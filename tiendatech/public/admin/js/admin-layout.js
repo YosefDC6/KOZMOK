@@ -11,19 +11,23 @@ function requireAuthAdmin() {
 }
 
 const ADMIN_SECCIONES = [
-    { titulo: 'CRM', links: [
-        { href: '/admin/dashboard.html',     key: 'dashboard',     ic: 'home',    label: 'Dashboard' },
-        { href: '/admin/clientes.html',      key: 'clientes',      ic: 'user',    label: 'Clientes' },
-        { href: '/admin/interacciones.html', key: 'interacciones', ic: 'chat',    label: 'Interacciones' },
-        { href: '/admin/evaluaciones.html',  key: 'evaluaciones',  ic: 'star',    label: 'Evaluaciones' },
-        { href: '/admin/soporte.html',       key: 'soporte',       ic: 'help',    label: 'Soporte' },
-        { href: '/admin/garantias.html',     key: 'garantias',     ic: 'shield',  label: 'Garantías' },
-        { href: '/admin/reportes.html',      key: 'reportes',      ic: 'grid',    label: 'Reportes' },
+    { titulo: 'CRM', home: '/admin/dashboard.html', links: [
+        { href: '/admin/dashboard.html',     key: 'dashboard',     ic: 'home',    label: 'Dashboard',           desc: 'Vista general del CRM' },
+        { href: '/admin/clientes.html',      key: 'clientes',      ic: 'user',    label: 'Clientes',            desc: 'Fichas y etapa de cada cliente' },
+        { href: '/admin/interacciones.html', key: 'interacciones', ic: 'chat',    label: 'Interacciones',       desc: 'Llamadas, correos y reuniones' },
+        { href: '/admin/evaluaciones.html',  key: 'evaluaciones',  ic: 'star',    label: 'Evaluaciones',        desc: 'Reseñas de producto' },
+        { href: '/admin/soporte.html',       key: 'soporte',       ic: 'help',    label: 'Soporte',             desc: 'Tickets de clientes' },
+        { href: '/admin/garantias.html',     key: 'garantias',     ic: 'shield',  label: 'Garantías',           desc: 'Certificados y reclamos' },
+        { href: '/admin/pedidos.html',       key: 'pedidos',       ic: 'truck',   label: 'Pedidos',             desc: 'Ventas a clientes' },
+        { href: '/admin/chatbot.html',       key: 'chatbot',       ic: 'chat',    label: 'Analítica chatbot',   desc: 'Qué pide la gente al asesor' },
+        { href: '/admin/reportes.html',      key: 'reportes',      ic: 'grid',    label: 'Reportes',            desc: 'Métricas e indicadores' },
     ] },
-    { titulo: 'Tienda', links: [
-        { href: '/admin/pedidos.html',   key: 'pedidos',   ic: 'truck',   label: 'Pedidos' },
-        { href: '/admin/productos.html', key: 'productos', ic: 'package', label: 'Inventario' },
-        { href: '/admin/chatbot.html',   key: 'chatbot',   ic: 'chat',    label: 'Analítica chatbot' },
+    { titulo: 'SCM', home: '/admin/scm.html', links: [
+        { href: '/admin/scm.html',            key: 'scm',             ic: 'home',    label: 'Dashboard',         desc: 'Madurez y métricas de la cadena' },
+        { href: '/admin/productos.html',      key: 'productos',       ic: 'package', label: 'Inventario',        desc: 'Catálogo y stock' },
+        { href: '/admin/proveedores.html',    key: 'proveedores',     ic: 'id',      label: 'Proveedores',       desc: 'Contactos y tiempos de entrega' },
+        { href: '/admin/movimientos.html',    key: 'movimientos',     ic: 'clock',   label: 'Movimientos',       desc: 'Historial de entradas y salidas' },
+        { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',    label: 'Órdenes de compra', desc: 'Reposición hacia proveedores' },
     ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
@@ -37,9 +41,9 @@ const ADMIN_SECCIONES = [
 // CHECK de la tabla usuarios (db/database.sql).
 const PERMISOS = {
     admin:    '*',
-    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'chatbot', 'mi-actividad', 'configuracion'],
+    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'scm', 'chatbot', 'mi-actividad', 'configuracion'],
     soporte:  ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'mi-actividad', 'configuracion'],
-    almacen:  ['dashboard', 'pedidos', 'productos', 'garantias', 'chatbot', 'mi-actividad', 'configuracion'],
+    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'scm', 'garantias', 'chatbot', 'mi-actividad', 'configuracion'],
 };
 const ROL_LABEL = { admin: 'Administrador', vendedor: 'Vendedor', soporte: 'Soporte', almacen: 'Almacén' };
 
@@ -68,13 +72,29 @@ function renderAdminSidebar(activo) {
         .filter((s) => s.links.length > 0);
 
     el.innerHTML = `
-        <div class="brand"><span class="brand-mark">${ic('bolt', 16)}</span> TiendaTech</div>
+        <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> TiendaTech</div>
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>
         <div class="admin-nav-links" id="admin-nav-links">
-            ${secciones.map((s) => `
-                <div class="admin-nav-sec">${s.titulo}</div>
-                ${s.links.map((l) => `<a href="${l.href}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('')}
-            `).join('')}
+            ${secciones.map((s) => {
+                const enlaces = s.links.map((l) => `<a href="${l.href}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
+                if (!s.home) {
+                    // Grupo estático (Cuenta): sin desplegable, siempre visible.
+                    return `<div class="admin-nav-sec">${s.titulo}</div>${enlaces}`;
+                }
+                // Grupo desplegable (CRM / SCM): el título navega a su dashboard;
+                // la flecha solo muestra u oculta sus opciones. Empieza abierto
+                // si la página activa pertenece a este grupo.
+                const abierto = s.links.some((l) => l.key === activo);
+                return `
+                    <div class="admin-nav-grupo ${abierto ? 'abierto' : ''}">
+                        <div class="admin-nav-grupo-head">
+                            <a href="${s.home}" class="admin-nav-sec-link">${s.titulo}</a>
+                            <button type="button" class="admin-nav-sec-toggle" aria-expanded="${abierto ? 'true' : 'false'}" aria-label="Mostrar opciones de ${s.titulo}">${ic('chevron', 15)}</button>
+                        </div>
+                        <div class="admin-nav-grupo-links"><div class="admin-nav-grupo-links-inner">${enlaces}</div></div>
+                    </div>
+                `;
+            }).join('')}
         </div>
         <div class="admin-user">
             <div class="au-name">${usuario ? usuario.nombre : ''}</div>
@@ -84,6 +104,14 @@ function renderAdminSidebar(activo) {
     `;
     const t = document.getElementById('admin-nav-toggle');
     if (t) t.addEventListener('click', () => document.getElementById('admin-nav-links').classList.toggle('open'));
+
+    document.querySelectorAll('.admin-nav-sec-toggle').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const grupo = btn.closest('.admin-nav-grupo');
+            const abierto = grupo.classList.toggle('abierto');
+            btn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+        });
+    });
 }
 
 function cerrarSesionAdmin() {
@@ -109,6 +137,27 @@ function descargarCSV(nombreArchivo, filas) {
     if (window.toast) toast('CSV descargado', 'ok');
 }
 window.descargarCSV = descargarCSV;
+
+// Menú de iconos grandes para la página de inicio de un módulo (CRM/SCM):
+// un acceso directo a cada sección del grupo, sin la que ya estás viendo.
+function renderModuloTiles(elId, grupoTitulo, excluirKey) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const usuario = Sesion.usuario();
+    const rol = (usuario && usuario.rol) || 'vendedor';
+    const ic = window.icon || (() => '');
+    const grupo = ADMIN_SECCIONES.find((s) => s.titulo === grupoTitulo);
+    if (!grupo) return;
+    const tiles = grupo.links.filter((l) => l.key !== excluirKey && puedeVer(rol, l.key));
+    el.innerHTML = tiles.map((l) => `
+        <a class="modulo-tile" href="${l.href}">
+            <span class="mt-ico">${ic(l.ic, 22)}</span>
+            <span class="mt-title">${l.label}</span>
+            <span class="mt-desc">${l.desc || ''}</span>
+        </a>
+    `).join('');
+}
+window.renderModuloTiles = renderModuloTiles;
 
 // Encabezado de página estándar del panel
 function adminHeader(titulo, subtitulo, accionHTML) {

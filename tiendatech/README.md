@@ -67,14 +67,21 @@ npm install
 
    Cuentas de prueba que quedan cargadas:
 
-   | Rol       | Correo                         | Contraseña   |
-   |-----------|--------------------------------|--------------|
-   | Admin     | admin@tiendatech.mx            | admin123     |
-   | Vendedor  | laura.vendedor@tiendatech.mx   | vendedor123  |
-   | Cliente   | mariana@correo.com             | demo123      |
-   | Cliente   | diego@correo.com               | demo123      |
-   | Cliente   | sofia@correo.com               | demo123      |
-   | Cliente   | carlos@correo.com              | demo123      |
+   | Rol       | Correo                         | Contraseña       |
+   |-----------|--------------------------------|------------------|
+   | Admin     | admin@tiendatech.mx            | Admin#TT2026     |
+   | Vendedor  | laura.vendedor@tiendatech.mx   | Vendedor#TT2026  |
+   | Soporte   | ruben.soporte@tiendatech.mx    | Soporte#TT2026   |
+   | Almacén   | paola.almacen@tiendatech.mx    | Almacen#TT2026   |
+   | Cliente   | mariana@correo.com             | Demo#TT2026      |
+   | Cliente   | diego@correo.com               | Demo#TT2026      |
+   | Cliente   | sofia@correo.com               | Demo#TT2026      |
+   | Cliente   | carlos@correo.com              | Demo#TT2026      |
+
+   Nota: se usan contraseñas con mayúscula/símbolo (no "admin123" tal
+   cual) porque los navegadores muestran un aviso nativo de "contraseña
+   comprometida" cuando detectan una contraseña que aparece en listas de
+   filtraciones conocidas, y "admin123"/"demo123" están en esas listas.
 
 ## 4. Correr el proyecto
 

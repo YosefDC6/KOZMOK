@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Órdenes de compra · Admin TiendaTech</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="table-wrap">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)">
+                <span style="font-size:.78rem;color:var(--text-muted)">Estado:</span>
+                <div id="chips-estado" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+            </div>
+            <table>
+                <thead><tr><th>Folio</th><th>Producto</th><th>Proveedor</th><th>Cantidad</th><th>Estado</th><th>Creada</th><th></th></tr></thead>
+                <tbody id="tabla-ordenes"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-orden">
+    <div class="modal" style="max-width:520px" id="modal-orden-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('ordenes-compra');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Órdenes de compra', 'Reposición hacia proveedores: genera la orden, dale seguimiento y al recibirla el stock sube solo.',
+    '<button class="btn btn-primary" onclick="abrirNuevaOrden()">Nueva orden</button>'
+);
+
+const ESTADOS = [
+    { valor: '', etiqueta: 'Todas' },
+    { valor: 'pendiente', etiqueta: 'Pendiente' },
+    { valor: 'en_proceso', etiqueta: 'En proceso' },
+    { valor: 'recibido', etiqueta: 'Recibido' },
+    { valor: 'cancelado', etiqueta: 'Cancelado' },
+];
+const PILL_CLASE = { pendiente: 'e-pendiente', en_proceso: 'e-procesando', recibido: 'e-entregado', cancelado: 'e-cancelado' };
+const ESTADO_LABEL = { pendiente: 'Pendiente', en_proceso: 'En proceso', recibido: 'Recibido', cancelado: 'Cancelado' };
+
+let FILTRO_ESTADO = '';
+let PRODUCTOS = [];
+let PROVEEDORES = [];
+
+function renderChipsEstado() {
+    document.getElementById('chips-estado').innerHTML = ESTADOS.map((e) => `
+        <button class="btn ${FILTRO_ESTADO === e.valor ? 'btn-primary' : 'btn-outline'} btn-sm" onclick="filtrarEstado('${e.valor}')">${e.etiqueta}</button>
+    `).join('');
+}
+
+function filtrarEstado(valor) {
+    FILTRO_ESTADO = valor;
+    renderChipsEstado();
+    cargarOrdenes();
+}
+
+function fechaCorta(f) {
+    return new Date(f).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+async function cargarOrdenes() {
+    const q = new URLSearchParams();
+    if (FILTRO_ESTADO) q.set('estado', FILTRO_ESTADO);
+    const ordenes = await api('/admin/ordenes-compra?' + q.toString());
+    document.getElementById('tabla-ordenes').innerHTML = ordenes.length ? ordenes.map((o) => `
+        <tr>
+            <td class="mono">${o.folio}</td>
+            <td>${o.producto_nombre || '—'}</td>
+            <td>${o.proveedor_nombre || '—'}${o.tiempo_entrega_dias ? `<div style="color:var(--text-muted);font-size:.74rem">entrega en ${o.tiempo_entrega_dias} días</div>` : ''}</td>
+            <td class="mono">${o.cantidad}</td>
+            <td><span class="estado-pill ${PILL_CLASE[o.estado]}">${ESTADO_LABEL[o.estado]}</span></td>
+            <td class="mono" style="font-size:.8rem">${fechaCorta(o.fecha_creacion)}</td>
+            <td>${botonesAccion(o)}</td>
+        </tr>
+    `).join('') : `<tr><td colspan="7" style="color:var(--text-muted)">No hay órdenes de compra con este filtro.</td></tr>`;
+}
+
+function botonesAccion(o) {
+    if (o.estado === 'pendiente') {
+        return `<button class="btn btn-outline btn-sm" onclick="cambiarEstado(${o.id},'en_proceso')">Marcar en proceso</button>
+                <button class="btn btn-ghost btn-sm" onclick="cambiarEstado(${o.id},'cancelado')">Cancelar</button>`;
+    }
+    if (o.estado === 'en_proceso') {
+        return `<button class="btn btn-outline btn-sm" onclick="cambiarEstado(${o.id},'recibido')">Marcar recibido</button>
+                <button class="btn btn-ghost btn-sm" onclick="cambiarEstado(${o.id},'cancelado')">Cancelar</button>`;
+    }
+    return '';
+}
+
+async function cambiarEstado(id, estado) {
+    if (estado === 'cancelado' && !(await confirmar('¿Cancelar esta orden de compra?', { okText: 'Cancelar orden', peligro: true }))) return;
+    try {
+        await api(`/admin/ordenes-compra/${id}/estado`, { method: 'PUT', body: { estado } });
+        toast(estado === 'recibido' ? 'Orden recibida: stock actualizado' : 'Orden actualizada', 'ok');
+        cargarOrdenes();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function cargarCatalogos() {
+    [PRODUCTOS, PROVEEDORES] = await Promise.all([api('/admin/productos'), api('/proveedores')]);
+}
+
+function sugerirCantidad(producto) {
+    if (!producto) return 1;
+    const faltante = (producto.stock_minimo * 2) - producto.stock;
+    return Math.max(faltante, producto.stock_minimo, 1);
+}
+
+function formularioOrden(productoPreseleccionado) {
+    const opcionesProducto = `<option value="">— Elegir producto —</option>` + PRODUCTOS.map((p) =>
+        `<option value="${p.id}" ${productoPreseleccionado === p.id ? 'selected' : ''}>${p.nombre} (stock ${p.stock}/${p.stock_minimo})</option>`
+    ).join('');
+    const opcionesProveedor = `<option value="">Usar el proveedor del producto</option>` + PROVEEDORES.map((pv) =>
+        `<option value="${pv.id}">${pv.nombre}</option>`
+    ).join('');
+    const p = PRODUCTOS.find((x) => x.id === productoPreseleccionado);
+    return `
+        <div class="field"><label>Producto</label><select id="oc-producto" onchange="alCambiarProductoOrden()">${opcionesProducto}</select></div>
+        <div class="field-row">
+            <div class="field"><label>Proveedor</label><select id="oc-proveedor">${opcionesProveedor}</select></div>
+            <div class="field"><label>Cantidad</label><input type="number" min="1" id="oc-cantidad" value="${sugerirCantidad(p)}" /></div>
+        </div>
+        <div class="field"><label>Notas (opcional)</label><textarea id="oc-notas" rows="2"></textarea></div>
+    `;
+}
+
+function alCambiarProductoOrden() {
+    const id = Number(document.getElementById('oc-producto').value) || null;
+    const p = PRODUCTOS.find((x) => x.id === id);
+    document.getElementById('oc-cantidad').value = sugerirCantidad(p);
+    document.getElementById('oc-proveedor').value = '';
+}
+
+async function abrirNuevaOrden(productoId) {
+    await cargarCatalogos();
+    document.getElementById('modal-orden-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-orden').classList.remove('open')">${icon('x', 18)}</button>
+        <h3>Nueva orden de compra</h3>
+        ${formularioOrden(productoId || null)}
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardarOrden()">Generar orden</button>
+    `;
+    document.getElementById('modal-orden').classList.add('open');
+}
+
+async function guardarOrden() {
+    const producto_id = Number(document.getElementById('oc-producto').value) || null;
+    const proveedor_id = Number(document.getElementById('oc-proveedor').value) || null;
+    const cantidad = Number(document.getElementById('oc-cantidad').value);
+    const notas = document.getElementById('oc-notas').value;
+    if (!producto_id) { toast('Elige un producto', 'warn'); return; }
+    if (!cantidad || cantidad < 1) { toast('La cantidad debe ser mayor a 0', 'warn'); return; }
+    try {
+        await api('/admin/ordenes-compra', { method: 'POST', body: { producto_id, proveedor_id, cantidad, notas } });
+        document.getElementById('modal-orden').classList.remove('open');
+        toast('Orden de compra generada', 'ok');
+        cargarOrdenes();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+(async () => {
+    renderChipsEstado();
+    await cargarOrdenes();
+    const params = new URLSearchParams(location.search);
+    const nuevo = params.get('nuevo');
+    if (nuevo) abrirNuevaOrden(Number(nuevo));
+})();
+</script>
+</body>
+</html>

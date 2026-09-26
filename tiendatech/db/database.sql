@@ -29,6 +29,7 @@ DROP TABLE IF EXISTS favoritos               CASCADE;
 DROP TABLE IF EXISTS metodos_pago            CASCADE;
 DROP TABLE IF EXISTS direcciones             CASCADE;
 DROP TABLE IF EXISTS chatbot_consultas       CASCADE;
+DROP TABLE IF EXISTS ordenes_compra          CASCADE;
 DROP TABLE IF EXISTS movimientos_inventario  CASCADE;
 DROP TABLE IF EXISTS pedido_items            CASCADE;
 DROP TABLE IF EXISTS pedidos                 CASCADE;
@@ -73,13 +74,16 @@ CREATE TABLE usuarios (
 -- PROVEEDORES
 -- ---------------------------------------------------------
 CREATE TABLE proveedores (
-    id             SERIAL PRIMARY KEY,
-    nombre         VARCHAR(150) NOT NULL,
-    contacto       VARCHAR(150),
-    email          VARCHAR(150),
-    telefono       VARCHAR(30),
-    activo         BOOLEAN DEFAULT TRUE,
-    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                  SERIAL PRIMARY KEY,
+    nombre              VARCHAR(150) NOT NULL,
+    contacto            VARCHAR(150),
+    email               VARCHAR(150),
+    telefono            VARCHAR(30),
+    -- tiempo de entrega promedio, en días: base de la estrategia de
+    -- reabastecimiento (punto de reorden = demanda x tiempo de entrega).
+    tiempo_entrega_dias INTEGER NOT NULL DEFAULT 7 CHECK (tiempo_entrega_dias > 0),
+    activo              BOOLEAN DEFAULT TRUE,
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ---------------------------------------------------------
@@ -116,6 +120,14 @@ CREATE TABLE productos (
     vendedor_id         INTEGER REFERENCES usuarios(id),
     activo              BOOLEAN DEFAULT TRUE,
     restock             VARCHAR(10) DEFAULT 'push' CHECK (restock IN ('push','pull')),
+    -- compatibilidad para el Armador de PC (solo aplica a categoría "Componentes")
+    tipo_componente     VARCHAR(20) CHECK (tipo_componente IS NULL OR tipo_componente IN
+                         ('cpu','placa_base','ram','gpu','almacenamiento','fuente','gabinete')),
+    socket              VARCHAR(20),  -- p.ej. "AM5", "AM4" (cpu y placa_base)
+    ram_tipo            VARCHAR(10),  -- "DDR4" / "DDR5" (ram y placa_base)
+    formato             VARCHAR(20),  -- "ATX" / "MicroATX" (placa_base y gabinete)
+    consumo_w           INTEGER,      -- consumo estimado en watts (cpu y gpu)
+    potencia_w          INTEGER,      -- capacidad de salida en watts (fuente)
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -283,8 +295,33 @@ CREATE TABLE movimientos_inventario (
     tipo         VARCHAR(20) NOT NULL DEFAULT 'entrada' CHECK (tipo IN ('entrada','salida')),
     cantidad     INTEGER NOT NULL,
     motivo       TEXT,
+    -- quién generó el movimiento (null = lo disparó el sistema: venta,
+    -- cancelación del cliente, recepción de una orden de compra, etc.)
+    usuario_id   INTEGER REFERENCES usuarios(id),
     fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ---------------------------------------------------------
+-- ÓRDENES DE COMPRA (reposición hacia proveedores, distinto de
+-- los pedidos de venta a clientes): el otro lado del punto de
+-- reorden — cuando el stock está bajo, se genera una orden, el
+-- proveedor la surte y al recibirla el stock sube solo.
+-- ---------------------------------------------------------
+CREATE TABLE ordenes_compra (
+    id             SERIAL PRIMARY KEY,
+    folio          VARCHAR(20) UNIQUE NOT NULL,
+    proveedor_id   INTEGER REFERENCES proveedores(id),
+    producto_id    INTEGER REFERENCES productos(id),
+    cantidad       INTEGER NOT NULL CHECK (cantidad > 0),
+    estado         VARCHAR(20) NOT NULL DEFAULT 'pendiente'
+                   CHECK (estado IN ('pendiente','en_proceso','recibido','cancelado')),
+    notas          TEXT,
+    usuario_id     INTEGER REFERENCES usuarios(id),
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_recibido TIMESTAMP
+);
+CREATE INDEX idx_ordenes_compra_proveedor ON ordenes_compra(proveedor_id);
+CREATE INDEX idx_ordenes_compra_producto ON ordenes_compra(producto_id);
 
 -- ---------------------------------------------------------
 -- CHATBOT: historial de consultas de recomendación
@@ -499,23 +536,26 @@ INSERT INTO categorias (nombre, icono) VALUES
  ('Accesorios', '');
 
 -- Usuarios internos. La contraseña se hashea aquí mismo con bcrypt
--- (pgcrypto). Credenciales de acceso:
---   admin@tiendatech.mx          -> admin123     (rol admin)
---   laura.vendedor@tiendatech.mx -> vendedor123  (rol vendedor)
+-- (pgcrypto). Credenciales de acceso (contraseñas de demo, no triviales
+-- a propósito: "admin123" y similares están en listas de contraseñas
+-- filtradas y el navegador muestra un aviso nativo de "contraseña
+-- comprometida" al iniciar sesión con ellas):
+--   admin@tiendatech.mx          -> Admin#TT2026     (rol admin)
+--   laura.vendedor@tiendatech.mx -> Vendedor#TT2026  (rol vendedor)
 INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUES
  ('Admin TiendaTech', 'admin@tiendatech.mx',
-  crypt('admin123', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
+  crypt('Admin#TT2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
  ('Laura Méndez', 'laura.vendedor@tiendatech.mx',
-  crypt('vendedor123', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),
+  crypt('Vendedor#TT2026', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),
  ('Rubén Soto', 'ruben.soporte@tiendatech.mx',
-  crypt('soporte123', gen_salt('bf', 10)), '555-000-0003', 'soporte', true),
+  crypt('Soporte#TT2026', gen_salt('bf', 10)), '555-000-0003', 'soporte', true),
  ('Paola Nieto', 'paola.almacen@tiendatech.mx',
-  crypt('almacen123', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
+  crypt('Almacen#TT2026', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
 
-INSERT INTO proveedores (nombre, contacto, email, telefono) VALUES
- ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000'),
- ('CompuMayoreo', 'Ana Ibarra', 'contacto@compumayoreo.mx', '555-100-3000'),
- ('ImportPC', 'Jorge Salinas', 'jorge@importpc.mx', '555-100-4000');
+INSERT INTO proveedores (nombre, contacto, email, telefono, tiempo_entrega_dias) VALUES
+ ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 5),
+ ('CompuMayoreo', 'Ana Ibarra', 'contacto@compumayoreo.mx', '555-100-3000', 3),
+ ('ImportPC', 'Jorge Salinas', 'jorge@importpc.mx', '555-100-4000', 12);
 
 -- ---------------------------------------------------------
 -- PRODUCTOS: laptops, PCs, componentes y periféricos reales
@@ -606,14 +646,64 @@ VALUES
   '{streaming,oficina}', NULL, 3, true, 'pull');
 
 -- ---------------------------------------------------------
--- CLIENTES DE PRUEBA  (contraseña "demo123" para los 4,
+-- ARMADOR DE PC: metadatos de compatibilidad sobre los
+-- componentes ya sembrados, y piezas nuevas (placas base,
+-- gabinetes, y una segunda opción de CPU/RAM/GPU/fuente) para
+-- tener opciones reales en los dos zócalos (AM4/AM5) y formatos
+-- (ATX/MicroATX) que el armador necesita validar.
+-- ---------------------------------------------------------
+UPDATE productos SET tipo_componente = 'gpu', consumo_w = 160 WHERE nombre = 'Tarjeta Gráfica RTX 4060 Ti';
+UPDATE productos SET tipo_componente = 'cpu', socket = 'AM5', consumo_w = 65 WHERE nombre = 'Procesador AMD Ryzen 5 7600';
+UPDATE productos SET tipo_componente = 'ram', ram_tipo = 'DDR5' WHERE nombre = 'Memoria RAM Kingston Fury 32GB (2x16)';
+UPDATE productos SET tipo_componente = 'almacenamiento' WHERE nombre = 'SSD NVMe Samsung 980 1TB';
+UPDATE productos SET tipo_componente = 'fuente', potencia_w = 650 WHERE nombre = 'Fuente de Poder 650W 80+ Bronze';
+
+INSERT INTO productos
+ (nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
+  uso_recomendado, imagen_url, proveedor_id, activo, restock,
+  tipo_componente, socket, ram_tipo, formato, consumo_w, potencia_w)
+VALUES
+ ('Placa Base ASUS TUF Gaming B650-Plus', 'Placa base ATX socket AM5 con soporte DDR5, ideal para procesadores Ryzen de última generación.',
+  3, 'ASUS', 3499.00, 12, 4, '{gaming,diseno,programacion}', NULL, 2, true, 'push',
+  'placa_base', 'AM5', 'DDR5', 'ATX', NULL, NULL),
+
+ ('Placa Base Gigabyte B450M DS3H', 'Placa base MicroATX socket AM4 con soporte DDR4, opción confiable de entrada para armar equipos AMD.',
+  3, 'Gigabyte', 1799.00, 15, 5, '{oficina,estudiante,programacion}', NULL, 1, true, 'push',
+  'placa_base', 'AM4', 'DDR4', 'MicroATX', NULL, NULL),
+
+ ('Procesador AMD Ryzen 5 5600', 'CPU de 6 núcleos socket AM4, excelente relación precio-rendimiento para equipos de entrada y gama media.',
+  3, 'AMD', 2799.00, 20, 6, '{oficina,estudiante,gaming}', NULL, 1, true, 'push',
+  'cpu', 'AM4', NULL, NULL, 65, NULL),
+
+ ('Memoria RAM Corsair Vengeance 16GB (2x8) DDR4', 'Kit de memoria DDR4 confiable para equipos de oficina, estudio y programación.',
+  3, 'Corsair', 949.00, 30, 8, '{oficina,estudiante,programacion}', NULL, 3, true, 'push',
+  'ram', NULL, 'DDR4', NULL, NULL, NULL),
+
+ ('Tarjeta Gráfica RTX 4060', 'GPU dedicada de entrada a gama media, ideal para gaming en 1080p y edición ligera.',
+  3, 'MSI', 6499.00, 14, 5, '{gaming,diseno}', NULL, 2, true, 'push',
+  'gpu', NULL, NULL, NULL, 115, NULL),
+
+ ('Fuente de Poder 750W 80+ Gold', 'Fuente de alta eficiencia para equipos gamer y estaciones de trabajo con tarjeta gráfica de gama alta.',
+  3, 'Corsair', 2199.00, 10, 4, '{gaming,diseno}', NULL, 3, true, 'push',
+  'fuente', NULL, NULL, NULL, NULL, 750),
+
+ ('Gabinete NZXT H510', 'Gabinete ATX con buen flujo de aire y panel lateral de vidrio templado.',
+  3, 'NZXT', 1699.00, 12, 4, '{gaming,diseno}', NULL, 2, true, 'push',
+  'gabinete', NULL, NULL, 'ATX', NULL, NULL),
+
+ ('Gabinete Cooler Master Q300L', 'Gabinete MicroATX compacto, ideal para equipos de oficina o gaming de espacio reducido.',
+  3, 'Cooler Master', 1199.00, 16, 5, '{oficina,estudiante}', NULL, 1, true, 'push',
+  'gabinete', NULL, NULL, 'MicroATX', NULL, NULL);
+
+-- ---------------------------------------------------------
+-- CLIENTES DE PRUEBA  (contraseña "Demo#TT2026" para los 4,
 -- hasheada aquí mismo con bcrypt / pgcrypto)
 -- ---------------------------------------------------------
 INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, estado_cliente, etapa_crm, fecha_registro) VALUES
- ('Mariana Torres', 'mariana@correo.com', crypt('demo123', gen_salt('bf', 10)), '555-123-4567', 'Estudio Creativo MT', 'Aguascalientes', 'Aguascalientes', 'activo', 'Frecuente', CURRENT_TIMESTAMP - INTERVAL '120 days'),
- ('Diego Ramírez', 'diego@correo.com', crypt('demo123', gen_salt('bf', 10)), '555-987-6543', NULL, 'León', 'Guanajuato', 'activo', 'Activo', CURRENT_TIMESTAMP - INTERVAL '60 days'),
- ('Sofía Herrera', 'sofia@correo.com', crypt('demo123', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
- ('Carlos Fuentes', 'carlos@correo.com', crypt('demo123', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
+ ('Mariana Torres', 'mariana@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-123-4567', 'Estudio Creativo MT', 'Aguascalientes', 'Aguascalientes', 'activo', 'Frecuente', CURRENT_TIMESTAMP - INTERVAL '120 days'),
+ ('Diego Ramírez', 'diego@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-987-6543', NULL, 'León', 'Guanajuato', 'activo', 'Activo', CURRENT_TIMESTAMP - INTERVAL '60 days'),
+ ('Sofía Herrera', 'sofia@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
+ ('Carlos Fuentes', 'carlos@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
 
 INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, fecha) VALUES
  (1, 1, 'llamada', 'Se discutieron opciones de laptop para edición de video.', CURRENT_TIMESTAMP - INTERVAL '2 days'),
@@ -746,7 +836,9 @@ INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUE
 
 -- =========================================================
 --  Listo. Credenciales de prueba:
---    admin@tiendatech.mx          / admin123
---    laura.vendedor@tiendatech.mx / vendedor123
---    mariana@correo.com           / demo123   (y diego / sofia / carlos)
+--    admin@tiendatech.mx          / Admin#TT2026
+--    laura.vendedor@tiendatech.mx / Vendedor#TT2026
+--    ruben.soporte@tiendatech.mx  / Soporte#TT2026
+--    paola.almacen@tiendatech.mx  / Almacen#TT2026
+--    mariana@correo.com           / Demo#TT2026   (y diego / sofia / carlos)
 -- =========================================================

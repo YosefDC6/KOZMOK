@@ -76,7 +76,7 @@
             <div class="recibo">
                 <div class="rec-top">
                     <div>
-                        <div class="rec-marca">${ic('bolt', 16)} TiendaTech</div>
+                        <div class="rec-marca">${ic('ghost', 16)} TiendaTech</div>
                         <div class="rec-emisor">${d.emisor.nombre}<br>RFC ${d.emisor.rfc}<br>${d.emisor.domicilio}</div>
                     </div>
                     <div class="rec-folio">

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Proveedores · Admin TiendaTech</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Proveedor</th><th>Contacto</th><th>Tiempo de entrega</th><th>Productos</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="tabla-proveedores"><tr><td colspan="6">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-proveedor">
+    <div class="modal" style="max-width:520px" id="modal-proveedor-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('proveedores');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Proveedores', 'Con quién se reabastece cada producto y cuánto tarda en llegar.',
+    '<button class="btn btn-primary" onclick="abrirNuevoProveedor()">Nuevo proveedor</button>'
+);
+
+function pillEntrega(dias) {
+    const color = dias <= 5 ? 'var(--success)' : dias <= 9 ? 'var(--warning)' : 'var(--danger)';
+    return `<span class="tag" style="color:${color};border-color:${color}">${dias} día${dias === 1 ? '' : 's'}</span>`;
+}
+
+async function cargarProveedores() {
+    const proveedores = await api('/admin/proveedores');
+    document.getElementById('tabla-proveedores').innerHTML = proveedores.length ? proveedores.map((pr) => `
+        <tr>
+            <td>${pr.nombre}<div style="color:var(--text-muted);font-size:.78rem">${pr.email || ''}</div></td>
+            <td>${pr.contacto || '—'}<div style="color:var(--text-muted);font-size:.78rem">${pr.telefono || ''}</div></td>
+            <td>${pillEntrega(pr.tiempo_entrega_dias)}</td>
+            <td class="mono">${pr.productos_asociados}</td>
+            <td>${pr.activo ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>' : '<span class="tag">Inactivo</span>'}</td>
+            <td>
+                <button class="btn btn-outline btn-sm" onclick="editarProveedor(${pr.id})">Editar</button>
+                <button class="btn btn-ghost btn-sm" onclick="eliminarProveedor(${pr.id})">Eliminar</button>
+            </td>
+        </tr>
+    `).join('') : `<tr><td colspan="6" style="color:var(--text-muted)">Aún no hay proveedores registrados.</td></tr>`;
+}
+
+function formularioProveedor(pr = {}) {
+    return `
+        <div class="field"><label>Nombre</label><input id="pv-nombre" value="${pr.nombre || ''}" /></div>
+        <div class="field-row">
+            <div class="field"><label>Contacto</label><input id="pv-contacto" value="${pr.contacto || ''}" /></div>
+            <div class="field"><label>Teléfono</label><input id="pv-telefono" value="${pr.telefono || ''}" /></div>
+        </div>
+        <div class="field"><label>Correo</label><input id="pv-email" value="${pr.email || ''}" /></div>
+        <div class="field">
+            <label>Tiempo de entrega (días)</label>
+            <input type="number" min="1" id="pv-entrega" value="${pr.tiempo_entrega_dias ?? 7}" />
+        </div>
+        ${pr.id ? `<div class="field"><label><input type="checkbox" id="pv-activo" style="width:auto;display:inline-block" ${pr.activo !== false ? 'checked' : ''}/> Activo</label></div>` : ''}
+    `;
+}
+
+function abrirNuevoProveedor() {
+    document.getElementById('modal-proveedor-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-proveedor').classList.remove('open')">${icon('x', 18)}</button>
+        <h3>Nuevo proveedor</h3>
+        ${formularioProveedor()}
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardarProveedor()">Crear proveedor</button>
+    `;
+    document.getElementById('modal-proveedor').classList.add('open');
+}
+
+async function editarProveedor(id) {
+    const proveedores = await api('/admin/proveedores');
+    const pr = proveedores.find((x) => x.id === id);
+    document.getElementById('modal-proveedor-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-proveedor').classList.remove('open')">${icon('x', 18)}</button>
+        <h3>Editar proveedor</h3>
+        ${formularioProveedor(pr)}
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardarProveedor(${id})">Guardar cambios</button>
+    `;
+    document.getElementById('modal-proveedor').classList.add('open');
+}
+
+function leerFormularioProveedor(esEdicion) {
+    const body = {
+        nombre: document.getElementById('pv-nombre').value,
+        contacto: document.getElementById('pv-contacto').value,
+        telefono: document.getElementById('pv-telefono').value,
+        email: document.getElementById('pv-email').value,
+        tiempo_entrega_dias: Number(document.getElementById('pv-entrega').value) || 7,
+    };
+    if (esEdicion) body.activo = document.getElementById('pv-activo').checked;
+    return body;
+}
+
+async function guardarProveedor(id) {
+    const body = leerFormularioProveedor(!!id);
+    if (!body.nombre) { toast('El nombre es obligatorio', 'warn'); return; }
+    try {
+        if (id) await api(`/admin/proveedores/${id}`, { method: 'PUT', body });
+        else await api('/admin/proveedores', { method: 'POST', body });
+        document.getElementById('modal-proveedor').classList.remove('open');
+        toast('Proveedor guardado', 'ok');
+        cargarProveedores();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function eliminarProveedor(id) {
+    if (!(await confirmar('¿Eliminar este proveedor?', { okText: 'Eliminar', peligro: true }))) return;
+    try {
+        const r = await api(`/admin/proveedores/${id}`, { method: 'DELETE' });
+        toast(r.message, 'ok');
+        cargarProveedores();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+cargarProveedores();
+</script>
+</body>
+</html>

@@ -12,10 +12,18 @@
     <main class="admin-main">
         <div id="topbar"></div>
 
+        <div id="panel-stock-critico"></div>
+
+        <div id="panel-logistica"></div>
+
         <div class="table-wrap">
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)">
+                <span style="font-size:.78rem;color:var(--text-muted)">Reabastecimiento:</span>
+                <div id="chips-restock" style="display:flex;gap:6px"></div>
+            </div>
             <table>
-                <thead><tr><th>ID</th><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Estado</th><th></th></tr></thead>
-                <tbody id="tabla-productos"><tr><td colspan="7">Cargando…</td></tr></tbody>
+                <thead><tr><th>ID</th><th>Producto</th><th>Categoría</th><th>Proveedor</th><th>Precio</th><th>Stock</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="tabla-productos"><tr><td colspan="8">Cargando…</td></tr></tbody>
             </table>
         </div>
     </main>
@@ -38,18 +46,85 @@ document.getElementById('topbar').innerHTML = adminHeader(
     '<button class="btn btn-primary" onclick="abrirNuevoProducto()">Nuevo producto</button>'
 );
 let CATEGORIAS = [];
+let PROVEEDORES = [];
+let PRODUCTOS_CACHE = [];
+let FILTRO_RESTOCK = 'todos';
 
 async function cargarCategorias() {
     CATEGORIAS = await api('/categorias');
 }
 
+async function cargarProveedores() {
+    PROVEEDORES = await api('/proveedores');
+}
+
+async function cargarStockCritico() {
+    const mp = await api('/admin/metricas-productos');
+    const el = document.getElementById('panel-stock-critico');
+    if (!mp.inventario_critico.length) {
+        el.innerHTML = `
+            <div class="pago-box pagado">
+                <h4>${icon('package', 16)} Cadena de suministro al día</h4>
+                <div class="pb-sub">Ningún producto está en o por debajo de su stock mínimo. ${mp.stats.stock_total} unidades en inventario, ${mp.stats.total_productos} productos activos.</div>
+            </div>`;
+        return;
+    }
+    el.innerHTML = `
+        <div class="pago-box pendiente">
+            <h4>${icon('alert', 16)} Alerta de stock crítico — ${mp.inventario_critico.length} producto(s)</h4>
+            <div class="pb-sub">Al llegar al mínimo definido, un producto entra aquí para que se reabastezca antes de agotarse.</div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+                ${mp.inventario_critico.map((p) => `
+                    <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px">
+                        <div>
+                            <div>${p.nombre} <span style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</span></div>
+                            <div style="font-size:.78rem;color:var(--text-muted)">
+                                Proveedor: ${p.proveedor_nombre || 'sin asignar'}${p.tiempo_entrega_dias ? ` (entrega en ${p.tiempo_entrega_dias} días)` : ''} · Reabastecimiento ${p.restock === 'pull' ? 'pull (bajo pedido)' : 'push (programado)'}
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <span class="mono ${p.stock === 0 ? 'stock-out' : 'stock-low'}">${p.stock} / ${p.stock_minimo}</span>
+                            <a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar orden</a>
+                            <button class="btn btn-outline btn-sm" onclick="restock(${p.id})">Restock</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>`;
+}
+
 async function cargarProductos() {
-    const productos = await api('/admin/productos');
-    document.getElementById('tabla-productos').innerHTML = productos.map((p) => `
+    PRODUCTOS_CACHE = await api('/admin/productos');
+    renderChipsRestock();
+    renderTablaProductos();
+    renderLogistica();
+}
+
+function renderChipsRestock() {
+    const chips = [
+        { valor: 'todos', etiqueta: 'Todos' },
+        { valor: 'push', etiqueta: 'Push' },
+        { valor: 'pull', etiqueta: 'Pull' },
+    ];
+    document.getElementById('chips-restock').innerHTML = chips.map((c) => `
+        <button class="btn ${FILTRO_RESTOCK === c.valor ? 'btn-primary' : 'btn-outline'} btn-sm" onclick="filtrarRestock('${c.valor}')">${c.etiqueta}</button>
+    `).join('');
+}
+
+function filtrarRestock(valor) {
+    FILTRO_RESTOCK = valor;
+    renderChipsRestock();
+    renderTablaProductos();
+}
+
+function renderTablaProductos() {
+    const lista = FILTRO_RESTOCK === 'todos' ? PRODUCTOS_CACHE : PRODUCTOS_CACHE.filter((p) => (p.restock || 'push') === FILTRO_RESTOCK);
+    document.getElementById('tabla-productos').innerHTML = lista.length ? lista.map((p) => `
         <tr>
             <td class="mono">${p.id}</td>
             <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
             <td>${p.categoria_nombre || '—'}</td>
+            <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}<div style="color:var(--text-muted);font-size:.78rem">${p.restock === 'pull' ? 'pull' : 'push'}</div></td>
             <td class="mono">${formatoMoneda(p.precio)}</td>
             <td class="mono ${p.stock === 0 ? 'stock-out' : p.stock <= p.stock_minimo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
             <td>${p.activo ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>' : '<span class="tag">Inactivo</span>'}</td>
@@ -58,11 +133,47 @@ async function cargarProductos() {
                 <button class="btn btn-ghost btn-sm" onclick="restock(${p.id})">Restock</button>
             </td>
         </tr>
-    `).join('');
+    `).join('') : `<tr><td colspan="8" style="color:var(--text-muted)">Ningún producto coincide con este filtro.</td></tr>`;
+}
+
+function renderLogistica() {
+    const el = document.getElementById('panel-logistica');
+    if (!PRODUCTOS_CACHE.length) { el.innerHTML = ''; return; }
+    const porCategoria = {};
+    PRODUCTOS_CACHE.forEach((p) => {
+        const cat = p.categoria_nombre || 'Sin categoría';
+        if (!porCategoria[cat]) porCategoria[cat] = { push: 0, pull: 0 };
+        porCategoria[cat][(p.restock === 'pull' ? 'pull' : 'push')]++;
+    });
+    const filas = Object.entries(porCategoria).sort((a, b) => (b[1].push + b[1].pull) - (a[1].push + a[1].pull));
+    el.innerHTML = `
+        <div class="pago-box">
+            <h4>${icon('truck', 16)} Logística por categoría — push vs. pull</h4>
+            <div class="pb-sub">Push: se repone por calendario/pronóstico. Pull: se repone bajo pedido o cuando baja el stock. Usa los filtros de la tabla para ver solo una u otra.</div>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+                ${filas.map(([cat, c]) => {
+                    const total = c.push + c.pull;
+                    const pctPush = Math.round((c.push / total) * 100);
+                    return `
+                        <div>
+                            <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:4px">
+                                <span>${cat}</span>
+                                <span class="mono" style="color:var(--text-muted)">${c.push} push · ${c.pull} pull</span>
+                            </div>
+                            <div style="display:flex;height:8px;border-radius:5px;overflow:hidden;background:var(--line)">
+                                <div style="width:${pctPush}%;background:var(--info)" title="${c.push} producto(s) push"></div>
+                                <div style="width:${100 - pctPush}%;background:var(--copper)" title="${c.pull} producto(s) pull"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>`;
 }
 
 function formularioProducto(p = {}) {
     const opcionesCat = CATEGORIAS.map((c) => `<option value="${c.id}" ${p.categoria_id === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('');
+    const opcionesProveedor = `<option value="">Sin asignar</option>` + PROVEEDORES.map((pv) => `<option value="${pv.id}" ${p.proveedor_id === pv.id ? 'selected' : ''}>${pv.nombre}</option>`).join('');
     const usos = ['gaming', 'oficina', 'diseno', 'programacion', 'estudiante', 'streaming', 'servidor'];
     const usosActuales = p.uso_recomendado || [];
     return `
@@ -79,6 +190,16 @@ function formularioProducto(p = {}) {
         <div class="field-row">
             <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" value="${p.stock_minimo ?? 5}" /></div>
             <div class="field"><label>Imagen (URL)</label><input id="p-imagen" value="${p.imagen_url || ''}" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field"><label>Proveedor</label><select id="p-proveedor">${opcionesProveedor}</select></div>
+            <div class="field">
+                <label>Reabastecimiento</label>
+                <select id="p-restock">
+                    <option value="push" ${(p.restock || 'push') === 'push' ? 'selected' : ''}>Push — se repone por calendario</option>
+                    <option value="pull" ${p.restock === 'pull' ? 'selected' : ''}>Pull — se repone cuando baja el stock</option>
+                </select>
+            </div>
         </div>
         <div class="field-row">
             <div class="field"><label>Procesador</label><input id="p-procesador" value="${p.procesador || ''}" /></div>
@@ -137,6 +258,8 @@ function leerFormularioProducto() {
         stock: Number(document.getElementById('p-stock').value),
         stock_minimo: Number(document.getElementById('p-stock-min').value),
         imagen_url: document.getElementById('p-imagen').value,
+        proveedor_id: document.getElementById('p-proveedor').value ? Number(document.getElementById('p-proveedor').value) : null,
+        restock: document.getElementById('p-restock').value,
         procesador: document.getElementById('p-procesador').value,
         ram_gb: document.getElementById('p-ram').value ? Number(document.getElementById('p-ram').value) : null,
         almacenamiento: document.getElementById('p-almacenamiento').value,
@@ -156,6 +279,7 @@ async function guardarProducto(id) {
         document.getElementById('modal-producto').classList.remove('open');
         toast('Producto guardado', 'ok');
         cargarProductos();
+        cargarStockCritico();
     } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -166,6 +290,7 @@ async function eliminarProducto(id) {
         document.getElementById('modal-producto').classList.remove('open');
         toast('Producto eliminado', 'ok');
         cargarProductos();
+        cargarStockCritico();
     } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -176,10 +301,11 @@ async function restock(id) {
         await api(`/admin/productos/${id}/restock`, { method: 'POST', body: { cantidad: Number(cantidad), motivo: 'Restock manual desde admin' } });
         toast(`+${cantidad} al stock`, 'ok');
         cargarProductos();
+        cargarStockCritico();
     } catch (e) { toast(e.message, 'error'); }
 }
 
-(async () => { await cargarCategorias(); await cargarProductos(); })();
+(async () => { await Promise.all([cargarCategorias(), cargarProveedores()]); await Promise.all([cargarProductos(), cargarStockCritico()]); })();
 </script>
 </body>
 </html>

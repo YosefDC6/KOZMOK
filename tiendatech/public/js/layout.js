@@ -29,6 +29,7 @@ async function renderNavbar() {
             <button class="cat-trigger" id="cat-trigger" aria-haspopup="true" aria-expanded="false">Categorías ${icon('chevron', 14)}</button>
             <div class="menu-panel cat-panel" role="menu">
                 <a href="/index.html?ver=todo" role="menuitem">${icon('grid', 16)} Todo el catálogo</a>
+                <a href="/armar-pc.html" role="menuitem">${icon('cpu', 16)} Arma tu PC</a>
                 <div class="menu-sep"></div>
                 ${catLinks}
             </div>
@@ -69,7 +70,7 @@ async function renderNavbar() {
         <nav class="navbar">
             <div class="navbar-inner">
                 <button class="hamburger" id="hamburger" aria-label="Menú">${icon('menu', 22)}</button>
-                <a href="/index.html" class="brand"><span class="brand-mark">${icon('bolt', 16)}</span> <span class="hide-sm">TiendaTech</span></a>
+                <a href="/index.html" class="brand"><span class="brand-mark">${icon('ghost', 16)}</span> <span class="hide-sm">TiendaTech</span></a>
 
                 <form class="nav-search" id="nav-search" role="search">
                     <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…" aria-label="Buscar" />
@@ -109,6 +110,7 @@ async function renderNavbar() {
             <div class="drawer-section">
                 <span class="drawer-label">Categorías</span>
                 <a href="/index.html?ver=todo">${icon('grid', 16)} Todo el catálogo</a>
+                <a href="/armar-pc.html">${icon('cpu', 16)} Arma tu PC</a>
                 ${catLinks}
             </div>
             <div class="drawer-section">
@@ -234,12 +236,13 @@ function renderFooter() {
         <footer>
             <div class="container footer-grid">
                 <div>
-                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${icon('bolt', 16)}</span> TiendaTech</div>
+                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${icon('ghost', 16)}</span> TiendaTech</div>
                     <p style="font-size:.85rem">Cómputo y electrónica con stock real, comparador de especificaciones y asesor de compra.</p>
                 </div>
                 <div>
                     <h4>Comprar</h4>
                     <a href="/index.html">Catálogo completo</a>
+                    <a href="/armar-pc.html">Arma tu PC</a>
                     <a href="/index.html?categoria=Laptops">Laptops</a>
                     <a href="/index.html?categoria=Componentes">Componentes</a>
                     <a href="/index.html?categoria=Perif%C3%A9ricos">Periféricos</a>

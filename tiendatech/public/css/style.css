@@ -161,6 +161,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .stat-card .stat-sub { font-size: .78rem; color: var(--text-muted); margin-top: 4px; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
 
+/* ---------- Nivel de madurez (Panel SCM) ---------- */
+.madurez-nivel { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-head); font-weight: 700; font-size: 1.15rem; padding: 6px 14px; border-radius: 100px; border: 1px solid currentColor; }
+.madurez-nivel.n-inicial      { color: var(--danger); }
+.madurez-nivel.n-en_desarrollo { color: var(--warning); }
+.madurez-nivel.n-optimizado   { color: var(--success); }
+.madurez-track { height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 12px 0 16px; }
+.madurez-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width .4s ease; }
+.madurez-check { display: flex; align-items: center; gap: 8px; font-size: .85rem; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+.madurez-check:last-child { border-bottom: none; }
+.madurez-check .mc-ico { flex-shrink: 0; }
+.madurez-check.cumplido { color: var(--text); }
+.madurez-check.cumplido .mc-ico { color: var(--success); }
+.madurez-check.pendiente { color: var(--text-muted); }
+.madurez-check.pendiente .mc-ico { color: var(--text-muted); }
+
 .product-card {
     background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius);
     overflow: hidden; display: flex; flex-direction: column; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
@@ -207,6 +222,26 @@ tr:hover td { background: var(--bg-panel-2); }
 .admin-sidebar a:hover { background: var(--bg-panel-2); color: var(--text); text-decoration: none; }
 .admin-sidebar a.active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 .admin-sidebar a.active .ic { color: var(--accent); }
+
+/* ---------- Grupos desplegables del menú (CRM / SCM) ---------- */
+.admin-nav-grupo-head { display: flex; align-items: center; }
+.admin-sidebar a.admin-nav-sec-link { flex: 1; display: block; padding: 14px 0 6px 12px; margin: 0; font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: var(--text-muted); border-radius: 0; }
+.admin-sidebar a.admin-nav-sec-link:hover { color: var(--accent); background: none; }
+.admin-nav-grupo:first-child a.admin-nav-sec-link { padding-top: 4px; }
+.admin-nav-sec-toggle { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 6px 10px; display: flex; align-items: center; transition: transform .18s ease; }
+.admin-nav-sec-toggle:hover { color: var(--text); }
+.admin-nav-grupo.abierto .admin-nav-sec-toggle { transform: rotate(180deg); }
+.admin-nav-grupo-links { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s ease; }
+.admin-nav-grupo.abierto .admin-nav-grupo-links { grid-template-rows: 1fr; }
+.admin-nav-grupo-links-inner { overflow: hidden; }
+
+/* ---------- Menú de módulo con iconos grandes (dashboard.html / scm.html) ---------- */
+.modulo-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.modulo-tile { background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 10px; transition: border-color .15s ease, transform .15s ease; }
+.modulo-tile:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
+.modulo-tile .mt-ico { width: 42px; height: 42px; border-radius: 11px; background: var(--bg-panel-2); color: var(--accent); display: flex; align-items: center; justify-content: center; }
+.modulo-tile .mt-title { font-weight: 600; font-size: .92rem; color: var(--text); }
+.modulo-tile .mt-desc { font-size: .76rem; color: var(--text-muted); line-height: 1.4; }
 .admin-user { border-top: 1px solid var(--line); padding: 12px 12px 4px; margin-top: 8px; }
 .admin-user .au-name { font-weight: 600; font-size: .88rem; }
 .admin-user .au-rol { font-size: .74rem; color: var(--text-muted); text-transform: capitalize; }
@@ -278,6 +313,33 @@ tr:hover td { background: var(--bg-panel-2); }
 .chatbot-quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px; }
 .chip { border: 1px solid var(--line); background: transparent; color: var(--text-muted); border-radius: 100px; padding: 5px 11px; font-size: .78rem; cursor: pointer; }
 .chip:hover { border-color: var(--copper); color: var(--text); }
+.chip.on { border-color: var(--accent); color: #fff; background: var(--accent); }
+
+/* ---------- Armador de PC ---------- */
+.armador-grid { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
+.armador-slots { display: flex; flex-direction: column; gap: 14px; }
+.slot-card { display: flex; gap: 14px; align-items: center; }
+.slot-card .slot-ico { width: 42px; height: 42px; border-radius: 10px; background: var(--bg-panel-2); color: var(--copper-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.slot-card .slot-body { flex: 1; min-width: 0; }
+.slot-card .slot-label { font-size: .82rem; font-weight: 600; display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.slot-card .slot-opcional { font-weight: 400; color: var(--text-muted); font-size: .74rem; }
+.slot-card select { width: 100%; }
+.slot-summary { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
+.slot-summary-row { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.slot-summary-row:last-child { border-bottom: none; padding-bottom: 0; }
+.slot-summary-row .ssr-nombre { color: var(--text-muted); }
+.slot-summary-row .ssr-nombre.vacio { font-style: italic; }
+.slot-summary-row .ssr-precio { font-family: var(--font-mono); flex-shrink: 0; }
+.compat-check { display: flex; align-items: flex-start; gap: 8px; font-size: .78rem; padding: 6px 0; }
+.compat-check .cc-ico { flex-shrink: 0; margin-top: 1px; }
+.compat-check.ok { color: var(--success); }
+.compat-check.error { color: var(--danger); }
+.compat-check.pendiente { color: var(--text-muted); }
+.armador-total { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 0; border-top: 1px solid var(--line); margin-top: 6px; }
+.armador-total strong { font-family: var(--font-mono); font-size: 1.3rem; }
+@media (max-width: 860px) {
+    .armador-grid { grid-template-columns: 1fr; }
+}
 .chatbot-input { display: flex; border-top: 1px solid var(--line); }
 .chatbot-input input { border: none; border-radius: 0; background: transparent; }
 .chatbot-input button { border: none; background: var(--copper); color: #fff; padding: 0 16px; cursor: pointer; }

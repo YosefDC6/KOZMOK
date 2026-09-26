@@ -335,17 +335,73 @@ app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
 
 // =========================================================
 // CHATBOT DE RECOMENDACIONES
-// Reglas: filtra por presupuesto + uso + categoría + stock,
-// y ordena por relevancia (coincidencia de uso, cercanía al
-// presupuesto, disponibilidad).
+// Reglas: filtra por presupuesto + categoría explícitos (los
+// que vienen de los chips) + stock, e infiere uso/presupuesto/
+// categoría/palabras clave del texto libre para puntuar por
+// relevancia. Nunca deja al cliente sin respuesta: si nada
+// calza perfecto, regresa lo más cercano disponible.
 // =========================================================
+const USO_PALABRAS = {
+    gaming: ['gam', 'jueg', 'jugar', 'jugad', 'fps', 'videojueg'],
+    oficina: ['oficin', 'trabaj', 'excel', 'documento', 'ofimatic', 'ofimátic'],
+    diseno: ['diseñ', 'diseno', 'edicion', 'edición', 'photoshop', 'illustrator', 'render', 'fotograf', 'video'],
+    programacion: ['programa', 'codigo', 'código', 'desarroll', 'software', 'compilar'],
+    estudiante: ['estudi', 'escuela', 'tarea', 'universidad', 'clases', 'carrera'],
+    streaming: ['streaming', 'transmit', 'twitch', 'directo', 'stream'],
+    servidor: ['servidor', 'server', 'nas'],
+};
+const CATEGORIA_PALABRAS = {
+    'Laptops': ['laptop', 'portátil', 'portatil', 'notebook'],
+    'PC de Escritorio': ['de escritorio', 'torre', 'pc de escritorio', 'computadora de escritorio'],
+    'Monitores': ['monitor', 'pantalla'],
+    'Componentes': ['tarjeta gráfica', 'tarjeta grafica', 'procesador', 'memoria ram', 'componente', 'ssd', 'disco duro', 'placa base', 'gabinete', 'fuente de poder'],
+    'Periféricos': ['teclado', 'mouse', 'periférico', 'periferico'],
+    'Accesorios': ['audífonos', 'audifonos', 'webcam', 'accesorio', 'bocina'],
+};
+const STOP_PALABRAS = new Set([
+    'de', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas', 'para', 'con', 'que', 'y', 'o',
+    'en', 'a', 'mi', 'me', 'quiero', 'busco', 'necesito', 'algo', 'por', 'favor', 'es', 'del', 'al',
+    'tengo', 'hola', 'buenas', 'buenos', 'dias', 'días', 'gracias', 'quisiera', 'puedes', 'puede',
+]);
+
+function analizarMensajeLibre(mensaje) {
+    if (!mensaje || typeof mensaje !== 'string') return { presupuesto: null, uso: null, categoria: null, palabras: [] };
+    const texto = mensaje.toLowerCase();
+
+    // Presupuesto: "15 mil", "15,000", "$15000", "20k"
+    let presupuesto = null;
+    const milMatch = texto.match(/(\d+(?:[.,]\d+)?)\s*(mil|k\b)/);
+    const numMatch = texto.match(/\$?\s?(\d[\d,.]{2,7})/);
+    if (milMatch) presupuesto = Math.round(parseFloat(milMatch[1].replace(',', '.')) * 1000);
+    else if (numMatch) presupuesto = Number(numMatch[1].replace(/[,.]/g, ''));
+
+    let uso = null;
+    for (const [clave, kws] of Object.entries(USO_PALABRAS)) {
+        if (kws.some((k) => texto.includes(k))) { uso = clave; break; }
+    }
+
+    let categoria = null;
+    for (const [nombre, kws] of Object.entries(CATEGORIA_PALABRAS)) {
+        if (kws.some((k) => texto.includes(k))) { categoria = nombre; break; }
+    }
+
+    const palabras = texto
+        .replace(/[^\p{L}0-9\s]/gu, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !STOP_PALABRAS.has(w) && isNaN(Number(w)));
+
+    return { presupuesto, uso, categoria, palabras };
+}
+
 app.post('/api/chatbot/recomendar', asyncRoute(async (req, res) => {
     const { presupuesto, uso, categoria, cliente_id, mensaje } = req.body;
+    const inferido = analizarMensajeLibre(mensaje);
 
+    // Los valores explícitos (chips) siguen siendo filtro duro, igual que antes.
+    // Lo inferido del texto libre solo suma puntaje: nunca deja la búsqueda en cero.
     const cond = ['p.activo = true', 'p.stock > 0'];
     const values = [];
     let i = 1;
-
     if (presupuesto) { cond.push(`p.precio <= $${i++}`); values.push(presupuesto); }
     if (categoria) { cond.push(`c.nombre = $${i++}`); values.push(categoria); }
 
@@ -357,42 +413,58 @@ app.post('/api/chatbot/recomendar', asyncRoute(async (req, res) => {
     `;
     const result = await pool.query(query, values);
 
-    // Puntaje: +3 si coincide el uso, + cercanía al presupuesto, +1 si hay buen stock
+    const usoFinal = uso || inferido.uso;
+    const presupuestoFinal = presupuesto || inferido.presupuesto;
+
+    // Puntaje: coincidencia de uso, cercanía al presupuesto, categoría y
+    // palabras sueltas inferidas del texto libre, y disponibilidad de stock.
     let productos = result.rows.map((p) => {
         let score = 0;
-        if (uso && p.uso_recomendado && p.uso_recomendado.includes(uso)) score += 3;
-        if (presupuesto) {
-            const cercania = 1 - Math.abs(presupuesto - p.precio) / presupuesto;
+        if (usoFinal && p.uso_recomendado && p.uso_recomendado.includes(usoFinal)) score += 3;
+        if (presupuestoFinal) {
+            const cercania = 1 - Math.abs(presupuestoFinal - p.precio) / presupuestoFinal;
             score += Math.max(cercania, 0) * 2;
+        }
+        if (!categoria && inferido.categoria && p.categoria_nombre === inferido.categoria) score += 2;
+        if (inferido.palabras.length) {
+            const texto = `${p.nombre} ${p.marca || ''} ${p.descripcion || ''} ${p.procesador || ''} ${p.tarjeta_grafica || ''}`.toLowerCase();
+            score += inferido.palabras.filter((w) => texto.includes(w)).length * 1.2;
         }
         if (p.stock > p.stock_minimo) score += 0.5;
         return { ...p, score };
     });
 
+    // Ordenado por puntaje: si nada es un match perfecto, esto ya deja
+    // arriba lo más cercano disponible en vez de no regresar nada.
     productos.sort((a, b) => b.score - a.score);
     const sugerencias = productos.slice(0, 5);
 
-    // Mensaje conversacional simple según lo encontrado
+    // Mensaje conversacional según lo que se entendió del texto/chips
     let respuesta;
     if (sugerencias.length === 0) {
         respuesta = presupuesto
             ? `No encontré equipo${categoria ? ` de ${categoria.toLowerCase()}` : ''} disponible con ese presupuesto (hasta $${Number(presupuesto).toLocaleString('es-MX')}). ¿Quieres que busque un rango más amplio?`
-            : 'No encontré productos disponibles con esos criterios. ¿Puedes darme más detalles?';
+            : 'No encontré productos disponibles en inventario ahora mismo. ¿Puedes darme más detalles?';
     } else {
-        respuesta = `Con base en ${uso ? `el uso que buscas (${uso})` : 'lo que me cuentas'}${presupuesto ? ` y un presupuesto de hasta $${Number(presupuesto).toLocaleString('es-MX')}` : ''}, esto es lo que más te conviene:`;
+        const piezas = [];
+        if (usoFinal) piezas.push(`para ${usoFinal}`);
+        if (presupuestoFinal) piezas.push(`con un presupuesto cercano a $${Number(presupuestoFinal).toLocaleString('es-MX')}`);
+        respuesta = piezas.length
+            ? `Buscando ${piezas.join(' y ')}, esto es lo más cercano que tengo disponible:`
+            : 'Con base en lo que escribiste, esto es lo más cercano que tengo disponible:';
     }
 
     try {
         await pool.query(
             `INSERT INTO chatbot_consultas (cliente_id, presupuesto, uso, categoria, mensaje, productos_sugeridos)
              VALUES ($1,$2,$3,$4,$5,$6)`,
-            [cliente_id || null, presupuesto || null, uso || null, categoria || null, mensaje || null, sugerencias.map((s) => s.id)]
+            [cliente_id || null, presupuestoFinal || null, usoFinal || null, categoria || inferido.categoria || null, mensaje || null, sugerencias.map((s) => s.id)]
         );
         // Si hay cliente logueado, esto también cuenta como una interacción CRM
         if (cliente_id) {
             await pool.query(
                 `INSERT INTO interacciones (cliente_id, tipo, descripcion) VALUES ($1, 'chat', $2)`,
-                [cliente_id, `Consulta al chatbot: ${mensaje || `uso=${uso || 'N/A'}, presupuesto=${presupuesto || 'N/A'}`}`]
+                [cliente_id, `Consulta al chatbot: ${mensaje || `uso=${usoFinal || 'N/A'}, presupuesto=${presupuestoFinal || 'N/A'}`}`]
             );
         }
     } catch (e) {
@@ -1705,8 +1777,11 @@ app.get('/api/admin/metricas-productos', asyncRoute(async (req, res) => {
         GROUP BY p.id ORDER BY unidades_vendidas DESC LIMIT 10
     `);
     const inventarioCritico = await pool.query(`
-        SELECT id, nombre, marca, stock, stock_minimo
-        FROM productos WHERE stock <= stock_minimo AND activo = true ORDER BY stock ASC
+        SELECT p.id, p.nombre, p.marca, p.stock, p.stock_minimo, p.restock,
+               pr.nombre AS proveedor_nombre, pr.tiempo_entrega_dias
+        FROM productos p
+        LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+        WHERE p.stock <= p.stock_minimo AND p.activo = true ORDER BY p.stock ASC
     `);
     const stats = await pool.query(`
         SELECT COUNT(*) AS total_productos, COALESCE(SUM(stock),0) AS stock_total,
@@ -1776,8 +1851,11 @@ app.get('/api/admin/chatbot-consultas', asyncRoute(async (req, res) => {
 
 app.get('/api/admin/productos', asyncRoute(async (req, res) => {
     const result = await pool.query(`
-        SELECT p.*, c.nombre AS categoria_nombre FROM productos p
-        LEFT JOIN categorias c ON p.categoria_id = c.id ORDER BY p.id ASC
+        SELECT p.*, c.nombre AS categoria_nombre, pr.nombre AS proveedor_nombre
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.id
+        LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+        ORDER BY p.id ASC
     `);
     res.json(result.rows);
 }));
@@ -1855,24 +1933,241 @@ app.post('/api/admin/productos/:id/restock', asyncRoute(async (req, res) => {
     const nuevoStock = prod.rows[0].stock + Number(cantidad);
     await pool.query('UPDATE productos SET stock = $1 WHERE id = $2', [nuevoStock, req.params.id]);
     await pool.query(
-        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'entrada',$2,$3)`,
-        [req.params.id, cantidad, motivo || 'Restock manual desde admin']
+        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'entrada',$2,$3,$4)`,
+        [req.params.id, cantidad, motivo || 'Restock manual desde admin', req.usuario.id]
     );
     res.json({ message: 'Restock aplicado', stock_nuevo: nuevoStock });
 }));
 
 app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
+    const { tipo, producto_id } = req.query;
+    const cond = [];
+    const values = [];
+    let i = 1;
+    if (tipo) { cond.push(`m.tipo = $${i++}`); values.push(tipo); }
+    if (producto_id) { cond.push(`m.producto_id = $${i++}`); values.push(producto_id); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const result = await pool.query(`
-        SELECT m.*, p.nombre AS producto_nombre FROM movimientos_inventario m
+        SELECT m.*, p.nombre AS producto_nombre, u.nombre AS usuario_nombre
+        FROM movimientos_inventario m
         LEFT JOIN productos p ON m.producto_id = p.id
+        LEFT JOIN usuarios u ON m.usuario_id = u.id
+        ${where}
         ORDER BY m.fecha DESC LIMIT 200
-    `);
+    `, values);
     res.json(result.rows);
+}));
+
+// =========================================================
+// ADMIN: ÓRDENES DE COMPRA (reposición hacia proveedores)
+// El lado "de entrada" de la cadena de suministro: cuando el
+// stock está bajo se genera una orden; al marcarla "recibido"
+// el stock sube y queda registrado el movimiento de inventario.
+// =========================================================
+app.get('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
+    const { estado } = req.query;
+    const cond = estado && estado !== 'Todas' ? 'WHERE oc.estado = $1' : '';
+    const values = cond ? [estado] : [];
+    const result = await pool.query(`
+        SELECT oc.*, p.nombre AS producto_nombre, p.stock AS producto_stock, p.stock_minimo,
+               pr.nombre AS proveedor_nombre, pr.tiempo_entrega_dias, u.nombre AS usuario_nombre
+        FROM ordenes_compra oc
+        LEFT JOIN productos p ON oc.producto_id = p.id
+        LEFT JOIN proveedores pr ON oc.proveedor_id = pr.id
+        LEFT JOIN usuarios u ON oc.usuario_id = u.id
+        ${cond}
+        ORDER BY oc.fecha_creacion DESC
+    `, values);
+    res.json(result.rows);
+}));
+
+app.post('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
+    const { producto_id, proveedor_id, cantidad, notas } = req.body;
+    if (!producto_id || !cantidad || cantidad < 1) {
+        return res.status(400).json({ message: 'Producto y cantidad son obligatorios' });
+    }
+    const prod = await pool.query('SELECT proveedor_id FROM productos WHERE id = $1', [producto_id]);
+    if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    const proveedorFinal = proveedor_id || prod.rows[0].proveedor_id;
+    if (!proveedorFinal) return res.status(400).json({ message: 'Este producto no tiene proveedor asignado; elige uno' });
+
+    const result = await pool.query(
+        `INSERT INTO ordenes_compra (folio, proveedor_id, producto_id, cantidad, notas, usuario_id)
+         VALUES ('OC-TMP',$1,$2,$3,$4,$5) RETURNING id`,
+        [proveedorFinal, producto_id, cantidad, notas || null, req.usuario.id]
+    );
+    const id = result.rows[0].id;
+    const final = await pool.query(
+        `UPDATE ordenes_compra SET folio = 'OC-' || (1000 + id) WHERE id = $1 RETURNING *`,
+        [id]
+    );
+    res.status(201).json(final.rows[0]);
+}));
+
+app.put('/api/admin/ordenes-compra/:id/estado', asyncRoute(async (req, res) => {
+    const { estado } = req.body;
+    if (!['pendiente', 'en_proceso', 'recibido', 'cancelado'].includes(estado)) {
+        return res.status(400).json({ message: 'Estado no válido' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const oc = await client.query('SELECT * FROM ordenes_compra WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (oc.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Orden no encontrada' }); }
+        const orden = oc.rows[0];
+        if (orden.estado === 'recibido' || orden.estado === 'cancelado') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: `Esta orden ya está ${orden.estado} y no se puede modificar` });
+        }
+
+        if (estado === 'recibido') {
+            await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [orden.cantidad, orden.producto_id]);
+            await client.query(
+                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id)
+                 VALUES ($1,'entrada',$2,$3,$4)`,
+                [orden.producto_id, orden.cantidad, `Recepción de orden de compra ${orden.folio}`, req.usuario.id]
+            );
+        }
+        const campoFecha = estado === 'recibido' ? ', fecha_recibido = CURRENT_TIMESTAMP' : '';
+        const result = await client.query(
+            `UPDATE ordenes_compra SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
+            [estado, req.params.id]
+        );
+        await client.query('COMMIT');
+        res.json(result.rows[0]);
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+}));
+
+// =========================================================
+// ADMIN: PANEL SCM — nivel de madurez y métricas de logística
+// Todo calculado a partir de datos reales (nada fijo a mano):
+// entre más de estos puntos estén realmente en uso, más avanzado
+// el nivel — así el nivel sube solo conforme se usa el sistema.
+// =========================================================
+app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
+    const stats = await pool.query(`
+        SELECT
+            (SELECT COUNT(*) FROM productos WHERE activo = true) AS total_productos,
+            (SELECT COUNT(*) FROM proveedores WHERE activo = true) AS total_proveedores,
+            (SELECT COUNT(*) FROM ordenes_compra WHERE estado IN ('pendiente','en_proceso')) AS ordenes_pendientes,
+            (SELECT COUNT(*) FROM productos WHERE activo = true AND stock <= stock_minimo) AS stock_bajo
+    `);
+
+    const masVendidos = await pool.query(`
+        SELECT p.id, p.nombre, COALESCE(SUM(pi.cantidad) FILTER (WHERE pe.estado <> 'cancelado'), 0) AS unidades_vendidas
+        FROM productos p
+        LEFT JOIN pedido_items pi ON pi.producto_id = p.id
+        LEFT JOIN pedidos pe ON pi.pedido_id = pe.id
+        WHERE p.activo = true
+        GROUP BY p.id ORDER BY unidades_vendidas DESC LIMIT 6
+    `);
+
+    const rotacion = await pool.query(`
+        SELECT
+            COALESCE(SUM(pi.cantidad) FILTER (WHERE pe.estado <> 'cancelado'), 0) AS vendidas,
+            COALESCE(SUM(p.stock), 0) AS stock_actual
+        FROM productos p
+        LEFT JOIN pedido_items pi ON pi.producto_id = p.id
+        LEFT JOIN pedidos pe ON pi.pedido_id = pe.id
+        WHERE p.activo = true
+    `);
+    const vendidas = Number(rotacion.rows[0].vendidas);
+    const stockActual = Number(rotacion.rows[0].stock_actual);
+    const rotacionPct = (vendidas + stockActual) > 0 ? Math.round((vendidas / (vendidas + stockActual)) * 100) : 0;
+
+    // Push/pull de todo el catálogo activo (la vista por categoría, solo
+    // de Componentes, ya vive en Inventario — aquí es el panorama completo).
+    const pushPull = await pool.query(`
+        SELECT restock, COUNT(*)::int AS total FROM productos WHERE activo = true GROUP BY restock
+    `);
+    const push = Number(pushPull.rows.find((r) => r.restock === 'push')?.total || 0);
+    const pull = Number(pushPull.rows.find((r) => r.restock === 'pull')?.total || 0);
+
+    // Checklist de madurez: cada punto se calcula de datos reales, no se
+    // marca a mano, así que el nivel avanza solo conforme se usa el sistema.
+    const conProveedor = await pool.query(`SELECT COUNT(*)::int AS n FROM productos WHERE activo = true AND proveedor_id IS NOT NULL`);
+    const movimientos = await pool.query(`SELECT COUNT(*)::int AS n FROM movimientos_inventario`);
+    const ordenesUsadas = await pool.query(`SELECT COUNT(*)::int AS n FROM ordenes_compra`);
+
+    const checklist = [
+        { clave: 'proveedores', etiqueta: 'Productos con proveedor asignado', cumplido: conProveedor.rows[0].n > 0 },
+        { clave: 'movimientos', etiqueta: 'Movimientos de inventario registrados', cumplido: movimientos.rows[0].n > 0 },
+        { clave: 'estrategia', etiqueta: 'Estrategia push y pull en uso (no solo una)', cumplido: push > 0 && pull > 0 },
+        { clave: 'ordenes', etiqueta: 'Órdenes de compra generadas', cumplido: ordenesUsadas.rows[0].n > 0 },
+        { clave: 'reportes', etiqueta: 'Reportes con datos reales de ventas', cumplido: vendidas > 0 },
+    ];
+    const cumplidos = checklist.filter((c) => c.cumplido).length;
+    const nivel = cumplidos <= 1 ? 'inicial' : cumplidos <= 3 ? 'en_desarrollo' : 'optimizado';
+
+    res.json({
+        stats: stats.rows[0],
+        mas_vendidos: masVendidos.rows,
+        rotacion_pct: rotacionPct,
+        push_pull: { push, pull },
+        madurez: { nivel, checklist, cumplidos, total: checklist.length },
+    });
 }));
 
 app.get('/api/proveedores', asyncRoute(async (req, res) => {
     const result = await pool.query('SELECT * FROM proveedores WHERE activo = true ORDER BY nombre ASC');
     res.json(result.rows);
+}));
+
+// =========================================================
+// ADMIN: PROVEEDORES
+// Base de la estrategia de reabastecimiento: cada proveedor
+// tiene un tiempo de entrega (días) que, junto con el stock
+// mínimo del producto, define qué tan pronto hay que reordenar.
+// =========================================================
+app.get('/api/admin/proveedores', asyncRoute(async (req, res) => {
+    const result = await pool.query(`
+        SELECT pr.*, COUNT(p.id)::int AS productos_asociados
+        FROM proveedores pr
+        LEFT JOIN productos p ON p.proveedor_id = pr.id AND p.activo = true
+        GROUP BY pr.id
+        ORDER BY pr.nombre ASC
+    `);
+    res.json(result.rows);
+}));
+
+app.post('/api/admin/proveedores', asyncRoute(async (req, res) => {
+    const { nombre, contacto, email, telefono, tiempo_entrega_dias } = req.body;
+    if (!nombre) return res.status(400).json({ message: 'El nombre es obligatorio' });
+    const result = await pool.query(
+        `INSERT INTO proveedores (nombre, contacto, email, telefono, tiempo_entrega_dias)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [nombre, contacto || null, email || null, telefono || null, tiempo_entrega_dias || 7]
+    );
+    res.status(201).json(result.rows[0]);
+}));
+
+app.put('/api/admin/proveedores/:id', asyncRoute(async (req, res) => {
+    const { nombre, contacto, email, telefono, tiempo_entrega_dias, activo } = req.body;
+    const result = await pool.query(
+        `UPDATE proveedores SET
+            nombre = COALESCE($1, nombre), contacto = COALESCE($2, contacto),
+            email = COALESCE($3, email), telefono = COALESCE($4, telefono),
+            tiempo_entrega_dias = COALESCE($5, tiempo_entrega_dias), activo = COALESCE($6, activo)
+         WHERE id = $7 RETURNING *`,
+        [nombre, contacto, email, telefono, tiempo_entrega_dias, activo, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Proveedor no encontrado' });
+    res.json(result.rows[0]);
+}));
+
+app.delete('/api/admin/proveedores/:id', asyncRoute(async (req, res) => {
+    const enUso = await pool.query('SELECT id FROM productos WHERE proveedor_id = $1 LIMIT 1', [req.params.id]);
+    if (enUso.rows.length > 0) {
+        await pool.query('UPDATE proveedores SET activo = false WHERE id = $1', [req.params.id]);
+        return res.json({ message: 'El proveedor abastece productos existentes; se desactivó en lugar de eliminarlo' });
+    }
+    await pool.query('DELETE FROM proveedores WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Proveedor eliminado' });
 }));
 
 // =========================================================

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Arma tu PC · TiendaTech</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="container" style="padding-top:36px;padding-bottom:60px;max-width:1080px">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="cpu" data-ic-size="28"></div>
+        <h1>Arma tu PC</h1>
+        <p>Elige cada pieza y te avisamos al momento si hay algo incompatible. Si no sabes por dónde empezar, dinos para qué la vas a usar y te armamos una propuesta completa.</p>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+            <strong style="font-size:.88rem">¿Para qué la vas a usar?</strong>
+            <button class="btn btn-primary btn-sm" id="btn-recomendar">Recomendarme una build</button>
+        </div>
+        <div id="chips-uso" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+
+    <div id="armador-contenido" class="empty-state">Cargando componentes disponibles…</div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script>
+const cliente = Sesion.cliente();
+
+const USOS = [
+    { valor: 'gaming', etiqueta: 'Gaming' },
+    { valor: 'oficina', etiqueta: 'Oficina' },
+    { valor: 'diseno', etiqueta: 'Diseño' },
+    { valor: 'programacion', etiqueta: 'Programación' },
+    { valor: 'estudiante', etiqueta: 'Estudiante' },
+    { valor: 'streaming', etiqueta: 'Streaming' },
+    { valor: 'servidor', etiqueta: 'Servidor' },
+];
+
+const SLOTS = [
+    { tipo: 'placa_base', label: 'Placa base', icono: 'grid', requerido: true },
+    { tipo: 'cpu', label: 'Procesador', icono: 'cpu', requerido: true },
+    { tipo: 'ram', label: 'Memoria RAM', icono: 'package', requerido: true },
+    { tipo: 'gpu', label: 'Tarjeta gráfica', icono: 'monitor', requerido: false },
+    { tipo: 'almacenamiento', label: 'Almacenamiento', icono: 'download', requerido: true },
+    { tipo: 'fuente', label: 'Fuente de poder', icono: 'power', requerido: true },
+    { tipo: 'gabinete', label: 'Gabinete', icono: 'card', requerido: true },
+];
+
+let COMPONENTES = {};  // tipo_componente -> [productos]
+let USO_ACTIVO = null;
+const SELECCION = {};  // tipo_componente -> id de producto (o null)
+
+function formatoRank(f) {
+    return f === 'ATX' ? 2 : f === 'MicroATX' ? 1 : 0;
+}
+
+function coincideUso(p, uso) {
+    return !!(uso && p.uso_recomendado && p.uso_recomendado.includes(uso));
+}
+
+function mejorPorUso(lista, uso) {
+    if (!lista.length) return null;
+    return [...lista].sort((a, b) => (coincideUso(b, uso) - coincideUso(a, uso)) || a.precio - b.precio)[0];
+}
+
+function seleccionado(tipo) {
+    const id = SELECCION[tipo];
+    return id ? (COMPONENTES[tipo] || []).find((p) => p.id === id) : null;
+}
+
+function evaluarCompatibilidad() {
+    const placa = seleccionado('placa_base');
+    const cpu = seleccionado('cpu');
+    const ram = seleccionado('ram');
+    const gpu = seleccionado('gpu');
+    const fuente = seleccionado('fuente');
+    const gabinete = seleccionado('gabinete');
+    const reglas = [];
+
+    reglas.push({
+        clave: 'socket',
+        etiqueta: 'Socket del procesador y la placa base',
+        estado: !placa || !cpu ? 'pendiente' : placa.socket === cpu.socket ? 'ok' : 'error',
+        detalle: (placa && cpu && placa.socket !== cpu.socket)
+            ? `El procesador es socket ${cpu.socket} y la placa base es ${placa.socket}.` : null,
+    });
+    reglas.push({
+        clave: 'ram',
+        etiqueta: 'Tipo de memoria RAM',
+        estado: !placa || !ram ? 'pendiente' : placa.ram_tipo === ram.ram_tipo ? 'ok' : 'error',
+        detalle: (placa && ram && placa.ram_tipo !== ram.ram_tipo)
+            ? `La RAM es ${ram.ram_tipo} y la placa base solo soporta ${placa.ram_tipo}.` : null,
+    });
+    reglas.push({
+        clave: 'formato',
+        etiqueta: 'Tamaño del gabinete',
+        estado: !placa || !gabinete ? 'pendiente' : formatoRank(gabinete.formato) >= formatoRank(placa.formato) ? 'ok' : 'error',
+        detalle: (placa && gabinete && formatoRank(gabinete.formato) < formatoRank(placa.formato))
+            ? `El gabinete es ${gabinete.formato} y la placa base es ${placa.formato}: no va a entrar.` : null,
+    });
+    const consumoNecesario = (cpu ? cpu.consumo_w || 0 : 0) + (gpu ? gpu.consumo_w || 0 : 0) + 120;
+    reglas.push({
+        clave: 'potencia',
+        etiqueta: 'Potencia de la fuente',
+        estado: !cpu || !fuente ? 'pendiente' : fuente.potencia_w >= consumoNecesario ? 'ok' : 'error',
+        detalle: (cpu && fuente && fuente.potencia_w < consumoNecesario)
+            ? `La fuente entrega ${fuente.potencia_w}W y este equipo necesita al menos ${consumoNecesario}W.` : null,
+    });
+    return reglas;
+}
+
+function recomendar(uso) {
+    const placa = mejorPorUso(COMPONENTES.placa_base || [], uso);
+    if (!placa) return;
+    const cpu = mejorPorUso((COMPONENTES.cpu || []).filter((c) => c.socket === placa.socket), uso);
+    const ram = mejorPorUso((COMPONENTES.ram || []).filter((r) => r.ram_tipo === placa.ram_tipo), uso);
+    const gabinete = mejorPorUso((COMPONENTES.gabinete || []).filter((g) => formatoRank(g.formato) >= formatoRank(placa.formato)), uso);
+    const quiereGpu = ['gaming', 'diseno', 'streaming'].includes(uso);
+    const gpu = quiereGpu ? mejorPorUso(COMPONENTES.gpu || [], uso) : null;
+    const consumoNecesario = (cpu ? cpu.consumo_w || 0 : 0) + (gpu ? gpu.consumo_w || 0 : 0) + 120;
+    const fuenteApta = (COMPONENTES.fuente || []).filter((f) => f.potencia_w >= consumoNecesario).sort((a, b) => a.precio - b.precio)[0];
+    const fuente = fuenteApta || mejorPorUso(COMPONENTES.fuente || [], uso);
+    const almacenamiento = mejorPorUso(COMPONENTES.almacenamiento || [], uso);
+
+    SELECCION.placa_base = placa ? placa.id : null;
+    SELECCION.cpu = cpu ? cpu.id : null;
+    SELECCION.ram = ram ? ram.id : null;
+    SELECCION.gabinete = gabinete ? gabinete.id : null;
+    SELECCION.gpu = gpu ? gpu.id : null;
+    SELECCION.fuente = fuente ? fuente.id : null;
+    SELECCION.almacenamiento = almacenamiento ? almacenamiento.id : null;
+    renderArmador();
+    toast('Build recomendada según lo que buscas', 'ok');
+}
+
+function renderChipsUso() {
+    document.getElementById('chips-uso').innerHTML = USOS.map((u) => `
+        <button class="chip ${USO_ACTIVO === u.valor ? 'on' : ''}" onclick="elegirUso('${u.valor}')">${u.etiqueta}</button>
+    `).join('');
+}
+
+function elegirUso(valor) {
+    USO_ACTIVO = USO_ACTIVO === valor ? null : valor;
+    renderChipsUso();
+}
+
+function opcionesSlot(tipo) {
+    const lista = COMPONENTES[tipo] || [];
+    const actual = SELECCION[tipo];
+    const base = tipo === 'gpu' ? [`<option value="">Sin tarjeta dedicada (gráficos integrados)</option>`] : [`<option value="">— Elegir —</option>`];
+    return base.concat(lista.map((p) => {
+        const detalle = [
+            p.socket, p.ram_tipo, p.formato,
+            p.consumo_w ? `${p.consumo_w}W` : null,
+            p.potencia_w ? `${p.potencia_w}W` : null,
+        ].filter(Boolean).join(' · ');
+        const agotado = p.stock === 0;
+        return `<option value="${p.id}" ${actual === p.id ? 'selected' : ''} ${agotado ? 'disabled' : ''}>
+            ${p.nombre}${detalle ? ` (${detalle})` : ''} — ${formatoMoneda(p.precio)}${agotado ? ' · agotado' : ''}
+        </option>`;
+    })).join('');
+}
+
+function cambiarSlot(tipo, valor) {
+    SELECCION[tipo] = valor ? Number(valor) : null;
+    renderArmador();
+}
+
+function renderArmador() {
+    const total = SLOTS.reduce((sum, s) => {
+        const p = seleccionado(s.tipo);
+        return sum + (p ? Number(p.precio) : 0);
+    }, 0);
+    const reglas = evaluarCompatibilidad();
+    const conflictos = reglas.filter((r) => r.estado === 'error');
+    const faltantes = SLOTS.filter((s) => s.requerido && !SELECCION[s.tipo]);
+    const puedeAgregar = conflictos.length === 0 && faltantes.length === 0;
+
+    document.getElementById('armador-contenido').innerHTML = `
+        <div class="armador-grid">
+            <div class="armador-slots">
+                ${SLOTS.map((s) => `
+                    <div class="card slot-card">
+                        <div class="slot-ico">${icon(s.icono, 20)}</div>
+                        <div class="slot-body">
+                            <div class="slot-label">${s.label} ${!s.requerido ? '<span class="slot-opcional">(opcional)</span>' : ''}</div>
+                            <select onchange="cambiarSlot('${s.tipo}', this.value)">${opcionesSlot(s.tipo)}</select>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div class="card" style="position:sticky;top:16px">
+                <strong style="font-size:.9rem">Tu configuración</strong>
+                <div class="slot-summary">
+                    ${SLOTS.map((s) => {
+                        const p = seleccionado(s.tipo);
+                        return `<div class="slot-summary-row">
+                            <span class="ssr-nombre ${p ? '' : 'vacio'}">${p ? p.nombre : (s.requerido ? 'Sin elegir' : 'Sin tarjeta dedicada')}</span>
+                            <span class="ssr-precio">${p ? formatoMoneda(p.precio) : '—'}</span>
+                        </div>`;
+                    }).join('')}
+                </div>
+
+                <strong style="font-size:.82rem">Compatibilidad</strong>
+                <div style="margin-top:4px">
+                    ${reglas.map((r) => `
+                        <div class="compat-check ${r.estado}">
+                            <span class="cc-ico">${icon(r.estado === 'ok' ? 'check' : r.estado === 'error' ? 'x' : 'clock', 14)}</span>
+                            <span>${r.detalle || r.etiqueta}</span>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="armador-total">
+                    <span>Total</span>
+                    <strong>${formatoMoneda(total)}</strong>
+                </div>
+                <button class="btn btn-primary" style="width:100%" id="btn-agregar-build" ${puedeAgregar ? '' : 'disabled'} onclick="agregarBuildAlCarrito()">
+                    ${conflictos.length ? 'Resuelve los conflictos primero' : faltantes.length ? `Faltan ${faltantes.length} componente(s)` : 'Agregar todo al carrito'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+async function agregarBuildAlCarrito() {
+    if (!cliente) { irALogin(); return; }
+    const btn = document.getElementById('btn-agregar-build');
+    btn.disabled = true;
+    btn.textContent = 'Agregando…';
+    try {
+        const piezas = SLOTS.map((s) => SELECCION[s.tipo]).filter(Boolean);
+        for (const producto_id of piezas) {
+            await api('/carrito', { method: 'POST', body: { producto_id, cantidad: 1 } });
+        }
+        actualizarBadgeCarrito();
+        toast('Tu PC armada se agregó al carrito', 'ok');
+        setTimeout(() => { location.href = '/carrito.html'; }, 600);
+    } catch (e) {
+        toast(e.message, 'error');
+        renderArmador();
+    }
+}
+
+async function cargarComponentes() {
+    try {
+        const productos = await api('/productos?categoria=Componentes');
+        COMPONENTES = {};
+        productos.forEach((p) => {
+            if (!p.tipo_componente) return;
+            (COMPONENTES[p.tipo_componente] = COMPONENTES[p.tipo_componente] || []).push(p);
+        });
+        Object.values(COMPONENTES).forEach((lista) => lista.sort((a, b) => a.precio - b.precio));
+        SLOTS.forEach((s) => { SELECCION[s.tipo] = null; });
+        renderChipsUso();
+        renderArmador();
+    } catch (e) {
+        document.getElementById('armador-contenido').innerHTML = `<div class="empty-state">No se pudieron cargar los componentes. Intenta de nuevo en un momento.</div>`;
+    }
+}
+
+document.getElementById('btn-recomendar').addEventListener('click', () => {
+    if (!USO_ACTIVO) { toast('Primero elige para qué la vas a usar', 'warn'); return; }
+    recomendar(USO_ACTIVO);
+});
+
+cargarComponentes();
+</script>
+</body>
+</html>

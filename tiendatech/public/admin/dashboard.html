@@ -13,6 +13,8 @@
     <main class="admin-main">
         <div id="topbar"></div>
 
+        <div class="modulo-tiles" id="modulo-tiles"></div>
+
         <div class="stat-grid" id="stat-grid"></div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:22px">
@@ -60,6 +62,7 @@
 requireAuthAdmin();
 renderAdminSidebar('dashboard');
 document.getElementById('topbar').innerHTML = adminHeader('Resumen CRM', 'Vista general de clientes, interacciones, soporte e inventario.');
+renderModuloTiles('modulo-tiles', 'CRM', 'dashboard');
 
 async function cargarDashboard() {
     const [d, mp] = await Promise.all([api('/admin/dashboard'), api('/admin/metricas-productos')]);

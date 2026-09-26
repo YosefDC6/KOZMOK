@@ -80,16 +80,26 @@ ROLES INTERNOS (entran por /admin/login.html; el menu se adapta al rol)
      3. admin/js/admin-layout.js -> objeto PERMISOS (que secciones ve)
 
 Cuentas de prueba (tras cargar db/database.sql)
-   Panel interno:
-      admin@tiendatech.mx           / admin123      (administrador)
-      laura.vendedor@tiendatech.mx  / vendedor123   (vendedor)
-      ruben.soporte@tiendatech.mx   / soporte123    (soporte)
-      paola.almacen@tiendatech.mx   / almacen123    (almacen)
-   Tienda (clientes), todas con password  demo123 :
-      mariana@correo.com   (nivel Oro, con pedidos y puntos)
-      diego@correo.com     (nivel Oro)
-      sofia@correo.com     (prospecto, sin compras)
-      carlos@correo.com    (inactivo)
+
+   +----------+------------------------------+-----------------+----------------------------------+
+   | Rol      | Correo                       | Contraseña      | Notas                            |
+   +----------+------------------------------+-----------------+----------------------------------+
+   | Admin    | admin@tiendatech.mx          | Admin#TT2026    | acceso total al panel            |
+   | Vendedor | laura.vendedor@tiendatech.mx | Vendedor#TT2026 | todo menos Cuentas y equipo      |
+   | Soporte  | ruben.soporte@tiendatech.mx  | Soporte#TT2026  | CRM y soporte                    |
+   | Almacen  | paola.almacen@tiendatech.mx  | Almacen#TT2026  | pedidos, inventario, proveedores |
+   | Cliente  | mariana@correo.com           | Demo#TT2026     | nivel Oro, con pedidos y puntos  |
+   | Cliente  | diego@correo.com             | Demo#TT2026     | nivel Oro                        |
+   | Cliente  | sofia@correo.com             | Demo#TT2026     | prospecto, sin compras           |
+   | Cliente  | carlos@correo.com            | Demo#TT2026     | inactivo                         |
+   +----------+------------------------------+-----------------+----------------------------------+
+
+   Nota: ya no son "admin123"/"demo123" a proposito. Esos patrones estan
+   en listas publicas de contrasenas filtradas, y el navegador (Chrome/
+   Edge) muestra un aviso nativo de "esta contrasena fue expuesta,
+   cambiala" al iniciar sesion con ellas. Ese aviso es del navegador, no
+   de la pagina, asi que no se puede quitar ni re-vestir con el tema de
+   TiendaTech; la solucion real es no usar contrasenas de ese tipo.
 
 Seguridad de sesion
    - El token de cliente y el token de admin se guardan por separado en el
@@ -157,13 +167,49 @@ Seguridad de sesion
      gracias y en "Mis garantias".
    - Si se cancela el pedido, sus garantias quedan "canceladas".
 
+3.3d ARMA TU PC  (armar-pc.html, enlace "Arma tu PC" en Categorias y en inicio)
+   - Arma un equipo de escritorio eligiendo cada pieza: placa base,
+     procesador, memoria RAM, tarjeta grafica (opcional), almacenamiento,
+     fuente de poder y gabinete.
+   - Revisa la compatibilidad en vivo: socket procesador/placa, tipo de
+     memoria (DDR4/DDR5), que el gabinete si acepte el tamano de la placa
+     (ATX/MicroATX) y que la fuente alcance en watts para el procesador y
+     la grafica elegidos. Cada regla se marca en verde o en rojo con el
+     motivo exacto si hay un conflicto.
+   - Boton "Recomendarme una build": eliges para que la vas a usar (gaming,
+     oficina, diseno, etc.) y arma automaticamente una configuracion
+     completa y compatible con esas piezas.
+   - "Agregar todo al carrito" solo se habilita cuando no hay conflictos y
+     estan elegidas las piezas obligatorias; agrega cada componente como
+     un producto normal del carrito.
+
 3.4  CHATBOT ASESOR  (boton flotante abajo a la derecha, en toda la tienda)
    - En la primera visita muestra una burbuja invitando a usarlo.
-   - Le escribes que buscas, para que lo quieres y tu presupuesto.
-   - Responde con recomendaciones concretas: solo productos que existen, que
-     estan EN STOCK y que caben en tu presupuesto.
+   - Puedes escribir con tus propias palabras lo que buscas (por ejemplo
+     "una laptop para diseno con 20 mil pesos" o "algo para jugar barato")
+     o usar las opciones rapidas. El asesor entiende del texto libre el
+     uso, el presupuesto, la categoria y palabras clave (marca, tipo de
+     producto), sin necesidad de contestar paso a paso.
+   - Responde con recomendaciones concretas: solo productos que existen y
+     que estan EN STOCK. Si nada calza perfecto, regresa lo mas cercano
+     disponible en vez de dejarte sin respuesta.
    - Cada consulta queda registrada para que el equipo vea que pide la gente
      (ver 4.10).
+
+   ARMAR POR PIEZAS DESDE EL CHAT
+   - Despues de elegir para que la vas a usar, el asesor pregunta si
+     quieres un equipo ya armado o armarlo tu mismo. Tambien puedes escribir
+     directamente "quiero armar mi propia PC" o "elegir mis componentes".
+   - Si armas por piezas: eliges tu presupuesto total y el asesor va
+     recomendando una pieza a la vez (placa base, procesador, RAM, tarjeta
+     grafica opcional, almacenamiento, fuente y gabinete), siempre
+     filtrando solo lo que es COMPATIBLE con lo que ya elegiste (mismo
+     socket, mismo tipo de RAM, gabinete que si acepte la placa, fuente con
+     watts suficientes) y ordenado por tu area de uso y precio.
+   - Cada sugerencia tiene su boton "Elegir y agregar": la agrega al
+     carrito al instante y sigue con la siguiente pieza en el mismo chat,
+     mostrando cuanto presupuesto te va quedando.
+   - Al terminar todas las piezas, resume el total y te lleva al carrito.
 
 3.5  CARRITO Y COMPRA  (carrito.html)
    - Para comprar hay que iniciar sesion (si no, te manda al login y vuelve).
@@ -280,7 +326,22 @@ Seguridad de sesion
  4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/admin/login.html)
 ===============================================================================
 
-La barra lateral esta agrupada en tres bloques: CRM, TIENDA y CUENTA.
+La barra lateral esta agrupada en tres bloques: CRM, SCM y CUENTA. El
+bloque CRM cubre clientes, ventas y relacion con el cliente; el bloque
+SCM cubre la cadena de suministro (inventario, proveedores, logistica).
+
+CRM y SCM son desplegables: el titulo del bloque es un enlace directo a
+su pantalla principal y la flechita junto al titulo solo muestra u oculta
+sus opciones sin salir de donde estas. El bloque del modulo en el que
+estas se abre solo; el otro queda cerrado, para que la lista no se sienta
+larga. El bloque CUENTA no es desplegable, siempre esta a la vista.
+
+Ambos bloques empiezan con su propio "Dashboard" (el de CRM en
+admin/dashboard.html, el de SCM en admin/scm.html -- este ultimo tambien
+se le llama "Panel SCM" en su encabezado). Los dos tienen arriba un menu
+de accesos directos con iconos grandes a cada seccion de su modulo
+(excepto a si mismos), para navegar sin tener que usar la barra lateral.
+
 Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 
 4.1  DASHBOARD  (admin/dashboard.html)  [bloque CRM]
@@ -365,7 +426,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Graficas: interacciones por tipo y clientes por etapa.
    - "Exportar CSV": descarga todos los indicadores del periodo.
 
-4.8  PEDIDOS  (admin/pedidos.html)  [TIENDA]
+4.8  PEDIDOS  (admin/pedidos.html)  [CRM]
    - Listado con filtro por estado. Cada fila muestra el estado y el pago
      como pildoras de color. Clic en la fila o en "Gestionar" abre el panel.
    - Panel de gestion:
@@ -381,13 +442,79 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - "Exportar CSV": descarga los pedidos tal como estan filtrados.
    - Enlace directo:  /admin/pedidos.html?open=<id>  abre ese panel.
 
-4.9  INVENTARIO  (admin/productos.html)  [TIENDA]
-   - Catalogo completo: ID, producto, categoria, precio, stock, estado.
+4.9  INVENTARIO  (admin/productos.html)  [SCM]
+   - Catalogo completo: ID, producto, categoria, proveedor, precio, stock,
+     estado.
    - "Nuevo producto" y edicion: datos, especificaciones tecnicas, precio,
-     stock, imagen (URL opcional; si se deja vacia se usa la generica).
-   - Reabastecer stock desde la ficha del producto.
+     stock, stock minimo, imagen (URL opcional; si se deja vacia se usa la
+     generica), proveedor y metodo de reabastecimiento (push = se repone
+     por calendario; pull = se repone cuando baja el stock).
+   - Reabastecer stock desde la ficha del producto o desde el boton
+     "Restock" de la tabla.
+   - Alerta de stock critico: en cuanto un producto llega a su stock
+     minimo o por debajo, aparece arriba de la tabla con su proveedor,
+     metodo de reabastecimiento y un boton directo para reabastecerlo.
+   - Logistica por categoria: panel con una barra por categoria que
+     muestra cuantos productos se reabastecen push vs. pull, para ver
+     de un vistazo la estrategia de cada linea de catalogo.
+   - Filtro "Reabastecimiento" (Todos/Push/Pull) arriba de la tabla,
+     para ver solo los productos de un metodo u otro.
 
-4.10 ANALITICA CHATBOT  (admin/chatbot.html)  [TIENDA]
+4.9b PROVEEDORES  (admin/proveedores.html)  [SCM]
+   - Lista de proveedores con contacto, telefono, correo, cuantos
+     productos activos abastece cada uno y su estado.
+   - Tiempo de entrega (dias): base de la estrategia de reabastecimiento
+     (a mayor tiempo de entrega, antes hay que reordenar). Se muestra en
+     verde (5 dias o menos), ambar (6-9) o rojo (10 o mas).
+   - "Nuevo proveedor" y edicion: nombre, contacto, telefono, correo,
+     tiempo de entrega y activo/inactivo.
+   - "Eliminar": si el proveedor ya tiene productos asociados se
+     desactiva en lugar de borrarse (para no perder el historial).
+   - La alerta de stock critico en Inventario (4.9) muestra el tiempo de
+     entrega del proveedor de cada producto, para decidir que tan urgente
+     es reordenar.
+
+4.9c MOVIMIENTOS DE INVENTARIO  (admin/movimientos.html)  [SCM]
+   - Historial de entradas y salidas de stock: fecha, producto, tipo
+     (entrada/salida), cantidad, motivo y que usuario lo genero.
+   - Se registra solo: cada venta (salida), cancelacion de un cliente
+     (entrada), restock manual (entrada) y recepcion de una orden de
+     compra (entrada). No hay carga manual de movimientos sueltos; para
+     ajustar stock a mano se usa "Restock" en Inventario.
+   - Filtros por tipo y por nombre de producto.
+
+4.9d ORDENES DE COMPRA  (admin/ordenes-compra.html)  [SCM]
+   - El otro lado de la cadena de suministro: pedidos de reposicion
+     HACIA los proveedores (distinto de los "Pedidos" de venta a
+     clientes). Folio (OC-100x), producto, proveedor, cantidad, estado y
+     fecha.
+   - "Nueva orden": eliges el producto (sugiere una cantidad segun su
+     stock minimo), el proveedor (por default el que ya tiene asignado
+     el producto) y notas opcionales.
+   - Estados: Pendiente -> En proceso -> Recibido (al marcarla recibida,
+     el stock del producto sube solo y queda registrado el movimiento de
+     inventario correspondiente) o Cancelado en cualquier momento antes
+     de recibirla.
+   - Acceso directo: el boton "Generar orden" en la alerta de stock
+     critico de Inventario (4.9) abre una orden nueva ya con ese producto
+     elegido.
+
+4.9e PANEL SCM  (admin/scm.html)  [SCM]
+   - En la barra lateral aparece como "Dashboard" (primer elemento del
+     bloque SCM, igual que el Dashboard es el primero del bloque CRM).
+   - Metricas: productos activos, proveedores, ordenes de compra
+     abiertas, productos en stock bajo y rotacion de inventario (%
+     de unidades vendidas contra el stock actual).
+   - Nivel de madurez SCM: Inicial / En desarrollo / Optimizado, calculado
+     de datos reales del sistema (no es una lista que se marca a mano):
+     que haya productos con proveedor asignado, movimientos de inventario
+     registrados, estrategia push Y pull en uso (no solo una), ordenes de
+     compra generadas y reportes con ventas reales. El nivel sube solo
+     conforme el equipo usa cada parte del modulo.
+   - Graficas: productos mas vendidos y comparativa push vs. pull de
+     todo el catalogo.
+
+4.10 ANALITICA CHATBOT  (admin/chatbot.html)  [CRM]
    - Que esta buscando la gente en el asesor: por uso, por rango de
      presupuesto y ultimas consultas.
    - Una consulta sin sugerencias es una oportunidad de reabastecer o de
@@ -441,10 +568,15 @@ SOPORTE
    estado/prioridad, y dejar registrada la interaccion en la ficha.
 
 ALMACEN
-   Ve: Dashboard, Pedidos, Inventario, Analitica chatbot, Mi actividad,
-   Configuracion. No ve Clientes, Interacciones, Soporte ni Cuentas.
+   Ve: Dashboard (CRM), Pedidos, Analitica chatbot -- y en el bloque SCM:
+   Dashboard (Panel SCM), Inventario, Proveedores, Movimientos, Ordenes de
+   compra -- ademas de Mi actividad y Configuracion. No ve Clientes,
+   Interacciones, Soporte ni Cuentas.
    Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->
-   entregado), registrar entradas de stock y vigilar el stock critico.
+   entregado), vigilar el stock critico, generar una orden de compra al
+   proveedor cuando haga falta, marcarla recibida cuando llegue (el stock
+   sube solo) y revisar el Dashboard de SCM para ver el nivel de madurez y
+   las metricas generales.
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles).
@@ -641,7 +773,8 @@ Estructura
      db/database.sql      esquema + triggers + datos, re-ejecutable
      public/              front estatico (HTML + CSS + JS, sin framework)
        index.html, carrito.html, gracias.html, recibo.html, ayuda.html,
-       login.html, registro.html, socio.html, comparar.html, garantias.html
+       login.html, registro.html, socio.html, comparar.html, garantias.html,
+       armar-pc.html
        perfil.html, pedidos.html, recompensas.html, favoritos.html,
        resenas.html, direcciones.html, pagos.html, soporte.html,
        datos.html, seguridad.html, preferencias.html
@@ -653,15 +786,18 @@ Estructura
        img/ producto.svg (imagen generica de producto)
        admin/  login.html dashboard.html clientes.html cliente.html
                interacciones.html evaluaciones.html soporte.html
-               reportes.html pedidos.html productos.html chatbot.html
-               mi-actividad.html usuarios.html configuracion.html
-               js/admin-layout.js
+               reportes.html pedidos.html productos.html proveedores.html
+               movimientos.html ordenes-compra.html scm.html chatbot.html
+               garantias.html recibo.html mi-actividad.html usuarios.html
+               configuracion.html
+               js/admin-layout.js  interaccion-sim.js
 
 Tablas principales
    usuarios, proveedores, categorias, productos, clientes, interacciones,
    metricas_clientes, carrito_items, pedidos, pedido_items,
-   movimientos_inventario, chatbot_consultas, direcciones, metodos_pago,
-   favoritos, movimientos_puntos, resenas, tickets, ticket_mensajes
+   movimientos_inventario, ordenes_compra, chatbot_consultas, direcciones,
+   metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
+   ticket_mensajes, garantias
 
 Autenticacion
    - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage tt_token).

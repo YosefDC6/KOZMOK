@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Movimientos de inventario · Admin TiendaTech</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="filters-bar">
+            <select id="f-tipo" onchange="aplicarFiltro()">
+                <option value="">Todos los tipos</option>
+                <option value="entrada">Entradas</option>
+                <option value="salida">Salidas</option>
+            </select>
+            <input type="text" id="f-producto" placeholder="Buscar producto…" oninput="aplicarFiltro()" />
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Motivo</th><th>Usuario</th></tr></thead>
+                <tbody id="tabla-movimientos"><tr><td colspan="6">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('movimientos');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Movimientos de inventario', 'Historial de entradas y salidas de stock, generado por ventas, cancelaciones, restocks y órdenes de compra recibidas.'
+);
+
+let MOVIMIENTOS = [];
+
+function fechaCorta(f) {
+    return new Date(f).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderTabla() {
+    const filtroProducto = document.getElementById('f-producto').value.trim().toLowerCase();
+    const lista = filtroProducto
+        ? MOVIMIENTOS.filter((m) => (m.producto_nombre || '').toLowerCase().includes(filtroProducto))
+        : MOVIMIENTOS;
+
+    document.getElementById('tabla-movimientos').innerHTML = lista.length ? lista.map((m) => `
+        <tr>
+            <td class="mono" style="font-size:.8rem">${fechaCorta(m.fecha)}</td>
+            <td>${m.producto_nombre || '—'}</td>
+            <td><span class="estado-pill ${m.tipo === 'entrada' ? 'e-entregado' : 'e-cancelado'}">${m.tipo}</span></td>
+            <td class="mono">${m.tipo === 'entrada' ? '+' : '−'}${m.cantidad}</td>
+            <td style="color:var(--text-muted);font-size:.85rem">${m.motivo || '—'}</td>
+            <td>${m.usuario_nombre || '<span style="color:var(--text-muted)">sistema</span>'}</td>
+        </tr>
+    `).join('') : `<tr><td colspan="6" style="color:var(--text-muted)">No hay movimientos con este filtro.</td></tr>`;
+}
+
+function aplicarFiltro() {
+    cargarMovimientos();
+}
+
+async function cargarMovimientos() {
+    const tipo = document.getElementById('f-tipo').value;
+    const q = new URLSearchParams();
+    if (tipo) q.set('tipo', tipo);
+    MOVIMIENTOS = await api('/admin/movimientos-inventario?' + q.toString());
+    renderTabla();
+}
+
+cargarMovimientos();
+</script>
+</body>
+</html>
