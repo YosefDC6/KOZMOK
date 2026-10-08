@@ -1,5 +1,5 @@
 // =========================================================
-//  TiendaTech CRM - Backend (Express + PostgreSQL)
+//  Kozmok CRM - Backend (Express + PostgreSQL)
 // =========================================================
 const express = require('express');
 const cors = require('cors');
@@ -105,7 +105,7 @@ function mismoCliente(req, res, next) {
 }
 
 // =========================================================
-// CLUB TIENDATECH (recompensas por puntos)
+// CLUB KOZMOK (recompensas por puntos)
 //   - Se gana: floor(subtotal / 20) * multiplicador del nivel
 //   - Se canjea: 100 puntos = $10  (VALOR_PUNTO = 0.10)
 //   - Nivel: el mayor entre el que dan las compras totales ($)
@@ -667,6 +667,7 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
                 `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,'Venta en línea')`,
                 [item.producto_id, item.cantidad]
             );
+            await generarOrdenAutomaticaSiCritico(client, item.producto_id);
         }
 
         subtotal += garantiasTotal;
@@ -834,12 +835,12 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
         puntos_ganados: ganados,
         puntos_canjeados: canjeados,
         emisor: {
-            nombre: 'TiendaTech S.A. de C.V.',
+            nombre: 'Kozmok S.A. de C.V.',
             rfc: 'TTE250101XY9',
             domicilio: 'Av. Tecnológico 1200, Col. Centro, Aguascalientes, Ags.',
             banco: 'STP',
             clabe: '646180' + String(1000000000 + Number(pedido.id) * 131).slice(0, 12),
-            beneficiario: 'TiendaTech S.A. de C.V.',
+            beneficiario: 'Kozmok S.A. de C.V.',
         },
     });
 }));
@@ -1778,9 +1779,15 @@ app.get('/api/admin/metricas-productos', asyncRoute(async (req, res) => {
     `);
     const inventarioCritico = await pool.query(`
         SELECT p.id, p.nombre, p.marca, p.stock, p.stock_minimo, p.restock,
-               pr.nombre AS proveedor_nombre, pr.tiempo_entrega_dias
+               pr.nombre AS proveedor_nombre, pr.tiempo_entrega_dias,
+               oc.folio AS orden_abierta_folio
         FROM productos p
         LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+        LEFT JOIN LATERAL (
+            SELECT folio FROM ordenes_compra
+            WHERE producto_id = p.id AND estado IN ('pendiente','en_proceso')
+            ORDER BY fecha_creacion DESC LIMIT 1
+        ) oc ON true
         WHERE p.stock <= p.stock_minimo AND p.activo = true ORDER BY p.stock ASC
     `);
     const stats = await pool.query(`
@@ -1883,6 +1890,7 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
             uso_recomendado || [], imagen_url || '', proveedor_id || null, vendedor_id || null,
             activo !== undefined ? activo : true, restock || 'push']
     );
+    await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.status(201).json({ message: 'Producto creado', producto: result.rows[0] });
 }));
 
@@ -1909,6 +1917,7 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
             almacenamiento, tarjeta_grafica, pantalla, uso_recomendado, imagen_url, proveedor_id, activo, restock, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.json({ message: 'Producto actualizado', producto: result.rows[0] });
 }));
 
@@ -1936,6 +1945,7 @@ app.post('/api/admin/productos/:id/restock', asyncRoute(async (req, res) => {
         `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'entrada',$2,$3,$4)`,
         [req.params.id, cantidad, motivo || 'Restock manual desde admin', req.usuario.id]
     );
+    await generarOrdenAutomaticaSiCritico(pool, req.params.id);
     res.json({ message: 'Restock aplicado', stock_nuevo: nuevoStock });
 }));
 
@@ -1958,12 +1968,64 @@ app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
+// Registrar un movimiento manual (ajuste, merma, conteo físico, etc.) —
+// a diferencia del restock rápido, aquí también se puede registrar una
+// SALIDA manual, con su propio motivo.
+app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
+    const { producto_id, tipo, cantidad, motivo } = req.body;
+    if (!producto_id || !['entrada', 'salida'].includes(tipo) || !cantidad || cantidad < 1) {
+        return res.status(400).json({ message: 'Producto, tipo y cantidad son obligatorios' });
+    }
+    const prod = await pool.query('SELECT stock FROM productos WHERE id = $1', [producto_id]);
+    if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    if (tipo === 'salida' && prod.rows[0].stock < cantidad) {
+        return res.status(400).json({ message: `Solo hay ${prod.rows[0].stock} en stock; no se puede registrar una salida mayor` });
+    }
+
+    const signo = tipo === 'entrada' ? 1 : -1;
+    await pool.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [signo * cantidad, producto_id]);
+    const result = await pool.query(
+        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [producto_id, tipo, cantidad, motivo || 'Ajuste manual', req.usuario.id]
+    );
+    if (tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id);
+    res.status(201).json(result.rows[0]);
+}));
+
 // =========================================================
 // ADMIN: ÓRDENES DE COMPRA (reposición hacia proveedores)
 // El lado "de entrada" de la cadena de suministro: cuando el
 // stock está bajo se genera una orden; al marcarla "recibido"
 // el stock sube y queda registrado el movimiento de inventario.
 // =========================================================
+
+// Si un producto está en (o cae en) stock crítico, tiene proveedor
+// asignado y no tiene ya una orden de compra abierta, genera una sola
+// automáticamente. Se llama después de cualquier operación que pueda
+// bajar o dejar igual el stock (ventas, ediciones de stock, etc.) o que
+// resuelva una orden sin dejar el stock por encima del mínimo.
+async function generarOrdenAutomaticaSiCritico(db, productoId) {
+    const prod = await db.query('SELECT stock, stock_minimo, proveedor_id FROM productos WHERE id = $1', [productoId]);
+    if (prod.rows.length === 0) return;
+    const p = prod.rows[0];
+    if (p.stock > p.stock_minimo || !p.proveedor_id) return;
+
+    const abierta = await db.query(
+        `SELECT id FROM ordenes_compra WHERE producto_id = $1 AND estado IN ('pendiente','en_proceso') LIMIT 1`,
+        [productoId]
+    );
+    if (abierta.rows.length > 0) return;
+
+    const cantidad = Math.max((p.stock_minimo * 2) - p.stock, p.stock_minimo, 1);
+    const ins = await db.query(
+        `INSERT INTO ordenes_compra (folio, proveedor_id, producto_id, cantidad, notas, usuario_id)
+         VALUES ('OC-TMP',$1,$2,$3,$4,NULL) RETURNING id`,
+        [p.proveedor_id, productoId, cantidad, 'Generada automáticamente: el producto llegó a stock crítico']
+    );
+    await db.query(`UPDATE ordenes_compra SET folio = 'OC-' || (1000 + id) WHERE id = $1`, [ins.rows[0].id]);
+}
+
 app.get('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
     const { estado } = req.query;
     const cond = estado && estado !== 'Todas' ? 'WHERE oc.estado = $1' : '';
@@ -2033,6 +2095,9 @@ app.put('/api/admin/ordenes-compra/:id/estado', asyncRoute(async (req, res) => {
             `UPDATE ordenes_compra SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
             [estado, req.params.id]
         );
+        // Si lo recibido no alcanzó para salir de stock crítico, y ya no
+        // queda esta orden como "abierta" para bloquearlo, se genera otra.
+        if (estado === 'recibido') await generarOrdenAutomaticaSiCritico(client, orden.producto_id);
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (e) {
@@ -2082,11 +2147,16 @@ app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
 
     // Push/pull de todo el catálogo activo (la vista por categoría, solo
     // de Componentes, ya vive en Inventario — aquí es el panorama completo).
+    // Se calculan dos estadísticas distintas: cantidad de productos y el
+    // valor de inventario que representa cada estrategia (stock x precio).
     const pushPull = await pool.query(`
-        SELECT restock, COUNT(*)::int AS total FROM productos WHERE activo = true GROUP BY restock
+        SELECT restock, COUNT(*)::int AS total, COALESCE(SUM(stock * precio), 0) AS valor
+        FROM productos WHERE activo = true GROUP BY restock
     `);
     const push = Number(pushPull.rows.find((r) => r.restock === 'push')?.total || 0);
     const pull = Number(pushPull.rows.find((r) => r.restock === 'pull')?.total || 0);
+    const valorPush = Number(pushPull.rows.find((r) => r.restock === 'push')?.valor || 0);
+    const valorPull = Number(pushPull.rows.find((r) => r.restock === 'pull')?.valor || 0);
 
     // Checklist de madurez: cada punto se calcula de datos reales, no se
     // marca a mano, así que el nivel avanza solo conforme se usa el sistema.
@@ -2108,7 +2178,7 @@ app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
         stats: stats.rows[0],
         mas_vendidos: masVendidos.rows,
         rotacion_pct: rotacionPct,
-        push_pull: { push, pull },
+        push_pull: { push, pull, valor_push: valorPush, valor_pull: valorPull },
         madurez: { nivel, checklist, cumplidos, total: checklist.length },
     });
 }));
@@ -2360,10 +2430,10 @@ app.get('/api/usuarios/:id/actividad', requireUsuario, asyncRoute(async (req, re
 }));
 
 // =========================================================
-app.get('/api', (req, res) => res.json({ status: 'ok', message: 'API TiendaTech activa' }));
+app.get('/api', (req, res) => res.json({ status: 'ok', message: 'API Kozmok activa' }));
 
 app.listen(PORT, async () => {
-    console.log(`TiendaTech escuchando en http://localhost:${PORT}`);
+    console.log(`Kozmok escuchando en http://localhost:${PORT}`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');

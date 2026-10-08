@@ -70,7 +70,7 @@ async function renderNavbar() {
         <nav class="navbar">
             <div class="navbar-inner">
                 <button class="hamburger" id="hamburger" aria-label="Menú">${icon('menu', 22)}</button>
-                <a href="/index.html" class="brand"><span class="brand-mark">${icon('ghost', 16)}</span> <span class="hide-sm">TiendaTech</span></a>
+                <a href="/index.html" class="brand"><span class="brand-mark">${icon('ghost', 16)}</span> <span class="hide-sm">Kozmok</span></a>
 
                 <form class="nav-search" id="nav-search" role="search">
                     <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…" aria-label="Buscar" />
@@ -236,7 +236,7 @@ function renderFooter() {
         <footer>
             <div class="container footer-grid">
                 <div>
-                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${icon('ghost', 16)}</span> TiendaTech</div>
+                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${icon('ghost', 16)}</span> Kozmok</div>
                     <p style="font-size:.85rem">Cómputo y electrónica con stock real, comparador de especificaciones y asesor de compra.</p>
                 </div>
                 <div>
@@ -263,7 +263,7 @@ function renderFooter() {
                 </div>
             </div>
             <div class="container footer-legal">
-                <span>© ${new Date().getFullYear()} TiendaTech · Cómputo y electrónica</span>
+                <span>© ${new Date().getFullYear()} Kozmok · Cómputo y electrónica</span>
                 <span class="footer-tema">
                     <label for="tema-quick">Tema</label>
                     <select id="tema-quick" aria-label="Cambiar tema de color">

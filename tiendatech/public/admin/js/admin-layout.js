@@ -23,11 +23,13 @@ const ADMIN_SECCIONES = [
         { href: '/admin/reportes.html',      key: 'reportes',      ic: 'grid',    label: 'Reportes',            desc: 'Métricas e indicadores' },
     ] },
     { titulo: 'SCM', home: '/admin/scm.html', links: [
-        { href: '/admin/scm.html',            key: 'scm',             ic: 'home',    label: 'Dashboard',         desc: 'Madurez y métricas de la cadena' },
+        { href: '/admin/scm.html',            key: 'scm',             ic: 'home',    label: 'Dashboard',         desc: 'Nivel de madurez de la cadena' },
         { href: '/admin/productos.html',      key: 'productos',       ic: 'package', label: 'Inventario',        desc: 'Catálogo y stock' },
         { href: '/admin/proveedores.html',    key: 'proveedores',     ic: 'id',      label: 'Proveedores',       desc: 'Contactos y tiempos de entrega' },
         { href: '/admin/movimientos.html',    key: 'movimientos',     ic: 'clock',   label: 'Movimientos',       desc: 'Historial de entradas y salidas' },
         { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',    label: 'Órdenes de compra', desc: 'Reposición hacia proveedores' },
+        { href: '/admin/logistica.html',      key: 'logistica',       ic: 'truck',   label: 'Logística',         desc: 'Estrategia push / pull' },
+        { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',    label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },
     ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
@@ -41,9 +43,9 @@ const ADMIN_SECCIONES = [
 // CHECK de la tabla usuarios (db/database.sql).
 const PERMISOS = {
     admin:    '*',
-    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'scm', 'chatbot', 'mi-actividad', 'configuracion'],
+    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'chatbot', 'mi-actividad', 'configuracion'],
     soporte:  ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'mi-actividad', 'configuracion'],
-    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'scm', 'garantias', 'chatbot', 'mi-actividad', 'configuracion'],
+    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'garantias', 'chatbot', 'mi-actividad', 'configuracion'],
 };
 const ROL_LABEL = { admin: 'Administrador', vendedor: 'Vendedor', soporte: 'Soporte', almacen: 'Almacén' };
 
@@ -72,7 +74,7 @@ function renderAdminSidebar(activo) {
         .filter((s) => s.links.length > 0);
 
     el.innerHTML = `
-        <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> TiendaTech</div>
+        <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> Kozmok</div>
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>
         <div class="admin-nav-links" id="admin-nav-links">
             ${secciones.map((s) => {

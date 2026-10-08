@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Soporte · TiendaTech</title>
+<title>Soporte · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -71,7 +71,7 @@ async function vistaHilo(panel, id) {
         <div class="hilo">
             ${t.mensajes.map((m) => `
                 <div class="hilo-msg ${m.autor === 'cliente' ? 'mio' : 'equipo'}">
-                    <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : (m.usuario_nombre || 'Equipo TiendaTech')} · ${formatoFecha(m.fecha)}</div>
+                    <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : (m.usuario_nombre || 'Equipo Kozmok')} · ${formatoFecha(m.fecha)}</div>
                     <div class="hm-txt">${m.mensaje.replace(/</g, '&lt;')}</div>
                 </div>
             `).join('')}

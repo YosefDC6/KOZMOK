@@ -1,4 +1,4 @@
-# TiendaTech CRM
+# Kozmok CRM
 
 Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y
 periféricos) con panel de administración, CRM de clientes, panel de

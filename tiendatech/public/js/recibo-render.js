@@ -76,7 +76,7 @@
             <div class="recibo">
                 <div class="rec-top">
                     <div>
-                        <div class="rec-marca">${ic('ghost', 16)} TiendaTech</div>
+                        <div class="rec-marca">${ic('ghost', 16)} Kozmok</div>
                         <div class="rec-emisor">${d.emisor.nombre}<br>RFC ${d.emisor.rfc}<br>${d.emisor.domicilio}</div>
                     </div>
                     <div class="rec-folio">
@@ -116,7 +116,7 @@
                 ${gar}
                 ${puntos}
 
-                <p class="rec-pie">Comprobante generado por TiendaTech. Documento sin validez fiscal (demo educativa).</p>
+                <p class="rec-pie">Comprobante generado por Kozmok. Documento sin validez fiscal (demo educativa).</p>
             </div>`;
     };
 })();

@@ -4,6 +4,10 @@
 // armar por piezas (presupuesto + componentes compatibles, uno por uno) ->
 // llama /api/chatbot/recomendar o filtra componentes -> tarjetas con
 // "+ Carrito" que también sirven de seguimiento en el propio chat.
+//
+// La conversación (mensajes, tarjetas y en qué paso vas) se guarda en
+// sessionStorage para que sobreviva a cambiar de página, iniciar sesión o
+// crear cuenta (todas son navegaciones normales en este sitio, no una SPA).
 
 (function () {
     const USOS = [
@@ -15,6 +19,7 @@
         { valor: 'streaming', etiqueta: 'Streaming' },
     ];
     const PRESUPUESTOS = [8000, 15000, 25000, 40000];
+    const CLAVE_ESTADO = 'tt_chat_estado';
 
     // Piezas de un armado por componentes, en el orden en que se preguntan
     // (así cada una ya puede filtrarse por lo que se eligió antes).
@@ -36,6 +41,16 @@
     let ELEGIDO_ARMADO = {};
     let PRESUPUESTO_RESTANTE = null;
 
+    // Qué paso del flujo está esperando respuesta ahora mismo (para poder
+    // volver a mostrar las mismas opciones si la página se recarga) y, para
+    // el armado por piezas, qué slot es ('armado-slot').
+    let ETAPA = null;
+    let ETAPA_SLOT_TIPO = null;
+
+    // Historial de lo que ya se mostró en el chat (mensajes y tarjetas), para
+    // poder reconstruir la conversación completa si cambias de página.
+    let TRANSCRIPT = [];
+
     function formatoRankArmado(f) { return f === 'ATX' ? 2 : f === 'MicroATX' ? 1 : 0; }
     function coincideUsoArmado(p, uso) { return !!(uso && p.uso_recomendado && p.uso_recomendado.includes(uso)); }
 
@@ -56,6 +71,77 @@
         return lista;
     }
 
+    // ---------------------------------------------------------------
+    // Persistencia: guarda todo lo necesario para reconstruir el chat tal
+    // cual estaba, y lo restaura al cargar cualquier página del sitio.
+    // ---------------------------------------------------------------
+    function guardar() {
+        try {
+            const panel = document.getElementById('chatbot-panel');
+            sessionStorage.setItem(CLAVE_ESTADO, JSON.stringify({
+                abierto: !!(panel && panel.classList.contains('open')),
+                iniciado: !!(panel && panel.dataset.iniciado === '1'),
+                transcript: TRANSCRIPT,
+                estado,
+                modoArmado,
+                elegidoArmado: ELEGIDO_ARMADO,
+                presupuestoRestante: PRESUPUESTO_RESTANTE,
+                componentesArmado: COMPONENTES_ARMADO,
+                categorias: CATEGORIAS,
+                etapa: ETAPA,
+                etapaSlotTipo: ETAPA_SLOT_TIPO,
+            }));
+        } catch (e) { /* sessionStorage lleno o bloqueado: seguimos sin persistir */ }
+    }
+
+    function restaurar() {
+        let guardado = null;
+        try { guardado = JSON.parse(sessionStorage.getItem(CLAVE_ESTADO) || 'null'); } catch (e) {}
+        if (!guardado || !guardado.iniciado) return false;
+
+        estado = guardado.estado || { uso: null, presupuesto: null, categoria: null };
+        modoArmado = !!guardado.modoArmado;
+        ELEGIDO_ARMADO = guardado.elegidoArmado || {};
+        PRESUPUESTO_RESTANTE = guardado.presupuestoRestante ?? null;
+        COMPONENTES_ARMADO = guardado.componentesArmado || null;
+        CATEGORIAS = guardado.categorias || [];
+        ETAPA = guardado.etapa || null;
+        ETAPA_SLOT_TIPO = guardado.etapaSlotTipo || null;
+        TRANSCRIPT = guardado.transcript || [];
+
+        const panel = document.getElementById('chatbot-panel');
+        panel.dataset.iniciado = '1';
+        if (guardado.abierto) panel.classList.add('open');
+
+        TRANSCRIPT.forEach((entrada) => {
+            if (entrada.t === 'msg') {
+                pintarMensaje(entrada.texto, entrada.tipo);
+            } else if (entrada.t === 'cards') {
+                const slot = entrada.slotTipo ? SLOTS_ARMADO.find((s) => s.tipo === entrada.slotTipo) : null;
+                entrada.productos.forEach((p) => pintarTarjetaProducto(p, entrada.variante, slot));
+            }
+        });
+
+        reengancharChips();
+        return true;
+    }
+
+    // Vuelve a mostrar las opciones (chips o tarjetas) del paso en el que se
+    // quedó la conversación, sin repetir los mensajes ya restaurados.
+    function reengancharChips() {
+        if (ETAPA === 'uso') chipsUso();
+        else if (ETAPA === 'modo') chipsModo();
+        else if (ETAPA === 'categoria') chipsCategoria();
+        else if (ETAPA === 'presupuesto') chipsPresupuesto();
+        else if (ETAPA === 'resultado') chipsResultado();
+        else if (ETAPA === 'armado-uso') chipsArmadoUso();
+        else if (ETAPA === 'armado-presupuesto') chipsArmadoPresupuesto();
+        else if (ETAPA === 'armado-slot' && ETAPA_SLOT_TIPO) {
+            const slot = SLOTS_ARMADO.find((s) => s.tipo === ETAPA_SLOT_TIPO);
+            if (slot) chipsArmadoSlot(slot);
+        } else if (ETAPA === 'armado-final') chipsArmadoFinal();
+    }
+
     function crearWidget() {
         const toggle = document.createElement('button');
         toggle.id = 'chatbot-toggle';
@@ -67,7 +153,7 @@
         panel.id = 'chatbot-panel';
         panel.innerHTML = `
             <div class="chatbot-header">
-                <strong>Asistente TiendaTech</strong>
+                <strong>Asistente Kozmok</strong>
                 <button class="modal-close" id="chatbot-close" aria-label="Cerrar">${window.icon ? icon('x', 18) : ''}</button>
             </div>
             <div class="chatbot-body" id="chatbot-body"></div>
@@ -84,17 +170,28 @@
         toggle.addEventListener('click', () => {
             panel.classList.toggle('open');
             quitarNudge();
+            guardar();
             if (panel.classList.contains('open') && !panel.dataset.iniciado) {
                 panel.dataset.iniciado = '1';
                 iniciarConversacion();
             }
         });
-        panel.querySelector('#chatbot-close').addEventListener('click', () => panel.classList.remove('open'));
+        panel.querySelector('#chatbot-close').addEventListener('click', () => {
+            panel.classList.remove('open');
+            guardar();
+        });
+        panel.querySelector('#chatbot-send').addEventListener('click', enviarTexto);
+        panel.querySelector('#chatbot-text').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') enviarTexto();
+        });
+
+        restaurar();
 
         // Aviso de primera visita: "hay un asesor por si no sabes qué elegir"
+        // (si la conversación se restauró ya abierta, no hace falta el aviso).
         let visto = false;
         try { visto = localStorage.getItem('tt_asesor_visto') === '1'; } catch (e) {}
-        if (!visto) {
+        if (!visto && !panel.classList.contains('open')) {
             const nudge = document.createElement('div');
             nudge.className = 'chatbot-nudge';
             nudge.innerHTML = `<button aria-label="Cerrar">${window.icon ? icon('x', 14) : '×'}</button>
@@ -109,19 +206,86 @@
             if (n) { n.classList.remove('show'); setTimeout(() => n.remove(), 300); }
             try { localStorage.setItem('tt_asesor_visto', '1'); } catch (e) {}
         }
-        panel.querySelector('#chatbot-send').addEventListener('click', enviarTexto);
-        panel.querySelector('#chatbot-text').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') enviarTexto();
-        });
     }
 
-    function agregarMensaje(texto, tipo = 'bot') {
+    // ---- Pintado puro (sin guardar nada) + envoltorios que sí persisten ----
+    function pintarMensaje(texto, tipo) {
         const body = document.getElementById('chatbot-body');
         const div = document.createElement('div');
         div.className = `chat-msg ${tipo}`;
         div.textContent = texto;
         body.appendChild(div);
         body.scrollTop = body.scrollHeight;
+    }
+
+    function agregarMensaje(texto, tipo = 'bot') {
+        pintarMensaje(texto, tipo);
+        TRANSCRIPT.push({ t: 'msg', texto, tipo });
+        guardar();
+    }
+
+    // variante 'resultado': tarjeta de producto terminado (Ver ficha / + Carrito).
+    // variante 'armado': tarjeta de un componente del armado (Elegir y agregar).
+    function pintarTarjetaProducto(p, variante, slot) {
+        const body = document.getElementById('chatbot-body');
+        const card = document.createElement('div');
+        card.className = 'chat-suggestion';
+        const img = `<img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='/img/producto.svg'" />`;
+
+        if (variante === 'armado') {
+            const detalle = [p.socket, p.ram_tipo, p.formato, p.consumo_w ? `${p.consumo_w}W` : null, p.potencia_w ? `${p.potencia_w}W` : null]
+                .filter(Boolean).join(' · ');
+            const sobrePresupuesto = PRESUPUESTO_RESTANTE && Number(p.precio) > PRESUPUESTO_RESTANTE;
+            card.innerHTML = `
+                ${img}
+                <div style="flex:1">
+                    <div class="name">${p.nombre}</div>
+                    ${detalle ? `<div style="font-size:.72rem;color:var(--text-muted)">${detalle}</div>` : ''}
+                    <div class="price">${formatoMoneda(p.precio)}${sobrePresupuesto ? ' · sobre tu presupuesto' : ''}</div>
+                    <div class="chat-sug-actions">
+                        <button class="chip" data-elegir>Elegir y agregar</button>
+                    </div>
+                </div>
+            `;
+            card.querySelector('[data-elegir]').addEventListener('click', () => elegirComponenteArmado(slot, p));
+        } else {
+            card.innerHTML = `
+                ${img}
+                <div style="flex:1">
+                    <div class="name">${p.nombre}</div>
+                    <div class="price">${formatoMoneda(p.precio)} · stock: ${p.stock}</div>
+                    <div class="chat-sug-actions">
+                        <button class="chip" data-ver>Ver ficha</button>
+                        <button class="chip" data-add ${p.stock === 0 ? 'disabled' : ''}>+ Carrito</button>
+                    </div>
+                </div>
+            `;
+            card.querySelector('[data-ver]').addEventListener('click', (e) => {
+                e.stopPropagation();
+                window.location.href = `/index.html#producto-${p.id}`;
+            });
+            card.querySelector('[data-add]').addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const cli = window.Sesion ? Sesion.cliente() : null;
+                if (!cli) { window.irALogin ? irALogin() : (location.href = '/login.html'); return; }
+                try {
+                    await api('/carrito', { method: 'POST', body: { cliente_id: cli.id, producto_id: p.id, cantidad: 1 } });
+                    if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
+                    window.toast ? toast('Agregado al carrito', 'ok') : agregarMensaje('Agregado al carrito', 'bot');
+                } catch (err) {
+                    window.toast ? toast(err.message, 'error') : agregarMensaje(err.message, 'bot');
+                }
+            });
+            card.querySelector('img').addEventListener('click', () => { window.location.href = `/index.html#producto-${p.id}`; });
+        }
+        body.appendChild(card);
+        body.scrollTop = body.scrollHeight;
+    }
+
+    function agregarTarjetas(productos, variante, slot) {
+        productos.forEach((p) => pintarTarjetaProducto(p, variante, slot));
+        TRANSCRIPT.push({ t: 'cards', variante, productos, slotTipo: slot ? slot.tipo : null });
+        guardar();
     }
 
     function mostrarChips(opciones, onClick) {
@@ -147,6 +311,11 @@
         ELEGIDO_ARMADO = {};
         PRESUPUESTO_RESTANTE = null;
         agregarMensaje('¡Hola! Puedo ayudarte a encontrar el equipo ideal. Escríbeme con tus palabras lo que buscas (por ejemplo "una laptop para diseño con 20 mil pesos" o "quiero armar mi propia PC") o elige una opción:');
+        ETAPA = 'uso'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsUso();
+    }
+
+    function chipsUso() {
         mostrarChips(USOS, (uso) => {
             estado.uso = uso;
             agregarMensaje(USOS.find((u) => u.valor === uso).etiqueta, 'user');
@@ -156,6 +325,11 @@
 
     function preguntarModo() {
         agregarMensaje('¿Buscas un equipo ya armado o prefieres elegir tú mismo los componentes? Si es por piezas, te voy recomendando una por una y reviso que sean compatibles entre sí.');
+        ETAPA = 'modo'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsModo();
+    }
+
+    function chipsModo() {
         mostrarChips([
             { valor: 'armado', etiqueta: 'Equipo ya armado' },
             { valor: 'piezas', etiqueta: 'Armar mi propia PC' },
@@ -170,6 +344,11 @@
         await cargarCategorias();
         if (!CATEGORIAS.length) return preguntarPresupuesto();
         agregarMensaje('¿Buscas algo en particular?');
+        ETAPA = 'categoria'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsCategoria();
+    }
+
+    function chipsCategoria() {
         const opciones = [{ valor: '', etiqueta: 'Cualquier tipo' }]
             .concat(CATEGORIAS.map((c) => ({ valor: c.nombre, etiqueta: c.nombre })));
         mostrarChips(opciones, (categoria) => {
@@ -181,6 +360,11 @@
 
     function preguntarPresupuesto() {
         agregarMensaje('Perfecto. ¿Cuál es tu presupuesto aproximado?');
+        ETAPA = 'presupuesto'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsPresupuesto();
+    }
+
+    function chipsPresupuesto() {
         mostrarChips(PRESUPUESTOS.map((p) => ({ valor: p, etiqueta: `Hasta $${p.toLocaleString('es-MX')}` })), (presupuesto) => {
             estado.presupuesto = presupuesto;
             agregarMensaje(`Hasta $${Number(presupuesto).toLocaleString('es-MX')}`, 'user');
@@ -204,47 +388,19 @@
                 },
             });
             agregarMensaje(data.respuesta, 'bot');
-            const body = document.getElementById('chatbot-body');
-            data.sugerencias.forEach((p) => {
-                const card = document.createElement('div');
-                card.className = 'chat-suggestion';
-                card.innerHTML = `
-                    <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='/img/producto.svg'" />
-                    <div style="flex:1">
-                        <div class="name">${p.nombre}</div>
-                        <div class="price">${formatoMoneda(p.precio)} · stock: ${p.stock}</div>
-                        <div class="chat-sug-actions">
-                            <button class="chip" data-ver>Ver ficha</button>
-                            <button class="chip" data-add ${p.stock === 0 ? 'disabled' : ''}>+ Carrito</button>
-                        </div>
-                    </div>
-                `;
-                card.querySelector('[data-ver]').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    window.location.href = `/index.html#producto-${p.id}`;
-                });
-                card.querySelector('[data-add]').addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    const cli = window.Sesion ? Sesion.cliente() : null;
-                    if (!cli) { window.irALogin ? irALogin() : (location.href = '/login.html'); return; }
-                    try {
-                        await api('/carrito', { method: 'POST', body: { cliente_id: cli.id, producto_id: p.id, cantidad: 1 } });
-                        if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
-                        window.toast ? toast('Agregado al carrito', 'ok') : agregarMensaje('Agregado al carrito', 'bot');
-                    } catch (err) {
-                        window.toast ? toast(err.message, 'error') : agregarMensaje(err.message, 'bot');
-                    }
-                });
-                card.querySelector('img').addEventListener('click', () => { window.location.href = `/index.html#producto-${p.id}`; });
-                body.appendChild(card);
-            });
-            body.scrollTop = body.scrollHeight;
-            mostrarChips([{ etiqueta: 'Buscar otra vez' }], () => {
-                iniciarConversacion();
-            });
+            agregarTarjetas(data.sugerencias, 'resultado');
+            ETAPA = 'resultado'; ETAPA_SLOT_TIPO = null; guardar();
+            chipsResultado();
         } catch (err) {
+            ETAPA = null; guardar();
             agregarMensaje('Tuve un problema buscando recomendaciones. Intenta de nuevo en un momento.');
         }
+    }
+
+    function chipsResultado() {
+        mostrarChips([{ etiqueta: 'Buscar otra vez' }], () => {
+            iniciarConversacion();
+        });
     }
 
     // ---------------------------------------------------------------
@@ -259,19 +415,29 @@
         document.getElementById('chatbot-quick').innerHTML = '';
         if (!estado.uso) {
             agregarMensaje('Vamos a armarla pieza por pieza. Primero, ¿para qué la vas a usar?');
-            mostrarChips(USOS, (uso) => {
-                estado.uso = uso;
-                agregarMensaje(USOS.find((u) => u.valor === uso).etiqueta, 'user');
-                preguntarPresupuestoArmado();
-            });
+            ETAPA = 'armado-uso'; ETAPA_SLOT_TIPO = null; guardar();
+            chipsArmadoUso();
         } else {
             agregarMensaje('Vamos a armarla pieza por pieza.');
             preguntarPresupuestoArmado();
         }
     }
 
+    function chipsArmadoUso() {
+        mostrarChips(USOS, (uso) => {
+            estado.uso = uso;
+            agregarMensaje(USOS.find((u) => u.valor === uso).etiqueta, 'user');
+            preguntarPresupuestoArmado();
+        });
+    }
+
     function preguntarPresupuestoArmado() {
         agregarMensaje('¿Cuál es tu presupuesto total aproximado para todo el equipo?');
+        ETAPA = 'armado-presupuesto'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsArmadoPresupuesto();
+    }
+
+    function chipsArmadoPresupuesto() {
         const opciones = PRESUPUESTOS.map((p) => ({ valor: p, etiqueta: `Hasta $${p.toLocaleString('es-MX')}` }))
             .concat([{ valor: 0, etiqueta: 'Sin límite definido' }]);
         mostrarChips(opciones, async (presupuesto) => {
@@ -307,13 +473,13 @@
     function mostrarSugerenciasSlot(slot) {
         document.getElementById('chatbot-quick').innerHTML = '';
         const candidatos = candidatosArmado(slot.tipo);
+        ETAPA = 'armado-slot';
+        ETAPA_SLOT_TIPO = slot.tipo;
 
         if (!candidatos.length) {
             agregarMensaje(`No tengo ${slot.label} compatible con lo que llevas, disponible en stock ahora mismo.`);
-            mostrarChips([{ etiqueta: slot.requerido ? 'Continuar sin esta pieza' : 'Omitir (gráficos integrados)' }], () => {
-                ELEGIDO_ARMADO[slot.tipo] = null;
-                avanzarSlotArmado();
-            });
+            guardar();
+            chipsArmadoSlot(slot);
             return;
         }
 
@@ -326,36 +492,25 @@
 
         const restanteTxt = PRESUPUESTO_RESTANTE ? ` (te quedan ${formatoMoneda(PRESUPUESTO_RESTANTE)} de presupuesto)` : '';
         agregarMensaje(`Elige ${slot.label}${restanteTxt}:`);
+        agregarTarjetas(top, 'armado', slot);
+        chipsArmadoSlot(slot);
+    }
 
-        const body = document.getElementById('chatbot-body');
-        top.forEach((p) => {
-            const detalle = [p.socket, p.ram_tipo, p.formato, p.consumo_w ? `${p.consumo_w}W` : null, p.potencia_w ? `${p.potencia_w}W` : null]
-                .filter(Boolean).join(' · ');
-            const sobrePresupuesto = PRESUPUESTO_RESTANTE && Number(p.precio) > PRESUPUESTO_RESTANTE;
-            const card = document.createElement('div');
-            card.className = 'chat-suggestion';
-            card.innerHTML = `
-                <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='/img/producto.svg'" />
-                <div style="flex:1">
-                    <div class="name">${p.nombre}</div>
-                    ${detalle ? `<div style="font-size:.72rem;color:var(--text-muted)">${detalle}</div>` : ''}
-                    <div class="price">${formatoMoneda(p.precio)}${sobrePresupuesto ? ' · sobre tu presupuesto' : ''}</div>
-                    <div class="chat-sug-actions">
-                        <button class="chip" data-elegir>Elegir y agregar</button>
-                    </div>
-                </div>
-            `;
-            card.querySelector('[data-elegir]').addEventListener('click', () => elegirComponenteArmado(slot, p));
-            body.appendChild(card);
-        });
-
-        if (!slot.requerido) {
+    function chipsArmadoSlot(slot) {
+        const candidatos = candidatosArmado(slot.tipo);
+        if (!candidatos.length) {
+            mostrarChips([{ etiqueta: slot.requerido ? 'Continuar sin esta pieza' : 'Omitir (gráficos integrados)' }], () => {
+                ELEGIDO_ARMADO[slot.tipo] = null;
+                avanzarSlotArmado();
+            });
+        } else if (!slot.requerido) {
             mostrarChips([{ etiqueta: 'Omitir (gráficos integrados)' }], () => {
                 ELEGIDO_ARMADO[slot.tipo] = null;
                 avanzarSlotArmado();
             });
+        } else {
+            document.getElementById('chatbot-quick').innerHTML = '';
         }
-        body.scrollTop = body.scrollHeight;
     }
 
     async function elegirComponenteArmado(slot, producto) {
@@ -382,6 +537,12 @@
                 : 'No se agregó ninguna pieza al carrito.',
             'bot'
         );
+        modoArmado = false;
+        ETAPA = 'armado-final'; ETAPA_SLOT_TIPO = null; guardar();
+        chipsArmadoFinal();
+    }
+
+    function chipsArmadoFinal() {
         document.getElementById('chatbot-quick').innerHTML = '';
         mostrarChips([
             { valor: 'carrito', etiqueta: 'Ir al carrito' },
@@ -390,7 +551,6 @@
             if (accion === 'carrito') location.href = '/carrito.html';
             else iniciarConversacion();
         });
-        modoArmado = false;
     }
 
     function pareceIntencionDeArmado(texto) {

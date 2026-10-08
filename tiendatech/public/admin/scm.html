@@ -3,9 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Panel SCM · Admin TiendaTech</title>
+<title>Panel SCM · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="admin-shell">
@@ -17,7 +16,7 @@
 
         <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
 
-        <div class="card" style="margin-bottom:18px">
+        <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px">
                 <h3 style="margin:0">Nivel de madurez SCM</h3>
                 <span id="madurez-nivel"></span>
@@ -26,12 +25,10 @@
                 Calculado a partir de datos reales del sistema, no de una lista marcada a mano: conforme se usa cada parte del módulo, el nivel avanza solo.
             </p>
             <div class="madurez-track"><div class="madurez-fill" id="madurez-fill"></div></div>
-            <div id="madurez-checklist"></div>
-        </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px" id="charts-wrap">
-            <div class="card"><h3>Productos más vendidos</h3><canvas id="c-vendidos" height="220"></canvas></div>
-            <div class="card"><h3>Estrategia de reabastecimiento (catálogo)</h3><canvas id="c-pushpull" height="220"></canvas></div>
+            <div id="madurez-descripcion" class="pago-box" style="margin:4px 0 16px"></div>
+
+            <div id="madurez-checklist"></div>
         </div>
     </main>
 </div>
@@ -45,12 +42,27 @@
 requireAuthAdmin();
 renderAdminSidebar('scm');
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Panel SCM', 'Nivel de madurez y métricas de la cadena de suministro: proveedores, inventario y logística.'
+    'Panel SCM', 'Nivel de madurez de la cadena de suministro: proveedores, inventario y logística.'
 );
 renderModuloTiles('modulo-tiles', 'SCM', 'scm');
 
 const NIVEL_LABEL = { inicial: 'Inicial', en_desarrollo: 'En desarrollo', optimizado: 'Optimizado' };
-let chartVendidos, chartPushPull;
+
+// Qué hacer para resolver cada punto pendiente del checklist: a dónde
+// mandar al admin con un clic para avanzar de nivel.
+const CHECKLIST_DESTINO = {
+    proveedores: { href: '/admin/productos.html', texto: 'Asignar proveedores en Inventario' },
+    movimientos: { href: '/admin/movimientos.html', texto: 'Ver Movimientos de inventario' },
+    estrategia: { href: '/admin/logistica.html', texto: 'Definir estrategias en Logística' },
+    ordenes: { href: '/admin/ordenes-compra.html', texto: 'Generar una orden de compra' },
+    reportes: { href: '/admin/reportes-scm.html', texto: 'Ver Reportes de la cadena' },
+};
+
+const NIVEL_DESCRIPCION = {
+    inicial: 'Tu cadena de suministro apenas se está armando. Asigna proveedores a tus productos, registra tu primer movimiento de inventario y define si cada producto es push o pull para empezar a avanzar de nivel.',
+    en_desarrollo: 'Ya hay trazabilidad básica: proveedores y movimientos en uso. Para llegar a Optimizado, usa las dos estrategias de reabastecimiento según corresponda, genera órdenes de compra reales a tus proveedores, y asegúrate de tener ventas registradas para que los reportes reflejen datos reales.',
+    optimizado: 'Tu módulo SCM está completo: hay trazabilidad de principio a fin, desde el proveedor hasta la venta, con las dos estrategias de reabastecimiento en uso y reportes basados en datos reales del negocio.',
+};
 
 async function cargar() {
     const r = await api('/admin/scm/resumen');
@@ -65,40 +77,24 @@ async function cargar() {
 
     document.getElementById('madurez-nivel').innerHTML = `<span class="madurez-nivel n-${r.madurez.nivel}">${NIVEL_LABEL[r.madurez.nivel]}</span>`;
     document.getElementById('madurez-fill').style.width = `${Math.round((r.madurez.cumplidos / r.madurez.total) * 100)}%`;
-    document.getElementById('madurez-checklist').innerHTML = r.madurez.checklist.map((c) => `
-        <div class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}">
-            <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
-            <span>${c.etiqueta}</span>
-        </div>
-    `).join('');
 
-    if (chartVendidos) chartVendidos.destroy();
-    if (chartPushPull) chartPushPull.destroy();
-    const acc = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4E6BE6';
-    const info = getComputedStyle(document.documentElement).getPropertyValue('--info').trim() || '#5AA9E6';
-    const copper = getComputedStyle(document.documentElement).getPropertyValue('--copper').trim() || '#6E8BF0';
+    document.getElementById('madurez-descripcion').innerHTML = `
+        <h4>${icon('info', 16)} Qué significa este nivel</h4>
+        <div class="pb-sub">${NIVEL_DESCRIPCION[r.madurez.nivel]}</div>
+    `;
 
-    chartVendidos = new Chart(document.getElementById('c-vendidos'), {
-        type: 'bar',
-        data: {
-            labels: r.mas_vendidos.map((p) => p.nombre),
-            datasets: [{ data: r.mas_vendidos.map((p) => Number(p.unidades_vendidas)), backgroundColor: acc }],
-        },
-        options: {
-            indexAxis: 'y',
-            plugins: { legend: { display: false } },
-            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
-        },
-    });
-
-    chartPushPull = new Chart(document.getElementById('c-pushpull'), {
-        type: 'doughnut',
-        data: {
-            labels: ['Push (por calendario)', 'Pull (bajo pedido)'],
-            datasets: [{ data: [r.push_pull.push, r.push_pull.pull], backgroundColor: [info, copper] }],
-        },
-        options: { plugins: { legend: { position: 'bottom' } } },
-    });
+    // Cada punto es un enlace: si ya está cumplido lleva a revisarlo, si
+    // está pendiente lleva directo a dónde resolverlo.
+    document.getElementById('madurez-checklist').innerHTML = r.madurez.checklist.map((c) => {
+        const destino = CHECKLIST_DESTINO[c.clave];
+        return `
+            <a class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}" href="${destino.href}" style="text-decoration:none;cursor:pointer">
+                <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
+                <span style="flex:1">${c.etiqueta}</span>
+                <span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? 'Revisar' : destino.texto} ${icon('arrow', 13)}</span>
+            </a>
+        `;
+    }).join('');
 }
 
 cargar();

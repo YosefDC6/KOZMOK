@@ -1,5 +1,5 @@
 -- =========================================================
---  TiendaTech CRM - Base de datos completa (PostgreSQL)
+--  Kozmok CRM - Base de datos completa (PostgreSQL)
 --  Tienda de electrónica / cómputo (laptops, PCs, componentes,
 --  periféricos) con CRM, ventas, inventario y chatbot.
 --
@@ -156,7 +156,7 @@ CREATE TABLE clientes (
                          CHECK (etapa_crm IN ('Prospecto','Activo','Frecuente','Inactivo')),
     -- preferencias del cliente en su cuenta (notificaciones, tema, etc.)
     preferencias        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    -- saldo de puntos de recompensas (Club TiendaTech)
+    -- saldo de puntos de recompensas (Club Kozmok)
     puntos              INTEGER NOT NULL DEFAULT 0,
     -- código del socio para el QR de la tarjeta virtual (tienda física)
     codigo_socio        VARCHAR(14) UNIQUE,
@@ -394,7 +394,7 @@ CREATE TABLE favoritos (
 CREATE INDEX idx_favoritos_cliente ON favoritos(cliente_id);
 
 -- ---------------------------------------------------------
--- RECOMPENSAS: historial de puntos (Club TiendaTech)
+-- RECOMPENSAS: historial de puntos (Club Kozmok)
 -- Se ganan al confirmar un pedido y se pueden canjear como
 -- descuento en el siguiente. 100 puntos = $10.
 -- ---------------------------------------------------------
@@ -543,7 +543,7 @@ INSERT INTO categorias (nombre, icono) VALUES
 --   admin@tiendatech.mx          -> Admin#TT2026     (rol admin)
 --   laura.vendedor@tiendatech.mx -> Vendedor#TT2026  (rol vendedor)
 INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUES
- ('Admin TiendaTech', 'admin@tiendatech.mx',
+ ('Admin Kozmok', 'admin@tiendatech.mx',
   crypt('Admin#TT2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
  ('Laura Méndez', 'laura.vendedor@tiendatech.mx',
   crypt('Vendedor#TT2026', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),

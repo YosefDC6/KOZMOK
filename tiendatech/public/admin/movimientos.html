@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Movimientos de inventario · Admin TiendaTech</title>
+<title>Movimientos de inventario · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -30,6 +30,10 @@
     </main>
 </div>
 
+<div class="modal-overlay" id="modal-movimiento">
+    <div class="modal" style="max-width:480px" id="modal-movimiento-body"></div>
+</div>
+
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
@@ -39,10 +43,12 @@
 requireAuthAdmin();
 renderAdminSidebar('movimientos');
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Movimientos de inventario', 'Historial de entradas y salidas de stock, generado por ventas, cancelaciones, restocks y órdenes de compra recibidas.'
+    'Movimientos de inventario', 'Historial de entradas y salidas de stock: automáticas (ventas, cancelaciones, restocks, órdenes recibidas) o registradas a mano.',
+    '<button class="btn btn-primary" onclick="abrirNuevoMovimiento()">Nuevo movimiento</button>'
 );
 
 let MOVIMIENTOS = [];
+let PRODUCTOS_MOV = [];
 
 function fechaCorta(f) {
     return new Date(f).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -76,6 +82,45 @@ async function cargarMovimientos() {
     if (tipo) q.set('tipo', tipo);
     MOVIMIENTOS = await api('/admin/movimientos-inventario?' + q.toString());
     renderTabla();
+}
+
+async function abrirNuevoMovimiento() {
+    if (!PRODUCTOS_MOV.length) PRODUCTOS_MOV = await api('/admin/productos');
+    const opciones = PRODUCTOS_MOV.map((p) => `<option value="${p.id}">${p.nombre} (stock ${p.stock})</option>`).join('');
+    document.getElementById('modal-movimiento-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-movimiento').classList.remove('open')">${icon('x', 18)}</button>
+        <h3>Nuevo movimiento</h3>
+        <div class="field"><label>Producto</label><select id="mv-producto">${opciones}</select></div>
+        <div class="field-row">
+            <div class="field"><label>Tipo</label>
+                <select id="mv-tipo">
+                    <option value="entrada">Entrada (suma al stock)</option>
+                    <option value="salida">Salida (resta del stock)</option>
+                </select>
+            </div>
+            <div class="field"><label>Cantidad</label><input type="number" min="1" id="mv-cantidad" value="1" /></div>
+        </div>
+        <div class="field"><label>Motivo</label><input id="mv-motivo" placeholder="Ej. merma, conteo físico, ajuste de inventario" /></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardarMovimiento()">Registrar movimiento</button>
+    `;
+    document.getElementById('modal-movimiento').classList.add('open');
+}
+
+async function guardarMovimiento() {
+    const body = {
+        producto_id: Number(document.getElementById('mv-producto').value),
+        tipo: document.getElementById('mv-tipo').value,
+        cantidad: Number(document.getElementById('mv-cantidad').value),
+        motivo: document.getElementById('mv-motivo').value,
+    };
+    if (!body.cantidad || body.cantidad < 1) { toast('La cantidad debe ser mayor a 0', 'warn'); return; }
+    try {
+        await api('/admin/movimientos-inventario', { method: 'POST', body });
+        document.getElementById('modal-movimiento').classList.remove('open');
+        toast('Movimiento registrado', 'ok');
+        PRODUCTOS_MOV = []; // refrescar stocks la próxima vez que se abra el formulario
+        cargarMovimientos();
+    } catch (e) { toast(e.message, 'error'); }
 }
 
 cargarMovimientos();

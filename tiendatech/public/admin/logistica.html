@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Logística · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="card" style="margin-bottom:22px">
+            <h3 style="margin:0 0 4px">Configurar estrategia de reposición</h3>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 10px">
+                Elige un producto y define cómo se reabastece: por calendario (push) o solo cuando se necesita (pull).
+            </p>
+            <div class="field"><label>Producto</label><select id="lg-producto" onchange="seleccionarProducto()"></select></div>
+            <div class="estrategia-opciones">
+                <div class="estrategia-card" id="card-push" onclick="elegirEstrategia('push')">
+                    <h4 id="titulo-push"></h4>
+                    <p>Se genera pedido automáticamente cuando el stock llega al mínimo. Ideal para productos de alta rotación y demanda predecible.</p>
+                </div>
+                <div class="estrategia-card" id="card-pull" onclick="elegirEstrategia('pull')">
+                    <h4 id="titulo-pull"></h4>
+                    <p>Se repone solo bajo pedido o cuando baja el stock. Ideal para productos de bajo volumen, caros o armados a la medida.</p>
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="guardarEstrategia()">Guardar estrategia</button>
+        </div>
+
+        <div class="card">
+            <h3 style="margin:0 0 4px">Comparativa push vs. pull</h3>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 4px">Cómo está clasificado todo el catálogo activo ahora mismo.</p>
+            <div class="estrategia-tiles" id="estrategia-tiles"></div>
+            <div class="filters-bar" style="margin-bottom:10px">
+                <select id="f-categoria" onchange="renderTablaComparativa()"><option value="">Todas las categorías</option></select>
+                <select id="f-estrategia" onchange="renderTablaComparativa()">
+                    <option value="">Push y pull</option>
+                    <option value="push">Solo push</option>
+                    <option value="pull">Solo pull</option>
+                </select>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Stock mínimo</th><th>Estrategia</th></tr></thead>
+                    <tbody id="tabla-comparativa"><tr><td colspan="5">Cargando…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('logistica');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Logística', 'Define la estrategia push o pull de cada producto y compara cómo está repartido todo el catálogo.'
+);
+
+let PRODUCTOS_LG = [];
+let ESTRATEGIA_ELEGIDA = 'push';
+
+function tarjetasEstrategia() {
+    document.getElementById('titulo-push').innerHTML = `${icon('calendar', 18)} Push`;
+    document.getElementById('titulo-pull').innerHTML = `${icon('clock', 18)} Pull`;
+}
+
+function seleccionarProducto() {
+    const id = Number(document.getElementById('lg-producto').value);
+    const p = PRODUCTOS_LG.find((x) => x.id === id);
+    ESTRATEGIA_ELEGIDA = (p && p.restock === 'pull') ? 'pull' : 'push';
+    pintarSeleccionEstrategia();
+}
+
+function elegirEstrategia(valor) {
+    ESTRATEGIA_ELEGIDA = valor;
+    pintarSeleccionEstrategia();
+}
+
+function pintarSeleccionEstrategia() {
+    document.getElementById('card-push').classList.toggle('activa', ESTRATEGIA_ELEGIDA === 'push');
+    document.getElementById('card-pull').classList.toggle('activa', ESTRATEGIA_ELEGIDA === 'pull');
+}
+
+async function guardarEstrategia() {
+    const id = Number(document.getElementById('lg-producto').value);
+    if (!id) { toast('Elige un producto', 'warn'); return; }
+    try {
+        await api(`/admin/productos/${id}`, { method: 'PUT', body: { restock: ESTRATEGIA_ELEGIDA } });
+        toast('Estrategia guardada', 'ok');
+        await cargarProductos();
+        document.getElementById('lg-producto').value = id;
+        seleccionarProducto();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderTilesComparativa() {
+    const push = PRODUCTOS_LG.filter((p) => p.restock !== 'pull').length;
+    const pull = PRODUCTOS_LG.filter((p) => p.restock === 'pull').length;
+    document.getElementById('estrategia-tiles').innerHTML = `
+        <div class="estrategia-tile push">${icon('calendar', 20)}<div class="et-num">${push}</div><div class="et-label">Productos PUSH</div></div>
+        <div class="estrategia-tile pull">${icon('clock', 20)}<div class="et-num">${pull}</div><div class="et-label">Productos PULL</div></div>
+    `;
+}
+
+function renderTablaComparativa() {
+    const cat = document.getElementById('f-categoria').value;
+    const est = document.getElementById('f-estrategia').value;
+    const lista = PRODUCTOS_LG.filter((p) =>
+        (!cat || p.categoria_nombre === cat) && (!est || (p.restock || 'push') === est)
+    );
+    document.getElementById('tabla-comparativa').innerHTML = lista.length ? lista.map((p) => `
+        <tr>
+            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+            <td>${p.categoria_nombre || '—'}</td>
+            <td class="mono ${p.stock === 0 ? 'stock-out' : p.stock <= p.stock_minimo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
+            <td class="mono">${p.stock_minimo}</td>
+            <td><span class="tag" style="color:${p.restock === 'pull' ? 'var(--copper)' : 'var(--info)'};border-color:${p.restock === 'pull' ? 'var(--copper)' : 'var(--info)'}">${p.restock === 'pull' ? 'Pull' : 'Push'}</span></td>
+        </tr>
+    `).join('') : `<tr><td colspan="5" style="color:var(--text-muted)">Ningún producto coincide con este filtro.</td></tr>`;
+}
+
+async function cargarProductos() {
+    PRODUCTOS_LG = await api('/admin/productos');
+
+    const actual = document.getElementById('lg-producto').value;
+    document.getElementById('lg-producto').innerHTML = PRODUCTOS_LG.map((p) =>
+        `<option value="${p.id}">${p.nombre} — ${p.restock === 'pull' ? 'Pull' : 'Push'}</option>`
+    ).join('');
+    if (actual) document.getElementById('lg-producto').value = actual;
+
+    const categorias = [...new Set(PRODUCTOS_LG.map((p) => p.categoria_nombre).filter(Boolean))].sort();
+    document.getElementById('f-categoria').innerHTML = '<option value="">Todas las categorías</option>' +
+        categorias.map((c) => `<option value="${c}">${c}</option>`).join('');
+
+    renderTilesComparativa();
+    renderTablaComparativa();
+}
+
+(async () => {
+    tarjetasEstrategia();
+    await cargarProductos();
+    seleccionarProducto();
+})();
+</script>
+</body>
+</html>

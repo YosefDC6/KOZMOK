@@ -1,5 +1,5 @@
 ===============================================================================
- TIENDATECH CRM  -  MANUAL DE USUARIO
+ KOZMOK CRM  -  MANUAL DE USUARIO
  Tienda de electronica / computo con tienda en linea, CRM y chatbot.
  Ultima actualizacion: septiembre 2026
 ===============================================================================
@@ -40,7 +40,7 @@ Levantar el servidor
    - Dentro de la carpeta  tiendatech/  ejecutar:   npm install   (una vez)
    - Luego:   npm start
    - Al arrancar, la consola muestra DOS lineas:
-        TiendaTech escuchando en http://localhost:3000
+        Kozmok escuchando en http://localhost:3000
         Base de datos: conectada (tiendatech@localhost:5432) - 20 productos
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
      PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
@@ -99,7 +99,7 @@ Cuentas de prueba (tras cargar db/database.sql)
    Edge) muestra un aviso nativo de "esta contrasena fue expuesta,
    cambiala" al iniciar sesion con ellas. Ese aviso es del navegador, no
    de la pagina, asi que no se puede quitar ni re-vestir con el tema de
-   TiendaTech; la solucion real es no usar contrasenas de ese tipo.
+   Kozmok; la solucion real es no usar contrasenas de ese tipo.
 
 Seguridad de sesion
    - El token de cliente y el token de admin se guardan por separado en el
@@ -479,8 +479,12 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      (entrada/salida), cantidad, motivo y que usuario lo genero.
    - Se registra solo: cada venta (salida), cancelacion de un cliente
      (entrada), restock manual (entrada) y recepcion de una orden de
-     compra (entrada). No hay carga manual de movimientos sueltos; para
-     ajustar stock a mano se usa "Restock" en Inventario.
+     compra (entrada).
+   - "Nuevo movimiento": registra a mano una entrada o salida de stock
+     (merma, conteo fisico, ajuste de inventario, etc.) con su motivo.
+     Una salida no puede ser mayor al stock actual. Si una salida manual
+     deja al producto en stock critico, tambien se le genera sola la
+     orden de compra (ver 4.9d).
    - Filtros por tipo y por nombre de producto.
 
 4.9d ORDENES DE COMPRA  (admin/ordenes-compra.html)  [SCM]
@@ -498,8 +502,25 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Acceso directo: el boton "Generar orden" en la alerta de stock
      critico de Inventario (4.9) abre una orden nueva ya con ese producto
      elegido.
+   - AUTOMATICA: en cuanto un producto con proveedor asignado cae en (o
+     sigue en) stock critico -- por una venta, por editar el stock a mano,
+     o porque lo recibido en una orden no alcanzo -- se genera una orden
+     de compra sola, sin que nadie tenga que darle clic a nada. Se marca
+     en sus notas como "Generada automaticamente". Si el producto ya tiene
+     una orden pendiente o en proceso, no se genera otra; en Inventario,
+     la alerta de stock critico muestra "OC-100x en curso" en lugar del
+     boton "Generar orden" mientras eso sea cierto.
 
-4.9e PANEL SCM  (admin/scm.html)  [SCM]
+4.9e LOGISTICA  (admin/logistica.html)  [SCM]
+   - Configurar estrategia: eliges un producto y dos tarjetas grandes
+     (Push / Pull) explican cada una y marcan cual esta activa. "Guardar
+     estrategia" actualiza el metodo de reabastecimiento de ese producto
+     (lo mismo que el campo de Inventario, pero en su propia pantalla).
+   - Comparativa push vs. pull: dos tarjetas con el total de productos en
+     cada estrategia (de todo el catalogo activo) y una tabla completa
+     con filtro por categoria y por estrategia.
+
+4.9f PANEL SCM  (admin/scm.html)  [SCM]
    - En la barra lateral aparece como "Dashboard" (primer elemento del
      bloque SCM, igual que el Dashboard es el primero del bloque CRM).
    - Metricas: productos activos, proveedores, ordenes de compra
@@ -511,8 +532,26 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      registrados, estrategia push Y pull en uso (no solo una), ordenes de
      compra generadas y reportes con ventas reales. El nivel sube solo
      conforme el equipo usa cada parte del modulo.
-   - Graficas: productos mas vendidos y comparativa push vs. pull de
-     todo el catalogo.
+   - "Que significa este nivel": explica en texto que falta o que ya se
+     logro para el nivel actual.
+   - Cada punto del checklist es un enlace: si esta pendiente, lleva
+     directo a la pantalla donde resolverlo (Inventario, Movimientos,
+     Logistica, Ordenes de compra o Reportes); si ya esta cumplido, lleva
+     a revisarlo igual.
+
+4.9g REPORTES SCM  (admin/reportes-scm.html)  [SCM]
+   - Mismas metricas generales que el Dashboard de SCM (productos,
+     proveedores, ordenes abiertas, stock bajo, rotacion).
+   - Productos mas vendidos: grafica de barras con unidades vendidas.
+   - Estrategia de reabastecimiento, con dos selectores independientes:
+        * Que estadistica ver: Cantidad de productos o Valor de
+          inventario (stock x precio) de cada estrategia.
+        * Como verla: Grafica (barras) o Tabla exacta (numero de
+          productos, % del catalogo, valor en pesos y % del valor, para
+          push y pull) -- para no depender solo de lo visual cuando se
+          necesita el dato preciso.
+   - Inventario critico: tabla de solo lectura (producto, stock actual,
+     stock minimo, proveedor) de los productos en su minimo o por debajo.
 
 4.10 ANALITICA CHATBOT  (admin/chatbot.html)  [CRM]
    - Que esta buscando la gente en el asesor: por uso, por rango de
@@ -570,8 +609,8 @@ SOPORTE
 ALMACEN
    Ve: Dashboard (CRM), Pedidos, Analitica chatbot -- y en el bloque SCM:
    Dashboard (Panel SCM), Inventario, Proveedores, Movimientos, Ordenes de
-   compra -- ademas de Mi actividad y Configuracion. No ve Clientes,
-   Interacciones, Soporte ni Cuentas.
+   compra, Logistica, Reportes -- ademas de Mi actividad y Configuracion. No ve
+   Clientes, Interacciones, Soporte ni Cuentas.
    Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->
    entregado), vigilar el stock critico, generar una orden de compra al
    proveedor cuando haga falta, marcarla recibida cuando llegue (el stock

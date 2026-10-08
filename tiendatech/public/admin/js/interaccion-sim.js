@@ -156,9 +156,9 @@
     /* ---------- CORREO ---------- */
     const PLANTILLAS = {
         '': { asunto: '', cuerpo: '' },
-        seguimiento: { asunto: 'Seguimiento a tu compra en TiendaTech', cuerpo: 'Hola {nombre},\n\nQueremos saber si todo salió bien con tu pedido y si necesitas ayuda con la instalación o configuración.\n\nQuedamos atentos.\nEquipo TiendaTech' },
-        cotizacion: { asunto: 'Cotización solicitada', cuerpo: 'Hola {nombre},\n\nAdjuntamos la cotización con los equipos que revisamos, precios y tiempos de entrega. La cotización es válida por 15 días.\n\nSaludos,\nEquipo TiendaTech' },
-        bienvenida: { asunto: 'Bienvenido al Club TiendaTech', cuerpo: 'Hola {nombre},\n\nTu cuenta ya está activa. Con cada compra acumulas puntos que valen dinero en la tienda y puedes seguir tus pedidos desde tu perfil.\n\n¡Gracias por elegirnos!' },
+        seguimiento: { asunto: 'Seguimiento a tu compra en Kozmok', cuerpo: 'Hola {nombre},\n\nQueremos saber si todo salió bien con tu pedido y si necesitas ayuda con la instalación o configuración.\n\nQuedamos atentos.\nEquipo Kozmok' },
+        cotizacion: { asunto: 'Cotización solicitada', cuerpo: 'Hola {nombre},\n\nAdjuntamos la cotización con los equipos que revisamos, precios y tiempos de entrega. La cotización es válida por 15 días.\n\nSaludos,\nEquipo Kozmok' },
+        bienvenida: { asunto: 'Bienvenido al Club Kozmok', cuerpo: 'Hola {nombre},\n\nTu cuenta ya está activa. Con cada compra acumulas puntos que valen dinero en la tienda y puedes seguir tus pedidos desde tu perfil.\n\n¡Gracias por elegirnos!' },
         recordatorio: { asunto: 'Recordatorio de pago pendiente', cuerpo: 'Hola {nombre},\n\nTu pedido está apartado y solo falta completar el pago con la referencia que te compartimos. Si ya lo realizaste, ignora este mensaje.\n\nGracias.' },
     };
     function panelCorreo() {

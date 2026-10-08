@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Inventario · Admin TiendaTech</title>
+<title>Inventario · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -72,7 +72,7 @@ async function cargarStockCritico() {
     el.innerHTML = `
         <div class="pago-box pendiente">
             <h4>${icon('alert', 16)} Alerta de stock crítico — ${mp.inventario_critico.length} producto(s)</h4>
-            <div class="pb-sub">Al llegar al mínimo definido, un producto entra aquí para que se reabastezca antes de agotarse.</div>
+            <div class="pb-sub">Al llegar al mínimo definido, un producto entra aquí y, si tiene proveedor asignado, se le genera una orden de compra automáticamente.</div>
             <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
                 ${mp.inventario_critico.map((p) => `
                     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px">
@@ -84,7 +84,9 @@ async function cargarStockCritico() {
                         </div>
                         <div style="display:flex;align-items:center;gap:10px">
                             <span class="mono ${p.stock === 0 ? 'stock-out' : 'stock-low'}">${p.stock} / ${p.stock_minimo}</span>
-                            <a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar orden</a>
+                            ${p.orden_abierta_folio
+                                ? `<span class="tag" style="color:var(--info);border-color:var(--info)" title="Ya se generó una orden de compra para este producto">${p.orden_abierta_folio} en curso</span>`
+                                : `<a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar orden</a>`}
                             <button class="btn btn-outline btn-sm" onclick="restock(${p.id})">Restock</button>
                         </div>
                     </div>
