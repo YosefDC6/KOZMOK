@@ -56,8 +56,8 @@ El menú del panel se adapta al rol. Si alguien abre por URL una sección que no
 
 ```bash
 # 1. Clonar e instalar dependencias
-git clone https://github.com/YosefDC6/Tiendatech.git
-cd Tiendatech/kozmok
+git clone https://github.com/YosefDC6/KOZMOK.git
+cd KOZMOK/kozmok
 npm install
 
 # 2. Crear la base de datos (en psql)
@@ -92,7 +92,7 @@ Si al arrancar la consola muestra `Base de datos: conectada … 20 productos`, t
 ## Estructura del proyecto
 
 ```
-Tiendatech/
+KOZMOK/
 ├── README.md
 ├── Manual_usuario.txt        # manual completo, sección por sección
 └── kozmok/
