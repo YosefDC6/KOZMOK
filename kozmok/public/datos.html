@@ -54,7 +54,7 @@ async function guardarDatos() {
     if (!body.nombre) { toast('El nombre no puede quedar vacío', 'warn'); return; }
     try {
         const r = await api(`/clientes/${CID}`, { method: 'PUT', body });
-        Sesion.guardarCliente({ ...Sesion.cliente(), ...r.cliente }, localStorage.getItem('tt_token'));
+        Sesion.guardarCliente({ ...Sesion.cliente(), ...r.cliente }, localStorage.getItem('kz_token'));
         document.getElementById('cn-nombre').textContent = r.cliente.nombre;
         toast('Datos actualizados', 'ok');
     } catch (e) { toast(e.message, 'error'); }

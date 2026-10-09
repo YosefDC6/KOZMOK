@@ -2,7 +2,7 @@
 
 function requireAuthAdmin() {
     const usuario = Sesion.usuario();
-    const token = localStorage.getItem('tt_admin_token');
+    const token = localStorage.getItem('kz_admin_token');
     if (!usuario || !token) { window.location.href = '/admin/login.html'; return null; }
     api('/admin/whoami')
         .then((u) => { if (u && u.rol) Sesion.guardarUsuario(u, token); })

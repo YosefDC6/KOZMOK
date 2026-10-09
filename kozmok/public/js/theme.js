@@ -1,7 +1,7 @@
 // public/js/theme.js  — se carga ANTES que el resto para evitar parpadeo.
 // El panel interno (/admin/*) y la tienda tienen su tema por SEPARADO:
-//   - tienda  -> clave "tt_tema_tienda"  (default "indigo")
-//   - panel   -> clave "tt_tema_admin"   (default "esmeralda")
+//   - tienda  -> clave "kz_tema_tienda"  (default "indigo")
+//   - panel   -> clave "kz_tema_admin"   (default "esmeralda")
 // Cambiar el tema en un lado no afecta al otro. Si no se ha elegido tema,
 // se aplica el default SIN guardarlo.
 (function () {
@@ -13,7 +13,7 @@
     ];
     const claves = TEMAS.map((t) => t.clave);
     const esPanel = location.pathname.startsWith('/admin/');
-    const CLAVE = esPanel ? 'tt_tema_admin' : 'tt_tema_tienda';
+    const CLAVE = esPanel ? 'kz_tema_admin' : 'kz_tema_tienda';
     const POR_DEFECTO = esPanel ? 'esmeralda' : 'indigo';
 
     function leer() {

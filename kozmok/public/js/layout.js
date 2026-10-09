@@ -290,7 +290,7 @@ function getCookie(nombre) {
 window.getCookie = getCookie;
 
 function renderCookieConsent() {
-    if (getCookie('tt_consent')) return;  // ya lo aceptó antes -> no volver a mostrar
+    if (getCookie('kz_consent')) return;  // ya lo aceptó antes -> no volver a mostrar
     const el = document.createElement('div');
     el.className = 'cookie-bar';
     el.setAttribute('role', 'dialog');
@@ -309,7 +309,7 @@ function renderCookieConsent() {
 
     const guardar = (valor) => {
         // 1 año; solo desaparece de verdad si el usuario borra las cookies del navegador
-        document.cookie = `tt_consent=${valor}; max-age=${60 * 60 * 24 * 365}; path=/; SameSite=Lax`;
+        document.cookie = `kz_consent=${valor}; max-age=${60 * 60 * 24 * 365}; path=/; SameSite=Lax`;
         el.classList.remove('show');
         setTimeout(() => el.remove(), 350);
     };

@@ -9,8 +9,8 @@
 --  hace falta correr ningún script de Node aparte.
 --
 --  Uso:
---     CREATE DATABASE tiendatech;
---     psql -U postgres -d tiendatech -f db/database.sql
+--     CREATE DATABASE kozmok;
+--     psql -U postgres -d kozmok -f db/database.sql
 --
 --  Se puede volver a ejecutar: primero borra todo y recrea.
 -- =========================================================
@@ -540,17 +540,17 @@ INSERT INTO categorias (nombre, icono) VALUES
 -- a propósito: "admin123" y similares están en listas de contraseñas
 -- filtradas y el navegador muestra un aviso nativo de "contraseña
 -- comprometida" al iniciar sesión con ellas):
---   admin@tiendatech.mx          -> Admin#TT2026     (rol admin)
---   laura.vendedor@tiendatech.mx -> Vendedor#TT2026  (rol vendedor)
+--   admin@kozmok.mx          -> Admin#KZ2026     (rol admin)
+--   laura.vendedor@kozmok.mx -> Vendedor#KZ2026  (rol vendedor)
 INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUES
- ('Admin Kozmok', 'admin@tiendatech.mx',
-  crypt('Admin#TT2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
- ('Laura Méndez', 'laura.vendedor@tiendatech.mx',
-  crypt('Vendedor#TT2026', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),
- ('Rubén Soto', 'ruben.soporte@tiendatech.mx',
-  crypt('Soporte#TT2026', gen_salt('bf', 10)), '555-000-0003', 'soporte', true),
- ('Paola Nieto', 'paola.almacen@tiendatech.mx',
-  crypt('Almacen#TT2026', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
+ ('Admin Kozmok', 'admin@kozmok.mx',
+  crypt('Admin#KZ2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
+ ('Laura Méndez', 'laura.vendedor@kozmok.mx',
+  crypt('Vendedor#KZ2026', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),
+ ('Rubén Soto', 'ruben.soporte@kozmok.mx',
+  crypt('Soporte#KZ2026', gen_salt('bf', 10)), '555-000-0003', 'soporte', true),
+ ('Paola Nieto', 'paola.almacen@kozmok.mx',
+  crypt('Almacen#KZ2026', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
 
 INSERT INTO proveedores (nombre, contacto, email, telefono, tiempo_entrega_dias) VALUES
  ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 5),
@@ -696,14 +696,14 @@ VALUES
   'gabinete', NULL, NULL, 'MicroATX', NULL, NULL);
 
 -- ---------------------------------------------------------
--- CLIENTES DE PRUEBA  (contraseña "Demo#TT2026" para los 4,
+-- CLIENTES DE PRUEBA  (contraseña "Demo#KZ2026" para los 4,
 -- hasheada aquí mismo con bcrypt / pgcrypto)
 -- ---------------------------------------------------------
 INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, estado_cliente, etapa_crm, fecha_registro) VALUES
- ('Mariana Torres', 'mariana@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-123-4567', 'Estudio Creativo MT', 'Aguascalientes', 'Aguascalientes', 'activo', 'Frecuente', CURRENT_TIMESTAMP - INTERVAL '120 days'),
- ('Diego Ramírez', 'diego@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-987-6543', NULL, 'León', 'Guanajuato', 'activo', 'Activo', CURRENT_TIMESTAMP - INTERVAL '60 days'),
- ('Sofía Herrera', 'sofia@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
- ('Carlos Fuentes', 'carlos@correo.com', crypt('Demo#TT2026', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
+ ('Mariana Torres', 'mariana@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-123-4567', 'Estudio Creativo MT', 'Aguascalientes', 'Aguascalientes', 'activo', 'Frecuente', CURRENT_TIMESTAMP - INTERVAL '120 days'),
+ ('Diego Ramírez', 'diego@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-987-6543', NULL, 'León', 'Guanajuato', 'activo', 'Activo', CURRENT_TIMESTAMP - INTERVAL '60 days'),
+ ('Sofía Herrera', 'sofia@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
+ ('Carlos Fuentes', 'carlos@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
 
 INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, fecha) VALUES
  (1, 1, 'llamada', 'Se discutieron opciones de laptop para edición de video.', CURRENT_TIMESTAMP - INTERVAL '2 days'),
@@ -720,10 +720,10 @@ INSERT INTO favoritos (cliente_id, producto_id) VALUES
  (1, 3), (1, 5), (1, 15), (2, 2), (2, 7);
 
 -- Código de socio (va en el QR de la tarjeta virtual)
-UPDATE clientes SET codigo_socio = 'TTMX-7K2M9Q' WHERE id = 1;
-UPDATE clientes SET codigo_socio = 'TTMX-4A1P8R' WHERE id = 2;
-UPDATE clientes SET codigo_socio = 'TTMX-3H6D2L' WHERE id = 3;
-UPDATE clientes SET codigo_socio = 'TTMX-9W5C7T' WHERE id = 4;
+UPDATE clientes SET codigo_socio = 'KZMX-7K2M9Q' WHERE id = 1;
+UPDATE clientes SET codigo_socio = 'KZMX-4A1P8R' WHERE id = 2;
+UPDATE clientes SET codigo_socio = 'KZMX-3H6D2L' WHERE id = 3;
+UPDATE clientes SET codigo_socio = 'KZMX-9W5C7T' WHERE id = 4;
 
 -- Métodos de pago guardados (solo marca + últimos 4, nunca el número completo)
 INSERT INTO metodos_pago (cliente_id, tipo, marca, ultimos4, titular, expira_mes, expira_anio, predeterminada) VALUES
@@ -836,9 +836,9 @@ INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUE
 
 -- =========================================================
 --  Listo. Credenciales de prueba:
---    admin@tiendatech.mx          / Admin#TT2026
---    laura.vendedor@tiendatech.mx / Vendedor#TT2026
---    ruben.soporte@tiendatech.mx  / Soporte#TT2026
---    paola.almacen@tiendatech.mx  / Almacen#TT2026
---    mariana@correo.com           / Demo#TT2026   (y diego / sofia / carlos)
+--    admin@kozmok.mx          / Admin#KZ2026
+--    laura.vendedor@kozmok.mx / Vendedor#KZ2026
+--    ruben.soporte@kozmok.mx  / Soporte#KZ2026
+--    paola.almacen@kozmok.mx  / Almacen#KZ2026
+--    mariana@correo.com           / Demo#KZ2026   (y diego / sofia / carlos)
 -- =========================================================

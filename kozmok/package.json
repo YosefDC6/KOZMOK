@@ -1,5 +1,5 @@
 {
-  "name": "tiendatech-crm",
+  "name": "kozmok-crm",
   "version": "1.0.0",
   "description": "Tienda de electrónica y cómputo con CRM, panel admin, panel de cliente y chatbot de recomendaciones",
   "main": "server.js",

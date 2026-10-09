@@ -19,7 +19,7 @@
         { valor: 'streaming', etiqueta: 'Streaming' },
     ];
     const PRESUPUESTOS = [8000, 15000, 25000, 40000];
-    const CLAVE_ESTADO = 'tt_chat_estado';
+    const CLAVE_ESTADO = 'kz_chat_estado';
 
     // Piezas de un armado por componentes, en el orden en que se preguntan
     // (así cada una ya puede filtrarse por lo que se eligió antes).
@@ -190,7 +190,7 @@
         // Aviso de primera visita: "hay un asesor por si no sabes qué elegir"
         // (si la conversación se restauró ya abierta, no hace falta el aviso).
         let visto = false;
-        try { visto = localStorage.getItem('tt_asesor_visto') === '1'; } catch (e) {}
+        try { visto = localStorage.getItem('kz_asesor_visto') === '1'; } catch (e) {}
         if (!visto && !panel.classList.contains('open')) {
             const nudge = document.createElement('div');
             nudge.className = 'chatbot-nudge';
@@ -204,7 +204,7 @@
         function quitarNudge() {
             const n = document.querySelector('.chatbot-nudge');
             if (n) { n.classList.remove('show'); setTimeout(() => n.remove(), 300); }
-            try { localStorage.setItem('tt_asesor_visto', '1'); } catch (e) {}
+            try { localStorage.setItem('kz_asesor_visto', '1'); } catch (e) {}
         }
     }
 

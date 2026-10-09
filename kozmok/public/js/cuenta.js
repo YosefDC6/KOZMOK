@@ -52,7 +52,7 @@ async function montarCuenta(key, render) {
         irALogin();
         return;
     }
-    Sesion.guardarCliente({ ...sesion, ...PERFIL }, localStorage.getItem('tt_token'));
+    Sesion.guardarCliente({ ...sesion, ...PERFIL }, localStorage.getItem('kz_token'));
     window.PERFIL = PERFIL;
     document.getElementById('cn-nombre').textContent = PERFIL.nombre;
     document.getElementById('cn-correo').textContent = PERFIL.correo;

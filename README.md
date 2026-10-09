@@ -1,4 +1,4 @@
-# Kozmok · TiendaTech
+# Kozmok
 
 Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
 
@@ -57,16 +57,16 @@ El menú del panel se adapta al rol. Si alguien abre por URL una sección que no
 ```bash
 # 1. Clonar e instalar dependencias
 git clone https://github.com/YosefDC6/Tiendatech.git
-cd Tiendatech/tiendatech
+cd Tiendatech/kozmok
 npm install
 
 # 2. Crear la base de datos (en psql)
-#    CREATE DATABASE tiendatech;
+#    CREATE DATABASE kozmok;
 
 # 3. Ajustar usuario y contraseña de PostgreSQL en db.config.js
 
 # 4. Cargar esquema, triggers y datos de ejemplo (se puede volver a ejecutar)
-psql -U postgres -d tiendatech -f db/database.sql
+psql -U postgres -d kozmok -f db/database.sql
 
 # 5. Iniciar el servidor
 npm start        # o: npm run dev  (con nodemon)
@@ -81,11 +81,11 @@ Si al arrancar la consola muestra `Base de datos: conectada … 20 productos`, t
 
 | Rol | Correo | Contraseña |
 |---|---|---|
-| Admin | admin@tiendatech.mx | `Admin#TT2026` |
-| Vendedor | laura.vendedor@tiendatech.mx | `Vendedor#TT2026` |
-| Soporte | ruben.soporte@tiendatech.mx | `Soporte#TT2026` |
-| Almacén | paola.almacen@tiendatech.mx | `Almacen#TT2026` |
-| Cliente | mariana@correo.com | `Demo#TT2026` |
+| Admin | admin@kozmok.mx | `Admin#KZ2026` |
+| Vendedor | laura.vendedor@kozmok.mx | `Vendedor#KZ2026` |
+| Soporte | ruben.soporte@kozmok.mx | `Soporte#KZ2026` |
+| Almacén | paola.almacen@kozmok.mx | `Almacen#KZ2026` |
+| Cliente | mariana@correo.com | `Demo#KZ2026` |
 
 ---
 
@@ -95,7 +95,7 @@ Si al arrancar la consola muestra `Base de datos: conectada … 20 productos`, t
 Tiendatech/
 ├── README.md
 ├── Manual_usuario.txt        # manual completo, sección por sección
-└── tiendatech/
+└── kozmok/
     ├── server.js             # API REST (Express): /api/...
     ├── db.config.js          # conexión a PostgreSQL
     ├── db/database.sql       # esquema + triggers + datos de ejemplo
@@ -114,4 +114,4 @@ Tiendatech/
 
 - Es una **demo educativa**: no hay pasarela de pago ni se hacen cargos reales. Nunca se guarda el número completo de la tarjeta ni el CVV.
 - Las contraseñas se guardan con **bcrypt**. Los tokens de sesión están simplificados (Base64); para producción convendría usar JWT con expiración y variables de entorno.
-- Los detalles de cada pantalla están en [`Manual_usuario.txt`](Manual_usuario.txt), y en [`tiendatech/README.md`](tiendatech/README.md) hay notas técnicas adicionales.
+- Los detalles de cada pantalla están en [`Manual_usuario.txt`](Manual_usuario.txt), y en [`kozmok/README.md`](kozmok/README.md) hay notas técnicas adicionales.

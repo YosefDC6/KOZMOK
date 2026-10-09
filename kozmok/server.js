@@ -128,12 +128,12 @@ function nivelRecompensas(valorTotal = 0, totalCompras = 0) {
     return { indice: idx, actual, siguiente };
 }
 
-// Código único de socio para el QR de la tarjeta virtual (formato TTMX-XXXXXX).
+// Código único de socio para el QR de la tarjeta virtual (formato KZMX-XXXXXX).
 function generarCodigoSocio() {
     const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/O/0/1 para que sea legible
     let s = '';
     for (let i = 0; i < 6; i++) s += abc[Math.floor(Math.random() * abc.length)];
-    return 'TTMX-' + s;
+    return 'KZMX-' + s;
 }
 
 // Detecta la marca de una tarjeta por su número (solo para guardar la marca;
@@ -836,7 +836,7 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
         puntos_canjeados: canjeados,
         emisor: {
             nombre: 'Kozmok S.A. de C.V.',
-            rfc: 'TTE250101XY9',
+            rfc: 'KOZ250101XY9',
             domicilio: 'Av. Tecnológico 1200, Col. Centro, Aguascalientes, Ags.',
             banco: 'STP',
             clabe: '646180' + String(1000000000 + Number(pedido.id) * 131).slice(0, 12),

@@ -3,7 +3,7 @@
 module.exports = {
     user: 'postgres',
     host: 'localhost',
-    database: 'tiendatech',
+    database: 'kozmok',
     password: '12345678',   // <-- cambia esto por tu contraseña
     port: 5432,
 };

@@ -186,14 +186,14 @@ function renderDestacados() {
 // ---- Vistos recientemente (localStorage) ----
 function guardarVisto(id) {
     try {
-        let v = JSON.parse(localStorage.getItem('tt_vistos') || '[]');
+        let v = JSON.parse(localStorage.getItem('kz_vistos') || '[]');
         v = [id, ...v.filter((x) => x !== id)].slice(0, 8);
-        localStorage.setItem('tt_vistos', JSON.stringify(v));
+        localStorage.setItem('kz_vistos', JSON.stringify(v));
     } catch { /* modo privado, etc. */ }
 }
 function renderRecientes() {
     let ids = [];
-    try { ids = JSON.parse(localStorage.getItem('tt_vistos') || '[]'); } catch { return; }
+    try { ids = JSON.parse(localStorage.getItem('kz_vistos') || '[]'); } catch { return; }
     const prods = ids.map((id) => TODOS_LOS_PRODUCTOS.find((p) => p.id === id)).filter(Boolean);
     if (prods.length < 2) return;
     document.getElementById('recientes').hidden = false;

@@ -25,23 +25,23 @@ Requisitos
    - PostgreSQL 16 o superior (se probo con 18).
 
 Configuracion de la base
-   - El archivo  tiendatech/db.config.js  tiene usuario, host, base, password
+   - El archivo  kozmok/db.config.js  tiene usuario, host, base, password
      y puerto. Ajustalo a tu instalacion local. Por defecto:
-        user: postgres   host: localhost   database: tiendatech
+        user: postgres   host: localhost   database: kozmok
         password: 12345678   port: 5432
 
 Crear y cargar la base (todo en un solo archivo, se puede repetir)
-   1. Crear la base:              CREATE DATABASE tiendatech;
-   2. Cargar esquema + datos:     psql -U postgres -d tiendatech -f db/database.sql
+   1. Crear la base:              CREATE DATABASE kozmok;
+   2. Cargar esquema + datos:     psql -U postgres -d kozmok -f db/database.sql
    El archivo db/database.sql borra todo y lo vuelve a crear: esquema, triggers,
    datos de ejemplo y contrasenas ya encriptadas. Es seguro re-ejecutarlo.
 
 Levantar el servidor
-   - Dentro de la carpeta  tiendatech/  ejecutar:   npm install   (una vez)
+   - Dentro de la carpeta  kozmok/  ejecutar:   npm install   (una vez)
    - Luego:   npm start
    - Al arrancar, la consola muestra DOS lineas:
         Kozmok escuchando en http://localhost:3000
-        Base de datos: conectada (tiendatech@localhost:5432) - 20 productos
+        Base de datos: conectada (kozmok@localhost:5432) - 20 productos
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
      PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
      cargar db/database.sql.
@@ -84,14 +84,14 @@ Cuentas de prueba (tras cargar db/database.sql)
    +----------+------------------------------+-----------------+----------------------------------+
    | Rol      | Correo                       | Contraseña      | Notas                            |
    +----------+------------------------------+-----------------+----------------------------------+
-   | Admin    | admin@tiendatech.mx          | Admin#TT2026    | acceso total al panel            |
-   | Vendedor | laura.vendedor@tiendatech.mx | Vendedor#TT2026 | todo menos Cuentas y equipo      |
-   | Soporte  | ruben.soporte@tiendatech.mx  | Soporte#TT2026  | CRM y soporte                    |
-   | Almacen  | paola.almacen@tiendatech.mx  | Almacen#TT2026  | pedidos, inventario, proveedores |
-   | Cliente  | mariana@correo.com           | Demo#TT2026     | nivel Oro, con pedidos y puntos  |
-   | Cliente  | diego@correo.com             | Demo#TT2026     | nivel Oro                        |
-   | Cliente  | sofia@correo.com             | Demo#TT2026     | prospecto, sin compras           |
-   | Cliente  | carlos@correo.com            | Demo#TT2026     | inactivo                         |
+   | Admin    | admin@kozmok.mx          | Admin#KZ2026    | acceso total al panel            |
+   | Vendedor | laura.vendedor@kozmok.mx | Vendedor#KZ2026 | todo menos Cuentas y equipo      |
+   | Soporte  | ruben.soporte@kozmok.mx  | Soporte#KZ2026  | CRM y soporte                    |
+   | Almacen  | paola.almacen@kozmok.mx  | Almacen#KZ2026  | pedidos, inventario, proveedores |
+   | Cliente  | mariana@correo.com           | Demo#KZ2026     | nivel Oro, con pedidos y puntos  |
+   | Cliente  | diego@correo.com             | Demo#KZ2026     | nivel Oro                        |
+   | Cliente  | sofia@correo.com             | Demo#KZ2026     | prospecto, sin compras           |
+   | Cliente  | carlos@correo.com            | Demo#KZ2026     | inactivo                         |
    +----------+------------------------------+-----------------+----------------------------------+
 
    Nota: ya no son "admin123"/"demo123" a proposito. Esos patrones estan
@@ -662,7 +662,7 @@ Cada cliente tiene una tarjeta virtual en su Resumen (perfil.html) con:
    - un numero de tarjeta (derivado de su ID, siempre el mismo),
    - su nivel del Club con insignia,
    - titular, socio desde, puntos y total de compras,
-   - un CODIGO QR y su codigo de socio en texto (formato  TTMX-XXXXXX ).
+   - un CODIGO QR y su codigo de socio en texto (formato  KZMX-XXXXXX ).
 
 Codigo de socio
    - Se genera automaticamente al registrarse. Cuentas antiguas reciben uno
@@ -767,7 +767,7 @@ P: Inicio sesion (o creo cuenta) y me regresa al login una y otra vez.
 R: Era un error ya corregido: el token de admin viejo se enviaba tambien en
    la tienda. Solucion para el usuario: recarga dura del navegador
    (Ctrl+Shift+R). Si persiste, en DevTools -> Application -> Local Storage,
-   borra la clave "tt_admin_token".
+   borra la clave "kz_admin_token".
 
 P: Las imagenes de producto no cargan / salen errores en la consola del
    navegador.
@@ -796,7 +796,7 @@ R: Se agrega en 3 lugares: el CHECK de la tabla usuarios (db/database.sql),
    database.sql y reinicia.
 
 P: Como reinicio los datos de ejemplo?
-R: Vuelve a ejecutar  psql -U postgres -d tiendatech -f db/database.sql .
+R: Vuelve a ejecutar  psql -U postgres -d kozmok -f db/database.sql .
    Borra y recrea todo. (Cierra antes cualquier conexion abierta a la base,
    como pgAdmin, o te dira que esta en uso.)
 
@@ -806,7 +806,7 @@ R: Vuelve a ejecutar  psql -U postgres -d tiendatech -f db/database.sql .
 ===============================================================================
 
 Estructura
-   tiendatech/
+   kozmok/
      server.js            API Express (todas las rutas /api/...)
      db.config.js         datos de conexion a PostgreSQL
      db/database.sql      esquema + triggers + datos, re-ejecutable
@@ -839,9 +839,9 @@ Tablas principales
    ticket_mensajes, garantias
 
 Autenticacion
-   - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage tt_token).
+   - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
    - Interno: token base64  usuario:<id>:<timestamp>   (localStorage
-     tt_admin_token). El panel valida la sesion contra GET /api/admin/whoami.
+     kz_admin_token). El panel valida la sesion contra GET /api/admin/whoami.
    - Middleware: requireCliente + mismoCliente en /api/clientes/:id ;
      requireUsuario (+ requireAdmin) en /api/admin/... .
 

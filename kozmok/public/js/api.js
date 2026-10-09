@@ -11,8 +11,8 @@ async function api(path, options = {}) {
     // de cuenta rebotaría al login una y otra vez.
     const esPanel = location.pathname.startsWith('/admin/');
     const token = esPanel
-        ? localStorage.getItem('tt_admin_token')
-        : localStorage.getItem('tt_token');
+        ? localStorage.getItem('kz_admin_token')
+        : localStorage.getItem('kz_token');
     const res = await fetch(API_BASE + path, {
         headers: {
             'Content-Type': 'application/json',
@@ -25,8 +25,8 @@ async function api(path, options = {}) {
     if (!res.ok) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
         if (res.status === 401 && location.pathname.startsWith('/admin/') && !location.pathname.endsWith('login.html')) {
-            localStorage.removeItem('tt_usuario');
-            localStorage.removeItem('tt_admin_token');
+            localStorage.removeItem('kz_usuario');
+            localStorage.removeItem('kz_admin_token');
             location.href = '/admin/login.html';
         }
         throw new Error(data.message || data.error || 'Error en la solicitud');
@@ -36,26 +36,26 @@ async function api(path, options = {}) {
 
 const Sesion = {
     guardarCliente(cliente, token) {
-        localStorage.setItem('tt_cliente', JSON.stringify(cliente));
-        localStorage.setItem('tt_token', token);
+        localStorage.setItem('kz_cliente', JSON.stringify(cliente));
+        localStorage.setItem('kz_token', token);
     },
     cliente() {
-        try { return JSON.parse(localStorage.getItem('tt_cliente')); } catch { return null; }
+        try { return JSON.parse(localStorage.getItem('kz_cliente')); } catch { return null; }
     },
     guardarUsuario(usuario, token) {
-        localStorage.setItem('tt_usuario', JSON.stringify(usuario));
-        localStorage.setItem('tt_admin_token', token);
+        localStorage.setItem('kz_usuario', JSON.stringify(usuario));
+        localStorage.setItem('kz_admin_token', token);
     },
     usuario() {
-        try { return JSON.parse(localStorage.getItem('tt_usuario')); } catch { return null; }
+        try { return JSON.parse(localStorage.getItem('kz_usuario')); } catch { return null; }
     },
     cerrarSesionCliente() {
-        localStorage.removeItem('tt_cliente');
-        localStorage.removeItem('tt_token');
+        localStorage.removeItem('kz_cliente');
+        localStorage.removeItem('kz_token');
     },
     cerrarSesionUsuario() {
-        localStorage.removeItem('tt_usuario');
-        localStorage.removeItem('tt_admin_token');
+        localStorage.removeItem('kz_usuario');
+        localStorage.removeItem('kz_admin_token');
     }
 };
 

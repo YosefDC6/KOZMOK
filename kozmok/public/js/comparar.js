@@ -2,7 +2,7 @@
 // Bandeja para comparar productos (máx. 4). Guarda ids en localStorage y
 // muestra una barra fija abajo. Requiere api.js e icons.js.
 (function () {
-    const CLAVE = 'tt_comparar';
+    const CLAVE = 'kz_comparar';
     const MAX = 4;
 
     function leer() {

@@ -13,7 +13,7 @@ autenticación con roles.
 ## Estructura
 
 ```
-tiendatech/
+kozmok/
 ├── server.js              # API REST (Express)
 ├── db.config.js           # credenciales de conexión a PostgreSQL
 ├── db/
@@ -54,13 +54,13 @@ npm install
 
 1. Crea la base de datos:
    ```sql
-   CREATE DATABASE tiendatech;
+   CREATE DATABASE kozmok;
    ```
 2. Edita `db.config.js` con tu usuario/contraseña de PostgreSQL.
 3. Carga **todo** con un solo archivo (esquema + triggers + datos +
    contraseñas hasheadas con bcrypt vía `pgcrypto`):
    ```bash
-   psql -U postgres -d tiendatech -f db/database.sql
+   psql -U postgres -d kozmok -f db/database.sql
    ```
    No hace falta ningún script de Node aparte. El archivo se puede
    volver a ejecutar: borra todo y lo recrea desde cero.
@@ -69,14 +69,14 @@ npm install
 
    | Rol       | Correo                         | Contraseña       |
    |-----------|--------------------------------|------------------|
-   | Admin     | admin@tiendatech.mx            | Admin#TT2026     |
-   | Vendedor  | laura.vendedor@tiendatech.mx   | Vendedor#TT2026  |
-   | Soporte   | ruben.soporte@tiendatech.mx    | Soporte#TT2026   |
-   | Almacén   | paola.almacen@tiendatech.mx    | Almacen#TT2026   |
-   | Cliente   | mariana@correo.com             | Demo#TT2026      |
-   | Cliente   | diego@correo.com               | Demo#TT2026      |
-   | Cliente   | sofia@correo.com               | Demo#TT2026      |
-   | Cliente   | carlos@correo.com              | Demo#TT2026      |
+   | Admin     | admin@kozmok.mx            | Admin#KZ2026     |
+   | Vendedor  | laura.vendedor@kozmok.mx   | Vendedor#KZ2026  |
+   | Soporte   | ruben.soporte@kozmok.mx    | Soporte#KZ2026   |
+   | Almacén   | paola.almacen@kozmok.mx    | Almacen#KZ2026   |
+   | Cliente   | mariana@correo.com             | Demo#KZ2026      |
+   | Cliente   | diego@correo.com               | Demo#KZ2026      |
+   | Cliente   | sofia@correo.com               | Demo#KZ2026      |
+   | Cliente   | carlos@correo.com              | Demo#KZ2026      |
 
    Nota: se usan contraseñas con mayúscula/símbolo (no "admin123" tal
    cual) porque los navegadores muestran un aviso nativo de "contraseña
