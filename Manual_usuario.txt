@@ -1,7 +1,7 @@
 ===============================================================================
  KOZMOK CRM  -  MANUAL DE USUARIO
- Tienda de electronica / computo con tienda en linea, CRM y chatbot.
- Ultima actualizacion: septiembre 2026
+ Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP y chatbot.
+ Ultima actualizacion: octubre 2026
 ===============================================================================
 
 Este documento explica, seccion por seccion, que hace cada parte del sistema
@@ -66,11 +66,14 @@ CLIENTE
 
 ROLES INTERNOS (entran por /admin/login.html; el menu se adapta al rol)
    - ADMINISTRADOR : acceso total, incluida la gestion de cuentas y equipo.
-   - VENDEDOR      : todo el CRM y la tienda; NO gestiona cuentas.
+   - VENDEDOR      : todo el CRM, el SCM y el ERP (captura ordenes de
+                     clientes); NO gestiona cuentas ni ve Nivel ERP.
    - SOPORTE       : Dashboard, Clientes, Interacciones, Evaluaciones,
                      Soporte, Garantias, Reportes, Mi actividad, Config.
    - ALMACEN       : Dashboard, Pedidos, Inventario, Garantias, Analitica
-                     chatbot, Mi actividad, Configuracion.
+                     chatbot, bloque SCM y consulta del ERP (Dashboard,
+                     Ordenes de clientes, Reportes), Mi actividad,
+                     Configuracion.
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda al Dashboard.
 
@@ -326,19 +329,22 @@ Seguridad de sesion
  4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/admin/login.html)
 ===============================================================================
 
-La barra lateral esta agrupada en tres bloques: CRM, SCM y CUENTA. El
-bloque CRM cubre clientes, ventas y relacion con el cliente; el bloque
-SCM cubre la cadena de suministro (inventario, proveedores, logistica).
+La barra lateral esta agrupada en cuatro bloques: CRM, SCM, ERP y CUENTA.
+El bloque CRM cubre clientes, ventas y relacion con el cliente; el bloque
+SCM cubre la cadena de suministro (inventario, proveedores, logistica); el
+bloque ERP une a los dos: ordenes de clientes capturadas por el equipo,
+nivel de implementacion y reportes empresariales (ver 4.14).
 
-CRM y SCM son desplegables: el titulo del bloque es un enlace directo a
+CRM, SCM y ERP son desplegables: el titulo del bloque es un enlace directo a
 su pantalla principal y la flechita junto al titulo solo muestra u oculta
 sus opciones sin salir de donde estas. El bloque del modulo en el que
 estas se abre solo; el otro queda cerrado, para que la lista no se sienta
 larga. El bloque CUENTA no es desplegable, siempre esta a la vista.
 
-Ambos bloques empiezan con su propio "Dashboard" (el de CRM en
+Cada bloque empieza con su propio "Dashboard" (el de CRM en
 admin/dashboard.html, el de SCM en admin/scm.html -- este ultimo tambien
-se le llama "Panel SCM" en su encabezado). Los dos tienen arriba un menu
+se le llama "Panel SCM" en su encabezado -- y el de ERP en admin/erp.html).
+Los tres tienen arriba un menu
 de accesos directos con iconos grandes a cada seccion de su modulo
 (excepto a si mismos), para navegar sin tener que usar la barra lateral.
 
@@ -582,7 +588,124 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Etapas del CRM: recordatorio del embudo Prospecto/Activo/Frecuente/
      Inactivo.
    - Club de puntos: recordatorio de las reglas.
+   - Panel por rol (menu dinamico): una columna por rol con las secciones
+     que ve en el menu. Se arma con los mismos permisos que usa el panel,
+     asi que siempre coincide con lo que de verdad ve cada quien.
    - Acerca de: version y stack.
+
+4.14 MODULO ERP  (Etapa 3)  [ERP]
+   Objetivo: integrar la informacion del CRM y del SCM para gestionar las
+   operaciones del negocio, crear ordenes de clientes desde el panel,
+   unificar la informacion y generar indicadores empresariales.
+
+   Hay dos tipos de ordenes en el sistema y NO se repiten:
+     * Ordenes de CLIENTES (ERP): lo que los clientes le compran a la
+       empresa. Se capturan aqui eligiendo un cliente del CRM y productos
+       del inventario del SCM. Al confirmarse se reduce el stock, se
+       registra el movimiento de inventario y se guarda el historial.
+     * Ordenes a PROVEEDORES (SCM): lo que la empresa le compra a sus
+       proveedores para reponer inventario (ver 4.9d). Ya existian desde la
+       Etapa 2; se mantienen igual y sus datos alimentan los reportes ERP.
+
+   4.14a DASHBOARD ERP  (admin/erp.html)
+      - Accesos directos con iconos grandes al resto del modulo.
+      - Indicadores: clientes activos, ordenes de clientes (y cuantas se
+        capturaron en el ERP), ventas totales cobradas, productos vendidos
+        y productos en stock critico.
+      - Grafica "Ventas (ultimos 6 meses)": barras apiladas por canal
+        (tienda en linea y ordenes ERP), solo ordenes cobradas.
+      - "Productos mas vendidos" (barras horizontales).
+      - "Ultimas ordenes de clientes" (clic abre el detalle).
+      - "Integracion entre modulos": CRM <-> ERP <-> SCM con un dato real de
+        cada uno; cada tarjeta lleva a su pantalla si tu rol la puede ver.
+      - Boton "Nueva orden" (solo roles que pueden capturar).
+
+   4.14b ORDENES DE CLIENTES  (admin/ordenes-erp.html)
+      - Listado de TODAS las ordenes de clientes: las capturadas en el ERP
+        (pildora verde "ERP", con el nombre de quien la capturo) y las de
+        la tienda en linea ("En linea").
+      - Busqueda por folio, nombre o correo; filtros por canal y estado.
+      - Tarjetas: ordenes del filtro, capturadas en ERP, importe cobrado y
+        ordenes con pago pendiente.
+      - Lupa / clic en la fila: detalle con productos, totales y notas, y
+        botones "Gestionar envio y pago" (abre Pedidos), "Ficha del
+        cliente" y "Comprobante".
+      - "Exportar CSV": descarga el listado tal como esta filtrado.
+      - Enlace directo:  /admin/ordenes-erp.html?open=<id>
+
+   4.14c NUEVA ORDEN  (admin/orden-nueva.html)  -- asistente de 3 pasos
+      Paso 1 - Cliente (CRM)
+         - Buscar por nombre, correo o empresa y elegirlo; se muestra la
+           tarjeta "Cliente seleccionado" (empresa, correo, telefono, etapa
+           CRM y numero de compras).
+         - "Nuevo cliente (CRM)": alta rapida (nombre, correo, telefono,
+           empresa, ciudad). Queda en el CRM como Prospecto con una
+           contrasena temporal para la tienda (se muestra en el aviso).
+         - Desde la ficha de un cliente (4.3) el boton "Nueva orden (ERP)"
+           abre el asistente con ese cliente ya elegido.
+      Paso 2 - Productos (SCM)
+         - Catalogo activo con stock real y precio. Con [-] cantidad [+] se
+           agrega a la orden; nunca deja pedir mas que el stock. Los
+           agotados no se pueden agregar.
+         - A la derecha, la mini-orden con el subtotal en vivo.
+      Paso 3 - Confirmar
+         - Resumen: producto, cantidad, precio unitario, subtotal, IVA 16%,
+           envio ($199, gratis desde $10,000) y total.
+         - Forma de pago:
+             * Efectivo / Tarjeta en mostrador -> la orden queda Confirmada
+               y Pagada; el cliente gana sus puntos al instante.
+             * Transferencia bancaria -> queda con Pago pendiente y una
+               referencia ERP-XXXXXXXXXX; los puntos se acreditan cuando se
+               registra el pago en Pedidos (4.8).
+         - Direccion de envio (se precarga la del cliente) y notas.
+         - "Confirmar orden".
+      Procesamiento
+         - Pantalla "Procesando orden..." con barra de avance y las etapas:
+           Creando orden -> Validando stock -> Actualizando inventario y
+           registrando movimientos -> Guardando historial -> Finalizando.
+         - Todo ocurre en UNA sola transaccion en el servidor: se crea la
+           orden con folio OR-001, OR-002..., se valida y descuenta el stock,
+           se registra un movimiento de inventario por producto ("Orden ERP
+           OR-00x"), si algun producto queda en stock critico se genera la
+           orden de compra automatica (4.9d) y se actualizan las metricas
+           del cliente (compras, etapa: Prospecto -> Activo, puntos).
+         - Si algo falla (por ejemplo, otra venta se llevo el stock), sale
+           el motivo en rojo y NO se guarda nada; "Volver a productos"
+           ajusta las cantidades al stock actual.
+      Operacion exitosa
+         - "Orden registrada con exito!" con folio, cliente, total y fecha,
+           la lista de lo que hizo el sistema y los botones "Ver orden",
+           "Ir a ordenes" y "Registrar otra orden".
+
+   4.14d NIVEL ERP  (admin/nivel-erp.html)  -- solo ADMIN
+      - Nivel de implementacion: Basico -> Integrado -> Automatizado ->
+        Optimizado, calculado de datos reales (no se marca a mano).
+      - Checklist de avance (6 puntos):
+          1. Clientes integrados (CRM): hay clientes con compras o
+             interacciones.
+          2. Productos e inventario (SCM): hay productos con proveedor.
+          3. Ordenes de clientes funcionando (ERP): ya se capturo al menos
+             una orden en el ERP.
+          4. Movimientos de inventario automaticos: hay movimientos
+             generados por ordenes ERP.
+          5. Reportes empresariales completos: hay ventas cobradas de los
+             dos canales (tienda en linea y ERP).
+          6. Procesos optimizados: el reabasto automatico ya genero ordenes
+             de compra y hay ordenes ERP entregadas.
+        0-2 puntos = Basico, 3-4 = Integrado, 5 = Automatizado,
+        6 = Optimizado. Cada punto lleva a la pantalla donde cumplirlo.
+      - Con los datos de ejemplo arranca en "Integrado"; al capturar la
+        primera orden en el ERP sube solo.
+
+   4.14e REPORTES ERP  (admin/reportes-erp.html)
+      - Rango de fechas ("Del ... al ...") o "Todo el historico".
+      - KPIs: ventas totales y ticket promedio, ordenes de clientes (ERP /
+        en linea), productos vendidos, clientes activos y monto por cobrar.
+      - Graficas: ventas por mes (6 meses, por canal), productos mas
+        vendidos, inventario disponible por rotacion (alta / media / baja,
+        segun lo vendido en 90 dias contra el stock) y ordenes por estado.
+      - Resumen del nivel ERP y bloque de integracion entre modulos.
+      - "Exportar CSV": todos los indicadores del periodo.
 
 
 ===============================================================================
@@ -592,25 +715,30 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 
 VENDEDOR
-   Ve todo menos "Cuentas y equipo". Flujo tipico:
+   Ve todo menos "Cuentas y equipo" y "Nivel ERP". En el ERP ve Dashboard,
+   Ordenes de clientes y Reportes, y SI puede capturar ordenes nuevas.
+   Flujo tipico:
    1. Dashboard: clientes en riesgo y tickets activos.
    2. Clientes: buscar al cliente y abrir su ficha.
    3. Registrar la interaccion (llamada/correo/reunion) con lo acordado.
    4. Atender tickets en Soporte si hay una queja formal.
    5. Actualizar el estado del pedido en Pedidos cuando avance el envio.
    6. Ajustar stock en Inventario si se recibe mercancia.
+   7. Capturar en ERP -> "Nueva orden" las ventas por telefono o mostrador.
 
 SOPORTE
    Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Reportes,
-   Mi actividad, Configuracion. No ve Pedidos, Inventario ni Cuentas.
+   Mi actividad, Configuracion. No ve Pedidos, Inventario, ERP ni Cuentas.
    Flujo tipico: revisar la cola de tickets, responder al cliente, cambiar
    estado/prioridad, y dejar registrada la interaccion en la ficha.
 
 ALMACEN
    Ve: Dashboard (CRM), Pedidos, Analitica chatbot -- y en el bloque SCM:
    Dashboard (Panel SCM), Inventario, Proveedores, Movimientos, Ordenes de
-   compra, Logistica, Reportes -- ademas de Mi actividad y Configuracion. No ve
-   Clientes, Interacciones, Soporte ni Cuentas.
+   compra, Logistica, Reportes -- en el bloque ERP: Dashboard, Ordenes de
+   clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
+   actividad y Configuracion. No ve Clientes, Interacciones, Soporte ni
+   Cuentas.
    Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->
    entregado), vigilar el stock critico, generar una orden de compra al
    proveedor cuando haga falta, marcarla recibida cuando llegue (el stock
@@ -618,7 +746,12 @@ ALMACEN
    las metricas generales.
 
 ADMINISTRADOR
-   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles).
+   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles) y
+   "Nivel ERP".
+
+El permiso para capturar ordenes en el ERP se llama "orden-nueva" en
+PERMISOS (admin-layout.js) y el servidor lo valida aparte con
+ROLES_ORDEN_ERP (server.js): hoy son admin y vendedor.
 
 
 ===============================================================================
@@ -829,11 +962,14 @@ Estructura
                movimientos.html ordenes-compra.html scm.html chatbot.html
                garantias.html recibo.html mi-actividad.html usuarios.html
                configuracion.html
-               js/admin-layout.js  interaccion-sim.js
+               erp.html ordenes-erp.html orden-nueva.html nivel-erp.html
+               reportes-erp.html                       (modulo ERP)
+               js/admin-layout.js  interaccion-sim.js  erp.js
 
 Tablas principales
    usuarios, proveedores, categorias, productos, clientes, interacciones,
-   metricas_clientes, carrito_items, pedidos, pedido_items,
+   metricas_clientes, carrito_items, pedidos (columna origen: 'en_linea' o
+   'erp'; en las ERP vendedor_id es quien la capturo), pedido_items,
    movimientos_inventario, ordenes_compra, chatbot_consultas, direcciones,
    metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
    ticket_mensajes, garantias
@@ -856,12 +992,25 @@ Endpoints utiles
    GET  /api/socio/:codigo                verificacion publica de socio (QR)
    GET  /api/admin/dashboard              KPIs del panel
    GET  /api/admin/reportes?desde=&hasta= reportes por rango de fechas
+   GET  /api/admin/erp/resumen            KPIs del Dashboard ERP
+   GET  /api/admin/erp/ordenes            ordenes de clientes (busqueda,
+                                          estado, origen)
+   GET  /api/admin/erp/clientes           clientes del CRM para el paso 1
+   POST /api/admin/erp/clientes           alta rapida de cliente (admin/vendedor)
+   GET  /api/admin/erp/productos          productos del SCM para el paso 2
+   POST /api/admin/erp/ordenes            crear orden ERP (admin/vendedor)
+   GET  /api/admin/erp/nivel              nivel de implementacion ERP
+   GET  /api/admin/erp/reportes?desde=&hasta=  reportes empresariales
 
 Reglas de negocio embebidas
    - IVA 16%. Envio $199, gratis desde $10,000 de subtotal.
    - Club: 100 puntos = $10; ganar = floor(subtotal/20 * multiplicador).
    - Etapa "Activo" automatica al confirmarse la primera compra.
    - Folio de ticket: TK-(1000 + id).
+   - Folio de orden ERP: OR-001, OR-002... (secuencia folio_erp_seq).
+   - Orden ERP: stock validado y descontado, movimiento de inventario por
+     producto y orden de compra automatica si queda en stock critico, todo
+     en una transaccion.
 
 ===============================================================================
  Fin del manual.

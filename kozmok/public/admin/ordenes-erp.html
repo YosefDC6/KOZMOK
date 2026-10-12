@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Órdenes de clientes · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
+
+        <div class="filters-bar">
+            <input type="search" id="f-busqueda" placeholder="Buscar folio o cliente…" style="min-width:240px" />
+            <select id="f-origen">
+                <option value="Todos">Todos los canales</option>
+                <option value="erp">Capturadas en ERP</option>
+                <option value="en_linea">Tienda en línea</option>
+            </select>
+            <select id="f-estado">
+                <option value="Todos">Todos los estados</option>
+                <option value="pendiente">Pendiente</option><option value="confirmado">Confirmado</option>
+                <option value="procesando">Procesando</option><option value="enviado">Enviado</option>
+                <option value="entregado">Entregado</option><option value="cancelado">Cancelado</option>
+            </select>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Folio</th><th>Fecha</th><th>Cliente</th><th>Canal</th><th>Piezas</th><th>Total</th><th>Estado</th><th>Pago</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="9">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-orden">
+    <div class="modal" style="max-width:620px" id="modal-orden-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/erp.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('ordenes-erp');
+const USR = Sesion.usuario();
+const ROL = (USR && USR.rol) || 'vendedor';
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Órdenes de clientes', 'Consulta de las órdenes registradas: las capturadas por el equipo en el ERP y las de la tienda en línea.',
+    '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +
+    (puedeVer(ROL, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
+);
+
+let ORDENES = [];
+let timer = null;
+
+function exportar() {
+    descargarCSV('ordenes-clientes', ORDENES.map((o) => ({
+        folio: o.numero_orden, fecha: (o.fecha_pedido || '').slice(0, 10), cliente: o.cliente_nombre, correo: o.cliente_correo,
+        canal: o.origen === 'erp' ? 'ERP' : 'En línea', registrado_por: o.registrado_por || '', piezas: o.piezas,
+        total: o.total, estado: o.estado, pago: o.pago_estado, metodo_pago: o.metodo_pago || '',
+    })));
+}
+
+async function cargar() {
+    const p = new URLSearchParams();
+    const b = document.getElementById('f-busqueda').value.trim();
+    if (b) p.set('busqueda', b);
+    p.set('origen', document.getElementById('f-origen').value);
+    p.set('estado', document.getElementById('f-estado').value);
+    ORDENES = await api('/admin/erp/ordenes?' + p.toString());
+
+    const activas = ORDENES.filter((o) => o.estado !== 'cancelado');
+    const cobradas = activas.filter((o) => o.pago_estado === 'pagado');
+    document.getElementById('stat-grid').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Órdenes (filtro actual)</div><div class="stat-value">${ORDENES.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Capturadas en ERP</div><div class="stat-value" style="color:var(--accent)">${ORDENES.filter((o) => o.origen === 'erp').length}</div></div>
+        <div class="stat-card"><div class="stat-label">Importe cobrado</div><div class="stat-value" style="font-size:1.4rem">${formatoMoneda(cobradas.reduce((s, o) => s + Number(o.total), 0))}</div></div>
+        <div class="stat-card"><div class="stat-label">Pago pendiente</div><div class="stat-value" style="color:var(--warning)">${activas.filter((o) => o.pago_estado === 'pendiente').length}</div></div>
+    `;
+
+    document.getElementById('tabla').innerHTML = ORDENES.map((o) => `
+        <tr onclick="verOrden(${o.id})" style="cursor:pointer">
+            <td class="mono">${o.numero_orden}</td>
+            <td>${formatoFecha(o.fecha_pedido)}</td>
+            <td>${o.cliente_nombre}<div style="color:var(--text-muted);font-size:.78rem">${o.cliente_empresa || o.cliente_correo}</div></td>
+            <td>${origenPill(o.origen)}${o.registrado_por ? `<div style="color:var(--text-muted);font-size:.72rem;margin-top:3px">${o.registrado_por}</div>` : ''}</td>
+            <td class="mono">${o.piezas}</td>
+            <td class="mono">${formatoMoneda(o.total)}</td>
+            <td><span class="estado-pill e-${o.estado}">${o.estado}</span></td>
+            <td>${pagoPill(o.pago_estado)}</td>
+            <td><button class="btn btn-outline btn-sm" title="Ver orden" onclick="event.stopPropagation();verOrden(${o.id})">${icon('search', 15)}</button></td>
+        </tr>`).join('') || '<tr><td colspan="9">No hay órdenes con ese filtro.</td></tr>';
+}
+
+async function verOrden(id) {
+    try {
+        const d = await api(`/pedidos/${id}/detalle`);
+        const o = ORDENES.find((x) => x.id === id) || {};
+        document.getElementById('modal-orden-body').innerHTML = `
+            <button class="modal-close" onclick="document.getElementById('modal-orden').classList.remove('open')">${icon('x', 18)}</button>
+            <h3 style="margin-bottom:2px">${d.numero_orden} ${origenPill(d.origen)}</h3>
+            <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${formatoFecha(d.fecha_pedido)} · ${o.cliente_nombre || ''}${o.registrado_por ? ' · capturó ' + o.registrado_por : ''}</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+                <span class="estado-pill e-${d.estado}">${d.estado}</span> ${pagoPill(d.pago_estado)}
+                <span style="font-size:.8rem;color:var(--text-muted)">${d.metodo_pago || ''}${d.pago_referencia ? ' · ref. ' + d.pago_referencia : ''}</span>
+            </div>
+            <div class="table-wrap" style="margin-bottom:14px">
+                <table>
+                    <thead><tr><th>Producto</th><th>Cant.</th><th>P. unit.</th><th>Subtotal</th></tr></thead>
+                    <tbody>${d.items.map((i) => `
+                        <tr><td>${i.nombre}</td><td class="mono">${i.cantidad}</td><td class="mono">${formatoMoneda(i.precio_unitario)}</td><td class="mono">${formatoMoneda(i.subtotal)}</td></tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:flex;justify-content:space-between"><span>Subtotal</span><span class="mono">${formatoMoneda(d.subtotal)}</span></div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>IVA</span><span class="mono">${formatoMoneda(d.impuestos)}</span></div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio)}</span></div>
+            ${Number(d.descuento) > 0 ? `<div style="display:flex;justify-content:space-between;color:var(--success)"><span>Descuento</span><span class="mono">-${formatoMoneda(d.descuento)}</span></div>` : ''}
+            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.05rem"><span>Total</span><span class="mono">${formatoMoneda(d.total)}</span></div>
+            ${d.notas ? `<p style="margin:12px 0 0;font-size:.85rem;color:var(--text-muted)">Notas: ${d.notas}</p>` : ''}
+            <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+                ${puedeVer(ROL, 'pedidos') ? `<a class="btn btn-primary btn-sm" style="flex:1" href="/admin/pedidos.html?open=${d.id}">Gestionar envío y pago</a>` : ''}
+                ${puedeVer(ROL, 'clientes') && o.cliente_id ? `<a class="btn btn-outline btn-sm" style="flex:1" href="/admin/cliente.html?id=${o.cliente_id}">Ficha del cliente</a>` : ''}
+                <a class="btn btn-outline btn-sm" style="flex:1" href="/admin/recibo.html?id=${d.id}" target="_blank" rel="noopener">Comprobante</a>
+            </div>
+        `;
+        document.getElementById('modal-orden').classList.add('open');
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+document.getElementById('f-busqueda').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(cargar, 250); });
+document.getElementById('f-origen').addEventListener('change', cargar);
+document.getElementById('f-estado').addEventListener('change', cargar);
+cargar().then(() => {
+    const op = new URLSearchParams(location.search).get('open');
+    if (op) verOrden(Number(op));
+}).catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

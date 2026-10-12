@@ -1,6 +1,6 @@
 # Kozmok
 
-Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
+Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), **ERP** (órdenes de clientes e integración de módulos), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
 
 Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front-end en HTML, CSS y JavaScript sin frameworks.
 
@@ -34,6 +34,16 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Logística**: estrategia de reabastecimiento *push* o *pull* por producto.
 - **Dashboard SCM** con nivel de madurez calculado a partir de los datos y **reportes SCM**.
 
+### Panel interno – ERP (Etapa 3)
+Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo lugar.
+- **Dashboard ERP**: clientes activos, órdenes de clientes, ventas totales, ventas de los últimos 6 meses por canal, productos más vendidos, últimas órdenes y el bloque de **integración entre módulos** (CRM ⇄ ERP ⇄ SCM).
+- **Órdenes de clientes**: listado de las órdenes de los dos canales (capturadas en el ERP o hechas en la tienda en línea) con búsqueda, filtros, detalle y exportación a CSV.
+- **Nueva orden** en 3 pasos: *Cliente* (se elige del CRM o se da de alta ahí mismo) → *Productos* (del inventario del SCM, con stock real) → *Confirmar* (resumen con IVA y envío, forma de pago y dirección).
+- **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera una orden de compra automática si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
+- **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos.
+- **Reportes ERP**: KPIs por rango de fechas, ventas por mes, más vendidos, inventario disponible por rotación, órdenes por estado y exportación a CSV.
+- **Panel por rol**: en Configuración se ve qué secciones tiene cada rol (se genera de los mismos permisos del menú).
+
 ---
 
 ## Roles
@@ -41,9 +51,9 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 | Rol | Acceso |
 |---|---|
 | **Administrador** | Acceso total, incluida la gestión de cuentas y del equipo |
-| **Vendedor** | CRM y tienda completos, sin gestión de cuentas |
+| **Vendedor** | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas ni Nivel ERP |
 | **Soporte** | Clientes, interacciones, evaluaciones, soporte, garantías y reportes |
-| **Almacén** | Pedidos, inventario, proveedores, garantías y analítica del chatbot |
+| **Almacén** | Pedidos, inventario, proveedores, garantías, analítica del chatbot y consulta del ERP (sin capturar órdenes) |
 | **Cliente** | Solo la tienda y su propia cuenta |
 
 El menú del panel se adapta al rol. Si alguien abre por URL una sección que no le corresponde, el sistema lo regresa al Dashboard.
@@ -103,10 +113,11 @@ KOZMOK/
         ├── index.html, carrito.html, armar-pc.html, comparar.html, ...
         ├── css/style.css
         ├── js/               # api, layout, chatbot, tema, toasts, etc.
-        └── admin/            # panel CRM y SCM
+        └── admin/            # panel CRM, SCM y ERP (erp.html, ordenes-erp.html,
+                              #   orden-nueva.html, nivel-erp.html, reportes-erp.html)
 ```
 
-**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos, pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas.
+**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas.
 
 ---
 

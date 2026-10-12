@@ -31,6 +31,12 @@ const ADMIN_SECCIONES = [
         { href: '/admin/logistica.html',      key: 'logistica',       ic: 'truck',   label: 'Logística',         desc: 'Estrategia push / pull' },
         { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',    label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },
     ] },
+    { titulo: 'ERP', home: '/admin/erp.html', links: [
+        { href: '/admin/erp.html',          key: 'erp',          ic: 'home',    label: 'Dashboard',           desc: 'Vista integrada del negocio' },
+        { href: '/admin/ordenes-erp.html',  key: 'ordenes-erp',  ic: 'cart',    label: 'Órdenes de clientes', desc: 'Captura y consulta de órdenes' },
+        { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
+        { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
+    ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
         { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'lock',     label: 'Cuentas y equipo' },
@@ -41,12 +47,17 @@ const ADMIN_SECCIONES = [
 // Qué secciones ve cada rol interno. '*' = todas.
 // Para un rol nuevo: agrégalo aquí, en ROLES_INTERNOS (server.js) y en el
 // CHECK de la tabla usuarios (db/database.sql).
+// 'orden-nueva' no aparece en el menú: es el permiso para CAPTURAR órdenes
+// en el ERP (botón "Nueva orden"); el servidor lo valida igual
+// (ROLES_ORDEN_ERP en server.js).
 const PERMISOS = {
     admin:    '*',
-    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'chatbot', 'mi-actividad', 'configuracion'],
+    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'chatbot', 'erp', 'ordenes-erp', 'orden-nueva', 'reportes-erp', 'mi-actividad', 'configuracion'],
     soporte:  ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'mi-actividad', 'configuracion'],
-    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'garantias', 'chatbot', 'mi-actividad', 'configuracion'],
+    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'garantias', 'chatbot', 'erp', 'ordenes-erp', 'reportes-erp', 'mi-actividad', 'configuracion'],
 };
+window.PERMISOS = PERMISOS;
+window.ADMIN_SECCIONES = ADMIN_SECCIONES;
 const ROL_LABEL = { admin: 'Administrador', vendedor: 'Vendedor', soporte: 'Soporte', almacen: 'Almacén' };
 
 function puedeVer(rol, key) {
@@ -83,7 +94,7 @@ function renderAdminSidebar(activo) {
                     // Grupo estático (Cuenta): sin desplegable, siempre visible.
                     return `<div class="admin-nav-sec">${s.titulo}</div>${enlaces}`;
                 }
-                // Grupo desplegable (CRM / SCM): el título navega a su dashboard;
+                // Grupo desplegable (CRM / SCM / ERP): el título navega a su dashboard;
                 // la flecha solo muestra u oculta sus opciones. Empieza abierto
                 // si la página activa pertenece a este grupo.
                 const abierto = s.links.some((l) => l.key === activo);
@@ -140,7 +151,7 @@ function descargarCSV(nombreArchivo, filas) {
 }
 window.descargarCSV = descargarCSV;
 
-// Menú de iconos grandes para la página de inicio de un módulo (CRM/SCM):
+// Menú de iconos grandes para la página de inicio de un módulo (CRM/SCM/ERP):
 // un acceso directo a cada sección del grupo, sin la que ya estás viendo.
 function renderModuloTiles(elId, grupoTitulo, excluirKey) {
     const el = document.getElementById(elId);

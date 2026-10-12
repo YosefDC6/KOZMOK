@@ -63,9 +63,9 @@ function requireAdmin(req, res, next) {
 // (public/admin/js/admin-layout.js) para que aparezca en el menú.
 const ROLES_INTERNOS = {
     admin:    { nombre: 'Administrador', descripcion: 'Acceso total, incluida la gestión de cuentas.' },
-    vendedor: { nombre: 'Vendedor',      descripcion: 'CRM y tienda; no gestiona cuentas.' },
+    vendedor: { nombre: 'Vendedor',      descripcion: 'CRM, tienda y órdenes de clientes (ERP); no gestiona cuentas.' },
     soporte:  { nombre: 'Soporte',       descripcion: 'Clientes, interacciones y tickets de soporte.' },
-    almacen:  { nombre: 'Almacén',       descripcion: 'Pedidos e inventario.' },
+    almacen:  { nombre: 'Almacén',       descripcion: 'Pedidos, inventario y consulta del ERP.' },
 };
 
 // =========================================================
@@ -563,7 +563,10 @@ app.delete('/api/carrito/:id', asyncRoute(async (req, res) => {
 // Aplica el "cobro" de un pedido al Club: otorga puntos ganados, actualiza
 // las métricas del cliente y su etapa CRM. Se usa al pagar con tarjeta (al
 // instante) o al registrar el pago de un pedido SPEI / en tienda.
-async function aplicarCobroPedido(client, pedido) {
+// opciones.metricas = false cuando el UPDATE de estado del pedido ya va a
+// disparar el trigger trg_pedido_metricas (así no se cuenta dos veces).
+async function aplicarCobroPedido(client, pedido, opciones = {}) {
+    const sumarMetricas = opciones.metricas !== false;
     const cliente_id = pedido.cliente_id;
     const subtotal = Number(pedido.subtotal);
     const total = Number(pedido.total);
@@ -580,7 +583,7 @@ async function aplicarCobroPedido(client, pedido) {
             [cliente_id, puntos_ganados, `Compra ${pedido.numero_orden} (nivel ${nivel.nombre})`, pedido.id]
         );
     }
-    await client.query(
+    if (sumarMetricas) await client.query(
         `INSERT INTO metricas_clientes (cliente_id, total_compras, valor_total_compras, ticket_promedio)
          VALUES ($1, 1, $2, $2)
          ON CONFLICT (cliente_id) DO UPDATE SET
@@ -2292,7 +2295,10 @@ app.post('/api/admin/pedidos/:id/registrar-pago', asyncRoute(async (req, res) =>
              WHERE id = $1`,
             [req.params.id]
         );
-        const puntos_ganados = await aplicarCobroPedido(client, pedido);
+        // Los pedidos con pago pendiente nacen en 'pendiente'; cuando salen de
+        // ahí (aquí mismo o antes, moviéndolos en el pipeline) el trigger
+        // trg_pedido_metricas ya suma la compra. Aquí solo se dan los puntos.
+        const puntos_ganados = await aplicarCobroPedido(client, pedido, { metricas: false });
         await client.query('COMMIT');
         res.json({ message: 'Pago registrado. Pedido confirmado.', puntos_ganados });
     } catch (e) {
@@ -2301,6 +2307,369 @@ app.post('/api/admin/pedidos/:id/registrar-pago', asyncRoute(async (req, res) =>
     } finally {
         client.release();
     }
+}));
+
+// =========================================================
+// ERP (Etapa 3): órdenes de clientes capturadas por el equipo
+// Une los otros dos módulos: el cliente sale del CRM, los
+// productos y el stock del SCM. Al confirmar una orden se
+// valida y descuenta el stock, se registran los movimientos
+// de inventario, se generan órdenes de compra si algo cae en
+// stock crítico y queda guardada en el historial del cliente.
+// =========================================================
+
+// Roles que pueden CAPTURAR órdenes ERP (las demás pantallas del
+// ERP las filtra el menú por rol; ver PERMISOS en admin-layout.js).
+const ROLES_ORDEN_ERP = ['admin', 'vendedor'];
+function requireRol(roles) {
+    return (req, res, next) => {
+        if (!req.usuario || !roles.includes(req.usuario.rol)) {
+            return res.status(403).json({ message: 'Tu rol no puede realizar esta acción' });
+        }
+        next();
+    };
+}
+
+const METODOS_ERP = {
+    efectivo:      { texto: 'Efectivo en mostrador',  inmediato: true },
+    tarjeta:       { texto: 'Tarjeta en mostrador',   inmediato: true },
+    transferencia: { texto: 'Transferencia bancaria', inmediato: false },
+};
+
+// Ventas de los últimos N meses (incluido el actual), una fila por mes
+// aunque no haya ventas, separadas por canal.
+async function ventasPorMes(meses = 6) {
+    const r = await pool.query(`
+        SELECT TO_CHAR(m.mes, 'YYYY-MM') AS mes,
+               COALESCE(SUM(p.total) FILTER (WHERE p.origen = 'en_linea'), 0) AS en_linea,
+               COALESCE(SUM(p.total) FILTER (WHERE p.origen = 'erp'), 0)      AS erp,
+               COUNT(p.id) AS ordenes
+        FROM generate_series(DATE_TRUNC('month', CURRENT_DATE) - ($1::int - 1) * INTERVAL '1 month',
+                             DATE_TRUNC('month', CURRENT_DATE), INTERVAL '1 month') AS m(mes)
+        LEFT JOIN pedidos p ON DATE_TRUNC('month', p.fecha_pedido) = m.mes
+                           AND p.estado <> 'cancelado' AND p.pago_estado = 'pagado'
+        GROUP BY m.mes ORDER BY m.mes
+    `, [meses]);
+    return r.rows.map((x) => ({ mes: x.mes, en_linea: Number(x.en_linea), erp: Number(x.erp), ordenes: Number(x.ordenes) }));
+}
+
+async function masVendidosERP(limite = 5, desde = null, hasta = null) {
+    const r = await pool.query(`
+        SELECT pr.id, pr.nombre, SUM(pi.cantidad)::int AS unidades, SUM(pi.subtotal) AS importe
+        FROM pedido_items pi
+        JOIN pedidos p ON pi.pedido_id = p.id
+        JOIN productos pr ON pi.producto_id = pr.id
+        WHERE p.estado <> 'cancelado'
+          AND ($2::date IS NULL OR p.fecha_pedido >= $2::date)
+          AND ($3::date IS NULL OR p.fecha_pedido < $3::date + INTERVAL '1 day')
+        GROUP BY pr.id ORDER BY unidades DESC, importe DESC LIMIT $1
+    `, [limite, desde, hasta]);
+    return r.rows;
+}
+
+app.get('/api/admin/erp/resumen', asyncRoute(async (req, res) => {
+    const k = await pool.query(`
+        SELECT
+            (SELECT COUNT(*) FROM clientes WHERE estado_cliente = 'activo' AND etapa_crm IN ('Activo','Frecuente'))::int AS clientes_activos,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado')::int AS ordenes_clientes,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado' AND origen = 'erp')::int AS ordenes_erp,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pendiente')::int AS pagos_pendientes,
+            (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado') AS ventas_totales,
+            (SELECT COALESCE(SUM(pi.cantidad),0) FROM pedido_items pi JOIN pedidos p ON pi.pedido_id = p.id WHERE p.estado <> 'cancelado')::int AS productos_vendidos,
+            (SELECT COUNT(*) FROM productos WHERE activo = true)::int AS productos_activos,
+            (SELECT COUNT(*) FROM productos WHERE activo = true AND stock <= stock_minimo)::int AS stock_critico,
+            (SELECT COUNT(*) FROM proveedores WHERE activo = true)::int AS proveedores,
+            (SELECT COUNT(*) FROM ordenes_compra WHERE estado IN ('pendiente','en_proceso'))::int AS ordenes_compra_abiertas,
+            (SELECT COUNT(*) FROM clientes)::int AS clientes_total,
+            (SELECT COUNT(*) FROM interacciones)::int AS interacciones
+    `);
+    const ultimas = await pool.query(`
+        SELECT p.id, p.numero_orden, p.fecha_pedido, p.total, p.estado, p.pago_estado, p.origen, c.nombre AS cliente_nombre
+        FROM pedidos p JOIN clientes c ON p.cliente_id = c.id
+        ORDER BY p.fecha_pedido DESC LIMIT 5
+    `);
+    const kp = k.rows[0];
+    res.json({
+        kpis: { ...kp, ventas_totales: Number(kp.ventas_totales) },
+        ventas_por_mes: await ventasPorMes(6),
+        mas_vendidos: await masVendidosERP(5),
+        ultimas_ordenes: ultimas.rows,
+    });
+}));
+
+// Listado de órdenes de clientes (de ambos canales) con búsqueda.
+app.get('/api/admin/erp/ordenes', asyncRoute(async (req, res) => {
+    const { busqueda, estado, origen } = req.query;
+    const cond = [];
+    const values = [];
+    if (busqueda) { values.push(`%${busqueda}%`); cond.push(`(p.numero_orden ILIKE $${values.length} OR c.nombre ILIKE $${values.length} OR c.correo ILIKE $${values.length})`); }
+    if (estado && estado !== 'Todos') { values.push(estado); cond.push(`p.estado = $${values.length}`); }
+    if (origen && origen !== 'Todos') { values.push(origen); cond.push(`p.origen = $${values.length}`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const r = await pool.query(`
+        SELECT p.id, p.numero_orden, p.fecha_pedido, p.subtotal, p.total, p.estado, p.pago_estado, p.metodo_pago, p.origen,
+               c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.empresa AS cliente_empresa,
+               u.nombre AS registrado_por,
+               (SELECT COALESCE(SUM(cantidad),0)::int FROM pedido_items WHERE pedido_id = p.id) AS piezas
+        FROM pedidos p
+        JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN usuarios u ON p.vendedor_id = u.id
+        ${where}
+        ORDER BY p.fecha_pedido DESC
+    `, values);
+    res.json(r.rows);
+}));
+
+// Clientes del CRM para el paso 1 de "Nueva orden".
+app.get('/api/admin/erp/clientes', asyncRoute(async (req, res) => {
+    const q = (req.query.busqueda || '').trim();
+    const soloId = Number(req.query.id) || null;
+    const r = await pool.query(`
+        SELECT c.id, c.nombre, c.correo, c.telefono, c.empresa, c.ciudad, c.etapa_crm, c.puntos,
+               COALESCE(m.total_compras, 0) AS total_compras,
+               (SELECT CONCAT_WS(', ', d.calle, d.ciudad, d.estado) FROM direcciones d
+                 WHERE d.cliente_id = c.id ORDER BY d.predeterminada DESC, d.id LIMIT 1) AS direccion
+        FROM clientes c LEFT JOIN metricas_clientes m ON m.cliente_id = c.id
+        WHERE c.estado_cliente = 'activo'
+          AND ($1 = '' OR c.nombre ILIKE '%' || $1 || '%' OR c.correo ILIKE '%' || $1 || '%' OR c.empresa ILIKE '%' || $1 || '%')
+          AND ($2::int IS NULL OR c.id = $2::int)
+        ORDER BY c.nombre LIMIT 30
+    `, [q, soloId]);
+    res.json(r.rows);
+}));
+
+// Alta rápida de cliente desde el paso 1 (queda en el CRM como Prospecto
+// y pasa a Activo al confirmarse su primera compra). La contraseña es
+// temporal: el cliente la cambia en la tienda.
+app.post('/api/admin/erp/clientes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async (req, res) => {
+    const { nombre, correo, telefono, empresa, ciudad } = req.body;
+    if (!nombre || !correo) return res.status(400).json({ message: 'Nombre y correo son obligatorios' });
+    const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = LOWER($1)', [correo]);
+    if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado en el CRM' });
+
+    const temporal = 'KZ-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    const hash = await bcrypt.hash(temporal, 10);
+    let codigoSocio;
+    for (let i = 0; i < 5; i++) {
+        codigoSocio = generarCodigoSocio();
+        const d = await pool.query('SELECT 1 FROM clientes WHERE codigo_socio = $1', [codigoSocio]);
+        if (d.rows.length === 0) break;
+    }
+    const r = await pool.query(
+        `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, codigo_socio, estado_cliente, etapa_crm)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'activo','Prospecto')
+         RETURNING id, nombre, correo, telefono, empresa, ciudad, etapa_crm, puntos`,
+        [nombre, correo, hash, telefono || null, empresa || null, ciudad || null, codigoSocio]
+    );
+    await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [r.rows[0].id]);
+    res.status(201).json({ cliente: { ...r.rows[0], total_compras: 0, direccion: null }, password_temporal: temporal });
+}));
+
+// Productos del SCM para el paso 2 (solo activos; el stock es el real).
+app.get('/api/admin/erp/productos', asyncRoute(async (req, res) => {
+    const q = (req.query.busqueda || '').trim();
+    const r = await pool.query(`
+        SELECT p.id, p.nombre, p.marca, p.precio, p.stock, p.stock_minimo, p.imagen_url, c.nombre AS categoria
+        FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id
+        WHERE p.activo = true
+          AND ($1 = '' OR p.nombre ILIKE '%' || $1 || '%' OR p.marca ILIKE '%' || $1 || '%' OR c.nombre ILIKE '%' || $1 || '%')
+        ORDER BY c.nombre, p.nombre
+    `, [q]);
+    res.json(r.rows);
+}));
+
+// Crear una orden de cliente (paso 3 → "Confirmar orden"). Todo en una
+// transacción: si algo falla (p. ej. stock insuficiente) no se guarda nada.
+app.post('/api/admin/erp/ordenes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async (req, res) => {
+    const { cliente_id, items, direccion_envio, notas } = req.body;
+    const metodo = METODOS_ERP[req.body.metodo] ? req.body.metodo : 'efectivo';
+    const lineas = (Array.isArray(items) ? items : [])
+        .map((i) => ({ producto_id: Number(i.producto_id), cantidad: Math.floor(Number(i.cantidad)) }))
+        .filter((i) => i.producto_id && i.cantidad > 0);
+    if (!cliente_id) return res.status(400).json({ message: 'Selecciona un cliente' });
+    if (lineas.length === 0) return res.status(400).json({ message: 'Agrega al menos un producto' });
+
+    const client = await pool.connect();
+    const pasos = [];
+    try {
+        await client.query('BEGIN');
+        const cli = await client.query(`SELECT id, nombre FROM clientes WHERE id = $1 AND estado_cliente = 'activo'`, [cliente_id]);
+        if (cli.rows.length === 0) throw new Error('El cliente no existe o está inactivo');
+
+        // 1) Validar stock (con bloqueo de fila para que dos órdenes no
+        //    vendan la misma pieza).
+        let subtotal = 0;
+        const detalle = [];
+        for (const l of lineas) {
+            const pr = await client.query('SELECT id, nombre, precio, stock, activo FROM productos WHERE id = $1 FOR UPDATE', [l.producto_id]);
+            if (pr.rows.length === 0 || !pr.rows[0].activo) throw new Error(`Producto ${l.producto_id} no disponible`);
+            const p = pr.rows[0];
+            if (p.stock < l.cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
+            const lineaSub = Math.round(Number(p.precio) * l.cantidad * 100) / 100;
+            subtotal += lineaSub;
+            detalle.push({ ...l, nombre: p.nombre, precio: Number(p.precio), subtotal: lineaSub });
+        }
+        pasos.push({ clave: 'stock', texto: `Stock validado (${detalle.length} producto${detalle.length === 1 ? '' : 's'})` });
+
+        // 2) Crear la orden.
+        subtotal = Math.round(subtotal * 100) / 100;
+        const impuestos = Math.round(subtotal * 0.16 * 100) / 100;
+        const envio = subtotal >= 10000 ? 0 : 199;
+        const total = Math.round((subtotal + impuestos + envio) * 100) / 100;
+        const m = METODOS_ERP[metodo];
+        const folio = await client.query(`SELECT 'OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0') AS folio`);
+        const numero_orden = folio.rows[0].folio;
+        const ped = await client.query(
+            `INSERT INTO pedidos (numero_orden, cliente_id, vendedor_id, origen, subtotal, impuestos, envio, descuento, total,
+                                  estado, metodo_pago, pago_estado, pago_referencia, pago_vence, direccion_envio, notas, fecha_confirmacion)
+             VALUES ($1,$2,$3,'erp',$4,$5,$6,0,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+            [numero_orden, cliente_id, req.usuario.id, subtotal, impuestos, envio, total,
+                m.inmediato ? 'confirmado' : 'pendiente', m.texto, m.inmediato ? 'pagado' : 'pendiente',
+                m.inmediato ? null : 'ERP-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0'),
+                m.inmediato ? null : new Date(Date.now() + 3 * 86400000),
+                direccion_envio || null, notas || null, m.inmediato ? new Date() : null]
+        );
+        const pedido = ped.rows[0];
+        pasos.push({ clave: 'orden', texto: `Orden ${numero_orden} creada` });
+
+        // 3) Partidas + descuento de stock + movimiento de inventario.
+        for (const d of detalle) {
+            await client.query(
+                `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1,$2,$3,$4,$5)`,
+                [pedido.id, d.producto_id, d.cantidad, d.precio, d.subtotal]
+            );
+            await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [d.cantidad, d.producto_id]);
+            await client.query(
+                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'salida',$2,$3,$4)`,
+                [d.producto_id, d.cantidad, `Orden ERP ${numero_orden}`, req.usuario.id]
+            );
+        }
+        pasos.push({ clave: 'inventario', texto: `Inventario actualizado y ${detalle.length} movimiento${detalle.length === 1 ? '' : 's'} registrado${detalle.length === 1 ? '' : 's'}` });
+
+        // 4) Reabastecimiento automático (SCM) si algo quedó en stock crítico.
+        const antesOC = await client.query(`SELECT COALESCE(MAX(id), 0) AS max FROM ordenes_compra`);
+        for (const d of detalle) await generarOrdenAutomaticaSiCritico(client, d.producto_id);
+        const nuevasOC = await client.query(`SELECT folio FROM ordenes_compra WHERE id > $1 ORDER BY id`, [antesOC.rows[0].max]);
+        const foliosOC = nuevasOC.rows.map((r) => r.folio);
+        if (foliosOC.length) pasos.push({ clave: 'reabasto', texto: `Orden de compra automática: ${foliosOC.join(', ')}` });
+
+        // 5) Historial del cliente: si ya se cobró, puntos + métricas CRM
+        //    (y pasa de Prospecto a Activo con su primera compra).
+        let puntos_ganados = 0;
+        if (m.inmediato) puntos_ganados = await aplicarCobroPedido(client, pedido);
+        pasos.push({
+            clave: 'historial',
+            texto: m.inmediato
+                ? `Historial del cliente actualizado${puntos_ganados ? ` (+${puntos_ganados} puntos)` : ''}`
+                : 'Historial guardado; los puntos se acreditan al registrar el pago',
+        });
+
+        await client.query('COMMIT');
+        res.status(201).json({
+            pedido: { ...pedido, cliente_nombre: cli.rows[0].nombre, items: detalle },
+            pasos, puntos_ganados, ordenes_compra: foliosOC,
+        });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ message: e.message });
+    } finally {
+        client.release();
+    }
+}));
+
+// Nivel de implementación del ERP. Como en el SCM, cada punto se
+// calcula con datos reales: el nivel sube solo conforme se usa.
+async function nivelERP() {
+    const r = await pool.query(`
+        SELECT
+            (SELECT COUNT(DISTINCT c.id) FROM clientes c
+              WHERE EXISTS (SELECT 1 FROM pedidos p WHERE p.cliente_id = c.id)
+                 OR EXISTS (SELECT 1 FROM interacciones i WHERE i.cliente_id = c.id))::int AS clientes_crm,
+            (SELECT COUNT(*) FROM productos WHERE activo = true AND proveedor_id IS NOT NULL)::int AS productos_scm,
+            (SELECT COUNT(*) FROM pedidos WHERE origen = 'erp')::int AS ordenes_erp,
+            (SELECT COUNT(*) FROM movimientos_inventario WHERE motivo LIKE 'Orden ERP %')::int AS movimientos_erp,
+            (SELECT COUNT(*) FROM pedidos WHERE origen = 'erp' AND pago_estado = 'pagado' AND estado <> 'cancelado')::int AS ventas_erp,
+            (SELECT COUNT(*) FROM pedidos WHERE origen = 'en_linea' AND pago_estado = 'pagado' AND estado <> 'cancelado')::int AS ventas_linea,
+            (SELECT COUNT(*) FROM ordenes_compra WHERE notas LIKE 'Generada automáticamente%')::int AS oc_automaticas,
+            (SELECT COUNT(*) FROM pedidos WHERE origen = 'erp' AND estado = 'entregado')::int AS erp_entregadas
+    `);
+    const d = r.rows[0];
+    const checklist = [
+        { clave: 'crm', etiqueta: 'Clientes integrados (CRM)', detalle: `${d.clientes_crm} clientes con compras o interacciones`, cumplido: d.clientes_crm > 0 },
+        { clave: 'scm', etiqueta: 'Productos e inventario (SCM)', detalle: `${d.productos_scm} productos con proveedor asignado`, cumplido: d.productos_scm > 0 },
+        { clave: 'ordenes', etiqueta: 'Órdenes de clientes funcionando (ERP)', detalle: `${d.ordenes_erp} órdenes capturadas en el ERP`, cumplido: d.ordenes_erp > 0 },
+        { clave: 'movimientos', etiqueta: 'Movimientos de inventario automáticos', detalle: `${d.movimientos_erp} movimientos generados por órdenes ERP`, cumplido: d.movimientos_erp > 0 },
+        { clave: 'reportes', etiqueta: 'Reportes empresariales completos', detalle: 'Ventas cobradas de los dos canales (tienda en línea y ERP)', cumplido: d.ventas_erp > 0 && d.ventas_linea > 0 },
+        { clave: 'optimizado', etiqueta: 'Procesos optimizados', detalle: 'Reabasto automático en uso y órdenes ERP entregadas', cumplido: d.oc_automaticas > 0 && d.erp_entregadas > 0 },
+    ];
+    const cumplidos = checklist.filter((c) => c.cumplido).length;
+    const nivel = cumplidos <= 2 ? 'basico' : cumplidos <= 4 ? 'integrado' : cumplidos === 5 ? 'automatizado' : 'optimizado';
+    return { nivel, checklist, cumplidos, total: checklist.length, datos: d };
+}
+
+app.get('/api/admin/erp/nivel', asyncRoute(async (req, res) => {
+    res.json(await nivelERP());
+}));
+
+// Reportes ERP (dashboard empresarial) con rango de fechas opcional.
+app.get('/api/admin/erp/reportes', asyncRoute(async (req, res) => {
+    const fecha = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
+    const desde = fecha(req.query.desde);
+    const hasta = fecha(req.query.hasta);
+    const rango = `($1::date IS NULL OR p.fecha_pedido >= $1::date) AND ($2::date IS NULL OR p.fecha_pedido < $2::date + INTERVAL '1 day')`;
+
+    const k = await pool.query(`
+        SELECT
+            COALESCE(SUM(p.total) FILTER (WHERE p.pago_estado = 'pagado'), 0) AS ventas_totales,
+            COUNT(*)::int AS ordenes,
+            COUNT(*) FILTER (WHERE p.origen = 'erp')::int AS ordenes_erp,
+            COUNT(*) FILTER (WHERE p.origen = 'en_linea')::int AS ordenes_en_linea,
+            COUNT(*) FILTER (WHERE p.pago_estado = 'pendiente')::int AS pagos_pendientes,
+            COALESCE(SUM(p.total) FILTER (WHERE p.pago_estado = 'pendiente'), 0) AS por_cobrar,
+            COUNT(DISTINCT p.cliente_id)::int AS clientes_con_compra,
+            COALESCE(AVG(p.total) FILTER (WHERE p.pago_estado = 'pagado'), 0) AS ticket_promedio
+        FROM pedidos p WHERE p.estado <> 'cancelado' AND ${rango}
+    `, [desde, hasta]);
+    const piezas = await pool.query(`
+        SELECT COALESCE(SUM(pi.cantidad),0)::int AS n FROM pedido_items pi JOIN pedidos p ON pi.pedido_id = p.id
+        WHERE p.estado <> 'cancelado' AND ${rango}
+    `, [desde, hasta]);
+    const activos = await pool.query(`SELECT COUNT(*)::int AS n FROM clientes WHERE estado_cliente = 'activo' AND etapa_crm IN ('Activo','Frecuente')`);
+    const porEstado = await pool.query(`
+        SELECT p.estado, COUNT(*)::int AS total FROM pedidos p WHERE ${rango} GROUP BY p.estado
+    `, [desde, hasta]);
+
+    // Inventario disponible por rotación (unidades vendidas en 90 días
+    // contra el stock actual de cada producto).
+    const inv = await pool.query(`
+        SELECT p.id, p.nombre, p.stock, p.precio,
+               COALESCE((SELECT SUM(pi.cantidad) FROM pedido_items pi JOIN pedidos pe ON pi.pedido_id = pe.id
+                          WHERE pi.producto_id = p.id AND pe.estado <> 'cancelado'
+                            AND pe.fecha_pedido >= CURRENT_DATE - INTERVAL '90 days'), 0)::int AS vendidas_90
+        FROM productos p WHERE p.activo = true
+    `);
+    const rot = { alta: { productos: 0, unidades: 0, valor: 0 }, media: { productos: 0, unidades: 0, valor: 0 }, baja: { productos: 0, unidades: 0, valor: 0 } };
+    inv.rows.forEach((p) => {
+        const indice = p.stock + p.vendidas_90 > 0 ? p.vendidas_90 / (p.stock + p.vendidas_90) : 0;
+        const g = indice >= 0.15 ? 'alta' : indice > 0 ? 'media' : 'baja';
+        rot[g].productos++; rot[g].unidades += p.stock; rot[g].valor += p.stock * Number(p.precio);
+    });
+
+    const kp = k.rows[0];
+    res.json({
+        rango: { desde, hasta },
+        kpis: {
+            ventas_totales: Number(kp.ventas_totales), ordenes: kp.ordenes, ordenes_erp: kp.ordenes_erp,
+            ordenes_en_linea: kp.ordenes_en_linea, pagos_pendientes: kp.pagos_pendientes, por_cobrar: Number(kp.por_cobrar),
+            clientes_con_compra: kp.clientes_con_compra, ticket_promedio: Math.round(Number(kp.ticket_promedio) * 100) / 100,
+            productos_vendidos: piezas.rows[0].n, clientes_activos: activos.rows[0].n,
+        },
+        ventas_por_mes: await ventasPorMes(6),
+        mas_vendidos: await masVendidosERP(6, desde, hasta),
+        ordenes_por_estado: porEstado.rows,
+        inventario_rotacion: rot,
+        nivel: await nivelERP(),
+    });
 }));
 
 // =========================================================

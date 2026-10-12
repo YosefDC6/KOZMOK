@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nivel ERP · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+                <h3 style="margin:0">Nivel de implementación ERP</h3>
+                <span id="nivel-actual"></span>
+            </div>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0">
+                Calculado con datos reales del sistema (no se marca a mano): conforme el equipo usa cada parte, el nivel sube solo.
+            </p>
+            <div class="nivel-steps" id="nivel-steps"></div>
+            <div id="nivel-descripcion" class="pago-box" style="margin:4px 0 16px"></div>
+
+            <h4 style="margin:0 0 6px">Checklist de avance</h4>
+            <div id="checklist"></div>
+        </div>
+
+        <div class="card">
+            <h3>Cómo se integran los módulos</h3>
+            <p>Cada orden de cliente del ERP toca a los otros dos módulos en una sola operación.</p>
+            <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
+                <li><strong>CRM →</strong> el cliente se elige (o se da de alta) desde el CRM; al cobrarse la orden suma a sus compras, a su etapa y a sus puntos del Club.</li>
+                <li><strong>SCM →</strong> los productos y el stock vienen del inventario; al confirmar se descuenta el stock y queda un movimiento de inventario por producto.</li>
+                <li><strong>Reabasto automático →</strong> si un producto queda en stock crítico, se genera sola una orden de compra al proveedor.</li>
+                <li><strong>Reportes →</strong> ventas, productos e inventario se consolidan en los Reportes ERP, de los dos canales (tienda en línea y ERP).</li>
+            </ol>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('nivel-erp');
+document.getElementById('topbar').innerHTML = adminHeader('Nivel ERP', 'Evalúa el avance en la integración de procesos entre CRM, SCM y ERP.');
+
+const NIVELES = [
+    { clave: 'basico', label: 'Básico' },
+    { clave: 'integrado', label: 'Integrado' },
+    { clave: 'automatizado', label: 'Automatizado' },
+    { clave: 'optimizado', label: 'Optimizado' },
+];
+const DESCRIPCION = {
+    basico: 'Los módulos todavía trabajan por separado. Asegúrate de tener clientes en el CRM, productos con proveedor en el SCM y registra tu primera orden de cliente en el ERP.',
+    integrado: 'Los módulos de CRM, SCM y ERP ya están integrados y funcionan de manera coordinada. Para automatizar, captura órdenes desde el ERP para que generen sus movimientos de inventario y reportes completos.',
+    automatizado: 'Las órdenes ya actualizan solas el inventario y los reportes consolidan los dos canales. Para optimizar, deja que el reabasto automático genere órdenes de compra y completa la entrega de órdenes ERP.',
+    optimizado: 'El ERP está completo: de la orden del cliente al reabasto con el proveedor, todo queda trazado y reportado sin pasos manuales.',
+};
+// A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
+// esa pantalla, el punto se muestra sin enlace.
+const DESTINO = {
+    crm: { key: 'clientes', href: '/admin/clientes.html', texto: 'Ir a Clientes' },
+    scm: { key: 'productos', href: '/admin/productos.html', texto: 'Ir a Inventario' },
+    ordenes: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden' },
+    movimientos: { key: 'movimientos', href: '/admin/movimientos.html', texto: 'Ver movimientos' },
+    reportes: { key: 'reportes-erp', href: '/admin/reportes-erp.html', texto: 'Ver reportes' },
+    optimizado: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Ver órdenes de compra' },
+};
+
+async function cargar() {
+    const r = await api('/admin/erp/nivel');
+    const rol = (Sesion.usuario() || {}).rol;
+    const idx = NIVELES.findIndex((n) => n.clave === r.nivel);
+    document.getElementById('nivel-actual').innerHTML = `<span class="madurez-nivel n-${r.nivel}">${icon('layers', 18)} Nivel actual: ${NIVELES[idx].label}</span>`;
+    document.getElementById('nivel-steps').innerHTML = NIVELES.map((n, i) => `
+        <div class="nivel-step ${i <= idx ? 'alcanzado' : ''} ${i === idx ? 'actual' : ''}">
+            <div class="nd">${i <= idx ? icon('check', 12) : ''}</div><div class="nl">${n.label}</div>
+        </div>`).join('');
+    document.getElementById('nivel-descripcion').innerHTML = `
+        <h4>${icon('info', 16)} Nivel actual: ${NIVELES[idx].label} · ${r.cumplidos} de ${r.total} puntos</h4>
+        <div class="pb-sub">${DESCRIPCION[r.nivel]}</div>`;
+    document.getElementById('checklist').innerHTML = r.checklist.map((c) => {
+        const d = DESTINO[c.clave];
+        const enlace = d && puedeVer(rol, d.key);
+        const tag = enlace ? `a href="${d.href}"` : 'div';
+        return `<${tag} class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}" style="text-decoration:none">
+            <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
+            <span style="flex:1">${c.etiqueta}<span style="display:block;font-size:.76rem;color:var(--text-muted)">${c.detalle}</span></span>
+            ${enlace ? `<span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? 'Revisar' : d.texto} ${icon('arrow', 13)}</span>` : ''}
+        </${tag.split(' ')[0]}>`;
+    }).join('');
+}
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

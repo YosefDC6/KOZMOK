@@ -53,6 +53,7 @@ async function cargar() {
         <div class="at-actions" style="margin-bottom:18px">
             <button class="btn btn-outline btn-sm" onclick="editar()">Editar cliente</button>
             <button class="btn btn-outline btn-sm" onclick="cambiarEtapa()">Cambiar etapa</button>
+            ${puedeVer((Sesion.usuario() || {}).rol, 'orden-nueva') && C.estado_cliente === 'activo' ? `<a class="btn btn-outline btn-sm" href="/admin/orden-nueva.html?cliente=${C.id}">Nueva orden (ERP)</a>` : ''}
             <button class="btn btn-primary btn-sm" onclick="nuevaInteraccion()">Nueva interacción</button>
         </div>
 

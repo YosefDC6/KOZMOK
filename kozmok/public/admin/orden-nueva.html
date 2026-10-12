@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nueva orden · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="card wiz" id="wiz">
+            <div class="wiz-steps" id="wiz-steps"></div>
+
+            <!-- PASO 1: CLIENTE (CRM) -->
+            <section id="paso-1">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                    <input type="search" id="b-cliente" placeholder="Buscar cliente por nombre, correo o empresa…" style="flex:1;min-width:220px" />
+                    <button class="btn btn-primary" onclick="abrirNuevoCliente()"></button>
+                </div>
+                <div class="cli-list" id="cli-list"></div>
+                <div id="cli-sel" style="margin-top:16px"></div>
+                <div class="wiz-actions">
+                    <a class="btn btn-outline" href="/admin/ordenes-erp.html">Cancelar</a>
+                    <button class="btn btn-primary" id="btn-sig-1" onclick="irPaso(2)" disabled>Siguiente</button>
+                </div>
+            </section>
+
+            <!-- PASO 2: PRODUCTOS (SCM) -->
+            <section id="paso-2" hidden>
+                <div class="erp-grid-2 ancho" style="margin-bottom:0">
+                    <div style="min-width:0">
+                        <input type="search" id="b-producto" placeholder="Buscar producto, marca o categoría…" style="width:100%;margin-bottom:12px" />
+                        <div class="table-wrap" style="max-height:460px;overflow:auto">
+                            <table>
+                                <thead><tr><th>Producto</th><th>Stock</th><th>Precio</th><th>Cantidad</th></tr></thead>
+                                <tbody id="tabla-productos"><tr><td colspan="4">Cargando…</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="card orden-mini" style="background:var(--bg-panel-2)">
+                            <h3 style="margin-top:0">Orden</h3>
+                            <div id="mini-cliente" style="font-size:.84rem;color:var(--text-muted);margin-bottom:8px"></div>
+                            <div id="mini-items"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wiz-actions">
+                    <button class="btn btn-outline grow" onclick="irPaso(1)">Anterior</button>
+                    <button class="btn btn-primary" id="btn-sig-2" onclick="irPaso(3)" disabled>Siguiente</button>
+                </div>
+            </section>
+
+            <!-- PASO 3: RESUMEN Y CONFIRMACIÓN -->
+            <section id="paso-3" hidden>
+                <div class="erp-grid-2" style="margin-bottom:0">
+                    <div style="min-width:0">
+                        <h3 style="margin-top:0">Resumen de la orden</h3>
+                        <div class="table-wrap">
+                            <table>
+                                <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Subtotal</th></tr></thead>
+                                <tbody id="tabla-resumen"></tbody>
+                            </table>
+                        </div>
+                        <div id="totales" style="margin-top:12px"></div>
+                    </div>
+                    <div>
+                        <h3 style="margin-top:0">Cliente y pago</h3>
+                        <div id="res-cliente" style="font-size:.88rem;margin-bottom:12px"></div>
+                        <label class="sim-lbl" for="metodo">Forma de pago</label>
+                        <select id="metodo" style="width:100%;margin-bottom:6px">
+                            <option value="efectivo">Efectivo en mostrador (pagado)</option>
+                            <option value="tarjeta">Tarjeta en mostrador (pagado)</option>
+                            <option value="transferencia">Transferencia bancaria (pago pendiente)</option>
+                        </select>
+                        <p id="metodo-nota" style="font-size:.78rem;color:var(--text-muted);margin:0 0 12px"></p>
+                        <label class="sim-lbl" for="direccion">Dirección de envío</label>
+                        <input id="direccion" style="width:100%;margin-bottom:12px" placeholder="Calle, colonia, ciudad (o 'Recoge en tienda')" />
+                        <label class="sim-lbl" for="notas">Notas (opcional)</label>
+                        <textarea id="notas" rows="2" style="width:100%" placeholder="Ej. pedido por teléfono"></textarea>
+                    </div>
+                </div>
+                <div class="wiz-actions">
+                    <button class="btn btn-outline grow" onclick="irPaso(2)">Anterior</button>
+                    <button class="btn btn-primary" id="btn-confirmar" onclick="confirmarOrden()">Confirmar orden</button>
+                </div>
+            </section>
+
+            <!-- PROCESAMIENTO -->
+            <section id="paso-proc" hidden>
+                <div class="proc">
+                    <span class="proc-gear"></span>
+                    <h3 id="proc-titulo" style="margin:8px 0 0">Procesando orden…</h3>
+                    <div class="proc-bar"><span class="pb-track"><span class="pb-fill" id="proc-fill"></span></span><span class="pb-pct" id="proc-pct">0%</span></div>
+                    <div class="proc-list" id="proc-list"></div>
+                    <div id="proc-error" style="margin-top:16px"></div>
+                </div>
+            </section>
+
+            <!-- ÉXITO -->
+            <section id="paso-exito" hidden>
+                <div class="exito" id="exito"></div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-cliente">
+    <div class="modal" style="max-width:460px">
+        <button class="modal-close" onclick="cerrarNuevoCliente()" id="mc-x"></button>
+        <h3>Nuevo cliente (CRM)</h3>
+        <p style="color:var(--text-muted);font-size:.85rem;margin-top:0">Se crea en el CRM como <strong>Prospecto</strong> y pasa a <strong>Activo</strong> con su primera compra.</p>
+        <form id="form-cliente">
+            <label class="sim-lbl">Nombre *</label><input name="nombre" required style="width:100%;margin-bottom:10px" />
+            <label class="sim-lbl">Correo *</label><input name="correo" type="email" required style="width:100%;margin-bottom:10px" />
+            <label class="sim-lbl">Teléfono</label><input name="telefono" style="width:100%;margin-bottom:10px" />
+            <label class="sim-lbl">Empresa</label><input name="empresa" style="width:100%;margin-bottom:10px" />
+            <label class="sim-lbl">Ciudad</label><input name="ciudad" style="width:100%;margin-bottom:14px" />
+            <button class="btn btn-primary" type="submit" style="width:100%">Crear y seleccionar</button>
+        </form>
+    </div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/erp.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('ordenes-erp');
+const USR = Sesion.usuario();
+if (!puedeVer(USR && USR.rol, 'orden-nueva')) {
+    location.href = '/admin/ordenes-erp.html';
+}
+document.getElementById('topbar').innerHTML = adminHeader('Nueva orden', 'Registra una orden de cliente: el cliente sale del CRM y los productos del inventario (SCM).');
+document.querySelector('#paso-1 .btn-primary').innerHTML = `${icon('plus', 15)} Nuevo cliente (CRM)`;
+document.querySelector('.proc-gear').innerHTML = icon('gear', 56);
+document.getElementById('mc-x').innerHTML = icon('x', 18);
+
+const IVA = 0.16, ENVIO = 199, ENVIO_GRATIS = 10000;
+const PASOS = ['Cliente', 'Productos', 'Confirmar'];
+let paso = 1;
+let CLIENTES = [];
+let CLIENTE = null;
+let PRODUCTOS = [];
+const ORDEN = new Map(); // producto_id -> cantidad
+let enviando = false;
+
+const iniciales = (n) => (n || '?').split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+
+function pintarPasos() {
+    document.getElementById('wiz-steps').innerHTML = PASOS.map((t, i) => {
+        const n = i + 1;
+        const cls = n < paso ? 'done' : n === paso ? 'actual' : '';
+        return `<div class="wiz-step ${cls}"><div class="wd">${n < paso ? icon('check', 14) : n}</div><div class="wl">${t}</div></div>`;
+    }).join('');
+}
+
+function mostrar(id) {
+    ['paso-1', 'paso-2', 'paso-3', 'paso-proc', 'paso-exito'].forEach((s) => { document.getElementById(s).hidden = s !== id; });
+}
+
+function irPaso(n) {
+    if (n >= 2 && !CLIENTE) return toast('Selecciona un cliente', 'warn');
+    if (n >= 3 && ORDEN.size === 0) return toast('Agrega al menos un producto', 'warn');
+    paso = n;
+    pintarPasos();
+    mostrar('paso-' + n);
+    if (n === 2) { pintarProductos(); pintarMini(); }
+    if (n === 3) pintarResumen();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ---------------- PASO 1: CLIENTE ----------------
+async function buscarClientes() {
+    const q = document.getElementById('b-cliente').value.trim();
+    CLIENTES = await api('/admin/erp/clientes' + (q ? '?busqueda=' + encodeURIComponent(q) : ''));
+    document.getElementById('cli-list').innerHTML = CLIENTES.map((c) => `
+        <button type="button" class="cli-opt ${CLIENTE && CLIENTE.id === c.id ? 'sel' : ''}" onclick="elegirCliente(${c.id})">
+            <span class="cli-avatar">${iniciales(c.nombre)}</span>
+            <span style="flex:1;min-width:0">
+                <strong>${c.nombre}</strong>
+                <span style="display:block;font-size:.78rem;color:var(--text-muted)">${c.correo}${c.empresa ? ' · ' + c.empresa : ''}</span>
+            </span>
+            <span class="origen-pill">${c.etapa_crm}</span>
+        </button>`).join('') || '<p style="color:var(--text-muted)">No hay clientes con esa búsqueda. Puedes darlo de alta con “Nuevo cliente (CRM)”.</p>';
+}
+
+function elegirCliente(id) {
+    CLIENTE = CLIENTES.find((c) => c.id === id) || CLIENTE;
+    pintarClienteSel();
+    buscarClientes();
+}
+
+function pintarClienteSel() {
+    const el = document.getElementById('cli-sel');
+    document.getElementById('btn-sig-1').disabled = !CLIENTE;
+    if (!CLIENTE) { el.innerHTML = ''; return; }
+    const c = CLIENTE;
+    el.innerHTML = `
+        <label class="sim-lbl">Cliente seleccionado</label>
+        <div class="cli-sel-card">
+            <span class="cli-avatar">${iniciales(c.nombre)}</span>
+            <div style="flex:1">
+                <strong style="font-size:1.05rem">${c.nombre}</strong>
+                <dl>
+                    ${c.empresa ? `<dt>Empresa</dt><dd>${c.empresa}</dd>` : ''}
+                    <dt>Correo</dt><dd>${c.correo}</dd>
+                    ${c.telefono ? `<dt>Teléfono</dt><dd>${c.telefono}</dd>` : ''}
+                    <dt>Etapa CRM</dt><dd>${c.etapa_crm} · ${c.total_compras} compra${Number(c.total_compras) === 1 ? '' : 's'}</dd>
+                </dl>
+            </div>
+        </div>`;
+}
+
+function abrirNuevoCliente() {
+    document.getElementById('form-cliente').reset();
+    document.getElementById('modal-cliente').classList.add('open');
+}
+function cerrarNuevoCliente() { document.getElementById('modal-cliente').classList.remove('open'); }
+
+document.getElementById('form-cliente').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const datos = Object.fromEntries(new FormData(e.target).entries());
+    try {
+        const r = await api('/admin/erp/clientes', { method: 'POST', body: datos });
+        CLIENTE = r.cliente;
+        cerrarNuevoCliente();
+        document.getElementById('b-cliente').value = r.cliente.nombre;
+        await buscarClientes();
+        pintarClienteSel();
+        toast(`Cliente creado. Contraseña temporal para la tienda: ${r.password_temporal}`, 'ok');
+    } catch (err) { toast(err.message, 'error'); }
+});
+
+// ---------------- PASO 2: PRODUCTOS ----------------
+async function cargarProductos() {
+    PRODUCTOS = await api('/admin/erp/productos');
+}
+
+function cant(id) { return ORDEN.get(id) || 0; }
+
+function setCant(id, n) {
+    const p = PRODUCTOS.find((x) => x.id === id);
+    if (!p) return;
+    n = Math.max(0, Math.min(Number(p.stock), Math.floor(Number(n) || 0)));
+    if (n === 0) ORDEN.delete(id); else ORDEN.set(id, n);
+    pintarProductos();
+    pintarMini();
+}
+
+function pintarProductos() {
+    const q = document.getElementById('b-producto').value.trim().toLowerCase();
+    const lista = PRODUCTOS.filter((p) => !q || `${p.nombre} ${p.marca || ''} ${p.categoria || ''}`.toLowerCase().includes(q));
+    document.getElementById('tabla-productos').innerHTML = lista.map((p) => {
+        const c = cant(p.id);
+        const agotado = Number(p.stock) === 0;
+        const bajo = Number(p.stock) <= Number(p.stock_minimo);
+        return `
+        <tr class="${c > 0 ? 'en-orden' : ''}">
+            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.76rem">${p.categoria || ''}${p.marca ? ' · ' + p.marca : ''}</div></td>
+            <td class="mono ${agotado ? 'stock-out' : bajo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
+            <td class="mono">${formatoMoneda(p.precio)}</td>
+            <td>
+                ${agotado ? '<span style="color:var(--text-muted);font-size:.8rem">Agotado</span>' : `
+                <span class="qty">
+                    <button type="button" aria-label="Quitar uno" onclick="setCant(${p.id}, ${c - 1})" ${c === 0 ? 'disabled' : ''}>${icon('minus', 14)}</button>
+                    <input type="number" min="0" max="${p.stock}" value="${c}" aria-label="Cantidad" onchange="setCant(${p.id}, this.value)" />
+                    <button type="button" aria-label="Agregar uno" onclick="setCant(${p.id}, ${c + 1})" ${c >= Number(p.stock) ? 'disabled' : ''}>${icon('plus', 14)}</button>
+                </span>`}
+            </td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="4">Sin productos con esa búsqueda.</td></tr>';
+}
+
+function calcular() {
+    let subtotal = 0;
+    const lineas = [];
+    ORDEN.forEach((cantidad, id) => {
+        const p = PRODUCTOS.find((x) => x.id === id);
+        if (!p) return;
+        const sub = Math.round(Number(p.precio) * cantidad * 100) / 100;
+        subtotal += sub;
+        lineas.push({ ...p, cantidad, subtotal: sub });
+    });
+    subtotal = Math.round(subtotal * 100) / 100;
+    const iva = Math.round(subtotal * IVA * 100) / 100;
+    const envio = subtotal === 0 || subtotal >= ENVIO_GRATIS ? 0 : ENVIO;
+    return { lineas, subtotal, iva, envio, total: Math.round((subtotal + iva + envio) * 100) / 100 };
+}
+
+function pintarMini() {
+    const t = calcular();
+    document.getElementById('mini-cliente').textContent = CLIENTE ? 'Cliente: ' + CLIENTE.nombre : '';
+    document.getElementById('btn-sig-2').disabled = t.lineas.length === 0;
+    document.getElementById('mini-items').innerHTML = t.lineas.length === 0
+        ? '<p style="color:var(--text-muted);font-size:.85rem">Usa “+” para agregar productos.</p>'
+        : t.lineas.map((l) => `<div class="om-row"><span>${l.cantidad} × ${l.nombre}</span><span class="mono">${formatoMoneda(l.subtotal)}</span></div>`).join('') +
+          `<div class="om-row om-total"><span>Subtotal</span><span class="mono">${formatoMoneda(t.subtotal)}</span></div>`;
+}
+
+// ---------------- PASO 3: RESUMEN ----------------
+function pintarResumen() {
+    const t = calcular();
+    document.getElementById('tabla-resumen').innerHTML = t.lineas.map((l) => `
+        <tr><td>${l.nombre}</td><td class="mono">${l.cantidad}</td><td class="mono">${formatoMoneda(l.precio)}</td><td class="mono">${formatoMoneda(l.subtotal)}</td></tr>`).join('');
+    document.getElementById('totales').innerHTML = `
+        <div class="om-row" style="display:flex;justify-content:space-between"><span>Subtotal</span><span class="mono">${formatoMoneda(t.subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>IVA 16%</span><span class="mono">${formatoMoneda(t.iva)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>Envío</span><span class="mono">${t.envio === 0 ? 'Gratis' : formatoMoneda(t.envio)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Total</span><span class="mono">${formatoMoneda(t.total)}</span></div>`;
+    const c = CLIENTE;
+    document.getElementById('res-cliente').innerHTML = `<strong>${c.nombre}</strong><div style="color:var(--text-muted)">${c.correo}${c.telefono ? ' · ' + c.telefono : ''}</div>`;
+    const dir = document.getElementById('direccion');
+    if (!dir.value) dir.value = c.direccion || '';
+    notaMetodo();
+}
+
+function notaMetodo() {
+    const m = document.getElementById('metodo').value;
+    document.getElementById('metodo-nota').textContent = m === 'transferencia'
+        ? 'La orden queda con pago pendiente; los puntos del cliente se acreditan cuando se registre el pago en Pedidos.'
+        : 'La orden queda confirmada y pagada; el cliente gana sus puntos del Club al instante.';
+}
+document.getElementById('metodo').addEventListener('change', notaMetodo);
+
+// ---------------- PROCESAMIENTO ----------------
+const ETAPAS = ['Creando orden', 'Validando stock', 'Actualizando inventario y registrando movimientos', 'Guardando historial', 'Finalizando operación'];
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function pintarProc(hechas, activa, error) {
+    document.getElementById('proc-list').innerHTML = ETAPAS.map((t, i) => {
+        const cls = error && i === activa ? 'error' : i < hechas ? 'hecho' : i === activa ? 'activo' : '';
+        const ico = cls === 'hecho' ? icon('check', 12) : cls === 'error' ? icon('x', 12) : '';
+        return `<div class="proc-item ${cls}"><span class="pi-dot">${ico}</span>${t}</div>`;
+    }).join('');
+    const pct = Math.round((hechas / ETAPAS.length) * 100);
+    document.getElementById('proc-fill').style.width = pct + '%';
+    document.getElementById('proc-pct').textContent = pct + '%';
+}
+
+async function confirmarOrden() {
+    if (enviando) return;
+    const t = calcular();
+    if (!CLIENTE || t.lineas.length === 0) return;
+    enviando = true;
+    paso = 4; pintarPasos();
+    mostrar('paso-proc');
+    document.getElementById('proc-titulo').textContent = 'Procesando orden…';
+    document.getElementById('proc-error').innerHTML = '';
+    document.querySelector('.proc-gear').classList.remove('detenido');
+    pintarProc(0, 0);
+
+    const peticion = api('/admin/erp/ordenes', {
+        method: 'POST',
+        body: {
+            cliente_id: CLIENTE.id,
+            items: t.lineas.map((l) => ({ producto_id: l.id, cantidad: l.cantidad })),
+            metodo: document.getElementById('metodo').value,
+            direccion_envio: document.getElementById('direccion').value.trim(),
+            notas: document.getElementById('notas').value.trim(),
+        },
+    }).then((r) => ({ ok: true, r }), (e) => ({ ok: false, e }));
+
+    // Avance visual mientras el servidor trabaja (la transacción real es una sola).
+    for (let i = 1; i <= 3; i++) { await espera(420); pintarProc(i, i); }
+    const res = await peticion;
+
+    if (!res.ok) {
+        const falla = /stock/i.test(res.e.message) ? 1 : 0;
+        pintarProc(falla, falla, true);
+        paso = 3; pintarPasos();
+        document.querySelector('.proc-gear').classList.add('detenido');
+        document.getElementById('proc-titulo').textContent = 'No se pudo registrar la orden';
+        document.getElementById('proc-error').innerHTML = `
+            <div class="pago-box" style="border-color:var(--danger);text-align:left"><h4>${icon('alert', 15)} ${res.e.message}</h4>
+            <div class="pb-sub">No se guardó nada: el stock y el historial quedaron como estaban.</div></div>
+            <button class="btn btn-primary" onclick="reintentar()">Volver a productos</button>`;
+        enviando = false;
+        return;
+    }
+    for (let i = 4; i <= ETAPAS.length; i++) { await espera(380); pintarProc(i, i); }
+    await espera(250);
+    mostrarExito(res.r);
+}
+
+async function reintentar() {
+    await cargarProductos();
+    // Ajusta cantidades al stock actual por si otra venta lo cambió.
+    ORDEN.forEach((c, id) => {
+        const p = PRODUCTOS.find((x) => x.id === id);
+        if (!p || Number(p.stock) === 0) ORDEN.delete(id); else if (c > p.stock) ORDEN.set(id, Number(p.stock));
+    });
+    irPaso(2);
+}
+
+function mostrarExito(r) {
+    paso = 4; pintarPasos();
+    const p = r.pedido;
+    const fecha = new Date();
+    document.getElementById('exito').innerHTML = `
+        <span class="exito-check">${icon('check', 40)}</span>
+        <h2 style="margin:4px 0">¡Orden registrada con éxito!</h2>
+        <p style="color:var(--text-muted);margin:0">${p.pago_estado === 'pagado' ? 'Confirmada y pagada.' : 'Registrada con pago pendiente (ref. ' + p.pago_referencia + ').'}</p>
+        <dl>
+            <dt>Folio:</dt><dd class="mono">${p.numero_orden}</dd>
+            <dt>Cliente:</dt><dd>${p.cliente_nombre}</dd>
+            <dt>Total:</dt><dd class="mono">${formatoMoneda(p.total)}</dd>
+            <dt>Fecha:</dt><dd>${fecha.toLocaleDateString('es-MX')} ${fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</dd>
+        </dl>
+        <ul class="ex-pasos">${r.pasos.map((s) => `<li>${s.texto}</li>`).join('')}</ul>
+        <div style="display:grid;gap:8px;max-width:280px;margin:0 auto">
+            <a class="btn btn-primary" href="/admin/ordenes-erp.html?open=${p.id}">Ver orden</a>
+            <a class="btn btn-outline" href="/admin/ordenes-erp.html">Ir a órdenes</a>
+            <a class="btn btn-ghost" href="/admin/orden-nueva.html">Registrar otra orden</a>
+        </div>`;
+    mostrar('paso-exito');
+    toast(`Orden ${p.numero_orden} registrada`, 'ok');
+}
+
+// ---------------- ARRANQUE ----------------
+let tC = null;
+document.getElementById('b-cliente').addEventListener('input', () => { clearTimeout(tC); tC = setTimeout(buscarClientes, 250); });
+document.getElementById('b-producto').addEventListener('input', pintarProductos);
+pintarPasos();
+Promise.all([buscarClientes(), cargarProductos()]).then(() => {
+    const pre = Number(new URLSearchParams(location.search).get('cliente'));
+    if (pre) {
+        api('/admin/erp/clientes?id=' + pre).then((r) => {
+            if (r[0]) { CLIENTE = r[0]; pintarClienteSel(); buscarClientes(); }
+        });
+    }
+}).catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

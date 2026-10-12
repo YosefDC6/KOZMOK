@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reportes ERP · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="filters-bar">
+            <label style="font-size:.85rem;color:var(--text-muted)">Del</label>
+            <input type="date" id="f-desde" />
+            <label style="font-size:.85rem;color:var(--text-muted)">al</label>
+            <input type="date" id="f-hasta" />
+            <button class="btn btn-primary btn-sm" onclick="cargar()">Aplicar</button>
+            <button class="btn btn-ghost btn-sm" onclick="todo()">Todo el histórico</button>
+        </div>
+
+        <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+
+        <div class="erp-grid-2">
+            <div class="card">
+                <h3>Ventas por mes</h3>
+                <p>Últimos 6 meses, cobradas, por canal.</p>
+                <canvas id="chart-ventas" height="200"></canvas>
+            </div>
+            <div class="card">
+                <h3>Productos más vendidos</h3>
+                <p id="sub-vendidos">Unidades en el periodo.</p>
+                <div id="mas-vendidos"></div>
+            </div>
+        </div>
+
+        <div class="erp-grid-3">
+            <div class="card">
+                <h3>Inventario disponible</h3>
+                <p>Unidades en stock según su rotación (ventas de 90 días).</p>
+                <canvas id="chart-inventario" height="190"></canvas>
+                <div id="inv-tabla" style="margin-top:10px;overflow-x:auto"></div>
+            </div>
+            <div class="card">
+                <h3>Órdenes por estado</h3>
+                <p>Del periodo seleccionado.</p>
+                <canvas id="chart-estados" height="220"></canvas>
+            </div>
+            <div class="card">
+                <h3>Nivel de implementación</h3>
+                <div id="nivel-mini"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Integración entre módulos</h3>
+            <div class="integra" id="integracion"></div>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/erp.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('reportes-erp');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Reportes ERP', 'Dashboard empresarial: indicadores clave del negocio con datos de CRM, SCM y ERP.',
+    '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>'
+);
+
+const NIVEL_LABEL = { basico: 'Básico', integrado: 'Integrado', automatizado: 'Automatizado', optimizado: 'Optimizado' };
+let DATA = null;
+const graficas = {};
+
+function todo() {
+    document.getElementById('f-desde').value = '';
+    document.getElementById('f-hasta').value = '';
+    cargar();
+}
+
+function exportar() {
+    if (!DATA) return;
+    const k = DATA.kpis;
+    const periodo = DATA.rango.desde || DATA.rango.hasta ? `${DATA.rango.desde || 'inicio'} a ${DATA.rango.hasta || 'hoy'}` : 'Todo el histórico';
+    const filas = [
+        { seccion: 'KPIs', indicador: 'Periodo', valor: periodo },
+        { seccion: 'KPIs', indicador: 'Ventas totales (cobradas)', valor: k.ventas_totales },
+        { seccion: 'KPIs', indicador: 'Órdenes de clientes', valor: k.ordenes },
+        { seccion: 'KPIs', indicador: 'Órdenes capturadas en ERP', valor: k.ordenes_erp },
+        { seccion: 'KPIs', indicador: 'Órdenes de la tienda en línea', valor: k.ordenes_en_linea },
+        { seccion: 'KPIs', indicador: 'Productos vendidos (unidades)', valor: k.productos_vendidos },
+        { seccion: 'KPIs', indicador: 'Ticket promedio', valor: k.ticket_promedio },
+        { seccion: 'KPIs', indicador: 'Pagos pendientes', valor: k.pagos_pendientes },
+        { seccion: 'KPIs', indicador: 'Importe por cobrar', valor: k.por_cobrar },
+        { seccion: 'KPIs', indicador: 'Clientes activos', valor: k.clientes_activos },
+        ...DATA.ventas_por_mes.map((v) => ({ seccion: 'Ventas por mes', indicador: v.mes, valor: v.en_linea + v.erp })),
+        ...DATA.mas_vendidos.map((p) => ({ seccion: 'Más vendidos', indicador: p.nombre, valor: p.unidades })),
+        ...['alta', 'media', 'baja'].map((g) => ({ seccion: 'Inventario disponible (unidades)', indicador: 'Rotación ' + g, valor: DATA.inventario_rotacion[g].unidades })),
+        ...['alta', 'media', 'baja'].map((g) => ({ seccion: 'Inventario disponible (valor)', indicador: 'Rotación ' + g, valor: DATA.inventario_rotacion[g].valor })),
+        { seccion: 'Nivel ERP', indicador: 'Nivel actual', valor: NIVEL_LABEL[DATA.nivel.nivel] },
+    ];
+    descargarCSV('reportes-erp', filas);
+}
+
+function nueva(id, cfg) {
+    if (graficas[id]) graficas[id].destroy();
+    graficas[id] = new Chart(document.getElementById(id), cfg);
+}
+
+async function cargar() {
+    const p = new URLSearchParams();
+    const d = document.getElementById('f-desde').value;
+    const h = document.getElementById('f-hasta').value;
+    if (d) p.set('desde', d);
+    if (h) p.set('hasta', h);
+    DATA = await api('/admin/erp/reportes?' + p.toString());
+    const k = DATA.kpis;
+
+    document.getElementById('stat-grid').innerHTML = `
+        <div class="stat-card"><span class="kpi-ico">${icon('wallet', 18)}</span><div class="stat-label">Ventas totales</div><div class="stat-value" style="font-size:1.5rem">${formatoMoneda(k.ventas_totales)}</div><div class="stat-sub">ticket promedio ${formatoMoneda(k.ticket_promedio)}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('clipboard', 18)}</span><div class="stat-label">Órdenes de clientes</div><div class="stat-value">${k.ordenes}</div><div class="stat-sub">${k.ordenes_erp} ERP · ${k.ordenes_en_linea} en línea</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('user', 18)}</span><div class="stat-label">Clientes activos</div><div class="stat-value">${k.clientes_activos}</div><div class="stat-sub">${k.clientes_con_compra} compraron en el periodo</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('clock', 18)}</span><div class="stat-label">Por cobrar</div><div class="stat-value" style="font-size:1.5rem;color:var(--warning)">${formatoMoneda(k.por_cobrar)}</div><div class="stat-sub">${k.pagos_pendientes} ${k.pagos_pendientes === 1 ? 'orden' : 'órdenes'} con pago pendiente</div></div>
+    `;
+
+    if (graficas['chart-ventas']) graficas['chart-ventas'].destroy();
+    graficas['chart-ventas'] = graficaVentasMes(document.getElementById('chart-ventas'), DATA.ventas_por_mes);
+
+    document.getElementById('sub-vendidos').textContent = DATA.rango.desde || DATA.rango.hasta ? 'Unidades en el periodo seleccionado.' : 'Unidades de todo el histórico.';
+    renderBarrasH(document.getElementById('mas-vendidos'), DATA.mas_vendidos);
+
+    const rot = DATA.inventario_rotacion;
+    const totalU = rot.alta.unidades + rot.media.unidades + rot.baja.unidades;
+    const pct = (n) => (totalU ? Math.round((n / totalU) * 100) : 0);
+    const COL = { alta: '#2E9E5B', media: '#E8944A', baja: '#E85F5A' };
+    const texto = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#8A93A7';
+    nueva('chart-inventario', {
+        type: 'doughnut',
+        data: { labels: ['Alta rotación', 'Rotación media', 'Rotación baja'], datasets: [{ data: [rot.alta.unidades, rot.media.unidades, rot.baja.unidades], backgroundColor: [COL.alta, COL.media, COL.baja], borderWidth: 0 }] },
+        options: { cutout: '62%', plugins: { legend: { position: 'bottom', labels: { color: texto, boxWidth: 12 } } } },
+    });
+    document.getElementById('inv-tabla').innerHTML = `
+        <table style="font-size:.8rem">
+            <thead><tr><th>Rotación</th><th>Prod.</th><th>Unid.</th><th>%</th></tr></thead>
+            <tbody>${['alta', 'media', 'baja'].map((g) => `
+                <tr title="Valor en stock: ${formatoMoneda(rot[g].valor)}"><td><span style="color:${COL[g]}">●</span> ${g[0].toUpperCase() + g.slice(1)}</td><td class="mono">${rot[g].productos}</td><td class="mono">${rot[g].unidades}</td><td class="mono">${pct(rot[g].unidades)}%</td></tr>`).join('')}
+            </tbody>
+        </table>`;
+
+    const ORDEN_EST = ['pendiente', 'confirmado', 'procesando', 'enviado', 'entregado', 'cancelado'];
+    const porEstado = Object.fromEntries(DATA.ordenes_por_estado.map((e) => [e.estado, e.total]));
+    nueva('chart-estados', {
+        type: 'bar',
+        data: { labels: ORDEN_EST.map((e) => e[0].toUpperCase() + e.slice(1)), datasets: [{ data: ORDEN_EST.map((e) => porEstado[e] || 0), backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#6E8BF0' }] },
+        options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0, color: texto } }, y: { ticks: { color: texto } } } },
+    });
+
+    const n = DATA.nivel;
+    document.getElementById('nivel-mini').innerHTML = `
+        <span class="madurez-nivel n-${n.nivel}" style="font-size:1rem">${NIVEL_LABEL[n.nivel]}</span>
+        <div class="madurez-track"><div class="madurez-fill" style="width:${Math.round((n.cumplidos / n.total) * 100)}%"></div></div>
+        ${n.checklist.map((c) => `<div class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}"><span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 14)}</span>${c.etiqueta}</div>`).join('')}
+        ${puedeVer((Sesion.usuario() || {}).rol, 'nivel-erp') ? `<a href="/admin/nivel-erp.html" style="font-size:.8rem;display:inline-block;margin-top:8px">Ver detalle ${icon('arrow', 12)}</a>` : ''}`;
+
+    // El bloque de integración usa los mismos totales del dashboard ERP.
+    const res = await api('/admin/erp/resumen');
+    renderIntegracion(document.getElementById('integracion'), res.kpis);
+}
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

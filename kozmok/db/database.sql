@@ -42,6 +42,8 @@ DROP TABLE IF EXISTS categorias              CASCADE;
 DROP TABLE IF EXISTS proveedores             CASCADE;
 DROP TABLE IF EXISTS usuarios                CASCADE;
 
+DROP SEQUENCE IF EXISTS folio_erp_seq;
+
 DROP FUNCTION IF EXISTS actualizar_fecha()                 CASCADE;
 DROP FUNCTION IF EXISTS actualizar_metricas_interaccion()  CASCADE;
 DROP FUNCTION IF EXISTS actualizar_metricas_compra()       CASCADE;
@@ -216,6 +218,11 @@ CREATE TABLE pedidos (
     numero_orden          VARCHAR(40) UNIQUE NOT NULL,
     cliente_id            INTEGER REFERENCES clientes(id),
     vendedor_id           INTEGER REFERENCES usuarios(id),
+    -- ERP: de dónde viene la orden. 'en_linea' = la hizo el cliente en la
+    -- tienda; 'erp' = la registró el equipo desde el panel (Órdenes ERP).
+    -- En las órdenes ERP, vendedor_id es el usuario interno que la capturó.
+    origen                VARCHAR(10) NOT NULL DEFAULT 'en_linea'
+                           CHECK (origen IN ('en_linea','erp')),
     subtotal              NUMERIC(12,2) NOT NULL DEFAULT 0,
     impuestos             NUMERIC(12,2) NOT NULL DEFAULT 0,
     envio                 NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -242,6 +249,9 @@ CREATE TABLE pedidos (
     fecha_entrega         TIMESTAMP,
     fecha_actualizacion   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Folio consecutivo de las órdenes de clientes del ERP: OR-001, OR-002, ...
+CREATE SEQUENCE folio_erp_seq START 1;
 
 CREATE TABLE pedido_items (
     id                SERIAL PRIMARY KEY,
@@ -763,6 +773,32 @@ INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, sub
  ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24310'), 7, 1, 34999.00, 34999.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'), 4, 1,  9999.00,  9999.00);
 
+-- ---------------------------------------------------------
+-- ÓRDENES DE CLIENTES (ERP) de ejemplo: capturadas desde el
+-- panel por el equipo (origen = 'erp'). Tres ya cobradas y una
+-- con pago pendiente. Sus importes ya están sumados en las
+-- métricas y puntos de abajo.
+-- ---------------------------------------------------------
+INSERT INTO pedidos
+ (numero_orden, cliente_id, vendedor_id, origen, subtotal, impuestos, envio, descuento, total, estado, metodo_pago,
+  pago_estado, pago_referencia, direccion_envio, notas, fecha_pedido, fecha_confirmacion, fecha_envio, fecha_entrega) VALUES
+ ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 4, 2, 'erp',  7197.00, 1151.52, 199.00, 0, 8547.52, 'entregado', 'Efectivo en mostrador',
+   'pagado', NULL, 'Recoge en tienda', 'Venta en mostrador', CURRENT_TIMESTAMP - INTERVAL '140 days', CURRENT_TIMESTAMP - INTERVAL '140 days', CURRENT_TIMESTAMP - INTERVAL '139 days', CURRENT_TIMESTAMP - INTERVAL '138 days'),
+ ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 1, 2, 'erp', 14999.00, 2399.84,   0.00, 0, 17398.84, 'entregado', 'Tarjeta en mostrador',
+   'pagado', NULL, 'Av. Universidad 123, Col. Centro, Aguascalientes', 'Pedido por teléfono para el estudio', CURRENT_TIMESTAMP - INTERVAL '100 days', CURRENT_TIMESTAMP - INTERVAL '100 days', CURRENT_TIMESTAMP - INTERVAL '99 days', CURRENT_TIMESTAMP - INTERVAL '97 days'),
+ ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 2, 1, 'erp',  3197.00,  511.52, 199.00, 0, 3907.52, 'entregado', 'Transferencia bancaria',
+   'pagado', NULL, 'Blvd. López Mateos 456, Col. Jardines, León', NULL, CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '39 days', CURRENT_TIMESTAMP - INTERVAL '37 days'),
+ ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 1, 2, 'erp',  5999.00,  959.84, 199.00, 0, 7157.84, 'pendiente', 'Transferencia bancaria',
+   'pendiente', 'ERP-4471029385', 'Av. Universidad 123, Col. Centro, Aguascalientes', 'Monitor para la segunda estación', CURRENT_TIMESTAMP - INTERVAL '1 days', NULL, NULL, NULL);
+
+INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 15, 1, 5999.00,  5999.00),
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 18, 2,  599.00,  1198.00),
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-002'),  1, 1, 14999.00, 14999.00),
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-003'), 17, 2, 1299.00,  2598.00),
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-003'), 18, 1,  599.00,   599.00),
+ ((SELECT id FROM pedidos WHERE numero_orden = 'OR-004'), 15, 1, 5999.00,  5999.00);
+
 -- Garantías extendidas de ejemplo (certificados de compras anteriores).
 -- No se recalculan los totales históricos de esos pedidos: lo que importa
 -- para la demo es el certificado. Los pedidos nuevos sí cuadran al centavo.
@@ -799,10 +835,10 @@ UPDATE pedido_items SET garantia_plan = 'Básica · 12 meses', garantia_meses = 
 --  con datos desde el arranque)
 -- ---------------------------------------------------------
 INSERT INTO metricas_clientes (cliente_id, total_compras, valor_total_compras, ticket_promedio) VALUES
- (1, 3, 105197.20, 35065.73),
- (2, 2,  73077.68, 36538.84),
+ (1, 4, 122596.04, 30649.01),
+ (2, 3,  76985.20, 25661.73),
  (3, 0,        0,        0),
- (4, 1,  11797.84, 11797.84)
+ (4, 2,  20345.36, 10172.68)
 ON CONFLICT (cliente_id) DO UPDATE
     SET total_compras       = EXCLUDED.total_compras,
         valor_total_compras = EXCLUDED.valor_total_compras,
@@ -810,16 +846,19 @@ ON CONFLICT (cliente_id) DO UPDATE
 
 -- Puntos del Club (100 puntos = $10). El saldo de cada cliente
 -- es la suma de sus movimientos.
-UPDATE clientes SET puntos = 1240 WHERE id = 1;
-UPDATE clientes SET puntos = 755  WHERE id = 2;
-UPDATE clientes SET puntos = 117  WHERE id = 4;
+UPDATE clientes SET puntos = 1989 WHERE id = 1;
+UPDATE clientes SET puntos = 914  WHERE id = 2;
+UPDATE clientes SET puntos = 476  WHERE id = 4;
 INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id, fecha) VALUES
  (1, 'ganado',   980, 'Compra ORD-24051 · PC Workstation Diseño',   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'), CURRENT_TIMESTAMP - INTERVAL '55 days'),
  (1, 'ganado',   700, 'Compra ORD-24188 · MacBook Air M2',          (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24188'), CURRENT_TIMESTAMP - INTERVAL '27 days'),
  (1, 'canjeado', -440, 'Descuento aplicado en ORD-24263',           (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), CURRENT_TIMESTAMP - INTERVAL '8 days'),
  (2, 'ganado',   350, 'Compra ORD-24120 · Laptop Gamer Legion 5',   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120'), CURRENT_TIMESTAMP - INTERVAL '12 days'),
  (2, 'ganado',   405, 'Compra ORD-24310 · PC Gamer RTX 4070',       (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24310'), CURRENT_TIMESTAMP - INTERVAL '2 days'),
- (4, 'ganado',   117, 'Compra ORD-24225 · Laptop ASUS VivoBook 15', (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'), CURRENT_TIMESTAMP - INTERVAL '17 days');
+ (4, 'ganado',   117, 'Compra ORD-24225 · Laptop ASUS VivoBook 15', (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'), CURRENT_TIMESTAMP - INTERVAL '17 days'),
+ (4, 'ganado',   359, 'Compra OR-001 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-001'),    CURRENT_TIMESTAMP - INTERVAL '140 days'),
+ (1, 'ganado',   749, 'Compra OR-002 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-002'),    CURRENT_TIMESTAMP - INTERVAL '100 days'),
+ (2, 'ganado',   159, 'Compra OR-003 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-003'),    CURRENT_TIMESTAMP - INTERVAL '40 days');
 
 -- Reseñas / Evaluaciones
 INSERT INTO resenas (cliente_id, producto_id, calificacion, comentario, fecha) VALUES

@@ -10,6 +10,13 @@ arquitectura (Node/Express + PostgreSQL) pedida para la Etapa 1 (CRM)
 del proyecto: front-end, back-end con API REST, base de datos y
 autenticación con roles.
 
+> **Etapas del proyecto:** Etapa 1 = CRM, Etapa 2 = SCM, Etapa 3 = ERP
+> (órdenes de clientes capturadas por el equipo que integran CRM y SCM,
+> nivel de implementación y reportes empresariales). Las rutas del ERP
+> viven en `server.js` bajo `/api/admin/erp/*` y sus pantallas en
+> `public/admin/erp.html`, `ordenes-erp.html`, `orden-nueva.html`,
+> `nivel-erp.html` y `reportes-erp.html` (utilidades en `admin/js/erp.js`).
+
 ## Estructura
 
 ```

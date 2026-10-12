@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dashboard ERP · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="modulo-tiles" id="modulo-tiles"></div>
+
+        <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+
+        <div class="erp-grid-2">
+            <div class="card">
+                <h3>Ventas (últimos 6 meses)</h3>
+                <p>Solo órdenes cobradas, separadas por canal.</p>
+                <canvas id="chart-ventas" height="210"></canvas>
+            </div>
+            <div class="card">
+                <h3>Productos más vendidos</h3>
+                <p>Unidades en órdenes no canceladas (ambos canales).</p>
+                <div id="mas-vendidos"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <h3 style="margin:0">Últimas órdenes de clientes</h3>
+                <a href="/admin/ordenes-erp.html" class="btn btn-outline btn-sm">Ver todas</a>
+            </div>
+            <div class="table-wrap" style="margin-top:12px">
+                <table>
+                    <thead><tr><th>Folio</th><th>Cliente</th><th>Fecha</th><th>Canal</th><th>Total</th><th>Estado</th></tr></thead>
+                    <tbody id="tabla-ultimas"><tr><td colspan="6">Cargando…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Integración entre módulos</h3>
+            <p>El ERP toma a los clientes del CRM y los productos e inventario del SCM; cada orden actualiza a los dos.</p>
+            <div class="integra" id="integracion"></div>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/erp.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('erp');
+const USR = Sesion.usuario();
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Dashboard ERP', 'Planificación de recursos empresariales: vista integrada del negocio.',
+    puedeVer(USR && USR.rol, 'orden-nueva') ? `<a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : ''
+);
+renderModuloTiles('modulo-tiles', 'ERP', 'erp');
+
+async function cargar() {
+    const r = await api('/admin/erp/resumen');
+    const k = r.kpis;
+    document.getElementById('stat-grid').innerHTML = `
+        <div class="stat-card"><span class="kpi-ico">${icon('user', 18)}</span><div class="stat-label">Clientes activos</div><div class="stat-value">${k.clientes_activos}</div><div class="stat-sub">de ${k.clientes_total} en el CRM</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('clipboard', 18)}</span><div class="stat-label">Órdenes de clientes</div><div class="stat-value">${k.ordenes_clientes}</div><div class="stat-sub">${k.ordenes_erp} capturadas en ERP</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('wallet', 18)}</span><div class="stat-label">Ventas totales</div><div class="stat-value" style="font-size:1.5rem">${formatoMoneda(k.ventas_totales)}</div><div class="stat-sub">${k.pagos_pendientes} con pago pendiente</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('alert', 18)}</span><div class="stat-label">Stock crítico</div><div class="stat-value" style="color:var(--danger)">${k.stock_critico}</div><div class="stat-sub">${k.ordenes_compra_abiertas} órdenes de compra abiertas</div></div>
+    `;
+
+    graficaVentasMes(document.getElementById('chart-ventas'), r.ventas_por_mes);
+    renderBarrasH(document.getElementById('mas-vendidos'), r.mas_vendidos);
+
+    document.getElementById('tabla-ultimas').innerHTML = r.ultimas_ordenes.map((o) => `
+        <tr onclick="location.href='/admin/ordenes-erp.html?open=${o.id}'" style="cursor:pointer">
+            <td class="mono">${o.numero_orden}</td>
+            <td>${o.cliente_nombre}</td>
+            <td>${formatoFecha(o.fecha_pedido)}</td>
+            <td>${origenPill(o.origen)}</td>
+            <td class="mono">${formatoMoneda(o.total)}</td>
+            <td><span class="estado-pill e-${o.estado}">${o.estado}</span></td>
+        </tr>`).join('') || '<tr><td colspan="6">Todavía no hay órdenes.</td></tr>';
+
+    renderIntegracion(document.getElementById('integracion'), k);
+}
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>
