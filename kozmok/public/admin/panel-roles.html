@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel por rol · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="card">
+            <h3 style="margin-top:0">Vistas y accesos por rol</h3>
+            <p style="color:var(--text-muted);font-size:.88rem">
+                Se genera de los mismos permisos que arman el menú lateral, así que siempre coincide con lo que de verdad ve cada quien.
+                Si alguien abre por URL una sección que no le toca, el panel lo regresa al Dashboard.
+            </p>
+            <div class="roles-grid" id="roles-grid"></div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0">Matriz de permisos</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead id="matriz-head"></thead>
+                    <tbody id="matriz-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0">Agregar un rol nuevo</h3>
+            <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
+                <li><code>db/database.sql</code> → CHECK <code>(rol IN (...))</code> de la tabla usuarios.</li>
+                <li><code>server.js</code> → objeto <code>ROLES_INTERNOS</code> (y <code>ROLES_ORDEN_ERP</code> si podrá capturar órdenes).</li>
+                <li><code>admin/js/admin-layout.js</code> → objeto <code>PERMISOS</code> con las secciones que verá.</li>
+            </ol>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('panel-roles');
+document.getElementById('topbar').innerHTML = adminHeader('Panel por rol', 'Menú dinámico: vistas y accesos según el rol de cada usuario.');
+
+const ROLES = Object.keys(PERMISOS);
+
+// Una columna por rol, agrupada por módulo.
+document.getElementById('roles-grid').innerHTML = ROLES.map((rol) => {
+    const grupos = ADMIN_SECCIONES.map((s) => {
+        const items = s.links.filter((l) => puedeVer(rol, l.key));
+        if (s.titulo === 'ERP' && puedeVer(rol, 'orden-nueva')) items.push({ label: 'Capturar órdenes', ic: 'plus' });
+        if (!items.length) return '';
+        return `<li style="margin-top:6px"><small style="font-weight:700;letter-spacing:.04em">${s.titulo.toUpperCase()}</small></li>` +
+            items.map((l) => `<li>${icon('check', 13)} ${l.label}</li>`).join('');
+    }).join('');
+    return `<div class="rol-col"><h4>${ROL_LABEL[rol] || rol}</h4><ul>${grupos}</ul></div>`;
+}).join('');
+
+// Matriz sección × rol.
+document.getElementById('matriz-head').innerHTML = `<tr><th>Módulo</th><th>Sección</th>${ROLES.map((r) => `<th style="text-align:center">${ROL_LABEL[r] || r}</th>`).join('')}</tr>`;
+const filas = ADMIN_SECCIONES.flatMap((s) => {
+    const links = [...s.links];
+    if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes' });
+    return links.map((l) => ({ modulo: s.titulo, ...l }));
+});
+const si = `<span style="color:var(--success)">${icon('check', 15)}</span>`;
+const no = `<span style="color:var(--text-muted)">—</span>`;
+document.getElementById('matriz-body').innerHTML = filas.map((f) => `
+    <tr>
+        <td style="color:var(--text-muted);font-size:.8rem">${f.modulo}</td>
+        <td>${f.label}</td>
+        ${ROLES.map((r) => `<td style="text-align:center">${puedeVer(r, f.key) ? si : no}</td>`).join('')}
+    </tr>`).join('');
+</script>
+</body>
+</html>

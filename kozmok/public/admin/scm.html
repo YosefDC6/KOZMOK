@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Panel SCM · Admin Kozmok</title>
+<title>Dashboard SCM · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -16,19 +16,40 @@
 
         <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
 
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px">
-                <h3 style="margin:0">Nivel de madurez SCM</h3>
-                <span id="madurez-nivel"></span>
+        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+                <h3 style="margin:0 0 4px">Nivel de madurez SCM</h3>
+                <div style="color:var(--text-muted);font-size:.85rem" id="madurez-resumen"></div>
             </div>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0">
-                Calculado a partir de datos reales del sistema, no de una lista marcada a mano: conforme se usa cada parte del módulo, el nivel avanza solo.
-            </p>
-            <div class="madurez-track"><div class="madurez-fill" id="madurez-fill"></div></div>
+            <div style="display:flex;align-items:center;gap:12px">
+                <span id="madurez-nivel"></span>
+                <a class="btn btn-outline btn-sm" href="/admin/nivel-scm.html">Ver detalle</a>
+            </div>
+            <div class="madurez-track" style="flex-basis:100%;margin:4px 0 0"><div class="madurez-fill" id="madurez-fill"></div></div>
+        </div>
 
-            <div id="madurez-descripcion" class="pago-box" style="margin:4px 0 16px"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+            <div class="card">
+                <h3 style="margin-top:0">Productos más vendidos</h3>
+                <div id="mas-vendidos"></div>
+            </div>
+            <div class="card">
+                <h3 style="margin-top:0">Estrategia de reabastecimiento</h3>
+                <div id="push-pull"></div>
+            </div>
+        </div>
 
-            <div id="madurez-checklist"></div>
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <h3 style="margin:0">Inventario crítico</h3>
+                <a class="btn btn-ghost btn-sm" href="/admin/inventario.html">Ir a Inventario</a>
+            </div>
+            <div class="table-wrap" style="margin-top:10px">
+                <table>
+                    <thead><tr><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Proveedor</th><th>Orden de compra</th></tr></thead>
+                    <tbody id="tabla-critico"><tr><td colspan="5">Cargando…</td></tr></tbody>
+                </table>
+            </div>
         </div>
     </main>
 </div>
@@ -38,34 +59,19 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/erp.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('scm');
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Panel SCM', 'Nivel de madurez de la cadena de suministro: proveedores, inventario y logística.'
+    'Dashboard SCM', 'Cadena de suministro: productos, inventario, proveedores y logística.'
 );
 renderModuloTiles('modulo-tiles', 'SCM', 'scm');
 
 const NIVEL_LABEL = { inicial: 'Inicial', en_desarrollo: 'En desarrollo', optimizado: 'Optimizado' };
 
-// Qué hacer para resolver cada punto pendiente del checklist: a dónde
-// mandar al admin con un clic para avanzar de nivel.
-const CHECKLIST_DESTINO = {
-    proveedores: { href: '/admin/productos.html', texto: 'Asignar proveedores en Inventario' },
-    movimientos: { href: '/admin/movimientos.html', texto: 'Ver Movimientos de inventario' },
-    estrategia: { href: '/admin/logistica.html', texto: 'Definir estrategias en Logística' },
-    ordenes: { href: '/admin/ordenes-compra.html', texto: 'Generar una orden de compra' },
-    reportes: { href: '/admin/reportes-scm.html', texto: 'Ver Reportes de la cadena' },
-};
-
-const NIVEL_DESCRIPCION = {
-    inicial: 'Tu cadena de suministro apenas se está armando. Asigna proveedores a tus productos, registra tu primer movimiento de inventario y define si cada producto es push o pull para empezar a avanzar de nivel.',
-    en_desarrollo: 'Ya hay trazabilidad básica: proveedores y movimientos en uso. Para llegar a Optimizado, usa las dos estrategias de reabastecimiento según corresponda, genera órdenes de compra reales a tus proveedores, y asegúrate de tener ventas registradas para que los reportes reflejen datos reales.',
-    optimizado: 'Tu módulo SCM está completo: hay trazabilidad de principio a fin, desde el proveedor hasta la venta, con las dos estrategias de reabastecimiento en uso y reportes basados en datos reales del negocio.',
-};
-
 async function cargar() {
-    const r = await api('/admin/scm/resumen');
+    const [r, mp] = await Promise.all([api('/admin/scm/resumen'), api('/admin/metricas-productos')]);
 
     document.getElementById('stat-grid').innerHTML = `
         <div class="stat-card"><div class="stat-label">Productos activos</div><div class="stat-value">${r.stats.total_productos}</div></div>
@@ -75,29 +81,39 @@ async function cargar() {
         <div class="stat-card"><div class="stat-label">Rotación de inventario</div><div class="stat-value" style="color:var(--accent)">${r.rotacion_pct}%</div><div class="stat-sub">unidades vendidas vs. stock actual</div></div>
     `;
 
-    document.getElementById('madurez-nivel').innerHTML = `<span class="madurez-nivel n-${r.madurez.nivel}">${NIVEL_LABEL[r.madurez.nivel]}</span>`;
-    document.getElementById('madurez-fill').style.width = `${Math.round((r.madurez.cumplidos / r.madurez.total) * 100)}%`;
+    const m = r.madurez;
+    document.getElementById('madurez-nivel').innerHTML = `<span class="madurez-nivel n-${m.nivel}" style="font-size:1rem">${NIVEL_LABEL[m.nivel]}</span>`;
+    document.getElementById('madurez-resumen').textContent = `${m.cumplidos} de ${m.total} puntos del checklist cumplidos.`;
+    document.getElementById('madurez-fill').style.width = `${Math.round((m.cumplidos / m.total) * 100)}%`;
 
-    document.getElementById('madurez-descripcion').innerHTML = `
-        <h4>${icon('info', 16)} Qué significa este nivel</h4>
-        <div class="pb-sub">${NIVEL_DESCRIPCION[r.madurez.nivel]}</div>
-    `;
+    renderBarrasH(document.getElementById('mas-vendidos'),
+        r.mas_vendidos.filter((p) => Number(p.unidades_vendidas) > 0),
+        { etiqueta: 'nombre', valor: 'unidades_vendidas' });
 
-    // Cada punto es un enlace: si ya está cumplido lleva a revisarlo, si
-    // está pendiente lleva directo a dónde resolverlo.
-    document.getElementById('madurez-checklist').innerHTML = r.madurez.checklist.map((c) => {
-        const destino = CHECKLIST_DESTINO[c.clave];
-        return `
-            <a class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}" href="${destino.href}" style="text-decoration:none;cursor:pointer">
-                <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
-                <span style="flex:1">${c.etiqueta}</span>
-                <span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? 'Revisar' : destino.texto} ${icon('arrow', 13)}</span>
-            </a>
-        `;
-    }).join('');
+    const pp = r.push_pull;
+    const tot = (pp.push + pp.pull) || 1;
+    document.getElementById('push-pull').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+            <div class="stat-card"><div class="stat-label" style="color:var(--info)">PUSH</div><div class="stat-value">${pp.push}</div><div class="stat-sub">${formatoMoneda(pp.valor_push)} en stock</div></div>
+            <div class="stat-card"><div class="stat-label" style="color:var(--warning)">PULL</div><div class="stat-value">${pp.pull}</div><div class="stat-sub">${formatoMoneda(pp.valor_pull)} en stock</div></div>
+        </div>
+        <div style="display:flex;height:10px;border-radius:6px;overflow:hidden;background:var(--line)">
+            <div style="width:${Math.round(pp.push / tot * 100)}%;background:var(--info)"></div>
+            <div style="width:${Math.round(pp.pull / tot * 100)}%;background:var(--warning)"></div>
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin:8px 0 0">Push: se repone por calendario. Pull: se repone bajo demanda. <a href="/admin/logistica.html">Configurar en Logística</a></p>`;
+
+    document.getElementById('tabla-critico').innerHTML = mp.inventario_critico.length ? mp.inventario_critico.map((p) => `
+        <tr>
+            <td>${p.nombre}</td>
+            <td class="mono ${p.stock === 0 ? 'stock-out' : 'stock-low'}">${p.stock}</td>
+            <td class="mono">${p.stock_minimo}</td>
+            <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
+            <td>${p.orden_abierta_folio ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio}</span>` : '—'}</td>
+        </tr>`).join('') : `<tr><td colspan="5" style="color:var(--text-muted)">Ningún producto está en su stock mínimo.</td></tr>`;
 }
 
-cargar();
+cargar().catch((e) => toast(e.message, 'error'));
 </script>
 </body>
 </html>

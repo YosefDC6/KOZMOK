@@ -40,10 +40,10 @@
             </ul>
         </div>
 
-        <div class="card" style="margin-bottom:16px">
-            <h3 style="margin-top:0">Panel por rol (menú dinámico)</h3>
-            <p style="color:var(--text-muted);font-size:.88rem">Qué secciones ve cada rol en el menú lateral. Se genera de los mismos permisos que usa el panel, así que siempre está al día.</p>
-            <div class="roles-grid" id="roles-grid"></div>
+        <div class="card" style="max-width:640px;margin-bottom:16px" id="card-roles" hidden>
+            <h3 style="margin-top:0">Panel por rol</h3>
+            <p style="color:var(--text-muted);font-size:.88rem">Qué secciones ve cada rol en el menú lateral, con su matriz de permisos.</p>
+            <a class="btn btn-outline btn-sm" href="/admin/panel-roles.html">Abrir Panel por rol</a>
         </div>
 
         <div class="card" style="max-width:640px">
@@ -79,18 +79,7 @@ function pintarTemas() {
 }
 pintarTemas();
 
-// Accesos por rol, armados con PERMISOS y ADMIN_SECCIONES de admin-layout.js.
-function pintarRoles() {
-    const roles = Object.keys(PERMISOS);
-    document.getElementById('roles-grid').innerHTML = roles.map((rol) => {
-        const items = ADMIN_SECCIONES.flatMap((s) => s.links
-            .filter((l) => puedeVer(rol, l.key))
-            .map((l) => `<li>${icon('check', 13)} ${l.label}${s.titulo !== 'Cuenta' ? ` <small>(${s.titulo})</small>` : ''}</li>`));
-        const captura = puedeVer(rol, 'orden-nueva') ? `<li>${icon('check', 13)} Capturar órdenes <small>(ERP)</small></li>` : '';
-        return `<div class="rol-col"><h4>${ROL_LABEL[rol] || rol}</h4><ul>${items.join('')}${captura}</ul></div>`;
-    }).join('');
-}
-pintarRoles();
+if (puedeVer((Sesion.usuario() || {}).rol, 'panel-roles')) document.getElementById('card-roles').hidden = false;
 </script>
 </body>
 </html>

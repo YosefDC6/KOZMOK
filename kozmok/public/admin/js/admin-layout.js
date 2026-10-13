@@ -23,19 +23,22 @@ const ADMIN_SECCIONES = [
         { href: '/admin/reportes.html',      key: 'reportes',      ic: 'grid',    label: 'Reportes',            desc: 'Métricas e indicadores' },
     ] },
     { titulo: 'SCM', home: '/admin/scm.html', links: [
-        { href: '/admin/scm.html',            key: 'scm',             ic: 'home',    label: 'Dashboard',         desc: 'Nivel de madurez de la cadena' },
-        { href: '/admin/productos.html',      key: 'productos',       ic: 'package', label: 'Inventario',        desc: 'Catálogo y stock' },
-        { href: '/admin/proveedores.html',    key: 'proveedores',     ic: 'id',      label: 'Proveedores',       desc: 'Contactos y tiempos de entrega' },
-        { href: '/admin/movimientos.html',    key: 'movimientos',     ic: 'clock',   label: 'Movimientos',       desc: 'Historial de entradas y salidas' },
-        { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',    label: 'Órdenes de compra', desc: 'Reposición hacia proveedores' },
-        { href: '/admin/logistica.html',      key: 'logistica',       ic: 'truck',   label: 'Logística',         desc: 'Estrategia push / pull' },
-        { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',    label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },
+        { href: '/admin/scm.html',            key: 'scm',             ic: 'home',      label: 'Dashboard',         desc: 'Métricas de la cadena de suministro' },
+        { href: '/admin/productos.html',      key: 'productos',       ic: 'laptop',    label: 'Productos',         desc: 'Catálogo: alta y edición' },
+        { href: '/admin/proveedores.html',    key: 'proveedores',     ic: 'id',        label: 'Proveedores',       desc: 'Contactos y tiempos de entrega' },
+        { href: '/admin/inventario.html',     key: 'inventario',      ic: 'package',   label: 'Inventario',        desc: 'Existencias y stock crítico' },
+        { href: '/admin/movimientos.html',    key: 'movimientos',     ic: 'clock',     label: 'Movimientos',       desc: 'Historial de entradas y salidas' },
+        { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',      label: 'Órdenes de compra', desc: 'Reposición hacia proveedores' },
+        { href: '/admin/logistica.html',      key: 'logistica',       ic: 'truck',     label: 'Logística',         desc: 'Estrategia push / pull' },
+        { href: '/admin/nivel-scm.html',      key: 'nivel-scm',       ic: 'medal',     label: 'Nivel de madurez',  desc: 'Avance en la implementación' },
+        { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',      label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },
     ] },
     { titulo: 'ERP', home: '/admin/erp.html', links: [
         { href: '/admin/erp.html',          key: 'erp',          ic: 'home',    label: 'Dashboard',           desc: 'Vista integrada del negocio' },
         { href: '/admin/ordenes-erp.html',  key: 'ordenes-erp',  ic: 'cart',    label: 'Órdenes de clientes', desc: 'Captura y consulta de órdenes' },
         { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
+        { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'layers',  label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
@@ -52,9 +55,9 @@ const ADMIN_SECCIONES = [
 // (ROLES_ORDEN_ERP en server.js).
 const PERMISOS = {
     admin:    '*',
-    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'chatbot', 'erp', 'ordenes-erp', 'orden-nueva', 'reportes-erp', 'mi-actividad', 'configuracion'],
+    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'inventario', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'nivel-scm', 'reportes-scm', 'chatbot', 'erp', 'ordenes-erp', 'orden-nueva', 'reportes-erp', 'mi-actividad', 'configuracion'],
     soporte:  ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'mi-actividad', 'configuracion'],
-    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'reportes-scm', 'garantias', 'chatbot', 'erp', 'ordenes-erp', 'reportes-erp', 'mi-actividad', 'configuracion'],
+    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'inventario', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'nivel-scm', 'reportes-scm', 'garantias', 'chatbot', 'erp', 'ordenes-erp', 'reportes-erp', 'mi-actividad', 'configuracion'],
 };
 window.PERMISOS = PERMISOS;
 window.ADMIN_SECCIONES = ADMIN_SECCIONES;

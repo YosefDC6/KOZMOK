@@ -28,11 +28,12 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Pedidos**, **garantías** y **analítica del chatbot** (qué se busca y qué búsquedas quedaron sin recomendación).
 
 ### Panel interno – SCM
-- **Inventario** con alertas de stock crítico.
-- **Proveedores** y **movimientos de inventario**.
+- **Dashboard SCM** con métricas, más vendidos, push vs pull e inventario crítico.
+- **Productos** (catálogo: alta, edición, filtros por categoría y estrategia) e **Inventario** (existencias, estado Normal / Stock bajo / Agotado, valor del inventario y detalle con últimos movimientos), como pantallas separadas.
+- **Proveedores** (con contacto, dirección y tiempo de entrega) y **movimientos de inventario**.
 - **Órdenes de compra** (`OC-100x`), generadas automáticamente cuando un producto llega a stock crítico.
 - **Logística**: estrategia de reabastecimiento *push* o *pull* por producto.
-- **Dashboard SCM** con nivel de madurez calculado a partir de los datos y **reportes SCM**.
+- **Nivel de madurez SCM** (Inicial → En desarrollo → Optimizado) en su propia pantalla, calculado a partir de los datos, y **reportes SCM**.
 
 ### Panel interno – ERP (Etapa 3)
 Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo lugar.
@@ -42,7 +43,7 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 - **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera una orden de compra automática si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
 - **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos.
 - **Reportes ERP**: KPIs por rango de fechas, ventas por mes, más vendidos, inventario disponible por rotación, órdenes por estado y exportación a CSV.
-- **Panel por rol**: en Configuración se ve qué secciones tiene cada rol (se genera de los mismos permisos del menú).
+- **Panel por rol** (solo admin): columnas por rol y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
 
 ---
 
@@ -51,7 +52,7 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 | Rol | Acceso |
 |---|---|
 | **Administrador** | Acceso total, incluida la gestión de cuentas y del equipo |
-| **Vendedor** | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas ni Nivel ERP |
+| **Vendedor** | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas, Nivel ERP ni Panel por rol |
 | **Soporte** | Clientes, interacciones, evaluaciones, soporte, garantías y reportes |
 | **Almacén** | Pedidos, inventario, proveedores, garantías, analítica del chatbot y consulta del ERP (sin capturar órdenes) |
 | **Cliente** | Solo la tienda y su propia cuenta |
@@ -113,8 +114,9 @@ KOZMOK/
         ├── index.html, carrito.html, armar-pc.html, comparar.html, ...
         ├── css/style.css
         ├── js/               # api, layout, chatbot, tema, toasts, etc.
-        └── admin/            # panel CRM, SCM y ERP (erp.html, ordenes-erp.html,
-                              #   orden-nueva.html, nivel-erp.html, reportes-erp.html)
+        └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)
+                              #   y ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
+                              #   reportes-erp, panel-roles)
 ```
 
 **Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas.

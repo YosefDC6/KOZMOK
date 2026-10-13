@@ -2209,25 +2209,26 @@ app.get('/api/admin/proveedores', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/admin/proveedores', asyncRoute(async (req, res) => {
-    const { nombre, contacto, email, telefono, tiempo_entrega_dias } = req.body;
+    const { nombre, contacto, email, telefono, direccion, tiempo_entrega_dias } = req.body;
     if (!nombre) return res.status(400).json({ message: 'El nombre es obligatorio' });
     const result = await pool.query(
-        `INSERT INTO proveedores (nombre, contacto, email, telefono, tiempo_entrega_dias)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [nombre, contacto || null, email || null, telefono || null, tiempo_entrega_dias || 7]
+        `INSERT INTO proveedores (nombre, contacto, email, telefono, direccion, tiempo_entrega_dias)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [nombre, contacto || null, email || null, telefono || null, direccion || null, tiempo_entrega_dias || 7]
     );
     res.status(201).json(result.rows[0]);
 }));
 
 app.put('/api/admin/proveedores/:id', asyncRoute(async (req, res) => {
-    const { nombre, contacto, email, telefono, tiempo_entrega_dias, activo } = req.body;
+    const { nombre, contacto, email, telefono, direccion, tiempo_entrega_dias, activo } = req.body;
     const result = await pool.query(
         `UPDATE proveedores SET
             nombre = COALESCE($1, nombre), contacto = COALESCE($2, contacto),
             email = COALESCE($3, email), telefono = COALESCE($4, telefono),
-            tiempo_entrega_dias = COALESCE($5, tiempo_entrega_dias), activo = COALESCE($6, activo)
-         WHERE id = $7 RETURNING *`,
-        [nombre, contacto, email, telefono, tiempo_entrega_dias, activo, req.params.id]
+            tiempo_entrega_dias = COALESCE($5, tiempo_entrega_dias), activo = COALESCE($6, activo),
+            direccion = COALESCE($7, direccion)
+         WHERE id = $8 RETURNING *`,
+        [nombre, contacto, email, telefono, tiempo_entrega_dias, activo, direccion, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Proveedor no encontrado' });
     res.json(result.rows[0]);
@@ -2807,6 +2808,9 @@ app.listen(PORT, async () => {
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
         console.log(`Base de datos: conectada (${dbConfig.database}@${dbConfig.host}:${dbConfig.port}) - ${r.rows[0].n} productos`);
+        // Bases cargadas antes de que existiera la dirección del proveedor:
+        // se agrega la columna sin tener que recargar database.sql.
+        await pool.query('ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS direccion VARCHAR(200)');
     } catch (err) {
         if (/relation .* does not exist/i.test(err.message)) {
             console.error(`Base de datos: conectada a ${dbConfig.database}, pero SIN TABLAS. Carga db/database.sql.`);

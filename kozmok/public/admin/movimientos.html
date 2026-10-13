@@ -49,6 +49,9 @@ document.getElementById('topbar').innerHTML = adminHeader(
 
 let MOVIMIENTOS = [];
 let PRODUCTOS_MOV = [];
+// Desde Inventario se puede llegar con ?producto=<nombre> para ver su historial.
+const productoURL = new URLSearchParams(location.search).get('producto');
+if (productoURL) document.getElementById('f-producto').value = productoURL;
 
 function fechaCorta(f) {
     return new Date(f).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });

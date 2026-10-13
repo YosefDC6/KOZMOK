@@ -81,6 +81,7 @@ CREATE TABLE proveedores (
     contacto            VARCHAR(150),
     email               VARCHAR(150),
     telefono            VARCHAR(30),
+    direccion           VARCHAR(200),
     -- tiempo de entrega promedio, en días: base de la estrategia de
     -- reabastecimiento (punto de reorden = demanda x tiempo de entrega).
     tiempo_entrega_dias INTEGER NOT NULL DEFAULT 7 CHECK (tiempo_entrega_dias > 0),
@@ -562,10 +563,10 @@ INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUE
  ('Paola Nieto', 'paola.almacen@kozmok.mx',
   crypt('Almacen#KZ2026', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
 
-INSERT INTO proveedores (nombre, contacto, email, telefono, tiempo_entrega_dias) VALUES
- ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 5),
- ('CompuMayoreo', 'Ana Ibarra', 'contacto@compumayoreo.mx', '555-100-3000', 3),
- ('ImportPC', 'Jorge Salinas', 'jorge@importpc.mx', '555-100-4000', 12);
+INSERT INTO proveedores (nombre, contacto, email, telefono, direccion, tiempo_entrega_dias) VALUES
+ ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 'Av. Insurgentes Sur 1500, CDMX', 5),
+ ('CompuMayoreo', 'Ana Ibarra', 'contacto@compumayoreo.mx', '555-100-3000', 'Av. Vallarta 3200, Guadalajara, Jal.', 3),
+ ('ImportPC', 'Jorge Salinas', 'jorge@importpc.mx', '555-100-4000', 'Blvd. Díaz Ordaz 410, Monterrey, N.L.', 12);
 
 -- ---------------------------------------------------------
 -- PRODUCTOS: laptops, PCs, componentes y periféricos reales

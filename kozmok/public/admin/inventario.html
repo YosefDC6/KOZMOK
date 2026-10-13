@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inventario · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
+
+        <div id="panel-stock-critico"></div>
+
+        <div class="filters-bar">
+            <input type="text" id="f-buscar" placeholder="Buscar producto…" oninput="renderTabla()" />
+            <select id="f-categoria" onchange="renderTabla()"><option value="">Todas las categorías</option></select>
+            <select id="f-estado" onchange="renderTabla()">
+                <option value="">Todos los estados</option>
+                <option value="normal">Normal</option>
+                <option value="bajo">Stock bajo</option>
+                <option value="agotado">Agotado</option>
+            </select>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Producto</th><th>Categoría</th><th>Proveedor</th><th>Stock actual</th><th>Stock mínimo</th><th>Estado</th><th>Valor</th><th></th></tr></thead>
+                <tbody id="tabla-inventario"><tr><td colspan="8">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-detalle">
+    <div class="modal" style="max-width:620px" id="modal-detalle-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('inventario');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Inventario', 'Existencias y estado de stock de cada producto activo.',
+    '<a class="btn btn-outline" href="/admin/movimientos.html">Registrar movimiento</a>'
+);
+
+let INVENTARIO = [];
+let CRITICOS = {};   // id -> datos de la alerta (proveedor, OC en curso…)
+
+function estadoDe(p) {
+    if (p.stock === 0) return 'agotado';
+    if (p.stock <= p.stock_minimo) return 'bajo';
+    return 'normal';
+}
+const ESTADO = {
+    normal:  { txt: 'Normal',     color: 'var(--success)', ico: 'check' },
+    bajo:    { txt: 'Stock bajo', color: 'var(--warning)', ico: 'alert' },
+    agotado: { txt: 'Agotado',    color: 'var(--danger)',  ico: 'x' },
+};
+function pillEstado(e) {
+    const s = ESTADO[e];
+    return `<span class="tag" style="color:${s.color};border-color:${s.color};display:inline-flex;align-items:center;gap:4px;white-space:nowrap">${icon(s.ico, 12)} ${s.txt}</span>`;
+}
+
+async function cargar() {
+    const [productos, metricas, categorias] = await Promise.all([
+        api('/admin/productos'), api('/admin/metricas-productos'), api('/categorias'),
+    ]);
+    INVENTARIO = productos.filter((p) => p.activo);
+    CRITICOS = Object.fromEntries(metricas.inventario_critico.map((c) => [c.id, c]));
+    document.getElementById('f-categoria').innerHTML = '<option value="">Todas las categorías</option>' +
+        categorias.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('');
+
+    const unidades = INVENTARIO.reduce((a, p) => a + p.stock, 0);
+    const valor = INVENTARIO.reduce((a, p) => a + p.stock * Number(p.precio), 0);
+    const bajos = INVENTARIO.filter((p) => estadoDe(p) === 'bajo').length;
+    const agotados = INVENTARIO.filter((p) => estadoDe(p) === 'agotado').length;
+    document.getElementById('stat-grid').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Productos activos</div><div class="stat-value">${INVENTARIO.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Unidades en stock</div><div class="stat-value">${unidades}</div></div>
+        <div class="stat-card"><div class="stat-label">Valor del inventario</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(valor)}</div><div class="stat-sub">stock × precio</div></div>
+        <div class="stat-card"><div class="stat-label">Stock bajo</div><div class="stat-value" style="color:var(--warning)">${bajos}</div></div>
+        <div class="stat-card"><div class="stat-label">Agotados</div><div class="stat-value" style="color:var(--danger)">${agotados}</div></div>
+    `;
+    renderAlerta(metricas.inventario_critico);
+    renderTabla();
+}
+
+function renderAlerta(criticos) {
+    const el = document.getElementById('panel-stock-critico');
+    if (!criticos.length) {
+        el.innerHTML = `<div class="pago-box pagado"><h4>${icon('package', 16)} Inventario al día</h4>
+            <div class="pb-sub">Ningún producto está en o por debajo de su stock mínimo.</div></div>`;
+        return;
+    }
+    el.innerHTML = `
+        <div class="pago-box pendiente">
+            <h4>${icon('alert', 16)} Alerta de stock crítico — ${criticos.length} producto(s)</h4>
+            <div class="pb-sub">Al llegar al mínimo, si el producto tiene proveedor, se le genera una orden de compra automáticamente.</div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+                ${criticos.map((p) => `
+                    <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;background:var(--bg-panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px">
+                        <div>
+                            <div>${p.nombre} <span style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</span></div>
+                            <div style="font-size:.78rem;color:var(--text-muted)">
+                                Proveedor: ${p.proveedor_nombre || 'sin asignar'}${p.tiempo_entrega_dias ? ` (entrega en ${p.tiempo_entrega_dias} días)` : ''} · Reabastecimiento ${p.restock === 'pull' ? 'pull' : 'push'}
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <span class="mono ${p.stock === 0 ? 'stock-out' : 'stock-low'}">${p.stock} / ${p.stock_minimo}</span>
+                            ${accionOC(p)}
+                            <button class="btn btn-outline btn-sm" onclick="restock(${p.id})">Restock</button>
+                        </div>
+                    </div>`).join('')}
+            </div>
+        </div>`;
+}
+
+function accionOC(p) {
+    if (!puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra')) return '';
+    return p.orden_abierta_folio
+        ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio} en curso</span>`
+        : `<a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar orden</a>`;
+}
+
+function renderTabla() {
+    const q = document.getElementById('f-buscar').value.trim().toLowerCase();
+    const cat = document.getElementById('f-categoria').value;
+    const est = document.getElementById('f-estado').value;
+    const lista = INVENTARIO.filter((p) =>
+        (!q || `${p.nombre} ${p.marca || ''}`.toLowerCase().includes(q)) &&
+        (!cat || String(p.categoria_id) === cat) &&
+        (!est || estadoDe(p) === est));
+    document.getElementById('tabla-inventario').innerHTML = lista.length ? lista.map((p) => {
+        const e = estadoDe(p);
+        return `
+        <tr style="cursor:pointer" onclick="verDetalle(${p.id})">
+            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+            <td>${p.categoria_nombre || '—'}</td>
+            <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
+            <td class="mono ${e === 'agotado' ? 'stock-out' : e === 'bajo' ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
+            <td class="mono">${p.stock_minimo}</td>
+            <td>${pillEstado(e)}</td>
+            <td class="mono">${formatoMoneda(p.stock * Number(p.precio))}</td>
+            <td style="white-space:nowrap" onclick="event.stopPropagation()">
+                <button class="btn btn-outline btn-sm" onclick="verDetalle(${p.id})" title="Ver detalle">${icon('search', 14)}</button>
+                <button class="btn btn-ghost btn-sm" onclick="restock(${p.id})">Restock</button>
+            </td>
+        </tr>`;
+    }).join('') : `<tr><td colspan="8" style="color:var(--text-muted)">Ningún producto coincide con estos filtros.</td></tr>`;
+}
+
+async function verDetalle(id) {
+    const p = INVENTARIO.find((x) => x.id === id);
+    if (!p) return;
+    const e = estadoDe(p);
+    const rol = (Sesion.usuario() || {}).rol;
+    const body = document.getElementById('modal-detalle-body');
+    body.innerHTML = `
+        <button class="modal-close" onclick="cerrarDetalle()">${icon('x', 18)}</button>
+        <h3 style="margin-bottom:4px">${p.nombre}</h3>
+        <p style="color:var(--text-muted);margin:0 0 14px;font-size:.85rem">${p.marca || ''} · ${p.categoria_nombre || 'Sin categoría'}</p>
+        <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
+            <div class="stat-card"><div class="stat-label">Stock actual</div><div class="stat-value">${p.stock}</div></div>
+            <div class="stat-card"><div class="stat-label">Stock mínimo</div><div class="stat-value">${p.stock_minimo}</div></div>
+            <div class="stat-card"><div class="stat-label">Estado</div><div style="margin-top:8px">${pillEstado(e)}</div></div>
+        </div>
+        <p style="font-size:.85rem;margin:0 0 12px">
+            Proveedor: <strong>${p.proveedor_nombre || 'sin asignar'}</strong> · Estrategia: <strong>${p.restock === 'pull' ? 'Pull' : 'Push'}</strong> · Valor: <strong>${formatoMoneda(p.stock * Number(p.precio))}</strong>
+        </p>
+        ${CRITICOS[id] ? `<div style="margin-bottom:12px">${accionOC(CRITICOS[id])}</div>` : ''}
+        <h4 style="margin:0 0 6px">Últimos movimientos</h4>
+        <div id="det-movs" style="font-size:.84rem;color:var(--text-muted)">Cargando…</div>
+        <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="restock(${p.id})">Restock</button>
+            ${puedeVer(rol, 'movimientos') ? `<a class="btn btn-outline" href="/admin/movimientos.html?producto=${encodeURIComponent(p.nombre)}">Ver todos los movimientos</a>` : ''}
+            ${puedeVer(rol, 'productos') ? `<a class="btn btn-ghost" href="/admin/productos.html?editar=${p.id}">Editar producto</a>` : ''}
+        </div>`;
+    document.getElementById('modal-detalle').classList.add('open');
+    try {
+        const movs = (await api(`/admin/movimientos-inventario?producto_id=${id}`)).slice(0, 8);
+        document.getElementById('det-movs').innerHTML = movs.length ? `
+            <table style="width:100%"><tbody>${movs.map((m) => `
+                <tr>
+                    <td>${new Date(m.fecha).toLocaleDateString('es-MX')}</td>
+                    <td style="color:${m.tipo === 'entrada' ? 'var(--success)' : 'var(--danger)'}">${m.tipo === 'entrada' ? 'Entrada' : 'Salida'}</td>
+                    <td class="mono">${m.tipo === 'entrada' ? '+' : '−'}${m.cantidad}</td>
+                    <td>${m.motivo || ''}</td>
+                </tr>`).join('')}</tbody></table>` : 'Sin movimientos registrados.';
+    } catch (err) { document.getElementById('det-movs').textContent = err.message; }
+}
+function cerrarDetalle() { document.getElementById('modal-detalle').classList.remove('open'); }
+
+async function restock(id) {
+    const cantidad = await pedirDato('¿Cuántas unidades vas a agregar al stock?', { tipo: 'number', placeholder: 'Ej. 10' });
+    if (!cantidad || isNaN(cantidad) || Number(cantidad) < 1) return;
+    try {
+        await api(`/admin/productos/${id}/restock`, { method: 'POST', body: { cantidad: Number(cantidad), motivo: 'Restock manual desde Inventario' } });
+        toast(`+${cantidad} al stock`, 'ok');
+        cerrarDetalle();
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

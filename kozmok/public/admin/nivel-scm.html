@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nivel de madurez SCM · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+                <h3 style="margin:0">Nivel actual</h3>
+                <span id="nivel-actual"></span>
+            </div>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0">
+                Calculado a partir de datos reales del sistema, no de una lista marcada a mano: conforme se usa cada parte del módulo, el nivel avanza solo.
+            </p>
+            <div class="nivel-steps" id="nivel-steps"></div>
+            <div id="nivel-descripcion" class="pago-box" style="margin:4px 0 16px"></div>
+
+            <h4 style="margin:0 0 6px">Checklist de avance</h4>
+            <div id="checklist"></div>
+        </div>
+
+        <div class="card">
+            <h3>Cómo se calcula</h3>
+            <ul style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
+                <li><strong>Inicial</strong> (0–1 puntos): procesos básicos, la cadena apenas se está armando.</li>
+                <li><strong>En desarrollo</strong> (2–3 puntos): integración de procesos; ya hay proveedores y trazabilidad de movimientos.</li>
+                <li><strong>Optimizado</strong> (4–5 puntos): procesos avanzados, con push y pull en uso, órdenes de compra y reportes con ventas reales.</li>
+            </ul>
+        </div>
+    </main>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('nivel-scm');
+document.getElementById('topbar').innerHTML = adminHeader('Nivel de madurez SCM', 'Evalúa el avance en la implementación de la cadena de suministro.');
+
+const NIVELES = [
+    { clave: 'inicial', label: 'Inicial', sub: 'Procesos básicos' },
+    { clave: 'en_desarrollo', label: 'En desarrollo', sub: 'Integración de procesos' },
+    { clave: 'optimizado', label: 'Optimizado', sub: 'Procesos avanzados' },
+];
+const DESCRIPCION = {
+    inicial: 'Tu cadena de suministro apenas se está armando. Asigna proveedores a tus productos, registra tu primer movimiento de inventario y define si cada producto es push o pull para empezar a avanzar de nivel.',
+    en_desarrollo: 'El sistema ya cuenta con los módulos principales funcionando: proveedores y movimientos en uso. Para llegar a Optimizado, usa las dos estrategias de reabastecimiento, genera órdenes de compra a tus proveedores y registra ventas para que los reportes reflejen datos reales.',
+    optimizado: 'Tu módulo SCM está completo: hay trazabilidad de principio a fin, desde el proveedor hasta la venta, con las dos estrategias de reabastecimiento en uso y reportes basados en datos reales del negocio.',
+};
+// A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
+// esa pantalla, el punto se muestra sin enlace.
+const DESTINO = {
+    proveedores: { key: 'productos', href: '/admin/productos.html', texto: 'Asignar proveedores en Productos' },
+    movimientos: { key: 'movimientos', href: '/admin/movimientos.html', texto: 'Registrar un movimiento' },
+    estrategia: { key: 'logistica', href: '/admin/logistica.html', texto: 'Definir estrategias en Logística' },
+    ordenes: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Generar una orden de compra' },
+    reportes: { key: 'reportes-scm', href: '/admin/reportes-scm.html', texto: 'Ver Reportes SCM' },
+};
+
+async function cargar() {
+    const { madurez: m } = await api('/admin/scm/resumen');
+    const rol = (Sesion.usuario() || {}).rol;
+    const idx = NIVELES.findIndex((n) => n.clave === m.nivel);
+    document.getElementById('nivel-actual').innerHTML = `<span class="madurez-nivel n-${m.nivel}">${icon('medal', 18)} ${NIVELES[idx].label}</span>`;
+    document.getElementById('nivel-steps').innerHTML = NIVELES.map((n, i) => `
+        <div class="nivel-step ${i <= idx ? 'alcanzado' : ''} ${i === idx ? 'actual' : ''}">
+            <div class="nd">${i <= idx ? icon('check', 12) : ''}</div>
+            <div class="nl">${n.label}<span style="display:block;font-size:.72rem;font-weight:400">${n.sub}</span></div>
+        </div>`).join('');
+    document.getElementById('nivel-descripcion').innerHTML = `
+        <h4>${icon('info', 16)} Descripción del nivel · ${m.cumplidos} de ${m.total} puntos</h4>
+        <div class="pb-sub">${DESCRIPCION[m.nivel]}</div>`;
+    document.getElementById('checklist').innerHTML = m.checklist.map((c) => {
+        const d = DESTINO[c.clave];
+        const enlace = d && puedeVer(rol, d.key);
+        const tag = enlace ? `a href="${d.href}"` : 'div';
+        return `<${tag} class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}" style="text-decoration:none">
+            <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
+            <span style="flex:1">${c.etiqueta}</span>
+            ${enlace ? `<span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? 'Revisar' : d.texto} ${icon('arrow', 13)}</span>` : ''}
+        </${tag.split(' ')[0]}>`;
+    }).join('');
+}
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

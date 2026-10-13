@@ -47,7 +47,7 @@ async function cargarProveedores() {
     const proveedores = await api('/admin/proveedores');
     document.getElementById('tabla-proveedores').innerHTML = proveedores.length ? proveedores.map((pr) => `
         <tr>
-            <td>${pr.nombre}<div style="color:var(--text-muted);font-size:.78rem">${pr.email || ''}</div></td>
+            <td>${pr.nombre}<div style="color:var(--text-muted);font-size:.78rem">${pr.email || ''}</div>${pr.direccion ? `<div style="color:var(--text-muted);font-size:.74rem">${pr.direccion}</div>` : ''}</td>
             <td>${pr.contacto || '—'}<div style="color:var(--text-muted);font-size:.78rem">${pr.telefono || ''}</div></td>
             <td>${pillEntrega(pr.tiempo_entrega_dias)}</td>
             <td class="mono">${pr.productos_asociados}</td>
@@ -68,6 +68,7 @@ function formularioProveedor(pr = {}) {
             <div class="field"><label>Teléfono</label><input id="pv-telefono" value="${pr.telefono || ''}" /></div>
         </div>
         <div class="field"><label>Correo</label><input id="pv-email" value="${pr.email || ''}" /></div>
+        <div class="field"><label>Dirección</label><textarea id="pv-direccion" rows="2" placeholder="Calle, número, ciudad">${pr.direccion || ''}</textarea></div>
         <div class="field">
             <label>Tiempo de entrega (días)</label>
             <input type="number" min="1" id="pv-entrega" value="${pr.tiempo_entrega_dias ?? 7}" />
@@ -104,6 +105,7 @@ function leerFormularioProveedor(esEdicion) {
         contacto: document.getElementById('pv-contacto').value,
         telefono: document.getElementById('pv-telefono').value,
         email: document.getElementById('pv-email').value,
+        direccion: document.getElementById('pv-direccion').value,
         tiempo_entrega_dias: Number(document.getElementById('pv-entrega').value) || 7,
     };
     if (esEdicion) body.activo = document.getElementById('pv-activo').checked;

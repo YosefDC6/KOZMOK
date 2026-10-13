@@ -342,8 +342,8 @@ estas se abre solo; el otro queda cerrado, para que la lista no se sienta
 larga. El bloque CUENTA no es desplegable, siempre esta a la vista.
 
 Cada bloque empieza con su propio "Dashboard" (el de CRM en
-admin/dashboard.html, el de SCM en admin/scm.html -- este ultimo tambien
-se le llama "Panel SCM" en su encabezado -- y el de ERP en admin/erp.html).
+admin/dashboard.html, el de SCM en admin/scm.html y el de ERP en
+admin/erp.html).
 Los tres tienen arriba un menu
 de accesos directos con iconos grandes a cada seccion de su modulo
 (excepto a si mismos), para navegar sin tener que usar la barra lateral.
@@ -448,23 +448,30 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - "Exportar CSV": descarga los pedidos tal como estan filtrados.
    - Enlace directo:  /admin/pedidos.html?open=<id>  abre ese panel.
 
-4.9  INVENTARIO  (admin/productos.html)  [SCM]
+4.9  PRODUCTOS  (admin/productos.html)  [SCM]
    - Catalogo completo: ID, producto, categoria, proveedor, precio, stock,
-     estado.
+     stock minimo, estrategia (PUSH/PULL) y estado.
+   - Busqueda por nombre o marca, filtro por categoria, por activo/inactivo
+     y por estrategia (Todos/Push/Pull).
    - "Nuevo producto" y edicion: datos, especificaciones tecnicas, precio,
      stock, stock minimo, imagen (URL opcional; si se deja vacia se usa la
      generica), proveedor y metodo de reabastecimiento (push = se repone
      por calendario; pull = se repone cuando baja el stock).
-   - Reabastecer stock desde la ficha del producto o desde el boton
-     "Restock" de la tabla.
+   - Enlace directo:  /admin/productos.html?editar=<id>  abre su formulario.
+
+4.9a INVENTARIO  (admin/inventario.html)  [SCM]
+   - Vista de existencias de los productos activos (separada del catalogo).
+   - Indicadores: productos activos, unidades en stock, valor del
+     inventario (stock x precio), productos en stock bajo y agotados.
    - Alerta de stock critico: en cuanto un producto llega a su stock
-     minimo o por debajo, aparece arriba de la tabla con su proveedor,
-     metodo de reabastecimiento y un boton directo para reabastecerlo.
-   - Logistica por categoria: panel con una barra por categoria que
-     muestra cuantos productos se reabastecen push vs. pull, para ver
-     de un vistazo la estrategia de cada linea de catalogo.
-   - Filtro "Reabastecimiento" (Todos/Push/Pull) arriba de la tabla,
-     para ver solo los productos de un metodo u otro.
+     minimo o por debajo, aparece arriba con su proveedor, tiempo de
+     entrega, metodo de reabastecimiento, "Generar orden" (o "OC-100x en
+     curso") y "Restock".
+   - Tabla con busqueda, filtro por categoria y por estado: stock actual,
+     stock minimo, estado (Normal / Stock bajo / Agotado) y valor.
+   - Lupa / clic en la fila: detalle del producto con sus ultimos
+     movimientos, boton "Restock", "Ver todos los movimientos" y "Editar
+     producto".
 
 4.9b PROVEEDORES  (admin/proveedores.html)  [SCM]
    - Lista de proveedores con contacto, telefono, correo, cuantos
@@ -473,10 +480,10 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      (a mayor tiempo de entrega, antes hay que reordenar). Se muestra en
      verde (5 dias o menos), ambar (6-9) o rojo (10 o mas).
    - "Nuevo proveedor" y edicion: nombre, contacto, telefono, correo,
-     tiempo de entrega y activo/inactivo.
+     direccion, tiempo de entrega y activo/inactivo.
    - "Eliminar": si el proveedor ya tiene productos asociados se
      desactiva en lugar de borrarse (para no perder el historial).
-   - La alerta de stock critico en Inventario (4.9) muestra el tiempo de
+   - La alerta de stock critico en Inventario (4.9a) muestra el tiempo de
      entrega del proveedor de cada producto, para decidir que tan urgente
      es reordenar.
 
@@ -506,7 +513,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      inventario correspondiente) o Cancelado en cualquier momento antes
      de recibirla.
    - Acceso directo: el boton "Generar orden" en la alerta de stock
-     critico de Inventario (4.9) abre una orden nueva ya con ese producto
+     critico de Inventario (4.9a) abre una orden nueva ya con ese producto
      elegido.
    - AUTOMATICA: en cuanto un producto con proveedor asignado cae en (o
      sigue en) stock critico -- por una venta, por editar el stock a mano,
@@ -526,24 +533,27 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      cada estrategia (de todo el catalogo activo) y una tabla completa
      con filtro por categoria y por estrategia.
 
-4.9f PANEL SCM  (admin/scm.html)  [SCM]
-   - En la barra lateral aparece como "Dashboard" (primer elemento del
-     bloque SCM, igual que el Dashboard es el primero del bloque CRM).
+4.9f DASHBOARD SCM  (admin/scm.html)  [SCM]
+   - Primer elemento del bloque SCM, con accesos directos a cada seccion.
    - Metricas: productos activos, proveedores, ordenes de compra
      abiertas, productos en stock bajo y rotacion de inventario (%
      de unidades vendidas contra el stock actual).
-   - Nivel de madurez SCM: Inicial / En desarrollo / Optimizado, calculado
-     de datos reales del sistema (no es una lista que se marca a mano):
+   - Resumen del nivel de madurez (con "Ver detalle"), productos mas
+     vendidos, estrategia push vs. pull (productos y valor en stock) e
+     inventario critico con su orden de compra en curso.
+
+4.9h NIVEL DE MADUREZ SCM  (admin/nivel-scm.html)  [SCM]
+   - Nivel actual: Inicial (procesos basicos) -> En desarrollo
+     (integracion de procesos) -> Optimizado (procesos avanzados),
+     calculado de datos reales (no es una lista que se marca a mano):
      que haya productos con proveedor asignado, movimientos de inventario
      registrados, estrategia push Y pull en uso (no solo una), ordenes de
-     compra generadas y reportes con ventas reales. El nivel sube solo
-     conforme el equipo usa cada parte del modulo.
-   - "Que significa este nivel": explica en texto que falta o que ya se
-     logro para el nivel actual.
-   - Cada punto del checklist es un enlace: si esta pendiente, lleva
-     directo a la pantalla donde resolverlo (Inventario, Movimientos,
-     Logistica, Ordenes de compra o Reportes); si ya esta cumplido, lleva
-     a revisarlo igual.
+     compra generadas y reportes con ventas reales.
+     0-1 puntos = Inicial, 2-3 = En desarrollo, 4-5 = Optimizado.
+   - Descripcion del nivel: explica que falta o que ya se logro.
+   - Checklist de avance: cada punto es un enlace a la pantalla donde
+     resolverlo (Productos, Movimientos, Logistica, Ordenes de compra o
+     Reportes) o a revisarlo si ya esta cumplido.
 
 4.9g REPORTES SCM  (admin/reportes-scm.html)  [SCM]
    - Mismas metricas generales que el Dashboard de SCM (productos,
@@ -588,9 +598,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Etapas del CRM: recordatorio del embudo Prospecto/Activo/Frecuente/
      Inactivo.
    - Club de puntos: recordatorio de las reglas.
-   - Panel por rol (menu dinamico): una columna por rol con las secciones
-     que ve en el menu. Se arma con los mismos permisos que usa el panel,
-     asi que siempre coincide con lo que de verdad ve cada quien.
+   - Acceso al Panel por rol (solo admin, ver 4.14f).
    - Acerca de: version y stack.
 
 4.14 MODULO ERP  (Etapa 3)  [ERP]
@@ -707,6 +715,15 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Resumen del nivel ERP y bloque de integracion entre modulos.
       - "Exportar CSV": todos los indicadores del periodo.
 
+   4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
+      - Menu dinamico: una columna por rol con las secciones que ve,
+        agrupadas por modulo (CRM, SCM, ERP, Cuenta), incluido el permiso
+        de "Capturar ordenes".
+      - Matriz de permisos: cada seccion contra cada rol.
+      - Recordatorio de los 3 lugares a tocar para agregar un rol nuevo.
+      - Se genera de los mismos permisos que arman el menu lateral, asi
+        que siempre coincide con lo que de verdad ve cada quien.
+
 
 ===============================================================================
  5. ROLES INTERNOS  -  QUE VE Y HACE CADA UNO
@@ -715,7 +732,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 
 VENDEDOR
-   Ve todo menos "Cuentas y equipo" y "Nivel ERP". En el ERP ve Dashboard,
+   Ve todo menos "Cuentas y equipo", "Nivel ERP" y "Panel por rol". En el ERP ve Dashboard,
    Ordenes de clientes y Reportes, y SI puede capturar ordenes nuevas.
    Flujo tipico:
    1. Dashboard: clientes en riesgo y tickets activos.
@@ -734,8 +751,8 @@ SOPORTE
 
 ALMACEN
    Ve: Dashboard (CRM), Pedidos, Analitica chatbot -- y en el bloque SCM:
-   Dashboard (Panel SCM), Inventario, Proveedores, Movimientos, Ordenes de
-   compra, Logistica, Reportes -- en el bloque ERP: Dashboard, Ordenes de
+   Dashboard, Productos, Proveedores, Inventario, Movimientos, Ordenes de
+   compra, Logistica, Nivel de madurez, Reportes -- en el bloque ERP: Dashboard, Ordenes de
    clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
    actividad y Configuracion. No ve Clientes, Interacciones, Soporte ni
    Cuentas.
@@ -746,8 +763,8 @@ ALMACEN
    las metricas generales.
 
 ADMINISTRADOR
-   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles) y
-   "Nivel ERP".
+   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles),
+   "Nivel ERP" y "Panel por rol".
 
 El permiso para capturar ordenes en el ERP se llama "orden-nueva" en
 PERMISOS (admin-layout.js) y el servidor lo valida aparte con
@@ -963,7 +980,8 @@ Estructura
                garantias.html recibo.html mi-actividad.html usuarios.html
                configuracion.html
                erp.html ordenes-erp.html orden-nueva.html nivel-erp.html
-               reportes-erp.html                       (modulo ERP)
+               inventario.html nivel-scm.html          (modulo SCM)
+               reportes-erp.html panel-roles.html      (modulo ERP)
                js/admin-layout.js  interaccion-sim.js  erp.js
 
 Tablas principales
