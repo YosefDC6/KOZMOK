@@ -67,7 +67,8 @@ CLIENTE
 ROLES INTERNOS (entran por /admin/login.html; el menu se adapta al rol)
    - ADMINISTRADOR : acceso total, incluida la gestion de cuentas y equipo.
    - VENDEDOR      : todo el CRM, el SCM y el ERP (captura ordenes de
-                     clientes); NO gestiona cuentas ni ve Nivel ERP.
+                     clientes); NO gestiona cuentas ni ve Nivel ERP
+                     ni Panel por rol.
    - SOPORTE       : Dashboard, Clientes, Interacciones, Evaluaciones,
                      Soporte, Garantias, Reportes, Mi actividad, Config.
    - ALMACEN       : Dashboard, Pedidos, Inventario, Garantias, Analitica
@@ -88,7 +89,7 @@ Cuentas de prueba (tras cargar db/database.sql)
    | Rol      | Correo                       | Contraseña      | Notas                            |
    +----------+------------------------------+-----------------+----------------------------------+
    | Admin    | admin@kozmok.mx          | Admin#KZ2026    | acceso total al panel            |
-   | Vendedor | laura.vendedor@kozmok.mx | Vendedor#KZ2026 | todo menos Cuentas y equipo      |
+   | Vendedor | laura.vendedor@kozmok.mx | Vendedor#KZ2026 | todo menos admin (ver sec. 5)    |
    | Soporte  | ruben.soporte@kozmok.mx  | Soporte#KZ2026  | CRM y soporte                    |
    | Almacen  | paola.almacen@kozmok.mx  | Almacen#KZ2026  | pedidos, inventario, proveedores |
    | Cliente  | mariana@correo.com           | Demo#KZ2026     | nivel Oro, con pedidos y puntos  |
@@ -563,7 +564,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Configurar estrategia: eliges un producto y dos tarjetas grandes
      (Push / Pull) explican cada una y marcan cual esta activa. "Guardar
      estrategia" actualiza el metodo de reabastecimiento de ese producto
-     (lo mismo que el campo de Inventario, pero en su propia pantalla).
+     (lo mismo que el campo de Productos, pero en su propia pantalla).
    - Push = se genera pedido automaticamente cuando el stock llega al
      minimo; Pull = se genera pedido solo bajo pedido o demanda (ver el
      reabasto automatico en 4.9d).
@@ -580,7 +581,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      vendidos, estrategia push vs. pull (productos y valor en stock) e
      inventario critico con su pedido de reposicion en curso.
 
-4.9h NIVEL DE MADUREZ SCM  (admin/nivel-scm.html)  [SCM]
+4.9g NIVEL DE MADUREZ SCM  (admin/nivel-scm.html)  [SCM]
    - Nivel actual: Inicial (procesos basicos) -> En desarrollo
      (integracion de procesos) -> Optimizado (procesos avanzados),
      calculado de datos reales (no es una lista que se marca a mano):
@@ -593,7 +594,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      resolverlo (Productos, Movimientos, Logistica, Pedidos o
      Reportes) o a revisarlo si ya esta cumplido.
 
-4.9g REPORTES SCM  (admin/reportes-scm.html)  [SCM]
+4.9h REPORTES SCM  (admin/reportes-scm.html)  [SCM]
    - Metricas: productos, proveedores, pedidos en proceso (con cuantos
      estan pendientes y cuantos genero el sistema), stock bajo y rotacion.
    - Productos mas vendidos: grafica de barras con unidades vendidas.
@@ -718,7 +719,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
          - Todo ocurre en UNA sola transaccion en el servidor: se crea la
            orden con folio OR-001, OR-002..., se valida y descuenta el stock,
            se registra un movimiento de inventario por producto ("Orden ERP
-           OR-00x"), si algun producto queda en stock critico se genera la
+           OR-00x"), si algun producto queda en stock critico se genera el
            pedido de reposicion automatico (4.9d) y se actualizan las metricas
            del cliente (compras, etapa: Prospecto -> Activo, puntos).
          - Si algo falla (por ejemplo, otra venta se llevo el stock), sale
@@ -742,8 +743,8 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
              generados por ordenes ERP.
           5. Reportes empresariales completos: hay ventas cobradas de los
              dos canales (tienda en linea y ERP).
-          6. Procesos optimizados: el reabasto automatico ya genero ordenes
-             de compra y hay ordenes ERP entregadas.
+          6. Procesos optimizados: el reabasto automatico ya genero pedidos
+             de reposicion y hay ordenes ERP entregadas.
         0-2 puntos = Basico, 3-4 = Integrado, 5 = Automatizado,
         6 = Optimizado. Cada punto lleva a la pantalla donde cumplirlo.
       - Con los datos de ejemplo arranca en "Integrado"; al capturar la
@@ -788,21 +789,21 @@ VENDEDOR
    7. Capturar en ERP -> "Nueva orden" las ventas por telefono o mostrador.
 
 SOPORTE
-   Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Reportes,
-   Mi actividad, Configuracion. No ve Pedidos, Inventario, ERP ni Cuentas.
+   Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Garantias,
+   Reportes, Mi actividad, Configuracion. No ve Pedidos, Inventario, ERP ni Cuentas.
    Flujo tipico: revisar la cola de tickets, responder al cliente, cambiar
    estado/prioridad, y dejar registrada la interaccion en la ficha.
 
 ALMACEN
-   Ve: Dashboard (CRM), Pedidos, Analitica chatbot -- y en el bloque SCM:
-   Dashboard, Productos, Proveedores, Inventario, Movimientos, Ordenes de
-   compra, Logistica, Nivel de madurez, Reportes -- en el bloque ERP: Dashboard, Ordenes de
-   clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
+   Ve: Dashboard (CRM), Pedidos, Garantias, Analitica chatbot -- y en el
+   bloque SCM: Dashboard, Productos, Proveedores, Inventario, Movimientos,
+   Pedidos (reposicion), Logistica, Nivel de madurez, Reportes -- en el
+   bloque ERP: Dashboard, Ordenes de clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
    actividad y Configuracion. No ve Clientes, Interacciones, Soporte ni
    Cuentas.
    Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->
-   entregado), vigilar el stock critico, generar una orden de compra al
-   proveedor cuando haga falta, marcarla recibida cuando llegue (el stock
+   entregado), vigilar el stock critico, generar un pedido de reposicion al
+   proveedor cuando haga falta, marcarlo "Surtir" cuando llegue (el stock
    sube solo) y revisar el Dashboard de SCM para ver el nivel de madurez y
    las metricas generales.
 
@@ -967,7 +968,7 @@ P: Las imagenes de producto no cargan / salen errores en la consola del
    navegador.
 R: El catalogo ya no depende de imagenes externas. Si un producto no tiene
    imagen se muestra una generica. Para poner imagenes reales, edita el
-   producto en el panel (Inventario) y pega una URL en el campo "Imagen".
+   producto en el panel (Productos) y pega una URL en el campo "Imagen".
 
 P: No puedo comprar, me pide iniciar sesion.
 R: Es correcto: la compra requiere una cuenta de cliente. Tras iniciar
@@ -1071,7 +1072,7 @@ Reglas de negocio embebidas
    - Folio de ticket: TK-(1000 + id).
    - Folio de orden ERP: OR-001, OR-002... (secuencia folio_erp_seq).
    - Orden ERP: stock validado y descontado, movimiento de inventario por
-     producto y orden de compra automatica si queda en stock critico, todo
+     producto y pedido de reposicion automatico si queda en stock critico, todo
      en una transaccion.
 
 ===============================================================================
