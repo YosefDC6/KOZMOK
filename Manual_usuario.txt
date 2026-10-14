@@ -453,10 +453,12 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      stock minimo, estrategia (PUSH/PULL) y estado.
    - Busqueda por nombre o marca, filtro por categoria, por activo/inactivo
      y por estrategia (Todos/Push/Pull).
-   - "Nuevo producto" y edicion: datos, especificaciones tecnicas, precio,
-     stock, stock minimo, imagen (URL opcional; si se deja vacia se usa la
-     generica), proveedor y metodo de reabastecimiento (push = se repone
-     por calendario; pull = se repone cuando baja el stock).
+   - "Nuevo producto" y edicion: datos, especificaciones tecnicas, precio
+     de venta, costo unitario (lo que cuesta comprarlo al proveedor; con
+     el se calcula el costo estimado de cada pedido de reposicion), stock
+     actual, stock minimo, imagen (URL opcional; si se deja vacia se usa
+     la generica), proveedor y estrategia logistica (push = pedido
+     automatico al llegar al minimo; pull = pedido solo bajo demanda).
    - Enlace directo:  /admin/productos.html?editar=<id>  abre su formulario.
 
 4.9a INVENTARIO  (admin/inventario.html)  [SCM]
@@ -465,7 +467,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      inventario (stock x precio), productos en stock bajo y agotados.
    - Alerta de stock critico: en cuanto un producto llega a su stock
      minimo o por debajo, aparece arriba con su proveedor, tiempo de
-     entrega, metodo de reabastecimiento, "Generar orden" (o "OC-100x en
+     entrega, metodo de reabastecimiento, "Generar pedido" (o "OC-100x en
      curso") y "Restock".
    - Tabla con busqueda, filtro por categoria y por estado: stock actual,
      stock minimo, estado (Normal / Stock bajo / Agotado) y valor.
@@ -491,74 +493,116 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Historial de entradas y salidas de stock: fecha, producto, tipo
      (entrada/salida), cantidad, motivo y que usuario lo genero.
    - Se registra solo: cada venta (salida), cancelacion de un cliente
-     (entrada), restock manual (entrada) y recepcion de una orden de
-     compra (entrada).
-   - "Nuevo movimiento": registra a mano una entrada o salida de stock
-     (merma, conteo fisico, ajuste de inventario, etc.) con su motivo.
-     Una salida no puede ser mayor al stock actual. Si una salida manual
-     deja al producto en stock critico, tambien se le genera sola la
-     orden de compra (ver 4.9d).
+     (entrada), restock manual (entrada) y cada pedido de reposicion
+     surtido (entrada). Los que surte el reabasto automatico aparecen con
+     usuario "sistema" y motivo "Reabasto automatico: pedido OC-100x
+     surtido por <proveedor>".
+   - "Nuevo movimiento": producto, tipo (Entrada / Salida), cantidad,
+     motivo (lista segun el tipo: compra a proveedor, devolucion, ajuste,
+     conteo fisico, merma... u "Otro" con texto libre), fecha (por
+     defecto ahora; se puede registrar uno de antes) y el usuario que lo
+     registra (el de la sesion). Una salida no puede ser mayor al stock
+     actual. Una salida cuenta como demanda: si deja al producto en stock
+     critico se le genera solo su pedido de reposicion (ver 4.9d).
    - Filtros por tipo y por nombre de producto.
 
-4.9d ORDENES DE COMPRA  (admin/ordenes-compra.html)  [SCM]
-   - El otro lado de la cadena de suministro: pedidos de reposicion
-     HACIA los proveedores (distinto de los "Pedidos" de venta a
-     clientes). Folio (OC-100x), producto, proveedor, cantidad, estado y
-     fecha.
-   - "Nueva orden": eliges el producto (sugiere una cantidad segun su
-     stock minimo), el proveedor (por default el que ya tiene asignado
-     el producto) y notas opcionales.
-   - Estados: Pendiente -> En proceso -> Recibido (al marcarla recibida,
-     el stock del producto sube solo y queda registrado el movimiento de
-     inventario correspondiente) o Cancelado en cualquier momento antes
-     de recibirla.
-   - Acceso directo: el boton "Generar orden" en la alerta de stock
-     critico de Inventario (4.9a) abre una orden nueva ya con ese producto
-     elegido.
-   - AUTOMATICA: en cuanto un producto con proveedor asignado cae en (o
-     sigue en) stock critico -- por una venta, por editar el stock a mano,
-     o porque lo recibido en una orden no alcanzo -- se genera una orden
-     de compra sola, sin que nadie tenga que darle clic a nada. Se marca
-     en sus notas como "Generada automaticamente". Si el producto ya tiene
-     una orden pendiente o en proceso, no se genera otra; en Inventario,
-     la alerta de stock critico muestra "OC-100x en curso" en lugar del
-     boton "Generar orden" mientras eso sea cierto.
+4.9d PEDIDOS  (admin/ordenes-compra.html)  [SCM]
+   - Pedidos de reposicion o suministro: un solo listado con los dos
+     tipos de pedido que mueven el inventario:
+        * Reposicion (entra stock): pedidos a proveedores, folio OC-100x.
+        * Venta (sale stock): partidas de los pedidos de clientes, de la
+          tienda en linea (ORD-...) y del ERP (OR-...). Solo de consulta;
+          se capturan en la tienda o en Ordenes de clientes (ERP).
+   - Columnas: folio, fecha, producto, cantidad (+ entra / - sale), tipo,
+     proveedor o cliente, estado, entrega (fecha estimada o fecha en que
+     se surtio) y acciones. Los generados por el sistema llevan la
+     etiqueta "Auto - push" o "Auto - pull".
+   - Filtros por Estado (Pendiente, En proceso, Surtido, Cancelado), por
+     Tipo (Reposicion / Venta) y busqueda por folio o producto.
+   - "Generar pedido" (formulario): producto (sugiere una cantidad segun
+     su stock minimo), cantidad, tipo (Reposicion), proveedor (por
+     default el del producto), fecha estimada de entrega (hoy + dias de
+     entrega del proveedor, se puede cambiar) y notas. Muestra el costo
+     estimado (cantidad x costo unitario).
+   - Acciones de un pedido de reposicion:
+        Pendiente  -> "Enviar" (pasa a En proceso), editar, cancelar.
+        En proceso -> "Surtir" (llego la mercancia), editar, cancelar.
+        Lupa: detalle (costo estimado, quien lo genero, notas...).
+     Al surtirse, el stock sube solo y queda el movimiento de entrada.
+   - Acceso directo: "Generar pedido" en la alerta de stock critico de
+     Inventario (4.9a) abre el formulario ya con ese producto.
+
+   REABASTO AUTOMATICO (tarjeta arriba del listado)
+   - Para no depender de que alguien haga el restock a mano:
+        1) Cuando un producto con proveedor llega a su stock minimo, el
+           sistema genera solo su pedido de reposicion y lo deja En
+           proceso (enviado al proveedor). Cantidad: lo necesario para
+           quedar en el doble del minimo.
+              PUSH: se pide en cuanto toca el minimo, venga de donde venga
+                    (una venta, una edicion del stock, un barrido).
+              PULL: solo se pide cuando lo dispara la demanda (una venta
+                    en la tienda o en el ERP, o una salida de inventario).
+        2) Al llegar la fecha estimada de entrega, el pedido se surte
+           solo: sube el stock y se registra el movimiento de entrada a
+           nombre del sistema. Esto aplica a cualquier pedido En proceso,
+           tambien los que se enviaron a mano.
+   - El servidor revisa cada minuto (y al abrir esta pantalla). "Ejecutar
+     ahora" lo corre en el momento.
+   - Interruptor: activa o desactiva todo el reabasto automatico (si se
+     apaga, los pedidos se generan y surten a mano; al volver a
+     encenderlo se generan los que falten).
+   - Entrega del proveedor:
+        * Segun los dias de entrega del proveedor (lo real).
+        * Inmediata (para demostracion): el pedido se genera y se surte
+          al instante, para ver el ciclo completo en clase sin esperar.
+   - Nunca se duplica: si el producto ya tiene un pedido Pendiente o En
+     proceso no se genera otro; en Inventario la alerta muestra "OC-100x
+     en curso" mientras eso sea cierto.
 
 4.9e LOGISTICA  (admin/logistica.html)  [SCM]
    - Configurar estrategia: eliges un producto y dos tarjetas grandes
      (Push / Pull) explican cada una y marcan cual esta activa. "Guardar
      estrategia" actualiza el metodo de reabastecimiento de ese producto
      (lo mismo que el campo de Inventario, pero en su propia pantalla).
+   - Push = se genera pedido automaticamente cuando el stock llega al
+     minimo; Pull = se genera pedido solo bajo pedido o demanda (ver el
+     reabasto automatico en 4.9d).
    - Comparativa push vs. pull: dos tarjetas con el total de productos en
      cada estrategia (de todo el catalogo activo) y una tabla completa
      con filtro por categoria y por estrategia.
 
 4.9f DASHBOARD SCM  (admin/scm.html)  [SCM]
    - Primer elemento del bloque SCM, con accesos directos a cada seccion.
-   - Metricas: productos activos, proveedores, ordenes de compra
-     abiertas, productos en stock bajo y rotacion de inventario (%
+   - Metricas: productos activos, proveedores, pedidos de reposicion
+     abiertos, productos en stock bajo y rotacion de inventario (%
      de unidades vendidas contra el stock actual).
    - Resumen del nivel de madurez (con "Ver detalle"), productos mas
      vendidos, estrategia push vs. pull (productos y valor en stock) e
-     inventario critico con su orden de compra en curso.
+     inventario critico con su pedido de reposicion en curso.
 
 4.9h NIVEL DE MADUREZ SCM  (admin/nivel-scm.html)  [SCM]
    - Nivel actual: Inicial (procesos basicos) -> En desarrollo
      (integracion de procesos) -> Optimizado (procesos avanzados),
      calculado de datos reales (no es una lista que se marca a mano):
      que haya productos con proveedor asignado, movimientos de inventario
-     registrados, estrategia push Y pull en uso (no solo una), ordenes de
-     compra generadas y reportes con ventas reales.
+     registrados, estrategia push Y pull en uso (no solo una), pedidos de
+     reposicion generados y reportes con ventas reales.
      0-1 puntos = Inicial, 2-3 = En desarrollo, 4-5 = Optimizado.
    - Descripcion del nivel: explica que falta o que ya se logro.
    - Checklist de avance: cada punto es un enlace a la pantalla donde
-     resolverlo (Productos, Movimientos, Logistica, Ordenes de compra o
+     resolverlo (Productos, Movimientos, Logistica, Pedidos o
      Reportes) o a revisarlo si ya esta cumplido.
 
 4.9g REPORTES SCM  (admin/reportes-scm.html)  [SCM]
-   - Mismas metricas generales que el Dashboard de SCM (productos,
-     proveedores, ordenes abiertas, stock bajo, rotacion).
+   - Metricas: productos, proveedores, pedidos en proceso (con cuantos
+     estan pendientes y cuantos genero el sistema), stock bajo y rotacion.
    - Productos mas vendidos: grafica de barras con unidades vendidas.
+   - Rotacion de inventario: dona con cuantos productos tienen rotacion
+     alta (15% o mas de unidades vendidas contra vendidas + stock),
+     media (5-15%) o baja (menos de 5%), con los principales de cada uno.
+   - Comparativa PUSH vs PULL: barras por mes (ultimos 6) de los pedidos
+     de reposicion de productos push contra pull; se puede ver en numero
+     de pedidos o en unidades.
    - Estrategia de reabastecimiento, con dos selectores independientes:
         * Que estadistica ver: Cantidad de productos o Valor de
           inventario (stock x precio) de cada estrategia.
@@ -675,7 +719,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
            orden con folio OR-001, OR-002..., se valida y descuenta el stock,
            se registra un movimiento de inventario por producto ("Orden ERP
            OR-00x"), si algun producto queda en stock critico se genera la
-           orden de compra automatica (4.9d) y se actualizan las metricas
+           pedido de reposicion automatico (4.9d) y se actualizan las metricas
            del cliente (compras, etapa: Prospecto -> Activo, puntos).
          - Si algo falla (por ejemplo, otra venta se llevo el stock), sale
            el motivo en rojo y NO se guarda nada; "Volver a productos"

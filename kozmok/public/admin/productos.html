@@ -132,20 +132,23 @@ function formularioProducto(p = {}) {
             <div class="field"><label>Marca</label><input id="p-marca" value="${p.marca || ''}" /></div>
         </div>
         <div class="field-row">
-            <div class="field"><label>Precio</label><input type="number" id="p-precio" value="${p.precio || ''}" /></div>
-            <div class="field"><label>Stock</label><input type="number" id="p-stock" value="${p.stock ?? 0}" /></div>
+            <div class="field"><label>Precio de venta</label><input type="number" id="p-precio" value="${p.precio || ''}" /></div>
+            <div class="field"><label>Costo unitario (proveedor)</label><input type="number" min="0" step="0.01" id="p-costo" value="${p.costo_unitario ?? ''}" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field"><label>Stock actual</label><input type="number" id="p-stock" value="${p.stock ?? 0}" /></div>
         </div>
         <div class="field-row">
             <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" value="${p.stock_minimo ?? 5}" /></div>
-            <div class="field"><label>Imagen (URL)</label><input id="p-imagen" value="${p.imagen_url || ''}" /></div>
         </div>
+        <div class="field"><label>Imagen (URL)</label><input id="p-imagen" value="${p.imagen_url || ''}" /></div>
         <div class="field-row">
             <div class="field"><label>Proveedor</label><select id="p-proveedor">${opcionesProveedor}</select></div>
             <div class="field">
-                <label>Reabastecimiento</label>
+                <label>Estrategia logística</label>
                 <select id="p-restock">
-                    <option value="push" ${(p.restock || 'push') === 'push' ? 'selected' : ''}>Push — se repone por calendario</option>
-                    <option value="pull" ${p.restock === 'pull' ? 'selected' : ''}>Pull — se repone cuando baja el stock</option>
+                    <option value="push" ${(p.restock || 'push') === 'push' ? 'selected' : ''}>Push — pedido automático al llegar al mínimo</option>
+                    <option value="pull" ${p.restock === 'pull' ? 'selected' : ''}>Pull — pedido solo bajo demanda</option>
                 </select>
             </div>
         </div>
@@ -203,6 +206,7 @@ function leerFormularioProducto() {
         categoria_id: Number(document.getElementById('p-categoria').value),
         marca: document.getElementById('p-marca').value,
         precio: Number(document.getElementById('p-precio').value),
+        costo_unitario: document.getElementById('p-costo').value === '' ? null : Number(document.getElementById('p-costo').value),
         stock: Number(document.getElementById('p-stock').value),
         stock_minimo: Number(document.getElementById('p-stock-min').value),
         imagen_url: document.getElementById('p-imagen').value,

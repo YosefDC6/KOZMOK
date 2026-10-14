@@ -29,6 +29,7 @@ DROP TABLE IF EXISTS favoritos               CASCADE;
 DROP TABLE IF EXISTS metodos_pago            CASCADE;
 DROP TABLE IF EXISTS direcciones             CASCADE;
 DROP TABLE IF EXISTS chatbot_consultas       CASCADE;
+DROP TABLE IF EXISTS config_scm              CASCADE;
 DROP TABLE IF EXISTS ordenes_compra          CASCADE;
 DROP TABLE IF EXISTS movimientos_inventario  CASCADE;
 DROP TABLE IF EXISTS pedido_items            CASCADE;
@@ -123,6 +124,8 @@ CREATE TABLE productos (
     vendedor_id         INTEGER REFERENCES usuarios(id),
     activo              BOOLEAN DEFAULT TRUE,
     restock             VARCHAR(10) DEFAULT 'push' CHECK (restock IN ('push','pull')),
+    -- lo que cuesta comprarlo al proveedor (para valorar los pedidos de reposición)
+    costo_unitario      NUMERIC(10,2) CHECK (costo_unitario >= 0),
     -- compatibilidad para el Armador de PC (solo aplica a categoría "Componentes")
     tipo_componente     VARCHAR(20) CHECK (tipo_componente IS NULL OR tipo_componente IN
                          ('cpu','placa_base','ram','gpu','almacenamiento','fuente','gabinete')),
@@ -329,9 +332,20 @@ CREATE TABLE ordenes_compra (
     notas          TEXT,
     usuario_id     INTEGER REFERENCES usuarios(id),
     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- cuándo se espera que llegue (hoy + días de entrega del proveedor);
+    -- el reabasto automático lo surte solo al llegar esta fecha.
+    fecha_estimada DATE,
     fecha_recibido TIMESTAMP
 );
 CREATE INDEX idx_ordenes_compra_proveedor ON ordenes_compra(proveedor_id);
+
+-- Configuración del reabasto automático (pantalla Pedidos del SCM):
+--   reabasto_automatico = 'si' | 'no'
+--   entrega             = 'fecha' (según el proveedor) | 'inmediata'
+CREATE TABLE config_scm (
+    clave  VARCHAR(40) PRIMARY KEY,
+    valor  VARCHAR(40) NOT NULL
+);
 CREATE INDEX idx_ordenes_compra_producto ON ordenes_compra(producto_id);
 
 -- ---------------------------------------------------------
@@ -705,6 +719,11 @@ VALUES
  ('Gabinete Cooler Master Q300L', 'Gabinete MicroATX compacto, ideal para equipos de oficina o gaming de espacio reducido.',
   3, 'Cooler Master', 1199.00, 16, 5, '{oficina,estudiante}', NULL, 1, true, 'push',
   'gabinete', NULL, NULL, 'MicroATX', NULL, NULL);
+
+-- Costo de compra al proveedor: ~70% del precio de venta.
+UPDATE productos SET costo_unitario = ROUND(precio * 0.7, 2);
+
+INSERT INTO config_scm (clave, valor) VALUES ('reabasto_automatico', 'si'), ('entrega', 'fecha');
 
 -- ---------------------------------------------------------
 -- CLIENTES DE PRUEBA  (contraseña "Demo#KZ2026" para los 4,

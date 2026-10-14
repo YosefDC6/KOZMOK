@@ -670,7 +670,7 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
                 `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,'Venta en línea')`,
                 [item.producto_id, item.cantidad]
             );
-            await generarOrdenAutomaticaSiCritico(client, item.producto_id);
+            await generarOrdenAutomaticaSiCritico(client, item.producto_id, 'demanda');
         }
 
         subtotal += garantiasTotal;
@@ -1874,7 +1874,7 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
     const {
         nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
         procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-        uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock
+        uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario
     } = req.body;
 
     if (!nombre || precio === undefined || precio < 0) {
@@ -1885,13 +1885,14 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
         `INSERT INTO productos
          (nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
           procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-          uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          RETURNING *`,
         [nombre, descripcion || '', categoria_id || null, marca || '', precio, stock || 0, stock_minimo || 5,
             procesador || null, ram_gb || null, almacenamiento || null, tarjeta_grafica || null, pantalla || null,
             uso_recomendado || [], imagen_url || '', proveedor_id || null, vendedor_id || null,
-            activo !== undefined ? activo : true, restock || 'push']
+            activo !== undefined ? activo : true, restock || 'push',
+            costo_unitario === undefined || costo_unitario === '' ? null : costo_unitario]
     );
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.status(201).json({ message: 'Producto creado', producto: result.rows[0] });
@@ -1901,7 +1902,7 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
     const {
         nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
         procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-        uso_recomendado, imagen_url, proveedor_id, activo, restock
+        uso_recomendado, imagen_url, proveedor_id, activo, restock, costo_unitario
     } = req.body;
 
     const result = await pool.query(
@@ -1914,10 +1915,11 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
             tarjeta_grafica = COALESCE($11, tarjeta_grafica), pantalla = COALESCE($12, pantalla),
             uso_recomendado = COALESCE($13, uso_recomendado), imagen_url = COALESCE($14, imagen_url),
             proveedor_id = COALESCE($15, proveedor_id), activo = COALESCE($16, activo),
-            restock = COALESCE($17, restock)
-         WHERE id = $18 RETURNING *`,
+            restock = COALESCE($17, restock), costo_unitario = COALESCE($18, costo_unitario)
+         WHERE id = $19 RETURNING *`,
         [nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo, procesador, ram_gb,
-            almacenamiento, tarjeta_grafica, pantalla, uso_recomendado, imagen_url, proveedor_id, activo, restock, req.params.id]
+            almacenamiento, tarjeta_grafica, pantalla, uso_recomendado, imagen_url, proveedor_id, activo, restock,
+            costo_unitario === '' ? null : costo_unitario, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
@@ -1975,7 +1977,7 @@ app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
 // a diferencia del restock rápido, aquí también se puede registrar una
 // SALIDA manual, con su propio motivo.
 app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
-    const { producto_id, tipo, cantidad, motivo } = req.body;
+    const { producto_id, tipo, cantidad, motivo, fecha } = req.body;
     if (!producto_id || !['entrada', 'salida'].includes(tipo) || !cantidad || cantidad < 1) {
         return res.status(400).json({ message: 'Producto, tipo y cantidad son obligatorios' });
     }
@@ -1988,47 +1990,226 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     const signo = tipo === 'entrada' ? 1 : -1;
     await pool.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [signo * cantidad, producto_id]);
     const result = await pool.query(
-        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [producto_id, tipo, cantidad, motivo || 'Ajuste manual', req.usuario.id]
+        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id, fecha)
+         VALUES ($1,$2,$3,$4,$5, COALESCE($6::timestamp, CURRENT_TIMESTAMP)) RETURNING *`,
+        [producto_id, tipo, cantidad, motivo || 'Ajuste manual', req.usuario.id, fecha || null]
     );
-    if (tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id);
+    if (tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id, 'demanda');
     res.status(201).json(result.rows[0]);
 }));
 
-// =========================================================
-// ADMIN: ÓRDENES DE COMPRA (reposición hacia proveedores)
-// El lado "de entrada" de la cadena de suministro: cuando el
-// stock está bajo se genera una orden; al marcarla "recibido"
-// el stock sube y queda registrado el movimiento de inventario.
-// =========================================================
 
-// Si un producto está en (o cae en) stock crítico, tiene proveedor
-// asignado y no tiene ya una orden de compra abierta, genera una sola
-// automáticamente. Se llama después de cualquier operación que pueda
-// bajar o dejar igual el stock (ventas, ediciones de stock, etc.) o que
-// resuelva una orden sin dejar el stock por encima del mínimo.
-async function generarOrdenAutomaticaSiCritico(db, productoId) {
-    const prod = await db.query('SELECT stock, stock_minimo, proveedor_id FROM productos WHERE id = $1', [productoId]);
-    if (prod.rows.length === 0) return;
+// =========================================================
+// REABASTO AUTOMÁTICO (SCM)
+// Para no depender de que alguien haga el restock a mano:
+//   1) Cuando un producto llega a su stock mínimo, el sistema genera
+//      solo el pedido de reposición a su proveedor y lo deja "en
+//      proceso" (enviado al proveedor).
+//        - PUSH: se pide en cuanto toca el mínimo, venga de donde venga.
+//        - PULL: solo se pide cuando lo dispara la demanda (una venta o
+//          una salida de inventario).
+//   2) Cuando llega la fecha estimada de entrega (hoy + días de entrega
+//      del proveedor), el pedido se surte solo: sube el stock y queda el
+//      movimiento de entrada registrado a nombre del sistema.
+// Se configura en config_scm (pantalla Pedidos del SCM):
+//   reabasto_automatico = 'si' | 'no'
+//   entrega             = 'fecha' (según el proveedor) | 'inmediata'
+// =========================================================
+const CONFIG_SCM_DEFAULT = { reabasto_automatico: 'si', entrega: 'fecha' };
+
+async function leerConfigScm(db) {
+    const cfg = { ...CONFIG_SCM_DEFAULT };
+    const r = await db.query('SELECT clave, valor FROM config_scm');
+    r.rows.forEach((f) => { cfg[f.clave] = f.valor; });
+    return cfg;
+}
+
+// Crea un pedido de reposición (orden de compra) con su folio OC-xxxx.
+// Si no se da fecha estimada, se calcula con el tiempo de entrega del proveedor.
+async function crearOrdenCompra(db, { producto_id, proveedor_id, cantidad, notas, usuario_id, estado = 'pendiente', fecha_estimada = null }) {
+    const ins = await db.query(
+        `INSERT INTO ordenes_compra (folio, proveedor_id, producto_id, cantidad, notas, usuario_id, estado, fecha_estimada)
+         VALUES ('OC-TMP', $1, $2, $3, $4, $5, $6,
+                 COALESCE($7::date, CURRENT_DATE + (SELECT tiempo_entrega_dias FROM proveedores WHERE id = $1)))
+         RETURNING id`,
+        [proveedor_id, producto_id, cantidad, notas || null, usuario_id || null, estado, fecha_estimada || null]
+    );
+    const fin = await db.query(`UPDATE ordenes_compra SET folio = 'OC-' || (1000 + id) WHERE id = $1 RETURNING *`, [ins.rows[0].id]);
+    return fin.rows[0];
+}
+
+// Surte (recibe) un pedido de reposición: sube el stock y registra el
+// movimiento de entrada. usuarioId null = lo hizo el sistema solo.
+async function surtirOrdenCompra(db, orden, usuarioId) {
+    await db.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [orden.cantidad, orden.producto_id]);
+    const pr = await db.query('SELECT nombre FROM proveedores WHERE id = $1', [orden.proveedor_id]);
+    const proveedor = pr.rows[0] ? pr.rows[0].nombre : null;
+    const motivo = usuarioId
+        ? `Recepción de pedido ${orden.folio}${proveedor ? ` (${proveedor})` : ''}`
+        : `Reabasto automático: pedido ${orden.folio} surtido${proveedor ? ` por ${proveedor}` : ''}`;
+    await db.query(
+        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'entrada',$2,$3,$4)`,
+        [orden.producto_id, orden.cantidad, motivo, usuarioId || null]
+    );
+    const r = await db.query(
+        `UPDATE ordenes_compra SET estado = 'recibido', fecha_recibido = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`,
+        [orden.id]
+    );
+    return r.rows[0];
+}
+
+// Si un producto está en (o cae en) stock crítico, tiene proveedor y no
+// tiene ya un pedido abierto, genera uno solo (ver reglas push/pull
+// arriba). origen = 'demanda' cuando lo dispara una venta o salida.
+// Devuelve el pedido generado, o null si no hizo falta.
+async function generarOrdenAutomaticaSiCritico(db, productoId, origen = 'sistema') {
+    const cfg = await leerConfigScm(db);
+    if (cfg.reabasto_automatico !== 'si') return null;
+
+    const prod = await db.query('SELECT stock, stock_minimo, proveedor_id, restock, activo FROM productos WHERE id = $1', [productoId]);
+    if (prod.rows.length === 0) return null;
     const p = prod.rows[0];
-    if (p.stock > p.stock_minimo || !p.proveedor_id) return;
+    if (!p.activo || !p.proveedor_id || p.stock > p.stock_minimo) return null;
+    if (p.restock === 'pull' && origen !== 'demanda') return null;
 
     const abierta = await db.query(
         `SELECT id FROM ordenes_compra WHERE producto_id = $1 AND estado IN ('pendiente','en_proceso') LIMIT 1`,
         [productoId]
     );
-    if (abierta.rows.length > 0) return;
+    if (abierta.rows.length > 0) return null;
 
     const cantidad = Math.max((p.stock_minimo * 2) - p.stock, p.stock_minimo, 1);
-    const ins = await db.query(
-        `INSERT INTO ordenes_compra (folio, proveedor_id, producto_id, cantidad, notas, usuario_id)
-         VALUES ('OC-TMP',$1,$2,$3,$4,NULL) RETURNING id`,
-        [p.proveedor_id, productoId, cantidad, 'Generada automáticamente: el producto llegó a stock crítico']
-    );
-    await db.query(`UPDATE ordenes_compra SET folio = 'OC-' || (1000 + id) WHERE id = $1`, [ins.rows[0].id]);
+    const notas = p.restock === 'pull'
+        ? 'Generada automáticamente (pull): la demanda dejó el producto en stock crítico'
+        : 'Generada automáticamente (push): el producto llegó a su stock mínimo';
+    let orden = await crearOrdenCompra(db, {
+        producto_id: productoId, proveedor_id: p.proveedor_id, cantidad, notas, usuario_id: null, estado: 'en_proceso',
+    });
+    if (cfg.entrega === 'inmediata') orden = await surtirOrdenCompra(db, orden, null);
+    return orden;
 }
 
+// Barrido periódico: surte los pedidos en proceso cuya fecha ya llegó y
+// genera los pedidos push que falten. Corre al arrancar, cada minuto y
+// cuando se abre la pantalla de Pedidos.
+let reabastoCorriendo = false;
+async function procesarReabastoAutomatico() {
+    const resultado = { surtidos: [], generados: [] };
+    if (reabastoCorriendo) return resultado;
+    reabastoCorriendo = true;
+    const client = await pool.connect();
+    try {
+        const cfg = await leerConfigScm(client);
+        if (cfg.reabasto_automatico !== 'si') return resultado;
+        await client.query('BEGIN');
+        const listos = await client.query(
+            `SELECT * FROM ordenes_compra
+             WHERE estado = 'en_proceso' ${cfg.entrega === 'inmediata' ? '' : 'AND fecha_estimada <= CURRENT_DATE'}
+             ORDER BY id FOR UPDATE`
+        );
+        for (const o of listos.rows) resultado.surtidos.push((await surtirOrdenCompra(client, o, null)).folio);
+
+        const criticos = await client.query(
+            `SELECT id FROM productos
+             WHERE activo = true AND restock = 'push' AND proveedor_id IS NOT NULL AND stock <= stock_minimo`
+        );
+        for (const p of criticos.rows) {
+            const o = await generarOrdenAutomaticaSiCritico(client, p.id);
+            if (o) resultado.generados.push(o.folio);
+        }
+        await client.query('COMMIT');
+        if (resultado.surtidos.length || resultado.generados.length) {
+            console.log(`Reabasto automático: ${resultado.generados.length} pedido(s) generado(s), ${resultado.surtidos.length} surtido(s)`);
+        }
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Reabasto automático ->', e.message);
+    } finally {
+        client.release();
+        reabastoCorriendo = false;
+    }
+    return resultado;
+}
+
+app.get('/api/admin/scm/config', asyncRoute(async (req, res) => {
+    res.json(await leerConfigScm(pool));
+}));
+
+app.put('/api/admin/scm/config', asyncRoute(async (req, res) => {
+    const { reabasto_automatico, entrega } = req.body;
+    if (reabasto_automatico !== undefined && !['si', 'no'].includes(reabasto_automatico)) {
+        return res.status(400).json({ message: 'Valor no válido para reabasto automático' });
+    }
+    if (entrega !== undefined && !['fecha', 'inmediata'].includes(entrega)) {
+        return res.status(400).json({ message: 'Valor no válido para la entrega' });
+    }
+    for (const [clave, valor] of Object.entries({ reabasto_automatico, entrega })) {
+        if (valor === undefined) continue;
+        await pool.query(
+            `INSERT INTO config_scm (clave, valor) VALUES ($1,$2) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`,
+            [clave, valor]
+        );
+    }
+    const resultado = await procesarReabastoAutomatico();
+    res.json({ config: await leerConfigScm(pool), ...resultado });
+}));
+
+// "Ejecutar ahora": corre el barrido sin esperar al siguiente minuto.
+app.post('/api/admin/scm/reabasto', asyncRoute(async (req, res) => {
+    res.json(await procesarReabastoAutomatico());
+}));
+
+// =========================================================
+// ADMIN: PEDIDOS SCM
+// Vista única de los pedidos que mueven el inventario:
+//   - Reposición: pedidos a proveedores (tabla ordenes_compra), entran.
+//   - Venta: partidas de pedidos de clientes (tienda y ERP), salen.
+// Estados unificados: pendiente, en_proceso, surtido, cancelado.
+// =========================================================
+app.get('/api/admin/pedidos-scm', asyncRoute(async (req, res) => {
+    await procesarReabastoAutomatico();
+    const tipo = ['reposicion', 'venta'].includes(req.query.tipo) ? req.query.tipo : '';
+    const estado = ['pendiente', 'en_proceso', 'surtido', 'cancelado'].includes(req.query.estado) ? req.query.estado : '';
+    const result = await pool.query(`
+        SELECT * FROM (
+            SELECT 'reposicion' AS tipo, oc.id, oc.folio, oc.fecha_creacion AS fecha, oc.fecha_estimada,
+                   oc.fecha_recibido AS fecha_surtido, oc.producto_id, p.nombre AS producto_nombre, oc.cantidad,
+                   CASE oc.estado WHEN 'recibido' THEN 'surtido' ELSE oc.estado END AS estado,
+                   oc.proveedor_id, pr.nombre AS contraparte, oc.notas, NULL AS origen,
+                   COALESCE(oc.notas LIKE 'Generada automáticamente%', false) AS automatico,
+                   p.restock, ROUND(COALESCE(p.costo_unitario, 0) * oc.cantidad, 2) AS total,
+                   u.nombre AS usuario_nombre
+            FROM ordenes_compra oc
+            LEFT JOIN productos p ON oc.producto_id = p.id
+            LEFT JOIN proveedores pr ON oc.proveedor_id = pr.id
+            LEFT JOIN usuarios u ON oc.usuario_id = u.id
+            UNION ALL
+            SELECT 'venta', pe.id, pe.numero_orden, pe.fecha_pedido, NULL,
+                   pe.fecha_entrega, pi.producto_id, p.nombre, pi.cantidad,
+                   CASE WHEN pe.estado = 'pendiente' THEN 'pendiente'
+                        WHEN pe.estado = 'entregado' THEN 'surtido'
+                        WHEN pe.estado = 'cancelado' THEN 'cancelado'
+                        ELSE 'en_proceso' END,
+                   NULL, c.nombre, NULL, pe.origen, false,
+                   p.restock, pi.subtotal, NULL
+            FROM pedido_items pi
+            JOIN pedidos pe ON pi.pedido_id = pe.id
+            LEFT JOIN productos p ON pi.producto_id = p.id
+            LEFT JOIN clientes c ON pe.cliente_id = c.id
+        ) x
+        WHERE ($1 = '' OR x.tipo = $1) AND ($2 = '' OR x.estado = $2)
+        ORDER BY x.fecha DESC
+        LIMIT 300
+    `, [tipo, estado]);
+    res.json(result.rows);
+}));
+
+// =========================================================
+// ADMIN: PEDIDOS DE REPOSICIÓN (órdenes de compra a proveedores)
+// El lado "de entrada" de la cadena de suministro: al surtirse un
+// pedido (a mano o por el reabasto automático) el stock sube y queda
+// registrado el movimiento de inventario.
+// =========================================================
 app.get('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
     const { estado } = req.query;
     const cond = estado && estado !== 'Todas' ? 'WHERE oc.estado = $1' : '';
@@ -2047,7 +2228,7 @@ app.get('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
-    const { producto_id, proveedor_id, cantidad, notas } = req.body;
+    const { producto_id, proveedor_id, cantidad, notas, fecha_estimada } = req.body;
     if (!producto_id || !cantidad || cantidad < 1) {
         return res.status(400).json({ message: 'Producto y cantidad son obligatorios' });
     }
@@ -2056,17 +2237,31 @@ app.post('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
     const proveedorFinal = proveedor_id || prod.rows[0].proveedor_id;
     if (!proveedorFinal) return res.status(400).json({ message: 'Este producto no tiene proveedor asignado; elige uno' });
 
+    const orden = await crearOrdenCompra(pool, {
+        producto_id, proveedor_id: proveedorFinal, cantidad, notas, usuario_id: req.usuario.id, fecha_estimada,
+    });
+    res.status(201).json(orden);
+}));
+
+// Editar un pedido de reposición que todavía no se surte ni se cancela.
+app.put('/api/admin/ordenes-compra/:id', asyncRoute(async (req, res) => {
+    const { cantidad, proveedor_id, fecha_estimada, notas } = req.body;
+    if (cantidad !== undefined && (!Number.isInteger(Number(cantidad)) || Number(cantidad) < 1)) {
+        return res.status(400).json({ message: 'La cantidad debe ser mayor a 0' });
+    }
+    const oc = await pool.query('SELECT estado FROM ordenes_compra WHERE id = $1', [req.params.id]);
+    if (oc.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
+    if (!['pendiente', 'en_proceso'].includes(oc.rows[0].estado)) {
+        return res.status(400).json({ message: 'Solo se pueden editar pedidos pendientes o en proceso' });
+    }
     const result = await pool.query(
-        `INSERT INTO ordenes_compra (folio, proveedor_id, producto_id, cantidad, notas, usuario_id)
-         VALUES ('OC-TMP',$1,$2,$3,$4,$5) RETURNING id`,
-        [proveedorFinal, producto_id, cantidad, notas || null, req.usuario.id]
+        `UPDATE ordenes_compra SET
+            cantidad = COALESCE($1, cantidad), proveedor_id = COALESCE($2, proveedor_id),
+            fecha_estimada = COALESCE($3::date, fecha_estimada), notas = COALESCE($4, notas)
+         WHERE id = $5 RETURNING *`,
+        [cantidad || null, proveedor_id || null, fecha_estimada || null, notas ?? null, req.params.id]
     );
-    const id = result.rows[0].id;
-    const final = await pool.query(
-        `UPDATE ordenes_compra SET folio = 'OC-' || (1000 + id) WHERE id = $1 RETURNING *`,
-        [id]
-    );
-    res.status(201).json(final.rows[0]);
+    res.json(result.rows[0]);
 }));
 
 app.put('/api/admin/ordenes-compra/:id/estado', asyncRoute(async (req, res) => {
@@ -2078,31 +2273,24 @@ app.put('/api/admin/ordenes-compra/:id/estado', asyncRoute(async (req, res) => {
     try {
         await client.query('BEGIN');
         const oc = await client.query('SELECT * FROM ordenes_compra WHERE id = $1 FOR UPDATE', [req.params.id]);
-        if (oc.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Orden no encontrada' }); }
+        if (oc.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pedido no encontrado' }); }
         const orden = oc.rows[0];
         if (orden.estado === 'recibido' || orden.estado === 'cancelado') {
             await client.query('ROLLBACK');
-            return res.status(400).json({ message: `Esta orden ya está ${orden.estado} y no se puede modificar` });
+            return res.status(400).json({ message: `Este pedido ya está ${orden.estado === 'recibido' ? 'surtido' : 'cancelado'} y no se puede modificar` });
         }
 
+        let final;
         if (estado === 'recibido') {
-            await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [orden.cantidad, orden.producto_id]);
-            await client.query(
-                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id)
-                 VALUES ($1,'entrada',$2,$3,$4)`,
-                [orden.producto_id, orden.cantidad, `Recepción de orden de compra ${orden.folio}`, req.usuario.id]
-            );
+            final = await surtirOrdenCompra(client, orden, req.usuario.id);
+            // Si lo recibido no alcanzó para salir de stock crítico, se pide otra vez.
+            await generarOrdenAutomaticaSiCritico(client, orden.producto_id);
+        } else {
+            const r = await client.query('UPDATE ordenes_compra SET estado = $1 WHERE id = $2 RETURNING *', [estado, req.params.id]);
+            final = r.rows[0];
         }
-        const campoFecha = estado === 'recibido' ? ', fecha_recibido = CURRENT_TIMESTAMP' : '';
-        const result = await client.query(
-            `UPDATE ordenes_compra SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
-            [estado, req.params.id]
-        );
-        // Si lo recibido no alcanzó para salir de stock crítico, y ya no
-        // queda esta orden como "abierta" para bloquearlo, se genera otra.
-        if (estado === 'recibido') await generarOrdenAutomaticaSiCritico(client, orden.producto_id);
         await client.query('COMMIT');
-        res.json(result.rows[0]);
+        res.json(final);
     } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -2135,14 +2323,15 @@ app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
         GROUP BY p.id ORDER BY unidades_vendidas DESC LIMIT 6
     `);
 
+    // (el stock se suma aparte: con el JOIN a las partidas se contaría una
+    // vez por cada venta del producto)
     const rotacion = await pool.query(`
         SELECT
-            COALESCE(SUM(pi.cantidad) FILTER (WHERE pe.estado <> 'cancelado'), 0) AS vendidas,
-            COALESCE(SUM(p.stock), 0) AS stock_actual
-        FROM productos p
-        LEFT JOIN pedido_items pi ON pi.producto_id = p.id
-        LEFT JOIN pedidos pe ON pi.pedido_id = pe.id
-        WHERE p.activo = true
+            (SELECT COALESCE(SUM(pi.cantidad), 0) FROM pedido_items pi
+               JOIN pedidos pe ON pi.pedido_id = pe.id
+               JOIN productos p ON pi.producto_id = p.id
+              WHERE pe.estado <> 'cancelado' AND p.activo = true) AS vendidas,
+            (SELECT COALESCE(SUM(stock), 0) FROM productos WHERE activo = true) AS stock_actual
     `);
     const vendidas = Number(rotacion.rows[0].vendidas);
     const stockActual = Number(rotacion.rows[0].stock_actual);
@@ -2184,6 +2373,58 @@ app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
         push_pull: { push, pull, valor_push: valorPush, valor_pull: valorPull },
         madurez: { nivel, checklist, cumplidos, total: checklist.length },
     });
+}));
+
+// Reportes SCM: rotación por producto (alta / media / baja) y la
+// comparativa mensual de pedidos de reposición push vs. pull.
+app.get('/api/admin/scm/reportes', asyncRoute(async (req, res) => {
+    // Rotación = unidades vendidas / (vendidas + stock actual).
+    // Alta >= 15%, media >= 5%, baja < 5%.
+    const rot = await pool.query(`
+        SELECT p.id, p.nombre, p.stock,
+               COALESCE(SUM(pi.cantidad) FILTER (WHERE pe.estado <> 'cancelado'), 0)::int AS vendidas
+        FROM productos p
+        LEFT JOIN pedido_items pi ON pi.producto_id = p.id
+        LEFT JOIN pedidos pe ON pi.pedido_id = pe.id
+        WHERE p.activo = true
+        GROUP BY p.id
+    `);
+    const rotacion = { alta: [], media: [], baja: [] };
+    rot.rows.forEach((r) => {
+        const base = r.vendidas + r.stock;
+        const pct = base > 0 ? r.vendidas / base : 0;
+        const nivel = pct >= 0.15 ? 'alta' : pct >= 0.05 ? 'media' : 'baja';
+        rotacion[nivel].push({ nombre: r.nombre, pct: Math.round(pct * 100) });
+    });
+
+    // Pedidos de reposición por mes (últimos 6), según la estrategia del producto.
+    const mensual = await pool.query(`
+        WITH meses AS (
+            SELECT to_char(m, 'YYYY-MM') AS mes
+            FROM generate_series(date_trunc('month', CURRENT_DATE) - INTERVAL '5 months',
+                                 date_trunc('month', CURRENT_DATE), INTERVAL '1 month') m
+        )
+        SELECT meses.mes,
+               COUNT(oc.id) FILTER (WHERE p.restock = 'push')::int AS push,
+               COUNT(oc.id) FILTER (WHERE p.restock = 'pull')::int AS pull,
+               COALESCE(SUM(oc.cantidad) FILTER (WHERE p.restock = 'push'), 0)::int AS unidades_push,
+               COALESCE(SUM(oc.cantidad) FILTER (WHERE p.restock = 'pull'), 0)::int AS unidades_pull
+        FROM meses
+        LEFT JOIN ordenes_compra oc ON to_char(oc.fecha_creacion, 'YYYY-MM') = meses.mes AND oc.estado <> 'cancelado'
+        LEFT JOIN productos p ON oc.producto_id = p.id
+        GROUP BY meses.mes ORDER BY meses.mes
+    `);
+
+    const pedidos = await pool.query(`
+        SELECT
+            COUNT(*) FILTER (WHERE estado = 'en_proceso')::int AS en_proceso,
+            COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes,
+            COUNT(*) FILTER (WHERE estado = 'recibido')::int AS surtidos,
+            COUNT(*) FILTER (WHERE notas LIKE 'Generada automáticamente%')::int AS automaticos
+        FROM ordenes_compra
+    `);
+
+    res.json({ rotacion, mensual: mensual.rows, pedidos: pedidos.rows[0] });
 }));
 
 app.get('/api/proveedores', asyncRoute(async (req, res) => {
@@ -2549,7 +2790,7 @@ app.post('/api/admin/erp/ordenes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async
 
         // 4) Reabastecimiento automático (SCM) si algo quedó en stock crítico.
         const antesOC = await client.query(`SELECT COALESCE(MAX(id), 0) AS max FROM ordenes_compra`);
-        for (const d of detalle) await generarOrdenAutomaticaSiCritico(client, d.producto_id);
+        for (const d of detalle) await generarOrdenAutomaticaSiCritico(client, d.producto_id, 'demanda');
         const nuevasOC = await client.query(`SELECT folio FROM ordenes_compra WHERE id > $1 ORDER BY id`, [antesOC.rows[0].max]);
         const foliosOC = nuevasOC.rows.map((r) => r.folio);
         if (foliosOC.length) pasos.push({ clave: 'reabasto', texto: `Orden de compra automática: ${foliosOC.join(', ')}` });
@@ -2802,15 +3043,33 @@ app.get('/api/usuarios/:id/actividad', requireUsuario, asyncRoute(async (req, re
 // =========================================================
 app.get('/api', (req, res) => res.json({ status: 'ok', message: 'API Kozmok activa' }));
 
+// Bases cargadas con una versión anterior de database.sql: agrega lo que
+// falte sin tener que recargar todo (y sin tocar lo que ya existe).
+async function migrarEsquema() {
+    await pool.query('ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS direccion VARCHAR(200)');
+    const costo = await pool.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_name = 'productos' AND column_name = 'costo_unitario'`
+    );
+    if (costo.rows.length === 0) {
+        await pool.query('ALTER TABLE productos ADD COLUMN costo_unitario NUMERIC(10,2) CHECK (costo_unitario >= 0)');
+        await pool.query('UPDATE productos SET costo_unitario = ROUND(precio * 0.7, 2)');
+    }
+    await pool.query('ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS fecha_estimada DATE');
+    await pool.query(`
+        UPDATE ordenes_compra oc SET fecha_estimada = oc.fecha_creacion::date + pr.tiempo_entrega_dias
+        FROM proveedores pr WHERE pr.id = oc.proveedor_id AND oc.fecha_estimada IS NULL`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS config_scm (clave VARCHAR(40) PRIMARY KEY, valor VARCHAR(40) NOT NULL)`);
+}
+
 app.listen(PORT, async () => {
     console.log(`Kozmok escuchando en http://localhost:${PORT}`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
         console.log(`Base de datos: conectada (${dbConfig.database}@${dbConfig.host}:${dbConfig.port}) - ${r.rows[0].n} productos`);
-        // Bases cargadas antes de que existiera la dirección del proveedor:
-        // se agrega la columna sin tener que recargar database.sql.
-        await pool.query('ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS direccion VARCHAR(200)');
+        await migrarEsquema();
+        await procesarReabastoAutomatico();
+        setInterval(procesarReabastoAutomatico, 60 * 1000);
     } catch (err) {
         if (/relation .* does not exist/i.test(err.message)) {
             console.error(`Base de datos: conectada a ${dbConfig.database}, pero SIN TABLAS. Carga db/database.sql.`);

@@ -105,7 +105,7 @@ function renderAlerta(criticos) {
     el.innerHTML = `
         <div class="pago-box pendiente">
             <h4>${icon('alert', 16)} Alerta de stock crítico — ${criticos.length} producto(s)</h4>
-            <div class="pb-sub">Al llegar al mínimo, si el producto tiene proveedor, se le genera una orden de compra automáticamente.</div>
+            <div class="pb-sub">Al llegar al mínimo, si el producto tiene proveedor, el reabasto automático le genera su pedido al proveedor (push al tocar el mínimo; pull cuando lo dispara una venta) y lo surte solo al llegar la fecha de entrega.</div>
             <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
                 ${criticos.map((p) => `
                     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;background:var(--bg-panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px">
@@ -129,7 +129,7 @@ function accionOC(p) {
     if (!puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra')) return '';
     return p.orden_abierta_folio
         ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio} en curso</span>`
-        : `<a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar orden</a>`;
+        : `<a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar pedido</a>`;
 }
 
 function renderTabla() {

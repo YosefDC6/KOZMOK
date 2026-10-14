@@ -46,7 +46,7 @@
             </div>
             <div class="table-wrap" style="margin-top:10px">
                 <table>
-                    <thead><tr><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Proveedor</th><th>Orden de compra</th></tr></thead>
+                    <thead><tr><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Proveedor</th><th>Pedido en curso</th></tr></thead>
                     <tbody id="tabla-critico"><tr><td colspan="5">Cargando…</td></tr></tbody>
                 </table>
             </div>
@@ -76,7 +76,7 @@ async function cargar() {
     document.getElementById('stat-grid').innerHTML = `
         <div class="stat-card"><div class="stat-label">Productos activos</div><div class="stat-value">${r.stats.total_productos}</div></div>
         <div class="stat-card"><div class="stat-label">Proveedores</div><div class="stat-value">${r.stats.total_proveedores}</div></div>
-        <div class="stat-card"><div class="stat-label">Órdenes de compra abiertas</div><div class="stat-value" style="color:var(--warning)">${r.stats.ordenes_pendientes}</div></div>
+        <div class="stat-card"><div class="stat-label">Pedidos de reposición abiertos</div><div class="stat-value" style="color:var(--warning)">${r.stats.ordenes_pendientes}</div></div>
         <div class="stat-card"><div class="stat-label">Productos en stock bajo</div><div class="stat-value" style="color:var(--danger)">${r.stats.stock_bajo}</div></div>
         <div class="stat-card"><div class="stat-label">Rotación de inventario</div><div class="stat-value" style="color:var(--accent)">${r.rotacion_pct}%</div><div class="stat-sub">unidades vendidas vs. stock actual</div></div>
     `;

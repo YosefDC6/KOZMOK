@@ -33,7 +33,7 @@
             <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
                 <li><strong>CRM →</strong> el cliente se elige (o se da de alta) desde el CRM; al cobrarse la orden suma a sus compras, a su etapa y a sus puntos del Club.</li>
                 <li><strong>SCM →</strong> los productos y el stock vienen del inventario; al confirmar se descuenta el stock y queda un movimiento de inventario por producto.</li>
-                <li><strong>Reabasto automático →</strong> si un producto queda en stock crítico, se genera sola una orden de compra al proveedor.</li>
+                <li><strong>Reabasto automático →</strong> si un producto queda en stock crítico, se genera solo el pedido de reposición al proveedor y, al llegar su fecha, se surte con su movimiento de entrada.</li>
                 <li><strong>Reportes →</strong> ventas, productos e inventario se consolidan en los Reportes ERP, de los dos canales (tienda en línea y ERP).</li>
             </ol>
         </div>
@@ -59,7 +59,7 @@ const NIVELES = [
 const DESCRIPCION = {
     basico: 'Los módulos todavía trabajan por separado. Asegúrate de tener clientes en el CRM, productos con proveedor en el SCM y registra tu primera orden de cliente en el ERP.',
     integrado: 'Los módulos de CRM, SCM y ERP ya están integrados y funcionan de manera coordinada. Para automatizar, captura órdenes desde el ERP para que generen sus movimientos de inventario y reportes completos.',
-    automatizado: 'Las órdenes ya actualizan solas el inventario y los reportes consolidan los dos canales. Para optimizar, deja que el reabasto automático genere órdenes de compra y completa la entrega de órdenes ERP.',
+    automatizado: 'Las órdenes ya actualizan solas el inventario y los reportes consolidan los dos canales. Para optimizar, deja que el reabasto automático genere pedidos de reposición y completa la entrega de órdenes ERP.',
     optimizado: 'El ERP está completo: de la orden del cliente al reabasto con el proveedor, todo queda trazado y reportado sin pasos manuales.',
 };
 // A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
@@ -70,7 +70,7 @@ const DESTINO = {
     ordenes: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden' },
     movimientos: { key: 'movimientos', href: '/admin/movimientos.html', texto: 'Ver movimientos' },
     reportes: { key: 'reportes-erp', href: '/admin/reportes-erp.html', texto: 'Ver reportes' },
-    optimizado: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Ver órdenes de compra' },
+    optimizado: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Ver pedidos de reposición' },
 };
 
 async function cargar() {

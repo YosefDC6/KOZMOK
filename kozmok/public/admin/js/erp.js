@@ -83,7 +83,7 @@ function renderIntegracion(el, k) {
         <span class="integra-sep">⇄</span>
         ${mod('/admin/ordenes-erp.html', 'ordenes-erp', 'clipboard', 'ERP', 'Órdenes de clientes, integración y reportes', `${k.ordenes_clientes} órdenes · ${k.ordenes_erp} capturadas en ERP`, true)}
         <span class="integra-sep">⇄</span>
-        ${mod('/admin/scm.html', 'scm', 'package', 'SCM', 'Productos, inventario, proveedores y órdenes de compra', `${k.productos_activos} productos · ${k.ordenes_compra_abiertas} OC abiertas`)}
+        ${mod('/admin/scm.html', 'scm', 'package', 'SCM', 'Productos, inventario, proveedores y pedidos de reposición', `${k.productos_activos} productos · ${k.ordenes_compra_abiertas} pedidos abiertos`)}
     `;
 }
 

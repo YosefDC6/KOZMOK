@@ -28,7 +28,7 @@ const ADMIN_SECCIONES = [
         { href: '/admin/proveedores.html',    key: 'proveedores',     ic: 'id',        label: 'Proveedores',       desc: 'Contactos y tiempos de entrega' },
         { href: '/admin/inventario.html',     key: 'inventario',      ic: 'package',   label: 'Inventario',        desc: 'Existencias y stock crítico' },
         { href: '/admin/movimientos.html',    key: 'movimientos',     ic: 'clock',     label: 'Movimientos',       desc: 'Historial de entradas y salidas' },
-        { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',      label: 'Órdenes de compra', desc: 'Reposición hacia proveedores' },
+        { href: '/admin/ordenes-compra.html', key: 'ordenes-compra',  ic: 'undo',      label: 'Pedidos',           desc: 'Reposición y suministro' },
         { href: '/admin/logistica.html',      key: 'logistica',       ic: 'truck',     label: 'Logística',         desc: 'Estrategia push / pull' },
         { href: '/admin/nivel-scm.html',      key: 'nivel-scm',       ic: 'medal',     label: 'Nivel de madurez',  desc: 'Avance en la implementación' },
         { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',      label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },

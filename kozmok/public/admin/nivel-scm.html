@@ -32,7 +32,7 @@
             <ul style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
                 <li><strong>Inicial</strong> (0–1 puntos): procesos básicos, la cadena apenas se está armando.</li>
                 <li><strong>En desarrollo</strong> (2–3 puntos): integración de procesos; ya hay proveedores y trazabilidad de movimientos.</li>
-                <li><strong>Optimizado</strong> (4–5 puntos): procesos avanzados, con push y pull en uso, órdenes de compra y reportes con ventas reales.</li>
+                <li><strong>Optimizado</strong> (4–5 puntos): procesos avanzados, con push y pull en uso, pedidos de reposición y reportes con ventas reales.</li>
             </ul>
         </div>
     </main>
@@ -55,7 +55,7 @@ const NIVELES = [
 ];
 const DESCRIPCION = {
     inicial: 'Tu cadena de suministro apenas se está armando. Asigna proveedores a tus productos, registra tu primer movimiento de inventario y define si cada producto es push o pull para empezar a avanzar de nivel.',
-    en_desarrollo: 'El sistema ya cuenta con los módulos principales funcionando: proveedores y movimientos en uso. Para llegar a Optimizado, usa las dos estrategias de reabastecimiento, genera órdenes de compra a tus proveedores y registra ventas para que los reportes reflejen datos reales.',
+    en_desarrollo: 'El sistema ya cuenta con los módulos principales funcionando: proveedores y movimientos en uso. Para llegar a Optimizado, usa las dos estrategias de reabastecimiento, genera pedidos de reposición a tus proveedores (a mano o con el reabasto automático) y registra ventas para que los reportes reflejen datos reales.',
     optimizado: 'Tu módulo SCM está completo: hay trazabilidad de principio a fin, desde el proveedor hasta la venta, con las dos estrategias de reabastecimiento en uso y reportes basados en datos reales del negocio.',
 };
 // A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
@@ -64,7 +64,7 @@ const DESTINO = {
     proveedores: { key: 'productos', href: '/admin/productos.html', texto: 'Asignar proveedores en Productos' },
     movimientos: { key: 'movimientos', href: '/admin/movimientos.html', texto: 'Registrar un movimiento' },
     estrategia: { key: 'logistica', href: '/admin/logistica.html', texto: 'Definir estrategias en Logística' },
-    ordenes: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Generar una orden de compra' },
+    ordenes: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Generar un pedido de reposición' },
     reportes: { key: 'reportes-scm', href: '/admin/reportes-scm.html', texto: 'Ver Reportes SCM' },
 };
 

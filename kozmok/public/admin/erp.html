@@ -75,7 +75,7 @@ async function cargar() {
         <div class="stat-card"><span class="kpi-ico">${icon('clipboard', 18)}</span><div class="stat-label">Órdenes de clientes</div><div class="stat-value">${k.ordenes_clientes}</div><div class="stat-sub">${k.ordenes_erp} capturadas en ERP</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('wallet', 18)}</span><div class="stat-label">Ventas totales</div><div class="stat-value" style="font-size:1.5rem">${formatoMoneda(k.ventas_totales)}</div><div class="stat-sub">${k.pagos_pendientes} con pago pendiente</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades</div></div>
-        <div class="stat-card"><span class="kpi-ico">${icon('alert', 18)}</span><div class="stat-label">Stock crítico</div><div class="stat-value" style="color:var(--danger)">${k.stock_critico}</div><div class="stat-sub">${k.ordenes_compra_abiertas} órdenes de compra abiertas</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('alert', 18)}</span><div class="stat-label">Stock crítico</div><div class="stat-value" style="color:var(--danger)">${k.stock_critico}</div><div class="stat-sub">${k.ordenes_compra_abiertas} pedidos de reposición abiertos</div></div>
     `;
 
     graficaVentasMes(document.getElementById('chart-ventas'), r.ventas_por_mes);
