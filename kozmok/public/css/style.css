@@ -249,6 +249,13 @@ tr:hover td { background: var(--bg-panel-2); }
 .admin-nav-grupo-links { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s ease; }
 .admin-nav-grupo.abierto .admin-nav-grupo-links { grid-template-rows: 1fr; }
 .admin-nav-grupo-links-inner { overflow: hidden; }
+/* Pantalla de otro módulo dentro del menú ERP: etiqueta "CRM" / "SCM". */
+.nav-mod { margin-left: auto; font-size: .6rem; font-weight: 700; letter-spacing: .05em; line-height: 1; padding: 3px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-muted); }
+.admin-sidebar a.active .nav-mod { border-color: currentColor; color: var(--accent); }
+.modulo-tile .mt-title .nav-mod { margin-left: 6px; vertical-align: 2px; }
+.admin-crumb { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--text-muted); margin-bottom: 4px; }
+.admin-crumb a { font-weight: 600; }
+.admin-crumb .nav-mod { margin-left: 0; }
 
 /* ---------- Menú de módulo con iconos grandes (dashboard.html / scm.html) ---------- */
 .modulo-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 24px; }
@@ -285,11 +292,16 @@ tr:hover td { background: var(--bg-panel-2); }
 
 @media (max-width: 900px) {
     .admin-shell { flex-direction: column; }
-    .admin-sidebar { width: 100%; height: auto; position: static; }
-    .admin-nav-toggle { display: inline-flex; align-items: center; gap: 8px; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; color: var(--text); cursor: pointer; margin-bottom: 8px; }
+    .admin-sidebar { width: 100%; height: auto; position: static; padding: 12px 16px; }
+    /* Menú hamburguesa: marca y botón en una fila; al abrirlo aparece el menú
+       completo (los tres módulos, Cuenta y la sesión con "Cerrar sesión"). */
+    .admin-sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .admin-sidebar .brand { padding: 0; }
+    .admin-nav-toggle { display: inline-flex; align-items: center; gap: 8px; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; color: var(--text); font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; }
     .admin-nav-links { display: none; }
-    .admin-nav-links.open { display: block; }
+    .admin-nav-links.open { display: block; margin-top: 12px; }
     .admin-user { display: none; }
+    .admin-nav-links.open + .admin-user { display: block; }
     .admin-main { padding: 20px 16px; }
 }
 

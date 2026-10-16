@@ -65,7 +65,7 @@ const ROLES_INTERNOS = {
     admin:    { nombre: 'Administrador', descripcion: 'Acceso total, incluida la gestión de cuentas.' },
     vendedor: { nombre: 'Vendedor',      descripcion: 'CRM, tienda y órdenes de clientes (ERP); no gestiona cuentas.' },
     soporte:  { nombre: 'Soporte',       descripcion: 'Clientes, interacciones y tickets de soporte.' },
-    almacen:  { nombre: 'Almacén',       descripcion: 'Pedidos, inventario y consulta del ERP.' },
+    almacen:  { nombre: 'Almacén',       descripcion: 'Logística: pedidos, productos, inventario y consulta del ERP.' },
 };
 
 // =========================================================

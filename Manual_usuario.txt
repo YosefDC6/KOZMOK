@@ -71,10 +71,10 @@ ROLES INTERNOS (entran por /admin/login.html; el menu se adapta al rol)
                      ni Panel por rol.
    - SOPORTE       : Dashboard, Clientes, Interacciones, Evaluaciones,
                      Soporte, Garantias, Reportes, Mi actividad, Config.
-   - ALMACEN       : Dashboard, Pedidos, Inventario, Garantias, Analitica
-                     chatbot, bloque SCM y consulta del ERP (Dashboard,
-                     Ordenes de clientes, Reportes), Mi actividad,
-                     Configuracion.
+   - ALMACEN       : (area de Logistica) Dashboard, Pedidos, Inventario,
+                     Garantias, Analitica chatbot, bloque SCM y consulta
+                     del ERP (Dashboard, Productos, Inventario, Ordenes de
+                     clientes, Reportes), Mi actividad, Configuracion.
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda al Dashboard.
 
@@ -341,6 +341,22 @@ su pantalla principal y la flechita junto al titulo solo muestra u oculta
 sus opciones sin salir de donde estas. El bloque del modulo en el que
 estas se abre solo; el otro queda cerrado, para que la lista no se sienta
 larga. El bloque CUENTA no es desplegable, siempre esta a la vista.
+
+El bloque ERP trae su menu completo para trabajar sin salirse de el:
+Dashboard, Clientes (CRM), Productos (SCM), Inventario (SCM), Ordenes de
+clientes, Reportes, Nivel ERP y Panel por rol. Clientes, Productos e
+Inventario son las mismas pantallas del CRM y del SCM (llevan una etiqueta
+gris "CRM" o "SCM"); si las abres desde el ERP, el menu se queda en el ERP
+con esa opcion marcada y arriba del titulo aparece la ruta
+"ERP > Clientes CRM". Lo mismo al abrir la ficha de un cliente o ir a
+Cuenta. El menu cambia de modulo solo cuando eliges una opcion de otro
+bloque (por ejemplo CRM > Clientes) o una pantalla que solo existe en otro
+modulo (por ejemplo Movimientos, que es del SCM).
+
+En pantallas angostas (celular o ventana chica) la barra lateral se
+vuelve un menu hamburguesa: el boton "Menu - ERP" (dice en que modulo
+estas) despliega el menu completo con los tres modulos, Cuenta, tu nombre,
+tu rol y "Cerrar sesion"; el mismo boton lo cierra.
 
 Cada bloque empieza con su propio "Dashboard" (el de CRM en
 admin/dashboard.html, el de SCM en admin/scm.html y el de ERP en
@@ -660,6 +676,14 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
        proveedores para reponer inventario (ver 4.9d). Ya existian desde la
        Etapa 2; se mantienen igual y sus datos alimentan los reportes ERP.
 
+   Menu del ERP (barra lateral, bloque ERP; cada rol ve solo lo suyo):
+     Dashboard, Clientes (CRM), Productos (SCM), Inventario (SCM),
+     Ordenes de clientes, Reportes, Nivel ERP y Panel por rol, mas el
+     bloque Cuenta (Mi actividad, Cuentas y equipo, Configuracion).
+     Desde aqui se consultan los clientes del CRM y los productos e
+     inventario del SCM sin salirse del menu del ERP (ver el inicio de la
+     seccion 4).
+
    4.14a DASHBOARD ERP  (admin/erp.html)
       - Accesos directos con iconos grandes al resto del modulo.
       - Indicadores: clientes activos, ordenes de clientes (y cuantas se
@@ -761,10 +785,13 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - "Exportar CSV": todos los indicadores del periodo.
 
    4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
-      - Menu dinamico: una columna por rol con las secciones que ve,
-        agrupadas por modulo (CRM, SCM, ERP, Cuenta), incluido el permiso
-        de "Capturar ordenes".
-      - Matriz de permisos: cada seccion contra cada rol.
+      - Menu dinamico: una columna por rol (con su area: Vendedor = Ventas,
+        Almacen = Logistica) con las secciones que ve, agrupadas por modulo
+        (CRM, SCM, ERP, Cuenta), incluido el permiso de "Capturar ordenes".
+        En el ERP aparecen tambien Clientes (CRM), Productos e Inventario
+        (SCM), igual que en el menu lateral.
+      - Matriz de permisos: cada seccion contra cada rol. Clientes,
+        Productos e Inventario se cuentan una sola vez, en su modulo.
       - Recordatorio de los 3 lugares a tocar para agregar un rol nuevo.
       - Se genera de los mismos permisos que arman el menu lateral, asi
         que siempre coincide con lo que de verdad ve cada quien.
@@ -778,7 +805,8 @@ Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 
 VENDEDOR
    Ve todo menos "Cuentas y equipo", "Nivel ERP" y "Panel por rol". En el ERP ve Dashboard,
-   Ordenes de clientes y Reportes, y SI puede capturar ordenes nuevas.
+   Clientes, Productos, Inventario, Ordenes de clientes y Reportes, y SI
+   puede capturar ordenes nuevas.
    Flujo tipico:
    1. Dashboard: clientes en riesgo y tickets activos.
    2. Clientes: buscar al cliente y abrir su ficha.
@@ -798,7 +826,8 @@ ALMACEN
    Ve: Dashboard (CRM), Pedidos, Garantias, Analitica chatbot -- y en el
    bloque SCM: Dashboard, Productos, Proveedores, Inventario, Movimientos,
    Pedidos (reposicion), Logistica, Nivel de madurez, Reportes -- en el
-   bloque ERP: Dashboard, Ordenes de clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
+   bloque ERP (Logistica): Dashboard, Productos, Inventario, Ordenes de
+   clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
    actividad y Configuracion. No ve Clientes, Interacciones, Soporte ni
    Cuentas.
    Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->

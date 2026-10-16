@@ -53,25 +53,35 @@ renderAdminSidebar('panel-roles');
 document.getElementById('topbar').innerHTML = adminHeader('Panel por rol', 'Menú dinámico: vistas y accesos según el rol de cada usuario.');
 
 const ROLES = Object.keys(PERMISOS);
+// Área del negocio que cubre cada rol (en el diagrama: Ventas y Logística).
+const ROL_AREA = { admin: 'Acceso total', vendedor: 'Ventas', soporte: 'Atención a clientes', almacen: 'Logística' };
+const tag = (l) => (l.modulo ? ` <span class="nav-mod">${l.modulo}</span>` : '');
 
-// Una columna por rol, agrupada por módulo.
+// En el ERP, "Capturar órdenes" va justo después de "Órdenes de clientes".
+function conCaptura(links) {
+    const i = links.findIndex((l) => l.key === 'ordenes-erp');
+    const out = [...links];
+    out.splice(i + 1, 0, { key: 'orden-nueva', label: 'Capturar órdenes' });
+    return out;
+}
+
+// Una columna por rol, agrupada por módulo: es el mismo menú que ve en el panel
+// (en el ERP incluye Clientes del CRM y Productos / Inventario del SCM).
 document.getElementById('roles-grid').innerHTML = ROLES.map((rol) => {
-    const grupos = ADMIN_SECCIONES.map((s) => {
-        const items = s.links.filter((l) => puedeVer(rol, l.key));
-        if (s.titulo === 'ERP' && puedeVer(rol, 'orden-nueva')) items.push({ label: 'Capturar órdenes', ic: 'plus' });
-        if (!items.length) return '';
+    const grupos = seccionesDeRol(rol).map((s) => {
+        const items = (s.titulo === 'ERP' ? conCaptura(s.links) : s.links).filter((l) => puedeVer(rol, l.key));
         return `<li style="margin-top:6px"><small style="font-weight:700;letter-spacing:.04em">${s.titulo.toUpperCase()}</small></li>` +
-            items.map((l) => `<li>${icon('check', 13)} ${l.label}</li>`).join('');
+            items.map((l) => `<li>${icon('check', 13)} ${l.label}${tag(l)}</li>`).join('');
     }).join('');
-    return `<div class="rol-col"><h4>${ROL_LABEL[rol] || rol}</h4><ul>${grupos}</ul></div>`;
+    return `<div class="rol-col"><h4>${ROL_LABEL[rol] || rol}<small style="display:block;font-weight:500;color:var(--text-muted);font-size:.74rem">${ROL_AREA[rol] || ''}</small></h4><ul>${grupos}</ul></div>`;
 }).join('');
 
-// Matriz sección × rol.
+// Matriz sección × rol. Las pantallas del CRM / SCM que también salen en el
+// menú del ERP se cuentan una sola vez, en su módulo.
 document.getElementById('matriz-head').innerHTML = `<tr><th>Módulo</th><th>Sección</th>${ROLES.map((r) => `<th style="text-align:center">${ROL_LABEL[r] || r}</th>`).join('')}</tr>`;
 const filas = ADMIN_SECCIONES.flatMap((s) => {
-    const links = [...s.links];
-    if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes' });
-    return links.map((l) => ({ modulo: s.titulo, ...l }));
+    const links = (s.titulo === 'ERP' ? conCaptura(s.links) : s.links).filter((l) => !l.modulo);
+    return links.map((l) => ({ ...l, modulo: s.titulo }));
 });
 const si = `<span style="color:var(--success)">${icon('check', 15)}</span>`;
 const no = `<span style="color:var(--text-muted)">—</span>`;

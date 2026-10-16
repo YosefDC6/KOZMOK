@@ -38,13 +38,14 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 
 ### Panel interno – ERP (Etapa 3)
 Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo lugar.
+- **Menú completo del ERP**: Dashboard, Clientes (CRM), Productos (SCM), Inventario (SCM), Órdenes de clientes, Reportes, Nivel ERP y Panel por rol. Clientes, Productos e Inventario abren las pantallas del CRM y del SCM **sin salirse del menú del ERP** (la opción queda marcada en el ERP y arriba se ve la ruta *ERP › Clientes*).
 - **Dashboard ERP**: clientes activos, órdenes de clientes, ventas totales, ventas de los últimos 6 meses por canal, productos más vendidos, últimas órdenes y el bloque de **integración entre módulos** (CRM ⇄ ERP ⇄ SCM).
 - **Órdenes de clientes**: listado de las órdenes de los dos canales (capturadas en el ERP o hechas en la tienda en línea) con búsqueda, filtros, detalle y exportación a CSV.
 - **Nueva orden** en 3 pasos: *Cliente* (se elige del CRM o se da de alta ahí mismo) → *Productos* (del inventario del SCM, con stock real) → *Confirmar* (resumen con IVA y envío, forma de pago y dirección).
 - **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera el pedido de reposición automático si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
 - **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos.
 - **Reportes ERP**: KPIs por rango de fechas, ventas por mes, más vendidos, inventario disponible por rotación, órdenes por estado y exportación a CSV.
-- **Panel por rol** (solo admin): columnas por rol y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
+- **Panel por rol** (solo admin): columnas por rol (Vendedor = Ventas, Almacén = Logística) y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
 
 ---
 
@@ -53,12 +54,12 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 | Rol | Acceso |
 |---|---|
 | **Administrador** | Acceso total, incluida la gestión de cuentas y del equipo |
-| **Vendedor** | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas, Nivel ERP ni Panel por rol |
+| **Vendedor** (Ventas) | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas, Nivel ERP ni Panel por rol |
 | **Soporte** | Clientes, interacciones, evaluaciones, soporte, garantías y reportes |
-| **Almacén** | Pedidos, inventario, proveedores, garantías, analítica del chatbot y consulta del ERP (sin capturar órdenes) |
+| **Almacén** (Logística) | Pedidos, inventario, proveedores, garantías, analítica del chatbot y consulta del ERP: Dashboard, Productos, Inventario, Órdenes y Reportes (sin capturar órdenes) |
 | **Cliente** | Solo la tienda y su propia cuenta |
 
-El menú del panel se adapta al rol. Si alguien abre por URL una sección que no le corresponde, el sistema lo regresa al Dashboard.
+El menú del panel se adapta al rol. Si alguien abre por URL una sección que no le corresponde, el sistema lo regresa al Dashboard. En celular o ventana angosta el menú se vuelve un **menú hamburguesa** con todo el contenido (los tres módulos, Cuenta y cerrar sesión).
 
 ---
 
