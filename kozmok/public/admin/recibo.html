@@ -9,7 +9,7 @@
 <body>
 <div class="recibo-page">
     <div class="recibo-actions no-print">
-        <a href="/admin/pedidos.html" class="btn btn-ghost btn-sm">← Volver a pedidos</a>
+        <button class="btn btn-ghost btn-sm" onclick="volver()">← Volver</button>
         <button class="btn btn-primary btn-sm" onclick="window.print()">Imprimir / Guardar PDF</button>
     </div>
     <div id="doc"><div class="empty-state">Cargando comprobante…</div></div>
@@ -24,6 +24,13 @@
 <script src="/admin/js/admin-layout.js"></script>
 <script>
 requireAuthAdmin();
+// El comprobante se abre en otra pestaña desde CRM, ERP o SCM: "Volver"
+// la cierra (o regresa) y así cada quien vuelve al panel de donde vino.
+function volver() {
+    if (window.opener || history.length <= 1) { window.close(); }
+    if (history.length > 1) history.back();
+    else location.href = homeDe((Sesion.usuario() || {}).rol);
+}
 const id = new URLSearchParams(location.search).get('id');
 const doc = document.getElementById('doc');
 
@@ -33,7 +40,7 @@ const doc = document.getElementById('doc');
         const d = await api('/pedidos/' + id + '/recibo');
         doc.innerHTML = renderRecibo(d);
     } catch (e) {
-        doc.innerHTML = `<div class="empty-state">${e.message}<br><a href="/admin/pedidos.html">Volver a pedidos</a></div>`;
+        doc.innerHTML = `<div class="empty-state">${e.message}<br><a href="#" onclick="volver();return false">Volver</a></div>`;
     }
 })();
 </script>

@@ -106,13 +106,11 @@ const DESCRIPCION = {
     automatizado: 'Las órdenes ya actualizan solas el inventario y los reportes consolidan los dos canales. Para optimizar, deja que el reabasto automático genere pedidos de reposición y completa la entrega de órdenes ERP.',
     optimizado: 'El ERP está completo: de la orden del cliente al reabasto con el proveedor, todo queda trazado y reportado sin pasos manuales.',
 };
-// A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
-// esa pantalla, el punto se muestra sin enlace.
+// Cómo cumplir (o revisar) cada punto SIN salir del ERP: pantallas del
+// propio ERP o una acción en esta misma pantalla (accion).
 const DESTINO = {
-    // Lo que se resuelve dentro del ERP se manda a pantallas del ERP; solo
-    // "Productos con proveedor" vive en el SCM.
     crm: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden (elige o da de alta al cliente)' },
-    scm: { key: 'productos', href: '/admin/productos.html', texto: 'Asignar proveedores (SCM)' },
+    scm: { key: 'nivel-erp', accion: 'asignarProveedores()', texto: 'Asignar proveedores aquí', revisar: 'Ver productos' },
     ordenes: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden' },
     movimientos: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Ver órdenes y sus movimientos' },
     reportes: { key: 'reportes-erp', href: '/admin/reportes-erp.html', texto: 'Ver reportes' },
@@ -151,11 +149,11 @@ async function cargar() {
     document.getElementById('checklist').innerHTML = r.checklist.map((c) => {
         const d = DESTINO[c.clave];
         const enlace = d && puedeVer(rol, d.key);
-        const tag = enlace ? `a href="${d.href}"` : 'div';
+        const tag = !enlace ? 'div' : d.accion ? `a href="#" onclick="${d.accion};return false"` : `a href="${d.href}"`;
         return `<${tag} class="madurez-check ${c.cumplido ? 'cumplido' : 'pendiente'}" style="text-decoration:none">
             <span class="mc-ico">${icon(c.cumplido ? 'check' : 'clock', 15)}</span>
             <span style="flex:1">${c.etiqueta}<span style="display:block;font-size:.76rem;color:var(--text-muted)">${c.detalle}</span></span>
-            ${enlace ? `<span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? 'Revisar' : d.texto} ${icon('arrow', 13)}</span>` : ''}
+            ${enlace ? `<span style="font-size:.76rem;color:var(--accent)">${c.cumplido ? (d.revisar || 'Revisar') : d.texto} ${icon('arrow', 13)}</span>` : ''}
         </${tag.split(' ')[0]}>`;
     }).join('');
 }
@@ -237,6 +235,39 @@ function ajustarAbasto(id) {
         try { await api('/admin/scm/reabasto', { method: 'POST' }); } catch (_) {}
         recargarTodo();
     } });
+}
+
+// Productos y su proveedor, en una ventana aquí mismo: asignar proveedor,
+// mínimo y estrategia sin ir al SCM (usa la misma ventana del SCM).
+async function asignarProveedores() {
+    let el = document.getElementById('modal-proveedores');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'modal-overlay'; el.id = 'modal-proveedores';
+        el.innerHTML = '<div class="modal" style="max-width:640px" id="mp-body"></div>';
+        el.addEventListener('click', (e) => { if (e.target === el) el.classList.remove('open'); });
+        document.body.appendChild(el);
+    }
+    const productos = (await api('/admin/productos')).filter((p) => p.activo);
+    const sin = productos.filter((p) => !p.proveedor_id);
+    const lista = [...sin, ...productos.filter((p) => p.proveedor_id)];
+    document.getElementById('mp-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-proveedores').classList.remove('open')">${icon('x', 18)}</button>
+        <h3 style="margin-bottom:2px">Productos y proveedores</h3>
+        <p style="margin:0 0 12px;font-size:.85rem;color:var(--text-muted)">${sin.length ? `${sin.length} producto${sin.length === 1 ? '' : 's'} sin proveedor.` : 'Todos los productos activos tienen proveedor.'} Asigna proveedor, mínimo y estrategia desde aquí.</p>
+        <div class="table-wrap"><table style="font-size:.84rem"><thead><tr><th>Producto</th><th>Proveedor</th><th style="white-space:nowrap">Stock / mín.</th><th></th></tr></thead><tbody>
+        ${lista.map((p) => `<tr>
+            <td>${p.nombre}</td>
+            <td>${p.proveedor_nombre || '<span style="color:var(--danger)">Sin asignar</span>'}</td>
+            <td class="mono" style="white-space:nowrap">${p.stock} / ${p.stock_minimo}</td>
+            <td style="text-align:right"><button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="editarAbasto(${p.id})">${p.proveedor_id ? 'Editar' : 'Asignar'}</button></td>
+        </tr>`).join('')}</tbody></table></div>`;
+    el.classList.add('open');
+}
+
+function editarAbasto(id) {
+    document.getElementById('modal-proveedores').classList.remove('open');
+    ScmAcciones.abasto({ productoId: id, onListo: async () => { await recargarTodo(); asignarProveedores(); } });
 }
 
 function gestionar(id) { GestionPedido.abrir(id, { onCambio: recargarTodo }); }
