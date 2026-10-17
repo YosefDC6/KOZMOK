@@ -3111,6 +3111,38 @@ app.put('/api/admin/erp/estado', requireAdmin, asyncRoute(async (req, res) => {
     res.json({ message: modo === 'manual' ? `Nivel ERP fijado en "${r.nivel}"` : 'Nivel ERP en cálculo automático', ...r });
 }));
 
+// Lo que falta para el nivel Optimizado, para resolverlo desde el propio
+// Nivel ERP sin ir al SCM: estado del reabasto automático, productos más
+// cerca de su mínimo y órdenes ERP que aún no se entregan.
+app.get('/api/admin/erp/optimizar', asyncRoute(async (req, res) => {
+    const [cfg, auto, candidatos, porEntregar] = await Promise.all([
+        leerConfigScm(pool),
+        pool.query(`
+            SELECT oc.folio, oc.estado, oc.cantidad, oc.fecha_creacion, p.nombre AS producto
+            FROM ordenes_compra oc JOIN productos p ON p.id = oc.producto_id
+            WHERE oc.notas LIKE 'Generada automáticamente%' ORDER BY oc.id DESC LIMIT 5`),
+        pool.query(`
+            SELECT p.id, p.nombre, p.stock, p.stock_minimo, p.restock, pr.nombre AS proveedor,
+                   EXISTS (SELECT 1 FROM ordenes_compra oc WHERE oc.producto_id = p.id
+                           AND oc.estado IN ('pendiente','en_proceso')) AS pedido_abierto
+            FROM productos p LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+            WHERE p.activo = true AND p.proveedor_id IS NOT NULL
+            ORDER BY (p.stock - p.stock_minimo), p.nombre LIMIT 6`),
+        pool.query(`
+            SELECT p.id, p.numero_orden, p.estado, p.pago_estado, p.total, p.fecha_pedido, c.nombre AS cliente_nombre
+            FROM pedidos p JOIN clientes c ON c.id = p.cliente_id
+            WHERE p.origen = 'erp' AND p.estado NOT IN ('entregado','cancelado')
+            ORDER BY p.fecha_pedido LIMIT 10`),
+    ]);
+    const entregadas = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos WHERE origen = 'erp' AND estado = 'entregado'`);
+    const totalAuto = await pool.query(`SELECT COUNT(*)::int AS n FROM ordenes_compra WHERE notas LIKE 'Generada automáticamente%'`);
+    res.json({
+        config: cfg,
+        reabasto: { automaticos: totalAuto.rows[0].n, recientes: auto.rows, candidatos: candidatos.rows },
+        entregas: { entregadas: entregadas.rows[0].n, por_entregar: porEntregar.rows.map((o) => ({ ...o, total: Number(o.total) })) },
+    });
+}));
+
 // GET /erp/metricas: los indicadores globales que pide el documento
 // (ventas totales, órdenes procesadas, productos vendidos, clientes
 // activos e inventario disponible) en una sola respuesta.

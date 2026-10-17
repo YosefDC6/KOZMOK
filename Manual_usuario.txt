@@ -798,6 +798,14 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Nivel de implementacion: Basico -> Integrado -> Automatizado ->
         Optimizado, calculado de datos reales, con la barra de "Progreso
         empresarial" (0%, 33%, 67%, 100%).
+      - "Procesos optimizados": resuelve el ultimo punto del checklist sin
+        salir del ERP. A la izquierda, el reabasto automatico (activar /
+        apagar, "Ejecutar ahora" y los productos mas cerca de su minimo con
+        el boton "Ajustar", que abre la ventana de abastecimiento; al
+        guardar se corre el reabasto y, si el producto quedo en su minimo
+        con estrategia push, se genera el pedido en ese momento). A la
+        derecha, las ordenes ERP aun no entregadas con "Gestionar" (pago y
+        estado hasta Entregado). GET /api/admin/erp/optimizar.
       - "Fijar el nivel (administrador)": modo Automatico (segun el
         checklist) o Manual (eliges el nivel y un motivo, p. ej. una
         auditoria). En manual la pantalla avisa quien lo fijo y que nivel

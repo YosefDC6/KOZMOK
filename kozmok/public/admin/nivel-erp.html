@@ -29,6 +29,24 @@
             <div id="checklist"></div>
         </div>
 
+        <div class="card" id="optimizar">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <h3 style="margin:0">Procesos optimizados</h3>
+                <span id="opt-estado"></span>
+            </div>
+            <p style="font-size:.86rem;margin:6px 0 14px">Para el nivel Optimizado hacen falta dos cosas: que el reabasto automático genere al menos un pedido al proveedor y que al menos una orden ERP llegue a <strong>Entregado</strong>. Las dos se resuelven aquí mismo.</p>
+            <div class="erp-grid-2" style="margin-bottom:0">
+                <div>
+                    <h4 style="margin:0 0 4px">1. Reabasto automático</h4>
+                    <div id="opt-reabasto"><p style="color:var(--text-muted);font-size:.85rem">Cargando…</p></div>
+                </div>
+                <div>
+                    <h4 style="margin:0 0 4px">2. Órdenes ERP por entregar</h4>
+                    <div id="opt-entregas"><p style="color:var(--text-muted);font-size:.85rem">Cargando…</p></div>
+                </div>
+            </div>
+        </div>
+
         <div class="card" id="card-control" hidden>
             <h3 style="margin-top:0">Fijar el nivel (administrador)</h3>
             <p style="font-size:.86rem">Por defecto el nivel se calcula solo con el checklist. Si la empresa evalúa su madurez de otra forma (auditoría, consultoría), aquí se puede fijar a mano y regresar al cálculo automático cuando se quiera.</p>
@@ -69,6 +87,8 @@
 <script src="/js/toast.js"></script>
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('nivel-erp');
@@ -96,7 +116,7 @@ const DESTINO = {
     ordenes: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden' },
     movimientos: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Ver órdenes y sus movimientos' },
     reportes: { key: 'reportes-erp', href: '/admin/reportes-erp.html', texto: 'Ver reportes' },
-    optimizado: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Entregar órdenes ERP' },
+    optimizado: { key: 'nivel-erp', href: '#optimizar', texto: 'Resolver aquí abajo' },
 };
 
 let ESTADO = null;
@@ -139,6 +159,88 @@ async function cargar() {
         </${tag.split(' ')[0]}>`;
     }).join('');
 }
+// ---- Procesos optimizados: todo desde esta pantalla ----
+const ESTADO_PILL = (e) => `<span class="estado-pill e-${e}">${e}</span>`;
+const ok = (txt) => `<div class="madurez-check cumplido" style="margin:6px 0"><span class="mc-ico">${icon('check', 14)}</span>${txt}</div>`;
+
+async function cargarOptimizar() {
+    const o = await api('/admin/erp/optimizar');
+    const listoReabasto = o.reabasto.automaticos > 0;
+    const listoEntrega = o.entregas.entregadas > 0;
+    document.getElementById('opt-estado').innerHTML = listoReabasto && listoEntrega
+        ? `<span class="tag" style="color:var(--success);border-color:var(--success)">${icon('check', 12)} Cumplido</span>`
+        : `<span class="tag">${(listoReabasto ? 1 : 0) + (listoEntrega ? 1 : 0)} de 2</span>`;
+
+    // 1. Reabasto
+    const activo = o.config.reabasto_automatico === 'si';
+    let h = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:.86rem;margin:6px 0 10px">
+        <span>Reabasto automático: <strong style="color:${activo ? 'var(--success)' : 'var(--danger)'}">${activo ? 'activado' : 'apagado'}</strong>
+        · ${o.reabasto.automaticos} pedido${o.reabasto.automaticos === 1 ? '' : 's'} generado${o.reabasto.automaticos === 1 ? '' : 's'}</span>
+        <span style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="toggleReabasto(${!activo})">${activo ? 'Apagar' : 'Activar'}</button>
+            ${activo ? `<button class="btn btn-outline btn-sm" onclick="ejecutarReabasto()">Ejecutar ahora</button>` : ''}
+        </span>
+    </div>`;
+    if (listoReabasto) {
+        h += ok('El reabasto automático ya está en uso.') + o.reabasto.recientes.map((r) =>
+            `<div style="font-size:.8rem;color:var(--text-muted);padding:3px 0">${r.folio} · ${r.producto} · ${r.cantidad} u. · ${r.estado.replace('_', ' ')}</div>`).join('');
+    } else {
+        h += `<p style="font-size:.8rem;color:var(--text-muted);margin:0 0 6px">Se genera un pedido cuando un producto con proveedor llega a su stock mínimo. Ajusta el mínimo de uno de estos hasta su stock actual o más, con estrategia <strong>push</strong>, y el pedido se genera al guardar:</p>
+        <div class="table-wrap"><table style="font-size:.82rem"><thead><tr><th>Producto</th><th style="white-space:nowrap">Stock / mín.</th><th></th></tr></thead><tbody>
+        ${o.reabasto.candidatos.map((p) => `<tr>
+            <td>${p.nombre}<div style="font-size:.72rem;color:var(--text-muted)">${p.proveedor} · ${p.restock}</div></td>
+            <td class="mono ${p.stock <= p.stock_minimo ? 'stock-low' : ''}" style="white-space:nowrap">${p.stock} / ${p.stock_minimo}</td>
+            <td style="text-align:right">${p.pedido_abierto ? '<span style="font-size:.74rem;color:var(--text-muted)">pedido abierto</span>'
+                : `<button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="ajustarAbasto(${p.id})">Ajustar</button>`}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+    }
+    document.getElementById('opt-reabasto').innerHTML = h;
+
+    // 2. Entregas
+    const pe = o.entregas.por_entregar;
+    let e = listoEntrega ? ok(`${o.entregas.entregadas} orden${o.entregas.entregadas === 1 ? '' : 'es'} ERP entregada${o.entregas.entregadas === 1 ? '' : 's'}.`) : '';
+    e += pe.length ? `<p style="font-size:.8rem;color:var(--text-muted);margin:6px 0">Abre una orden, registra su pago si falta y muévela hasta <strong>Entregado</strong>:</p>
+        <div class="table-wrap"><table style="font-size:.82rem"><thead><tr><th>Orden</th><th>Estado</th><th></th></tr></thead><tbody>
+        ${pe.map((x) => `<tr>
+            <td><span class="mono" style="white-space:nowrap">${x.numero_orden}</span> · ${formatoMoneda(x.total)}<div style="font-size:.74rem;color:var(--text-muted)">${x.cliente_nombre}</div></td>
+            <td>${ESTADO_PILL(x.estado)}${x.pago_estado === 'pendiente' ? '<div style="font-size:.7rem;color:var(--warning)">pago pendiente</div>' : ''}</td>
+            <td style="text-align:right"><button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="gestionar(${x.id})">Gestionar</button></td>
+        </tr>`).join('')}</tbody></table></div>`
+        : (listoEntrega ? '' : '<p style="font-size:.85rem;color:var(--text-muted)">No hay órdenes ERP abiertas. Registra una en Nueva orden.</p>');
+    document.getElementById('opt-entregas').innerHTML = e;
+}
+
+async function recargarTodo() { await Promise.all([cargar(), cargarOptimizar()]); }
+
+async function toggleReabasto(activar) {
+    try {
+        await api('/admin/scm/config', { method: 'PUT', body: { reabasto_automatico: activar ? 'si' : 'no' } });
+        toast(activar ? 'Reabasto automático activado' : 'Reabasto automático apagado', 'ok');
+        if (activar) await api('/admin/scm/reabasto', { method: 'POST' });
+        recargarTodo();
+    } catch (err) { toast(err.message, 'error'); }
+}
+
+async function ejecutarReabasto() {
+    try {
+        const r = await api('/admin/scm/reabasto', { method: 'POST' });
+        toast(r.generados.length ? `Pedido${r.generados.length === 1 ? '' : 's'} generado${r.generados.length === 1 ? '' : 's'}: ${r.generados.join(', ')}`
+            : 'Ningún producto push está en su stock mínimo todavía', r.generados.length ? 'ok' : 'warn');
+        recargarTodo();
+    } catch (err) { toast(err.message, 'error'); }
+}
+
+// Al guardar el abastecimiento se corre el reabasto para que, si el
+// producto ya quedó en su mínimo, el pedido se genere en ese momento.
+function ajustarAbasto(id) {
+    ScmAcciones.abasto({ productoId: id, onListo: async () => {
+        try { await api('/admin/scm/reabasto', { method: 'POST' }); } catch (_) {}
+        recargarTodo();
+    } });
+}
+
+function gestionar(id) { GestionPedido.abrir(id, { onCambio: recargarTodo }); }
+
 function pintarControl() {
     const manual = document.getElementById('c-modo').value === 'manual';
     document.getElementById('c-nivel-wrap').style.visibility = manual ? 'visible' : 'hidden';
@@ -158,6 +260,7 @@ async function guardarNivel() {
 }
 
 cargar().catch((e) => toast(e.message, 'error'));
+cargarOptimizar().catch((e) => toast(e.message, 'error'));
 </script>
 </body>
 </html>
