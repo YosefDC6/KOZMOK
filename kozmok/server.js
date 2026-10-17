@@ -7,6 +7,8 @@ const bcrypt = require('bcrypt');
 const path = require('path');
 const { Pool } = require('pg');
 const dbConfig = require('./db.config.js');
+// Permisos por rol: el mismo archivo que arma el menú del panel.
+const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -58,15 +60,23 @@ function requireAdmin(req, res, next) {
     next();
 }
 
-// Roles internos del panel. Para agregar uno nuevo: añádelo aquí, en el
-// CHECK de la tabla usuarios (db/database.sql) y en PERMISOS
-// (public/admin/js/admin-layout.js) para que aparezca en el menú.
+// Roles empresariales del ERP (como en SAP, Odoo o Dynamics): administrador,
+// ventas y logística. Para agregar uno nuevo: añádelo aquí, en el CHECK de
+// la tabla usuarios (db/database.sql) y en PERMISOS (public/admin/js/permisos.js).
 const ROLES_INTERNOS = {
-    admin:    { nombre: 'Administrador', descripcion: 'Acceso total, incluida la gestión de cuentas.' },
-    vendedor: { nombre: 'Vendedor',      descripcion: 'CRM, tienda y órdenes de clientes (ERP); no gestiona cuentas.' },
-    soporte:  { nombre: 'Soporte',       descripcion: 'Clientes, interacciones y tickets de soporte.' },
-    almacen:  { nombre: 'Almacén',       descripcion: 'Pedidos, inventario y consulta del ERP.' },
+    admin:     { nombre: 'Administrador', descripcion: 'Acceso total: CRM, SCM y ERP, cuentas, Nivel ERP y Panel por rol.' },
+    ventas:    { nombre: 'Ventas',        descripcion: 'Clientes (CRM), consulta de productos y captura de órdenes de clientes (ERP).' },
+    logistica: { nombre: 'Logística',     descripcion: 'Productos, inventario, proveedores y reposición (SCM); surte y envía las órdenes (ERP).' },
 };
+
+// Middleware: el rol del usuario debe tener AL MENOS UNO de estos permisos
+// (claves de PERMISOS en permisos.js).
+function requirePermiso(...claves) {
+    return (req, res, next) => {
+        if (req.usuario && claves.some((k) => puedeVer(req.usuario.rol, k))) return next();
+        return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
+    };
+}
 
 // =========================================================
 // MIDDLEWARE DE AUTENTICACIÓN (cliente / tienda)
@@ -231,8 +241,10 @@ app.post('/api/auth/registro-cliente', asyncRoute(async (req, res) => {
     res.status(201).json({ success: true, cliente, token });
 }));
 
-// Login de usuario interno (admin / vendedor)
-app.post('/api/auth/login-usuario', asyncRoute(async (req, res) => {
+// Login de usuario interno (admin / ventas / logística). Responde también
+// con los permisos del rol para armar el menú dinámico.
+// /api/auth/login es el nombre del endpoint en el documento del ERP.
+const loginUsuario = asyncRoute(async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos' });
 
@@ -248,8 +260,10 @@ app.post('/api/auth/login-usuario', asyncRoute(async (req, res) => {
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
     delete usuario.password_hash;
     const token = Buffer.from(`usuario:${usuario.id}:${Date.now()}`).toString('base64');
-    res.json({ success: true, usuario, token });
-}));
+    res.json({ success: true, usuario, token, permisos: PERMISOS[usuario.rol] || [] });
+});
+app.post('/api/auth/login-usuario', loginUsuario);
+app.post('/api/auth/login', loginUsuario);
 
 // =========================================================
 // CATEGORÍAS Y PRODUCTOS (catálogo público)
@@ -610,6 +624,15 @@ const ESTADOS_COBRADOS = ['confirmado', 'procesando', 'enviado', 'entregado'];
 //   - devuelve los puntos que el cliente canjeó en él,
 //   - quita los puntos que ganó con él y lo resta de sus métricas CRM.
 // Así el inventario del SCM y los reportes del ERP no se desajustan.
+// Procesos internos (ERP): deja en la bitácora de la orden cada paso que
+// vivió (lo automático y lo que hizo alguien del equipo).
+async function registrarProceso(db, pedidoId, paso, descripcion, { usuarioId = null, automatico = true } = {}) {
+    await db.query(
+        `INSERT INTO procesos_erp (pedido_id, paso, descripcion, automatico, usuario_id) VALUES ($1,$2,$3,$4,$5)`,
+        [pedidoId, paso, String(descripcion).slice(0, 300), automatico, usuarioId]
+    );
+}
+
 async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
     if (pedido.estado === 'cancelado') throw new Error('El pedido ya está cancelado');
     if (['enviado', 'entregado'].includes(pedido.estado)) {
@@ -1404,6 +1427,66 @@ app.put('/api/pedidos/:id/cancelar', requireCliente, asyncRoute(async (req, res)
 // A PARTIR DE AQUÍ TODO /api/admin REQUIERE SESIÓN INTERNA
 // =========================================================
 app.use('/api/admin', requireUsuario);
+
+// ---------------------------------------------------------
+// CONTROL DE ACCESO POR MÓDULO (ERP 3.5)
+// El menú oculta lo que no le toca a cada rol, pero eso no basta: aquí
+// el servidor valida cada llamada. Cada regla dice qué permisos (de
+// permisos.js) dan acceso a esa ruta; basta con tener uno. La primera
+// regla que coincide decide. Sin regla, solo el administrador entra.
+// Las lecturas son más amplias que las escrituras porque varias
+// pantallas consultan datos de otro módulo (p. ej. el inventario lee
+// proveedores); modificar algo exige el permiso de esa sección.
+// ---------------------------------------------------------
+const LEER = ['GET'];
+const TODO = ['GET', 'POST', 'PUT', 'DELETE'];
+const PERMISOS_API = [
+    // Cualquier usuario interno
+    { ruta: /^\/(whoami|roles)$/,                     metodos: LEER, permisos: ['*'] },
+    // CRM
+    { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
+    { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
+    { ruta: /^\/resenas$/,                             metodos: LEER, permisos: ['evaluaciones'] },
+    { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
+    { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
+    { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
+    { ruta: /^\/chatbot-consultas$/,                   metodos: LEER, permisos: ['chatbot'] },
+    { ruta: /^\/garantias(\/|$)/,                      metodos: TODO, permisos: ['garantias'] },
+    // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
+    { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
+    { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    // SCM
+    { ruta: /^\/metricas-productos$/,                  metodos: LEER, permisos: ['dashboard', 'scm', 'inventario', 'reportes-scm', 'productos'] },
+    { ruta: /^\/productos(\/|$)/,                      metodos: LEER, permisos: ['productos', 'inventario', 'logistica', 'scm', 'ordenes-compra', 'movimientos'] },
+    { ruta: /^\/productos(\/|$)/,                      metodos: TODO, permisos: ['productos-editar'] },
+    { ruta: /^\/proveedores(\/|$)/,                    metodos: LEER, permisos: ['proveedores', 'productos', 'inventario', 'ordenes-compra', 'scm'] },
+    { ruta: /^\/proveedores(\/|$)/,                    metodos: TODO, permisos: ['proveedores'] },
+    { ruta: /^\/movimientos-inventario$/,              metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
+    { ruta: /^\/(ordenes-compra|pedidos-scm)(\/|$)/,   metodos: TODO, permisos: ['ordenes-compra', 'inventario', 'scm'] },
+    { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
+    { ruta: /^\/scm\//,                                metodos: LEER, permisos: ['scm', 'nivel-scm', 'reportes-scm', 'ordenes-compra'] },
+    // ERP
+    { ruta: /^\/erp\/(clientes|productos)$/,            metodos: TODO, permisos: ['orden-nueva'] },
+    { ruta: /^\/erp\/ordenes(\/procesar)?$/,            metodos: ['POST'], permisos: ['orden-nueva'] },
+    { ruta: /^\/erp\/ordenes\/\d+\/estado$/,            metodos: ['PUT'], permisos: ['ordenes-erp'] },
+    { ruta: /^\/erp\/estado$/,                          metodos: ['PUT'], permisos: ['nivel-erp'] },
+    { ruta: /^\/erp\/reportes\/guardados(\/|$)/,        metodos: TODO, permisos: ['reportes-erp'] },
+    { ruta: /^\/erp\/recursos(\/|$)/,                 metodos: TODO, permisos: ['recursos'] },
+    { ruta: /^\/erp\//,                                metodos: LEER, permisos: ['erp', 'ordenes-erp', 'reportes-erp', 'nivel-erp'] },
+    // Cuentas (solo admin; además cada ruta lleva requireAdmin)
+    { ruta: /^\/usuarios(\/|$)/,                       metodos: TODO, permisos: ['usuarios'] },
+];
+
+app.use('/api/admin', (req, res, next) => {
+    const rol = req.usuario && req.usuario.rol;
+    if (!PERMISOS[rol]) return res.status(403).json({ message: 'Tu rol ya no existe. Pide al administrador que te asigne Administrador, Ventas o Logística.' });
+    if (rol === 'admin') return next();
+    const ruta = req.path.replace(/\/+$/, '') || '/';
+    const regla = PERMISOS_API.find((r) => r.ruta.test(ruta) && r.metodos.includes(req.method));
+    if (regla && (regla.permisos.includes('*') || regla.permisos.some((k) => puedeVer(rol, k)))) return next();
+    return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
+});
 
 // Identidad del usuario interno autenticado (para que el panel valide
 // la sesión contra el servidor y no confíe solo en localStorage).
@@ -2555,7 +2638,7 @@ app.get('/api/admin/pedidos', asyncRoute(async (req, res) => {
 // Detalle completo de un pedido para gestionarlo desde cualquier panel
 // (CRM, ERP o SCM): partidas, garantías, datos del cliente (CRM) y los
 // movimientos de inventario que generó (SCM).
-app.get('/api/admin/pedidos/:id', asyncRoute(async (req, res) => {
+const detallePedido = asyncRoute(async (req, res) => {
     const p = await pool.query(`
         SELECT p.*, u.nombre AS registrado_por,
                c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
@@ -2585,10 +2668,16 @@ app.get('/api/admin/pedidos/:id', asyncRoute(async (req, res) => {
         LEFT JOIN usuarios us ON us.id = m.usuario_id
         WHERE m.motivo LIKE '%' || $1 || '%'
         ORDER BY m.fecha, m.id`, [pedido.numero_orden]);
-    res.json({ ...pedido, items: items.rows, garantias: garantias.rows, movimientos: movimientos.rows });
-}));
+    const procesos = await pool.query(`
+        SELECT pe.fecha, pe.paso, pe.descripcion, pe.automatico, us.nombre AS usuario_nombre
+        FROM procesos_erp pe LEFT JOIN usuarios us ON us.id = pe.usuario_id
+        WHERE pe.pedido_id = $1 ORDER BY pe.fecha, pe.id`, [pedido.id]);
+    res.json({ ...pedido, items: items.rows, garantias: garantias.rows, movimientos: movimientos.rows, procesos: procesos.rows });
+});
+app.get('/api/admin/pedidos/:id', detallePedido);
+app.get('/api/admin/erp/ordenes/:id', detallePedido);
 
-app.put('/api/admin/pedidos/:id/estado', asyncRoute(async (req, res) => {
+const cambiarEstadoPedido = asyncRoute(async (req, res) => {
     const { estado } = req.body;
     const validos = ['pendiente', 'confirmado', 'procesando', 'enviado', 'entregado', 'cancelado'];
     if (!validos.includes(estado)) return res.status(400).json({ message: 'Estado no válido' });
@@ -2606,6 +2695,9 @@ app.put('/api/admin/pedidos/:id/estado', asyncRoute(async (req, res) => {
         // (igual que cuando cancela el cliente).
         if (estado === 'cancelado') {
             const r = await cancelarPedido(client, pedido, { usuarioId: req.usuario.id });
+            await registrarProceso(client, pedido.id, 'cancelacion',
+                `Orden cancelada: stock regresado al inventario${r.canjeados ? `, ${r.canjeados} puntos devueltos` : ''}${r.ganados ? `, ${r.ganados} puntos retirados` : ''}`,
+                { usuarioId: req.usuario.id, automatico: false });
             await client.query('COMMIT');
             return res.json({
                 message: `Pedido cancelado: stock regresado (${r.productos} producto${r.productos === 1 ? '' : 's'})` +
@@ -2624,6 +2716,8 @@ app.put('/api/admin/pedidos/:id/estado', asyncRoute(async (req, res) => {
             `UPDATE pedidos SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
             [estado, req.params.id]
         );
+        await registrarProceso(client, pedido.id, 'estado', `Estado: ${pedido.estado} → ${estado}`,
+            { usuarioId: req.usuario.id, automatico: false });
         await client.query('COMMIT');
         res.json({ message: 'Estado actualizado', pedido: result.rows[0] });
     } catch (e) {
@@ -2632,7 +2726,9 @@ app.put('/api/admin/pedidos/:id/estado', asyncRoute(async (req, res) => {
     } finally {
         client.release();
     }
-}));
+});
+app.put('/api/admin/pedidos/:id/estado', cambiarEstadoPedido);
+app.put('/api/admin/erp/ordenes/:id/estado', cambiarEstadoPedido);
 
 // Registrar el pago de un pedido SPEI / en tienda: lo marca como pagado,
 // lo pasa a 'confirmado' y recién ahí otorga los puntos y actualiza métricas.
@@ -2657,6 +2753,9 @@ app.post('/api/admin/pedidos/:id/registrar-pago', asyncRoute(async (req, res) =>
         // ahí (aquí mismo o antes, moviéndolos en el pipeline) el trigger
         // trg_pedido_metricas ya suma la compra. Aquí solo se dan los puntos.
         const puntos_ganados = await aplicarCobroPedido(client, pedido, { metricas: false });
+        await registrarProceso(client, pedido.id, 'pago',
+            `Pago registrado (${pedido.metodo_pago || 'sin método'}); orden confirmada${puntos_ganados ? `, +${puntos_ganados} puntos al cliente` : ''}`,
+            { usuarioId: req.usuario.id, automatico: false });
         await client.query('COMMIT');
         res.json({ message: 'Pago registrado. Pedido confirmado.', puntos_ganados });
     } catch (e) {
@@ -2676,17 +2775,8 @@ app.post('/api/admin/pedidos/:id/registrar-pago', asyncRoute(async (req, res) =>
 // stock crítico y queda guardada en el historial del cliente.
 // =========================================================
 
-// Roles que pueden CAPTURAR órdenes ERP (las demás pantallas del
-// ERP las filtra el menú por rol; ver PERMISOS en admin-layout.js).
-const ROLES_ORDEN_ERP = ['admin', 'vendedor'];
-function requireRol(roles) {
-    return (req, res, next) => {
-        if (!req.usuario || !roles.includes(req.usuario.rol)) {
-            return res.status(403).json({ message: 'Tu rol no puede realizar esta acción' });
-        }
-        next();
-    };
-}
+// Capturar órdenes ERP requiere el permiso 'orden-nueva' (permisos.js):
+// hoy lo tienen Administrador y Ventas.
 
 const METODOS_ERP = {
     efectivo:      { texto: 'Efectivo en mostrador',  inmediato: true },
@@ -2799,7 +2889,7 @@ app.get('/api/admin/erp/clientes', asyncRoute(async (req, res) => {
 // Alta rápida de cliente desde el paso 1 (queda en el CRM como Prospecto
 // y pasa a Activo al confirmarse su primera compra). La contraseña es
 // temporal: el cliente la cambia en la tienda.
-app.post('/api/admin/erp/clientes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async (req, res) => {
+app.post('/api/admin/erp/clientes', requirePermiso('orden-nueva'), asyncRoute(async (req, res) => {
     const { nombre, correo, telefono, empresa, ciudad } = req.body;
     if (!nombre || !correo) return res.status(400).json({ message: 'Nombre y correo son obligatorios' });
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = LOWER($1)', [correo]);
@@ -2840,7 +2930,9 @@ app.get('/api/admin/erp/productos', asyncRoute(async (req, res) => {
 
 // Crear una orden de cliente (paso 3 → "Confirmar orden"). Todo en una
 // transacción: si algo falla (p. ej. stock insuficiente) no se guarda nada.
-app.post('/api/admin/erp/ordenes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async (req, res) => {
+// POST /erp/ordenes y POST /erp/ordenes/procesar (nombre del documento):
+// Crear Orden → Reducir stock → Registrar movimiento → Guardar historial.
+const procesarOrdenERP = asyncRoute(async (req, res) => {
     const { cliente_id, items, direccion_envio, notas } = req.body;
     const metodo = METODOS_ERP[req.body.metodo] ? req.body.metodo : 'efectivo';
     const lineas = (Array.isArray(items) ? items : [])
@@ -2924,6 +3016,13 @@ app.post('/api/admin/erp/ordenes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async
                 : 'Historial guardado; los puntos se acreditan al registrar el pago',
         });
 
+        // Procesos internos: la bitácora de lo que el sistema hizo solo.
+        const ORDEN_PASOS = ['orden', 'stock', 'inventario', 'reabasto', 'historial'];
+        const bitacora = [...pasos].sort((x, y) => ORDEN_PASOS.indexOf(x.clave) - ORDEN_PASOS.indexOf(y.clave));
+        for (const paso of bitacora) {
+            await registrarProceso(client, pedido.id, paso.clave, paso.texto, { usuarioId: req.usuario.id });
+        }
+
         await client.query('COMMIT');
         res.status(201).json({
             pedido: { ...pedido, cliente_nombre: cli.rows[0].nombre, items: detalle },
@@ -2935,7 +3034,9 @@ app.post('/api/admin/erp/ordenes', requireRol(ROLES_ORDEN_ERP), asyncRoute(async
     } finally {
         client.release();
     }
-}));
+});
+app.post('/api/admin/erp/ordenes', requirePermiso('orden-nueva'), procesarOrdenERP);
+app.post('/api/admin/erp/ordenes/procesar', requirePermiso('orden-nueva'), procesarOrdenERP);
 
 // Nivel de implementación del ERP. Como en el SCM, cada punto se
 // calcula con datos reales: el nivel sube solo conforme se usa.
@@ -2963,19 +3064,95 @@ async function nivelERP() {
         { clave: 'optimizado', etiqueta: 'Procesos optimizados', detalle: 'Reabasto automático en uso y órdenes ERP entregadas', cumplido: d.oc_automaticas > 0 && d.erp_entregadas > 0 },
     ];
     const cumplidos = checklist.filter((c) => c.cumplido).length;
-    const nivel = cumplidos <= 2 ? 'basico' : cumplidos <= 4 ? 'integrado' : cumplidos === 5 ? 'automatizado' : 'optimizado';
-    return { nivel, checklist, cumplidos, total: checklist.length, datos: d };
-}
+    const nivelCalculado = cumplidos <= 2 ? 'basico' : cumplidos <= 4 ? 'integrado' : cumplidos === 5 ? 'automatizado' : 'optimizado';
 
-app.get('/api/admin/erp/nivel', asyncRoute(async (req, res) => {
-    res.json(await nivelERP());
+    // EstadoERP (tabla estado_erp): en modo automático guarda el nivel
+    // calculado; en modo manual manda el nivel que fijó el administrador.
+    await pool.query(`INSERT INTO estado_erp (id, modo, nivel) VALUES (1, 'auto', $1) ON CONFLICT (id) DO NOTHING`, [nivelCalculado]);
+    const e = await pool.query(`
+        SELECT e.modo, e.nivel, e.nota, e.actualizado, u.nombre AS actualizado_por
+        FROM estado_erp e LEFT JOIN usuarios u ON u.id = e.usuario_id WHERE e.id = 1`);
+    let estado = e.rows[0];
+    if (estado.modo === 'auto' && estado.nivel !== nivelCalculado) {
+        const upd = await pool.query(
+            `UPDATE estado_erp SET nivel = $1, actualizado = CURRENT_TIMESTAMP WHERE id = 1 RETURNING actualizado`, [nivelCalculado]);
+        estado = { ...estado, nivel: nivelCalculado, actualizado: upd.rows[0].actualizado };
+    }
+    const nivel = estado.modo === 'manual' ? estado.nivel : nivelCalculado;
+    return {
+        nivel, nivel_calculado: nivelCalculado, modo: estado.modo,
+        progreso: Math.round((NIVELES_ERP.indexOf(nivel) * 100) / (NIVELES_ERP.length - 1)),
+        nota: estado.nota, actualizado: estado.actualizado, actualizado_por: estado.actualizado_por,
+        checklist, cumplidos, total: checklist.length, datos: d,
+    };
+}
+const NIVELES_ERP = ['basico', 'integrado', 'automatizado', 'optimizado'];
+
+// GET /erp/estado (y /erp/nivel, que ya usaban las pantallas): nivel de
+// implementación con su checklist.
+app.get('/api/admin/erp/nivel', asyncRoute(async (req, res) => { res.json(await nivelERP()); }));
+app.get('/api/admin/erp/estado', asyncRoute(async (req, res) => { res.json(await nivelERP()); }));
+
+// PUT /erp/estado (solo admin): fijar el nivel a mano o regresar al
+// cálculo automático.  Body: { modo: 'auto' }  o  { modo: 'manual', nivel, nota }
+app.put('/api/admin/erp/estado', requireAdmin, asyncRoute(async (req, res) => {
+    const modo = req.body.modo === 'manual' ? 'manual' : 'auto';
+    const nivel = req.body.nivel;
+    if (modo === 'manual' && !NIVELES_ERP.includes(nivel)) {
+        return res.status(400).json({ message: 'Nivel no válido (basico, integrado, automatizado u optimizado)' });
+    }
+    await pool.query(`
+        INSERT INTO estado_erp (id, modo, nivel, nota, usuario_id, actualizado)
+        VALUES (1, $1, COALESCE($2, 'basico'), $3, $4, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO UPDATE SET modo = EXCLUDED.modo, nivel = COALESCE($2, estado_erp.nivel),
+            nota = EXCLUDED.nota, usuario_id = EXCLUDED.usuario_id, actualizado = CURRENT_TIMESTAMP`,
+        [modo, modo === 'manual' ? nivel : null, modo === 'manual' ? (req.body.nota || '').slice(0, 300) || null : null, req.usuario.id]);
+    const r = await nivelERP();
+    res.json({ message: modo === 'manual' ? `Nivel ERP fijado en "${r.nivel}"` : 'Nivel ERP en cálculo automático', ...r });
 }));
 
+// GET /erp/metricas: los indicadores globales que pide el documento
+// (ventas totales, órdenes procesadas, productos vendidos, clientes
+// activos e inventario disponible) en una sola respuesta.
+app.get('/api/admin/erp/metricas', asyncRoute(async (req, res) => { res.json(await metricasERP()); }));
+
+async function metricasERP() {
+    const r = await pool.query(`
+        SELECT
+            (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado') AS ventas_totales,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado')::int AS ordenes_procesadas,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado' AND origen = 'erp')::int AS ordenes_procesadas_erp,
+            (SELECT COUNT(*) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pendiente')::int AS ordenes_por_cobrar,
+            (SELECT COALESCE(SUM(pi.cantidad),0) FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+              WHERE p.estado <> 'cancelado')::int AS productos_vendidos,
+            (SELECT COUNT(*) FROM clientes WHERE estado_cliente = 'activo' AND etapa_crm IN ('Activo','Frecuente'))::int AS clientes_activos,
+            (SELECT COALESCE(SUM(stock),0) FROM productos WHERE activo = true)::int AS inventario_unidades,
+            (SELECT COALESCE(SUM(stock * precio),0) FROM productos WHERE activo = true) AS inventario_valor,
+            (SELECT COUNT(*) FROM productos WHERE activo = true AND stock > 0)::int AS productos_con_stock,
+            (SELECT COUNT(*) FROM productos WHERE activo = true AND stock <= stock_minimo)::int AS productos_criticos
+    `);
+    const m = r.rows[0];
+    return ({
+        ventas_totales: Number(m.ventas_totales),
+        ordenes_procesadas: m.ordenes_procesadas,
+        ordenes_procesadas_erp: m.ordenes_procesadas_erp,
+        ordenes_por_cobrar: m.ordenes_por_cobrar,
+        productos_vendidos: m.productos_vendidos,
+        clientes_activos: m.clientes_activos,
+        inventario_disponible: {
+            unidades: m.inventario_unidades, valor: Number(m.inventario_valor),
+            productos_con_stock: m.productos_con_stock, productos_criticos: m.productos_criticos,
+        },
+    });
+}
+
 // Reportes ERP (dashboard empresarial) con rango de fechas opcional.
+const fechaISO = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
 app.get('/api/admin/erp/reportes', asyncRoute(async (req, res) => {
-    const fecha = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
-    const desde = fecha(req.query.desde);
-    const hasta = fecha(req.query.hasta);
+    res.json(await reporteERP(fechaISO(req.query.desde), fechaISO(req.query.hasta)));
+}));
+
+async function reporteERP(desde, hasta) {
     const rango = `($1::date IS NULL OR p.fecha_pedido >= $1::date) AND ($2::date IS NULL OR p.fecha_pedido < $2::date + INTERVAL '1 day')`;
 
     const k = await pool.query(`
@@ -3016,7 +3193,7 @@ app.get('/api/admin/erp/reportes', asyncRoute(async (req, res) => {
     });
 
     const kp = k.rows[0];
-    res.json({
+    return ({
         rango: { desde, hasta },
         kpis: {
             ventas_totales: Number(kp.ventas_totales), ordenes: kp.ordenes, ordenes_erp: kp.ordenes_erp,
@@ -3030,6 +3207,141 @@ app.get('/api/admin/erp/reportes', asyncRoute(async (req, res) => {
         inventario_rotacion: rot,
         nivel: await nivelERP(),
     });
+}
+
+// Reportes ERP guardados (tabla reportes_erp): una foto de los
+// indicadores del periodo para consultarla después.
+app.get('/api/admin/erp/reportes/guardados', asyncRoute(async (req, res) => {
+    const r = await pool.query(`
+        SELECT r.id, r.nombre, r.desde, r.hasta, r.fecha, u.nombre AS usuario_nombre,
+               (r.datos->'kpis'->>'ventas_totales')::numeric AS ventas_totales,
+               (r.datos->'kpis'->>'ordenes')::int AS ordenes
+        FROM reportes_erp r LEFT JOIN usuarios u ON u.id = r.usuario_id
+        ORDER BY r.fecha DESC LIMIT 50`);
+    res.json(r.rows.map((x) => ({ ...x, ventas_totales: Number(x.ventas_totales) })));
+}));
+
+app.get('/api/admin/erp/reportes/guardados/:id', asyncRoute(async (req, res) => {
+    const r = await pool.query(`
+        SELECT r.*, u.nombre AS usuario_nombre FROM reportes_erp r LEFT JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.id = $1`, [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Reporte no encontrado' });
+    res.json(r.rows[0]);
+}));
+
+app.post('/api/admin/erp/reportes/guardados', asyncRoute(async (req, res) => {
+    const desde = fechaISO(req.body.desde);
+    const hasta = fechaISO(req.body.hasta);
+    const rango = desde || hasta ? `${desde || 'inicio'} a ${hasta || 'hoy'}` : 'todo el histórico';
+    const nombre = String(req.body.nombre || '').trim().slice(0, 120) || `Reporte ERP (${rango})`;
+    // La foto incluye también el inventario disponible de ese momento.
+    const datos = { ...(await reporteERP(desde, hasta)), inventario_disponible: (await metricasERP()).inventario_disponible };
+    const r = await pool.query(
+        `INSERT INTO reportes_erp (nombre, desde, hasta, datos, usuario_id) VALUES ($1,$2,$3,$4,$5) RETURNING id, nombre, fecha`,
+        [nombre, desde, hasta, JSON.stringify(datos), req.usuario.id]);
+    res.status(201).json({ message: 'Reporte guardado', reporte: r.rows[0] });
+}));
+
+app.delete('/api/admin/erp/reportes/guardados/:id', asyncRoute(async (req, res) => {
+    const r = await pool.query('DELETE FROM reportes_erp WHERE id = $1 RETURNING id', [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Reporte no encontrado' });
+    res.json({ message: 'Reporte eliminado' });
+}));
+
+// ---------------------------------------------------------
+// RECURSOS (ERP): una sola vista de los recursos de la empresa.
+//   - Humanos     -> usuarios internos por rol (tabla usuarios)
+//   - Materiales  -> inventario del SCM (tabla productos)
+//   - Financieros -> ventas cobradas, por cobrar y reposición comprometida
+//   - Registrados -> equipo, vehículos, instalaciones y presupuestos
+//                    (tabla recursos_erp, lo único que no existía)
+// ---------------------------------------------------------
+const TIPOS_RECURSO = ['equipo', 'vehiculo', 'instalacion', 'presupuesto'];
+const AREAS_RECURSO = ['administracion', 'ventas', 'logistica'];
+const ESTADOS_RECURSO = ['disponible', 'en_uso', 'mantenimiento', 'baja'];
+
+app.get('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
+    const [humanos, materiales, financieros, registrados] = await Promise.all([
+        pool.query(`
+            SELECT rol, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE activo)::int AS activos
+            FROM usuarios GROUP BY rol`),
+        pool.query(`
+            SELECT COUNT(*)::int AS productos,
+                   COALESCE(SUM(stock),0)::int AS unidades,
+                   COALESCE(SUM(stock * COALESCE(NULLIF(costo_unitario,0), precio)),0) AS valor_costo,
+                   COALESCE(SUM(stock * precio),0) AS valor_venta,
+                   COUNT(*) FILTER (WHERE stock <= stock_minimo)::int AS criticos
+            FROM productos WHERE activo = true`),
+        pool.query(`
+            SELECT
+              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado') AS ingresos,
+              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pendiente') AS por_cobrar,
+              (SELECT COALESCE(SUM(oc.cantidad * COALESCE(NULLIF(pr.costo_unitario,0), pr.precio)),0)
+                 FROM ordenes_compra oc JOIN productos pr ON pr.id = oc.producto_id
+                WHERE oc.estado IN ('pendiente','en_proceso')) AS reposicion_comprometida`),
+        pool.query(`
+            SELECT r.*, u.nombre AS responsable_nombre, u.rol AS responsable_rol
+            FROM recursos_erp r LEFT JOIN usuarios u ON u.id = r.responsable_id
+            ORDER BY r.tipo, r.nombre`),
+    ]);
+    const m = materiales.rows[0];
+    const f = financieros.rows[0];
+    const presupuestos = registrados.rows.filter((r) => r.tipo === 'presupuesto' && r.estado !== 'baja');
+    res.json({
+        humanos: Object.keys(ROLES_INTERNOS).map((rol) => {
+            const h = humanos.rows.find((x) => x.rol === rol) || { total: 0, activos: 0 };
+            return { rol, nombre: ROLES_INTERNOS[rol].nombre, total: h.total, activos: h.activos };
+        }),
+        materiales: {
+            productos: m.productos, unidades: m.unidades, criticos: m.criticos,
+            valor_costo: Number(m.valor_costo), valor_venta: Number(m.valor_venta),
+        },
+        financieros: {
+            ingresos: Number(f.ingresos), por_cobrar: Number(f.por_cobrar),
+            reposicion_comprometida: Number(f.reposicion_comprometida),
+            presupuesto_asignado: presupuestos.reduce((a, r) => a + Number(r.valor) * r.cantidad, 0),
+        },
+        registrados: registrados.rows.map((r) => ({ ...r, valor: Number(r.valor) })),
+    });
+}));
+
+function validarRecurso(b) {
+    const nombre = String(b.nombre || '').trim().slice(0, 120);
+    if (!nombre) return { error: 'El nombre es obligatorio' };
+    if (!TIPOS_RECURSO.includes(b.tipo)) return { error: 'Tipo no válido (equipo, vehiculo, instalacion o presupuesto)' };
+    const area = AREAS_RECURSO.includes(b.area) ? b.area : 'administracion';
+    const estado = ESTADOS_RECURSO.includes(b.estado) ? b.estado : 'disponible';
+    const cantidad = b.cantidad === undefined || b.cantidad === '' ? 1 : Number(b.cantidad);
+    const valor = b.valor === undefined || b.valor === '' ? 0 : Number(b.valor);
+    if (!Number.isInteger(cantidad) || cantidad < 0) return { error: 'La cantidad debe ser un entero de 0 o más' };
+    if (!Number.isFinite(valor) || valor < 0) return { error: 'El valor debe ser 0 o más' };
+    const responsable_id = b.responsable_id ? Number(b.responsable_id) : null;
+    return { datos: [nombre, b.tipo, area, String(b.descripcion || '').trim().slice(0, 300) || null, cantidad, valor, estado, responsable_id] };
+}
+
+app.post('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
+    const v = validarRecurso(req.body);
+    if (v.error) return res.status(400).json({ message: v.error });
+    const r = await pool.query(`
+        INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, v.datos);
+    res.status(201).json({ message: 'Recurso registrado', recurso: r.rows[0] });
+}));
+
+app.put('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
+    const v = validarRecurso(req.body);
+    if (v.error) return res.status(400).json({ message: v.error });
+    const r = await pool.query(`
+        UPDATE recursos_erp SET nombre=$1, tipo=$2, area=$3, descripcion=$4, cantidad=$5, valor=$6, estado=$7, responsable_id=$8
+        WHERE id = $9 RETURNING *`, [...v.datos, req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
+    res.json({ message: 'Recurso actualizado', recurso: r.rows[0] });
+}));
+
+app.delete('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
+    const r = await pool.query('DELETE FROM recursos_erp WHERE id = $1 RETURNING id', [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
+    res.json({ message: 'Recurso eliminado' });
 }));
 
 // =========================================================
@@ -3149,6 +3461,26 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     res.status(201).json({ message: 'Usuario creado', usuario: result.rows[0] });
 }));
 
+// Cambiar el rol de un usuario interno (solo admin). El admin no puede
+// quitarse a sí mismo el rol de administrador para no quedarse fuera.
+app.put('/api/admin/usuarios/:id/rol', requireAdmin, asyncRoute(async (req, res) => {
+    const { rol } = req.body;
+    if (!ROLES_INTERNOS[rol]) return res.status(400).json({ message: 'Rol no válido (admin, ventas o logistica)' });
+    if (String(req.params.id) === String(req.usuario.id) && rol !== 'admin') {
+        return res.status(400).json({ message: 'No puedes quitarte tu propio rol de administrador' });
+    }
+    const r = await pool.query('UPDATE usuarios SET rol = $1 WHERE id = $2 RETURNING id, nombre, email, rol, activo', [rol, req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
+    res.json({ message: `Rol actualizado a ${ROLES_INTERNOS[rol].nombre}`, usuario: r.rows[0] });
+}));
+
+// GET /usuarios/rol: rol del usuario con sesión y sus permisos (lo que
+// arma el menú dinámico).
+app.get('/api/usuarios/rol', requireUsuario, (req, res) => {
+    const rol = req.usuario.rol;
+    res.json({ rol, nombre: (ROLES_INTERNOS[rol] || {}).nombre || rol, permisos: PERMISOS[rol] || [] });
+});
+
 app.get('/api/usuarios/:id/actividad', requireUsuario, asyncRoute(async (req, res) => {
     const result = await pool.query(`
         SELECT i.fecha, c.nombre AS cliente, i.tipo, i.descripcion
@@ -3177,6 +3509,46 @@ async function migrarEsquema() {
         UPDATE ordenes_compra oc SET fecha_estimada = oc.fecha_creacion::date + pr.tiempo_entrega_dias
         FROM proveedores pr WHERE pr.id = oc.proveedor_id AND oc.fecha_estimada IS NULL`);
     await pool.query(`CREATE TABLE IF NOT EXISTS config_scm (clave VARCHAR(40) PRIMARY KEY, valor VARCHAR(40) NOT NULL)`);
+
+    // Etapa 3: roles empresariales Administrador / Ventas / Logística.
+    // vendedor y soporte pasan a Ventas; almacén pasa a Logística.
+    const rolCheck = await pool.query(`
+        SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+        WHERE c.conrelid = 'usuarios'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) ILIKE '%rol%'`);
+    if (!rolCheck.rows.some((r) => r.def.includes('logistica'))) {
+        const viejos = await pool.query(`
+            SELECT c.conname FROM pg_constraint c
+            WHERE c.conrelid = 'usuarios'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) ILIKE '%rol%'`);
+        for (const v of viejos.rows) await pool.query(`ALTER TABLE usuarios DROP CONSTRAINT "${v.conname}"`);
+        await pool.query(`UPDATE usuarios SET rol = 'ventas' WHERE rol IN ('vendedor','soporte')`);
+        await pool.query(`UPDATE usuarios SET rol = 'logistica' WHERE rol = 'almacen'`);
+        await pool.query(`ALTER TABLE usuarios ALTER COLUMN rol SET DEFAULT 'ventas'`);
+        await pool.query(`ALTER TABLE usuarios ADD CONSTRAINT usuarios_rol_check CHECK (rol IN ('admin','ventas','logistica'))`);
+        console.log('Roles migrados a Administrador / Ventas / Logística');
+    }
+
+    // Etapa 3: tablas propias del ERP.
+    await pool.query(`CREATE TABLE IF NOT EXISTS estado_erp (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        modo VARCHAR(10) NOT NULL DEFAULT 'auto' CHECK (modo IN ('auto','manual')),
+        nivel VARCHAR(15) NOT NULL DEFAULT 'basico' CHECK (nivel IN ('basico','integrado','automatizado','optimizado')),
+        nota VARCHAR(300), usuario_id INTEGER REFERENCES usuarios(id), actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS procesos_erp (
+        id SERIAL PRIMARY KEY, pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+        paso VARCHAR(30) NOT NULL, descripcion VARCHAR(300) NOT NULL, automatico BOOLEAN NOT NULL DEFAULT TRUE,
+        usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_procesos_erp_pedido ON procesos_erp(pedido_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS recursos_erp (
+        id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL,
+        tipo VARCHAR(15) NOT NULL CHECK (tipo IN ('equipo','vehiculo','instalacion','presupuesto')),
+        area VARCHAR(15) NOT NULL DEFAULT 'administracion' CHECK (area IN ('administracion','ventas','logistica')),
+        descripcion VARCHAR(300), cantidad INTEGER NOT NULL DEFAULT 1 CHECK (cantidad >= 0),
+        valor DECIMAL(12,2) NOT NULL DEFAULT 0 CHECK (valor >= 0),
+        estado VARCHAR(15) NOT NULL DEFAULT 'disponible' CHECK (estado IN ('disponible','en_uso','mantenimiento','baja')),
+        responsable_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS reportes_erp (
+        id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL, desde DATE, hasta DATE, datos JSONB NOT NULL,
+        usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
 }
 
 app.listen(PORT, async () => {

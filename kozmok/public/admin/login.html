@@ -27,6 +27,7 @@
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script>
 document.getElementById('form-login-admin').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -37,7 +38,7 @@ document.getElementById('form-login-admin').addEventListener('submit', async (e)
     try {
         const data = await api('/auth/login-usuario', { method: 'POST', body: { email, password } });
         Sesion.guardarUsuario(data.usuario, data.token);
-        window.location.href = '/admin/dashboard.html';
+        window.location.href = homeDe(data.usuario.rol);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.style.display = 'block';

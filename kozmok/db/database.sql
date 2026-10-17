@@ -20,6 +20,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS recursos_erp            CASCADE;
+DROP TABLE IF EXISTS reportes_erp            CASCADE;
+DROP TABLE IF EXISTS procesos_erp            CASCADE;
+DROP TABLE IF EXISTS estado_erp              CASCADE;
 DROP TABLE IF EXISTS garantias               CASCADE;
 DROP TABLE IF EXISTS ticket_mensajes         CASCADE;
 DROP TABLE IF EXISTS tickets                 CASCADE;
@@ -55,7 +59,7 @@ DROP FUNCTION IF EXISTS actualizar_metricas_compra()       CASCADE;
 -- =========================================================
 
 -- ---------------------------------------------------------
--- USUARIOS INTERNOS (admin / vendedor)
+-- USUARIOS INTERNOS (roles empresariales: admin / ventas / logistica)
 -- ---------------------------------------------------------
 CREATE TABLE usuarios (
     id                  SERIAL PRIMARY KEY,
@@ -63,10 +67,11 @@ CREATE TABLE usuarios (
     email               VARCHAR(150) UNIQUE NOT NULL,
     password_hash       VARCHAR(200) NOT NULL,
     telefono            VARCHAR(30),
-    -- Roles internos. Para agregar uno nuevo: añádelo aquí y en
-    -- ROLES_INTERNOS (server.js) y PERMISOS (admin/js/admin-layout.js).
-    rol                 VARCHAR(20) NOT NULL DEFAULT 'vendedor'
-                         CHECK (rol IN ('admin','vendedor','soporte','almacen')),
+    -- Roles empresariales (ERP): administrador, ventas y logística.
+    -- Para agregar uno nuevo: añádelo aquí, en ROLES_INTERNOS y
+    -- PERMISOS_API (server.js) y en PERMISOS (admin/js/admin-layout.js).
+    rol                 VARCHAR(20) NOT NULL DEFAULT 'ventas'
+                         CONSTRAINT usuarios_rol_check CHECK (rol IN ('admin','ventas','logistica')),
     activo              BOOLEAN DEFAULT TRUE,
     ultimo_login        TIMESTAMP,
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -349,6 +354,72 @@ CREATE TABLE config_scm (
 CREATE INDEX idx_ordenes_compra_producto ON ordenes_compra(producto_id);
 
 -- ---------------------------------------------------------
+-- ERP (Etapa 3)
+-- Las órdenes de clientes del ERP son filas de "pedidos" con
+-- origen = 'erp' (el ERP integra, no duplica). Estas tablas guardan
+-- lo propio del ERP:
+-- ---------------------------------------------------------
+
+-- Estado / nivel de implementación del ERP (una sola fila, id = 1).
+--   modo 'auto'   -> el nivel se calcula con los datos reales (checklist)
+--   modo 'manual' -> el administrador fijó el nivel a mano (PUT /erp/estado)
+CREATE TABLE estado_erp (
+    id             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    modo           VARCHAR(10) NOT NULL DEFAULT 'auto' CHECK (modo IN ('auto','manual')),
+    nivel          VARCHAR(15) NOT NULL DEFAULT 'basico'
+                    CHECK (nivel IN ('basico','integrado','automatizado','optimizado')),
+    nota           VARCHAR(300),
+    usuario_id     INTEGER REFERENCES usuarios(id),
+    actualizado    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Procesos internos: bitácora de cada paso automático o manual que
+-- vive una orden (crear orden, validar stock, actualizar inventario,
+-- reabasto, historial, pago, envío, cancelación...).
+CREATE TABLE procesos_erp (
+    id           SERIAL PRIMARY KEY,
+    pedido_id    INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    paso         VARCHAR(30) NOT NULL,
+    descripcion  VARCHAR(300) NOT NULL,
+    automatico   BOOLEAN NOT NULL DEFAULT TRUE,
+    usuario_id   INTEGER REFERENCES usuarios(id),
+    fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_procesos_erp_pedido ON procesos_erp(pedido_id);
+
+-- Reportes ERP guardados: foto de los indicadores de un periodo para
+-- consultarla después aunque los datos cambien.
+CREATE TABLE reportes_erp (
+    id           SERIAL PRIMARY KEY,
+    nombre       VARCHAR(120) NOT NULL,
+    desde        DATE,
+    hasta        DATE,
+    datos        JSONB NOT NULL,
+    usuario_id   INTEGER REFERENCES usuarios(id),
+    fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Recursos de la empresa que NO viven en otra tabla: equipo, vehículos,
+-- instalaciones y presupuestos. Los recursos humanos (usuarios), los
+-- materiales (inventario) y los financieros (ventas y compras) se leen
+-- de sus propias tablas en GET /erp/recursos: el ERP integra, no duplica.
+CREATE TABLE recursos_erp (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(120) NOT NULL,
+    tipo            VARCHAR(15) NOT NULL
+                     CHECK (tipo IN ('equipo','vehiculo','instalacion','presupuesto')),
+    area            VARCHAR(15) NOT NULL DEFAULT 'administracion'
+                     CHECK (area IN ('administracion','ventas','logistica')),
+    descripcion     VARCHAR(300),
+    cantidad        INTEGER NOT NULL DEFAULT 1 CHECK (cantidad >= 0),
+    valor           DECIMAL(12,2) NOT NULL DEFAULT 0 CHECK (valor >= 0),  -- costo / monto asignado
+    estado          VARCHAR(15) NOT NULL DEFAULT 'disponible'
+                     CHECK (estado IN ('disponible','en_uso','mantenimiento','baja')),
+    responsable_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha_registro  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------
 -- CHATBOT: historial de consultas de recomendación
 -- (permite ver en el admin qué está buscando la gente:
 --  presupuesto, uso, y si hubo stock para recomendar)
@@ -566,16 +637,27 @@ INSERT INTO categorias (nombre, icono) VALUES
 -- filtradas y el navegador muestra un aviso nativo de "contraseña
 -- comprometida" al iniciar sesión con ellas):
 --   admin@kozmok.mx          -> Admin#KZ2026     (rol admin)
---   laura.vendedor@kozmok.mx -> Vendedor#KZ2026  (rol vendedor)
+--   laura.ventas@kozmok.mx   -> Ventas#KZ2026     (rol ventas)
+--   paola.logistica@kozmok.mx -> Logistica#KZ2026 (rol logistica)
 INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUES
  ('Admin Kozmok', 'admin@kozmok.mx',
   crypt('Admin#KZ2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
- ('Laura Méndez', 'laura.vendedor@kozmok.mx',
-  crypt('Vendedor#KZ2026', gen_salt('bf', 10)), '555-000-0002', 'vendedor', true),
- ('Rubén Soto', 'ruben.soporte@kozmok.mx',
-  crypt('Soporte#KZ2026', gen_salt('bf', 10)), '555-000-0003', 'soporte', true),
- ('Paola Nieto', 'paola.almacen@kozmok.mx',
-  crypt('Almacen#KZ2026', gen_salt('bf', 10)), '555-000-0004', 'almacen', true);
+ ('Laura Méndez', 'laura.ventas@kozmok.mx',
+  crypt('Ventas#KZ2026', gen_salt('bf', 10)), '555-000-0002', 'ventas', true),
+ ('Paola Nieto', 'paola.logistica@kozmok.mx',
+  crypt('Logistica#KZ2026', gen_salt('bf', 10)), '555-000-0003', 'logistica', true);
+
+INSERT INTO estado_erp (id, modo, nivel) VALUES (1, 'auto', 'basico');
+
+INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id) VALUES
+ ('Camioneta de reparto Nissan NV200', 'vehiculo',    'logistica',      'Entregas locales en CDMX y área metropolitana', 1, 385000.00, 'en_uso',       3),
+ ('Almacén principal Iztapalapa',      'instalacion', 'logistica',      'Bodega de 220 m² con racks y zona de recepción', 1, 28000.00, 'en_uso',        3),
+ ('Terminal punto de venta',           'equipo',      'ventas',         'Terminal bancaria para cobro con tarjeta en mostrador', 2, 4200.00, 'disponible', 2),
+ ('Laptops del equipo de ventas',      'equipo',      'ventas',         'Equipos para captura de órdenes y seguimiento CRM', 3, 54000.00, 'en_uso',     2),
+ ('Lector de código de barras',        'equipo',      'logistica',      'Escaneo de entradas y salidas de inventario', 2, 1800.00, 'mantenimiento',     3),
+ ('Presupuesto de reabasto trimestral','presupuesto', 'logistica',      'Monto asignado para pedidos de reposición a proveedores', 1, 250000.00, 'disponible', 1),
+ ('Presupuesto de marketing',          'presupuesto', 'ventas',         'Campañas y promociones del trimestre', 1, 60000.00, 'disponible',          1),
+ ('Servidor y hosting de la tienda',   'equipo',      'administracion', 'Infraestructura del sistema (CRM, SCM y ERP)', 1, 3500.00, 'en_uso',         1);
 
 INSERT INTO proveedores (nombre, contacto, email, telefono, direccion, tiempo_entrega_dias) VALUES
  ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 'Av. Insurgentes Sur 1500, CDMX', 5),
@@ -819,6 +901,18 @@ INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, sub
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-003'), 18, 1,  599.00,   599.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-004'), 15, 1, 5999.00,  5999.00);
 
+-- Procesos internos de esas órdenes (lo que el ERP registra al procesarlas).
+INSERT INTO procesos_erp (pedido_id, paso, descripcion, automatico, usuario_id, fecha)
+SELECT p.id, x.paso, x.descripcion, x.automatico, p.vendedor_id, p.fecha_pedido + x.desfase
+FROM pedidos p
+CROSS JOIN (VALUES
+   ('orden',      'Orden creada y validada',                          true,  INTERVAL '0 seconds'),
+   ('stock',      'Stock validado y descontado del inventario (SCM)', true,  INTERVAL '1 second'),
+   ('inventario', 'Movimientos de salida registrados',                true,  INTERVAL '2 seconds'),
+   ('historial',  'Historial del cliente actualizado (CRM)',          true,  INTERVAL '3 seconds')
+) AS x(paso, descripcion, automatico, desfase)
+WHERE p.origen = 'erp';
+
 -- Garantías extendidas de ejemplo (certificados de compras anteriores).
 -- No se recalculan los totales históricos de esos pedidos: lo que importa
 -- para la demo es el certificado. Los pedidos nuevos sí cuadran al centavo.
@@ -896,8 +990,7 @@ INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUE
 -- =========================================================
 --  Listo. Credenciales de prueba:
 --    admin@kozmok.mx          / Admin#KZ2026
---    laura.vendedor@kozmok.mx / Vendedor#KZ2026
---    ruben.soporte@kozmok.mx  / Soporte#KZ2026
---    paola.almacen@kozmok.mx  / Almacen#KZ2026
+--    laura.ventas@kozmok.mx    / Ventas#KZ2026     (Ventas)
+--    paola.logistica@kozmok.mx / Logistica#KZ2026  (Logística)
 --    mariana@correo.com           / Demo#KZ2026   (y diego / sofia / carlos)
 -- =========================================================

@@ -129,6 +129,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
 <script src="/admin/js/scm-acciones.js"></script>
@@ -377,7 +378,7 @@ async function confirmarOrden() {
     document.querySelector('.proc-gear').classList.remove('detenido');
     pintarProc(0, 0);
 
-    const peticion = api('/admin/erp/ordenes', {
+    const peticion = api('/admin/erp/ordenes/procesar', {
         method: 'POST',
         body: {
             cliente_id: CLIENTE.id,

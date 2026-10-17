@@ -5,7 +5,8 @@
 //   - estado del envío (pipeline) y cancelación,
 //   - registro del pago,
 //   - datos e historial del cliente (CRM),
-//   - partidas con su stock actual y los movimientos de inventario (SCM).
+//   - partidas con su stock actual y los movimientos de inventario (SCM),
+//   - procesos internos de la orden (bitácora del ERP).
 // Uso:  GestionPedido.abrir(id, { onCambio: () => recargarListado() })
 
 (function () {
@@ -121,6 +122,22 @@
         </details>`;
     }
 
+    // Procesos internos (ERP): cada paso que vivió la orden, automático o
+    // hecho por alguien del equipo (tabla procesos_erp).
+    function bloqueProcesos(d) {
+        if (!d.procesos || d.procesos.length === 0) return '';
+        return `<details style="margin-top:14px" ${d.origen === 'erp' ? 'open' : ''}>
+            <summary style="cursor:pointer;font-size:.86rem">${ic('layers', 14)} Procesos internos de la orden (${d.procesos.length})</summary>
+            <ol style="list-style:none;margin:8px 0 0;padding:0">${d.procesos.map((p) => `
+                <li style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.82rem">
+                    <span style="color:${p.automatico ? 'var(--success)' : 'var(--accent)'}" title="${p.automatico ? 'Automático' : 'Manual'}">${ic(p.automatico ? 'check' : 'user', 14)}</span>
+                    <span style="flex:1">${p.descripcion}
+                        <span style="display:block;font-size:.74rem;color:var(--text-muted)">${formatoFecha(p.fecha)} · ${p.automatico ? 'automático' : 'manual'}${p.usuario_nombre ? ' · ' + p.usuario_nombre : ''}</span>
+                    </span>
+                </li>`).join('')}</ol>
+        </details>`;
+    }
+
     function pintar() {
         const d = actual;
         const editable = puedeGestionar();
@@ -155,6 +172,7 @@
             ${fila('Total', formatoMoneda(d.total), 'font-weight:700;font-size:1.05rem')}
             ${d.notas ? `<p style="margin:10px 0 0;font-size:.84rem;color:var(--text-muted)">Notas: ${d.notas}</p>` : ''}
             ${d.garantias && d.garantias.length ? `<p style="margin:10px 0 0;font-size:.8rem;color:var(--text-muted)">Garantías: ${d.garantias.map((g) => `${g.folio} (${g.estado})`).join(', ')}</p>` : ''}
+            ${bloqueProcesos(d)}
             ${bloqueMovimientos(d)}
             <a class="btn btn-outline btn-sm" style="width:100%;margin-top:14px" href="/admin/recibo.html?id=${d.id}" target="_blank" rel="noopener">Ver comprobante</a>
         `;

@@ -37,8 +37,9 @@ const ADMIN_SECCIONES = [
         { href: '/admin/erp.html',          key: 'erp',          ic: 'home',    label: 'Dashboard',           desc: 'Vista integrada del negocio' },
         { href: '/admin/ordenes-erp.html',  key: 'ordenes-erp',  ic: 'cart',    label: 'Órdenes de clientes', desc: 'Captura y consulta de órdenes' },
         { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
+        { href: '/admin/recursos.html',     key: 'recursos',     ic: 'layers',  label: 'Recursos',            desc: 'Humanos, materiales y financieros' },
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
-        { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'layers',  label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
+        { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'id',      label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
@@ -47,39 +48,25 @@ const ADMIN_SECCIONES = [
     ] },
 ];
 
-// Qué secciones ve cada rol interno. '*' = todas.
-// Para un rol nuevo: agrégalo aquí, en ROLES_INTERNOS (server.js) y en el
-// CHECK de la tabla usuarios (db/database.sql).
-// 'orden-nueva' no aparece en el menú: es el permiso para CAPTURAR órdenes
-// en el ERP (botón "Nueva orden"); el servidor lo valida igual
-// (ROLES_ORDEN_ERP en server.js).
-const PERMISOS = {
-    admin:    '*',
-    vendedor: ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'pedidos', 'productos', 'proveedores', 'inventario', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'nivel-scm', 'reportes-scm', 'chatbot', 'erp', 'ordenes-erp', 'orden-nueva', 'reportes-erp', 'mi-actividad', 'configuracion'],
-    soporte:  ['dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias', 'reportes', 'mi-actividad', 'configuracion'],
-    almacen:  ['dashboard', 'pedidos', 'productos', 'proveedores', 'inventario', 'movimientos', 'ordenes-compra', 'logistica', 'scm', 'nivel-scm', 'reportes-scm', 'garantias', 'chatbot', 'erp', 'ordenes-erp', 'reportes-erp', 'mi-actividad', 'configuracion'],
-};
-window.PERMISOS = PERMISOS;
+// Los permisos por rol (PERMISOS, ROL_LABEL, ROL_HOME, puedeVer) viven en
+// admin/js/permisos.js: es el mismo archivo que usa el servidor para
+// validar cada llamada, así que el menú y el acceso real siempre coinciden.
 window.ADMIN_SECCIONES = ADMIN_SECCIONES;
-const ROL_LABEL = { admin: 'Administrador', vendedor: 'Vendedor', soporte: 'Soporte', almacen: 'Almacén' };
-
-function puedeVer(rol, key) {
-    const p = PERMISOS[rol] || PERMISOS.vendedor;
-    return p === '*' || p.includes(key);
-}
-window.puedeVer = puedeVer;
-window.ROL_LABEL = ROL_LABEL;
 
 function renderAdminSidebar(activo) {
     const el = document.getElementById('admin-sidebar-placeholder');
     if (!el) return;
     const usuario = Sesion.usuario();
-    const rol = (usuario && usuario.rol) || 'vendedor';
+    const rol = (usuario && usuario.rol) || '';
     const ic = window.icon || (() => '');
 
-    // Si el rol no puede ver esta sección, lo mandamos al panel principal.
+    // Rol que ya no existe (sesión vieja de antes del cambio de roles):
+    // se cierra la sesión para que vuelva a entrar.
+    if (!PERMISOS[rol]) { cerrarSesionAdmin(); return; }
+
+    // Si el rol no puede ver esta sección, lo mandamos a su inicio.
     if (activo && !puedeVer(rol, activo)) {
-        window.location.href = '/admin/dashboard.html';
+        window.location.href = homeDe(rol);
         return;
     }
 
@@ -160,7 +147,7 @@ function renderModuloTiles(elId, grupoTitulo, excluirKey) {
     const el = document.getElementById(elId);
     if (!el) return;
     const usuario = Sesion.usuario();
-    const rol = (usuario && usuario.rol) || 'vendedor';
+    const rol = (usuario && usuario.rol) || '';
     const ic = window.icon || (() => '');
     const grupo = ADMIN_SECCIONES.find((s) => s.titulo === grupoTitulo);
     if (!grupo) return;

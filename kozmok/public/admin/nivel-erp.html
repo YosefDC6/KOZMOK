@@ -17,14 +17,37 @@
                 <h3 style="margin:0">Nivel de implementación ERP</h3>
                 <span id="nivel-actual"></span>
             </div>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0">
-                Calculado con datos reales del sistema (no se marca a mano): conforme el equipo usa cada parte, el nivel sube solo.
-            </p>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0" id="nivel-modo"></p>
             <div class="nivel-steps" id="nivel-steps"></div>
+            <div style="display:flex;justify-content:space-between;font-size:.8rem;color:var(--text-muted)">
+                <span>Progreso empresarial</span><strong id="progreso-pct" class="mono" style="color:var(--text)"></strong>
+            </div>
+            <div class="madurez-track" style="height:10px;margin-top:6px"><div class="madurez-fill" id="progreso-fill" style="width:0"></div></div>
             <div id="nivel-descripcion" class="pago-box" style="margin:4px 0 16px"></div>
 
             <h4 style="margin:0 0 6px">Checklist de avance</h4>
             <div id="checklist"></div>
+        </div>
+
+        <div class="card" id="card-control" hidden>
+            <h3 style="margin-top:0">Fijar el nivel (administrador)</h3>
+            <p style="font-size:.86rem">Por defecto el nivel se calcula solo con el checklist. Si la empresa evalúa su madurez de otra forma (auditoría, consultoría), aquí se puede fijar a mano y regresar al cálculo automático cuando se quiera.</p>
+            <div class="field-row">
+                <div class="field"><label>Modo</label>
+                    <select id="c-modo" onchange="pintarControl()">
+                        <option value="auto">Automático (según el checklist)</option>
+                        <option value="manual">Manual (lo fija el administrador)</option>
+                    </select>
+                </div>
+                <div class="field" id="c-nivel-wrap"><label>Nivel</label>
+                    <select id="c-nivel">
+                        <option value="basico">Básico</option><option value="integrado">Integrado</option>
+                        <option value="automatizado">Automatizado</option><option value="optimizado">Optimizado</option>
+                    </select>
+                </div>
+            </div>
+            <div class="field" id="c-nota-wrap"><label>Motivo (opcional)</label><input id="c-nota" maxlength="300" placeholder="Ej. Evaluación de la auditoría interna de octubre" /></div>
+            <button class="btn btn-primary" onclick="guardarNivel()">Guardar</button>
         </div>
 
         <div class="card">
@@ -44,6 +67,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script>
 requireAuthAdmin();
@@ -75,10 +99,27 @@ const DESTINO = {
     optimizado: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Entregar órdenes ERP' },
 };
 
+let ESTADO = null;
+const esAdmin = (Sesion.usuario() || {}).rol === 'admin';
+
 async function cargar() {
-    const r = await api('/admin/erp/nivel');
+    const r = await api('/admin/erp/estado');
+    ESTADO = r;
     const rol = (Sesion.usuario() || {}).rol;
     const idx = NIVELES.findIndex((n) => n.clave === r.nivel);
+    const labelDe = (c) => (NIVELES.find((n) => n.clave === c) || {}).label || c;
+    document.getElementById('nivel-modo').innerHTML = r.modo === 'manual'
+        ? `${icon('lock', 13)} Nivel fijado a mano${r.actualizado_por ? ' por ' + r.actualizado_por : ''}${r.actualizado ? ' el ' + formatoFecha(r.actualizado) : ''}${r.nota ? ` · “${r.nota.replace(/</g, '&lt;')}”` : ''}. Según el checklist sería <strong>${labelDe(r.nivel_calculado)}</strong>.`
+        : 'Calculado con datos reales del sistema: conforme el equipo usa cada parte, el nivel sube solo.';
+    document.getElementById('progreso-pct').textContent = r.progreso + '%';
+    document.getElementById('progreso-fill').style.width = r.progreso + '%';
+    if (esAdmin) {
+        document.getElementById('card-control').hidden = false;
+        document.getElementById('c-modo').value = r.modo;
+        document.getElementById('c-nivel').value = r.nivel;
+        document.getElementById('c-nota').value = r.modo === 'manual' ? (r.nota || '') : '';
+        pintarControl();
+    }
     document.getElementById('nivel-actual').innerHTML = `<span class="madurez-nivel n-${r.nivel}">${icon('layers', 18)} Nivel actual: ${NIVELES[idx].label}</span>`;
     document.getElementById('nivel-steps').innerHTML = NIVELES.map((n, i) => `
         <div class="nivel-step ${i <= idx ? 'alcanzado' : ''} ${i === idx ? 'actual' : ''}">
@@ -98,6 +139,24 @@ async function cargar() {
         </${tag.split(' ')[0]}>`;
     }).join('');
 }
+function pintarControl() {
+    const manual = document.getElementById('c-modo').value === 'manual';
+    document.getElementById('c-nivel-wrap').style.visibility = manual ? 'visible' : 'hidden';
+    document.getElementById('c-nota-wrap').hidden = !manual;
+}
+
+async function guardarNivel() {
+    const modo = document.getElementById('c-modo').value;
+    const body = modo === 'manual'
+        ? { modo, nivel: document.getElementById('c-nivel').value, nota: document.getElementById('c-nota').value.trim() }
+        : { modo };
+    try {
+        const r = await api('/admin/erp/estado', { method: 'PUT', body });
+        toast(r.message, 'ok');
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
 cargar().catch((e) => toast(e.message, 'error'));
 </script>
 </body>

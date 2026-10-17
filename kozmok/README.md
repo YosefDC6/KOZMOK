@@ -43,7 +43,7 @@ kozmok/
         ├── productos.html   # inventario: alta/edición/restock
         ├── pedidos.html     # seguimiento, cambio de estado y detalle de la orden
         ├── chatbot.html     # analítica del chatbot (qué se busca, presupuestos, sin-stock)
-        └── usuarios.html    # equipo interno (admin/vendedor) + "mi actividad"
+        └── usuarios.html    # equipo interno (admin/ventas/logística) + cambio de rol
 ```
 
 ## 1. Requisitos
@@ -77,9 +77,8 @@ npm install
    | Rol       | Correo                         | Contraseña       |
    |-----------|--------------------------------|------------------|
    | Admin     | admin@kozmok.mx            | Admin#KZ2026     |
-   | Vendedor  | laura.vendedor@kozmok.mx   | Vendedor#KZ2026  |
-   | Soporte   | ruben.soporte@kozmok.mx    | Soporte#KZ2026   |
-   | Almacén   | paola.almacen@kozmok.mx    | Almacen#KZ2026   |
+   | Ventas    | laura.ventas@kozmok.mx     | Ventas#KZ2026    |
+   | Logística | paola.logistica@kozmok.mx  | Logistica#KZ2026 |
    | Cliente   | mariana@correo.com             | Demo#KZ2026      |
    | Cliente   | diego@correo.com               | Demo#KZ2026      |
    | Cliente   | sofia@correo.com               | Demo#KZ2026      |
@@ -97,7 +96,7 @@ npm start
 ```
 
 - Tienda: http://localhost:3000
-- Acceso interno (admin/vendedor): http://localhost:3000/admin/login.html
+- Acceso interno (admin / ventas / logística): http://localhost:3000/admin/login.html
 
 ## Módulo CRM (lo que pide la Etapa 1)
 
@@ -114,13 +113,14 @@ npm start
   (30+ días sin contacto) y gráficas de etapa/tipo de interacción.
 - **Roles y autenticación**: login separado para clientes
   (`/api/auth/login-cliente`) y para equipo interno
-  (`/api/auth/login-usuario`, roles `admin`/`vendedor`), con
+  (`/api/auth/login-usuario` o `/api/auth/login`, roles `admin` /
+  `ventas` / `logistica`, ver `public/admin/js/permisos.js`), con
   contraseñas hasheadas con bcrypt. Todas las rutas `/api/admin/*`
   exigen el token del equipo interno (header `Authorization: Bearer
   <token>`, que el front manda automáticamente); crear usuarios
   internos requiere además rol `admin`.
 - **"Mi actividad"**: `/api/usuarios/:id/actividad` devuelve las
-  interacciones registradas por ese vendedor/admin (visible en
+  interacciones registradas por ese usuario interno (visible en
   `/admin/usuarios.html`).
 - **Analítica del chatbot** (`/admin/chatbot.html`): consultas por
   uso y por rango de presupuesto, y cuántas búsquedas se quedaron

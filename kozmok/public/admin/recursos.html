@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Recursos · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="erp-grid-3">
+            <div class="card">
+                <h3>Humanos</h3>
+                <p>Equipo interno por rol (Cuentas y equipo).</p>
+                <div id="r-humanos"></div>
+            </div>
+            <div class="card">
+                <h3>Materiales</h3>
+                <p>Inventario del SCM.</p>
+                <div id="r-materiales"></div>
+            </div>
+            <div class="card">
+                <h3>Financieros</h3>
+                <p>Ventas, cobranza y compromisos con proveedores.</p>
+                <div id="r-financieros"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <div>
+                    <h3 style="margin:0">Equipo, vehículos, instalaciones y presupuestos</h3>
+                    <p style="margin:4px 0 0">Lo que no vive en otro módulo se registra aquí, con su área y responsable.</p>
+                </div>
+            </div>
+            <div class="filters-bar" style="margin:14px 0 12px">
+                <select id="f-tipo" onchange="pintarTabla()">
+                    <option value="">Todos los tipos</option>
+                    <option value="equipo">Equipo</option>
+                    <option value="vehiculo">Vehículos</option>
+                    <option value="instalacion">Instalaciones</option>
+                    <option value="presupuesto">Presupuestos</option>
+                </select>
+                <select id="f-area" onchange="pintarTabla()">
+                    <option value="">Todas las áreas</option>
+                    <option value="administracion">Administración</option>
+                    <option value="ventas">Ventas</option>
+                    <option value="logistica">Logística</option>
+                </select>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Recurso</th><th>Tipo</th><th>Área</th><th>Cant.</th><th>Valor</th><th>Responsable</th><th>Estado</th><th></th></tr></thead>
+                    <tbody id="tabla-recursos"><tr><td colspan="8">Cargando…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-recurso">
+    <div class="modal" style="max-width:540px" id="modal-recurso-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('recursos');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Recursos', 'Recursos humanos, materiales y financieros de la empresa en un solo lugar (se leen de CRM, SCM y ERP sin duplicarlos).',
+    `<button class="btn btn-primary" onclick="abrir()">${icon('plus', 16)} Nuevo recurso</button>`
+);
+
+const TIPO = { equipo: 'Equipo', vehiculo: 'Vehículo', instalacion: 'Instalación', presupuesto: 'Presupuesto' };
+const AREA = { administracion: 'Administración', ventas: 'Ventas', logistica: 'Logística' };
+const ESTADO = { disponible: 'Disponible', en_uso: 'En uso', mantenimiento: 'Mantenimiento', baja: 'Baja' };
+const COLOR_ESTADO = { disponible: 'var(--success)', en_uso: 'var(--info)', mantenimiento: 'var(--warning)', baja: 'var(--text-muted)' };
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const linea = (k, v, estilo = '') => `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:.88rem;${estilo}"><span>${k}</span><strong class="mono">${v}</strong></div>`;
+
+let DATA = null;
+let USUARIOS = [];
+
+async function cargar() {
+    [DATA, USUARIOS] = await Promise.all([api('/admin/erp/recursos'), api('/admin/usuarios').catch(() => [])]);
+
+    const h = DATA.humanos;
+    document.getElementById('r-humanos').innerHTML =
+        h.map((x) => linea(x.nombre, `${x.activos}${x.total !== x.activos ? ` <span style="color:var(--text-muted);font-weight:400">/ ${x.total}</span>` : ''}`)).join('') +
+        linea('Total activos', h.reduce((a, x) => a + x.activos, 0), 'border-bottom:0');
+
+    const m = DATA.materiales;
+    document.getElementById('r-materiales').innerHTML =
+        linea('Productos activos', m.productos) +
+        linea('Unidades en stock', m.unidades) +
+        linea('Valor a costo', formatoMoneda(m.valor_costo)) +
+        linea('Valor a precio de venta', formatoMoneda(m.valor_venta)) +
+        linea('En stock crítico', `<span style="color:${m.criticos ? 'var(--danger)' : 'inherit'}">${m.criticos}</span>`, 'border-bottom:0');
+
+    const f = DATA.financieros;
+    document.getElementById('r-financieros').innerHTML =
+        linea('Ingresos cobrados', formatoMoneda(f.ingresos)) +
+        linea('Por cobrar', `<span style="color:var(--warning)">${formatoMoneda(f.por_cobrar)}</span>`) +
+        linea('Reposición comprometida', formatoMoneda(f.reposicion_comprometida)) +
+        linea('Presupuestos asignados', formatoMoneda(f.presupuesto_asignado), 'border-bottom:0');
+
+    pintarTabla();
+}
+
+function pintarTabla() {
+    const t = document.getElementById('f-tipo').value;
+    const a = document.getElementById('f-area').value;
+    const lista = DATA.registrados.filter((r) => (!t || r.tipo === t) && (!a || r.area === a));
+    document.getElementById('tabla-recursos').innerHTML = lista.length ? lista.map((r) => `
+        <tr>
+            <td><strong>${esc(r.nombre)}</strong>${r.descripcion ? `<div style="font-size:.76rem;color:var(--text-muted)">${esc(r.descripcion)}</div>` : ''}</td>
+            <td>${TIPO[r.tipo]}</td>
+            <td>${AREA[r.area]}</td>
+            <td class="mono">${r.cantidad}</td>
+            <td class="mono">${formatoMoneda(r.valor * r.cantidad)}</td>
+            <td>${r.responsable_nombre ? esc(r.responsable_nombre) : '—'}</td>
+            <td><span class="tag" style="color:${COLOR_ESTADO[r.estado]};border-color:${COLOR_ESTADO[r.estado]}">${ESTADO[r.estado]}</span></td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-ghost btn-sm" onclick="abrir(${r.id})">Editar</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="eliminar(${r.id})">Eliminar</button>
+            </td>
+        </tr>`).join('') : '<tr><td colspan="8" style="color:var(--text-muted)">No hay recursos con ese filtro.</td></tr>';
+}
+
+function cerrar() { document.getElementById('modal-recurso').classList.remove('open'); }
+
+function abrir(id) {
+    const r = id ? DATA.registrados.find((x) => x.id === id) : { tipo: 'equipo', area: 'administracion', estado: 'disponible', cantidad: 1, valor: 0 };
+    const sel = (nombre, mapa, valor) => `<select id="r-${nombre}">${Object.entries(mapa).map(([k, v]) => `<option value="${k}" ${k === valor ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
+    document.getElementById('modal-recurso-body').innerHTML = `
+        <button class="modal-close" onclick="cerrar()">${icon('x', 18)}</button>
+        <h3>${id ? 'Editar recurso' : 'Nuevo recurso'}</h3>
+        <div class="field"><label>Nombre</label><input id="r-nombre" value="${esc(r.nombre || '')}" maxlength="120" /></div>
+        <div class="field-row">
+            <div class="field"><label>Tipo</label>${sel('tipo', TIPO, r.tipo)}</div>
+            <div class="field"><label>Área</label>${sel('area', AREA, r.area)}</div>
+        </div>
+        <div class="field"><label>Descripción</label><input id="r-descripcion" value="${esc(r.descripcion || '')}" maxlength="300" /></div>
+        <div class="field-row">
+            <div class="field"><label>Cantidad</label><input type="number" min="0" step="1" id="r-cantidad" value="${r.cantidad}" /></div>
+            <div class="field"><label>Valor unitario / monto</label><input type="number" min="0" step="0.01" id="r-valor" value="${r.valor}" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field"><label>Estado</label>${sel('estado', ESTADO, r.estado)}</div>
+            <div class="field"><label>Responsable</label>
+                <select id="r-responsable"><option value="">Sin responsable</option>${USUARIOS.filter((u) => u.activo || u.id === r.responsable_id).map((u) =>
+                    `<option value="${u.id}" ${u.id === r.responsable_id ? 'selected' : ''}>${esc(u.nombre)} · ${ROL_LABEL[u.rol] || u.rol}</option>`).join('')}</select>
+            </div>
+        </div>
+        <div id="r-error" style="color:var(--danger);font-size:.85rem;margin:4px 0 10px;display:none"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="guardar(${id || 0})">${id ? 'Guardar cambios' : 'Registrar recurso'}</button>`;
+    document.getElementById('modal-recurso').classList.add('open');
+}
+
+async function guardar(id) {
+    const v = (k) => document.getElementById('r-' + k).value;
+    const body = {
+        nombre: v('nombre').trim(), tipo: v('tipo'), area: v('area'), descripcion: v('descripcion').trim(),
+        cantidad: v('cantidad'), valor: v('valor'), estado: v('estado'), responsable_id: v('responsable') || null,
+    };
+    const err = document.getElementById('r-error');
+    if (!body.nombre) { err.textContent = 'El nombre es obligatorio.'; err.style.display = 'block'; return; }
+    try {
+        const r = await api('/admin/erp/recursos' + (id ? '/' + id : ''), { method: id ? 'PUT' : 'POST', body });
+        cerrar();
+        toast(r.message, 'ok');
+        cargar();
+    } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+}
+
+async function eliminar(id) {
+    const r = DATA.registrados.find((x) => x.id === id);
+    if (!(await confirmar(`¿Eliminar "${r.nombre}"? Si solo dejó de usarse, mejor cámbialo a estado "Baja".`, { okText: 'Eliminar', peligro: true }))) return;
+    try {
+        const res = await api('/admin/erp/recursos/' + id, { method: 'DELETE' });
+        toast(res.message, 'ok');
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+cargar().catch((e) => toast(e.message, 'error'));
+</script>
+</body>
+</html>

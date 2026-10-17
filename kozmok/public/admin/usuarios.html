@@ -29,6 +29,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script>
 requireAuthAdmin();
@@ -37,7 +38,7 @@ const usuarioActual = Sesion.usuario();
 const esAdmin = usuarioActual && usuarioActual.rol === 'admin';
 document.getElementById('topbar').innerHTML = adminHeader(
     'Cuentas y equipo',
-    'Da de alta cuentas de cliente o de personal interno (administrador, vendedor, soporte, almacén).',
+    'Da de alta cuentas de cliente o de personal interno (administrador, ventas, logística).',
     esAdmin ? '<button class="btn btn-primary" onclick="abrirNueva()">Nueva cuenta</button>' : ''
 );
 if (!esAdmin) {
@@ -59,13 +60,32 @@ async function cargarUsuarios() {
             <td>${u.nombre}</td>
             <td>${u.email}</td>
             <td>${u.telefono || '—'}</td>
-            <td><span class="tag">${(window.ROL_LABEL && ROL_LABEL[u.rol]) || u.rol}</span></td>
+            <td>${esAdmin && ROLES.length
+                ? `<select class="sel-rol" style="width:auto;min-width:140px;padding:4px 8px" onchange="cambiarRol(${u.id}, this)" data-actual="${u.rol}"
+                        ${u.id === usuarioActual.id ? 'disabled title="No puedes cambiar tu propio rol"' : ''}>
+                    ${ROLES.map((r) => `<option value="${r.clave}" ${r.clave === u.rol ? 'selected' : ''}>${r.nombre}</option>`).join('')}
+                   </select>`
+                : `<span class="tag">${(window.ROL_LABEL && ROL_LABEL[u.rol]) || u.rol}</span>`}</td>
             <td>${u.activo
                 ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>'
                 : '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Inactivo</span>'}</td>
             <td>${u.ultimo_login ? formatoFecha(u.ultimo_login) : 'Nunca'}</td>
         </tr>
     `).join('');
+}
+
+async function cambiarRol(id, sel) {
+    const nuevo = sel.value;
+    const anterior = sel.dataset.actual;
+    const nombre = (ROLES.find((r) => r.clave === nuevo) || {}).nombre || nuevo;
+    if (!(await confirmar(`¿Cambiar el rol a ${nombre}? Cambia lo que ve en el menú y lo que puede hacer desde su siguiente acción.`, { okText: 'Cambiar rol' }))) {
+        sel.value = anterior; return;
+    }
+    try {
+        const r = await api(`/admin/usuarios/${id}/rol`, { method: 'PUT', body: { rol: nuevo } });
+        sel.dataset.actual = nuevo;
+        toast(r.message, 'ok');
+    } catch (e) { sel.value = anterior; toast(e.message, 'error'); }
 }
 
 function cerrarModal() { document.getElementById('modal-usuario').classList.remove('open'); }

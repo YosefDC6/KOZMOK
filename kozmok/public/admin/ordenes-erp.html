@@ -43,6 +43,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
@@ -50,7 +51,7 @@
 requireAuthAdmin();
 renderAdminSidebar('ordenes-erp');
 const USR = Sesion.usuario();
-const ROL = (USR && USR.rol) || 'vendedor';
+const ROL = (USR && USR.rol) || '';
 document.getElementById('topbar').innerHTML = adminHeader(
     'Órdenes de clientes', 'Órdenes de los dos canales (ERP y tienda en línea): consulta, envío, pago y cancelación desde aquí.',
     '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +

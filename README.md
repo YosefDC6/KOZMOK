@@ -43,8 +43,10 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 - **Órdenes de clientes**: listado de las órdenes de los dos canales (capturadas en el ERP o hechas en la tienda en línea) con búsqueda, filtros y exportación a CSV. Cada orden se gestiona completa sin salir del ERP: cliente e historial, estado del envío, registro del pago, cancelación (regresa stock, garantías y puntos) y movimientos de inventario.
 - **Nueva orden** en 3 pasos: *Cliente* (se elige del CRM o se da de alta ahí mismo) → *Productos* (del inventario del SCM, con stock real) → *Confirmar* (resumen con IVA y envío, forma de pago y dirección).
 - **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera el pedido de reposición automático si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
-- **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos.
-- **Reportes ERP**: KPIs por rango de fechas, ventas por mes, más vendidos, inventario disponible por rotación, órdenes por estado y exportación a CSV.
+- **Procesos internos**: cada orden guarda su bitácora (orden creada, stock validado, inventario actualizado, reabasto, historial, pago, cambios de estado, cancelación), marcando qué fue automático y qué hizo alguien del equipo. Se ve en el detalle de la orden.
+- **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos, con barra de progreso empresarial. El administrador puede fijarlo a mano (con motivo) y regresarlo al cálculo automático (`GET/PUT /api/admin/erp/estado`).
+- **Recursos** (solo admin): recursos humanos (equipo por rol), materiales (inventario) y financieros (ingresos, por cobrar, reposición comprometida) leídos de sus tablas sin duplicarlos, más el registro de equipo, vehículos, instalaciones y presupuestos con área, responsable y estado.
+- **Reportes ERP**: KPIs por rango de fechas (ventas, órdenes, productos vendidos, clientes activos, inventario disponible, por cobrar), ventas por mes, más vendidos, inventario por rotación, órdenes por estado y exportación a CSV. Los reportes se pueden **guardar** como foto del periodo y consultarse después. `GET /api/admin/erp/metricas` devuelve los indicadores globales.
 - **Panel por rol** (solo admin): columnas por rol y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
 
 ---
@@ -53,13 +55,18 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 
 | Rol | Acceso |
 |---|---|
-| **Administrador** | Acceso total, incluida la gestión de cuentas y del equipo |
-| **Vendedor** | CRM, SCM y ERP (incluida la captura de órdenes), sin gestión de cuentas, Nivel ERP ni Panel por rol |
-| **Soporte** | Clientes, interacciones, evaluaciones, soporte, garantías y reportes |
-| **Almacén** | Pedidos, inventario, proveedores, garantías, analítica del chatbot y consulta del ERP (sin capturar órdenes) |
-| **Cliente** | Solo la tienda y su propia cuenta |
+Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**.
 
-El menú del panel se adapta al rol. Si alguien abre por URL una sección que no le corresponde, el sistema lo regresa al Dashboard.
+| Rol | Entra a | Acceso |
+|---|---|---|
+| **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP, Recursos y Panel por rol |
+| **Ventas** | Dashboard CRM | Clientes e interacciones (CRM), consulta de productos, captura y seguimiento de órdenes de clientes (ERP), reportes y Mi actividad |
+| **Logística** | Dashboard SCM | Productos, inventario, proveedores, movimientos y reposición (SCM); surte y envía las órdenes de clientes (ERP, sin capturarlas) y reportes |
+| **Cliente** | Tienda | Solo la tienda y su propia cuenta |
+
+Los permisos viven en un solo archivo, `public/admin/js/permisos.js`, que usan **el menú** (menú dinámico según el usuario) **y el servidor** (control de acceso por módulo en cada llamada a `/api/admin/...`), así que nunca se contradicen. Si alguien abre por URL una sección que no le corresponde, el panel lo regresa a su inicio y la API responde 403. El administrador cambia el rol de cualquier persona desde *Cuentas y equipo* (`PUT /api/admin/usuarios/:id/rol`); `GET /api/usuarios/rol` devuelve el rol y los permisos de la sesión, y `POST /api/auth/login` responde también con ellos.
+
+Al arrancar sobre una base anterior, el servidor migra solo los roles viejos: *vendedor* y *soporte* pasan a **Ventas** y *almacén* a **Logística**.
 
 ---
 
@@ -95,9 +102,8 @@ Si al arrancar la consola muestra `Base de datos: conectada … 28 productos`, t
 | Rol | Correo | Contraseña |
 |---|---|---|
 | Admin | admin@kozmok.mx | `Admin#KZ2026` |
-| Vendedor | laura.vendedor@kozmok.mx | `Vendedor#KZ2026` |
-| Soporte | ruben.soporte@kozmok.mx | `Soporte#KZ2026` |
-| Almacén | paola.almacen@kozmok.mx | `Almacen#KZ2026` |
+| Ventas | laura.ventas@kozmok.mx | `Ventas#KZ2026` |
+| Logística | paola.logistica@kozmok.mx | `Logistica#KZ2026` |
 | Cliente | mariana@correo.com | `Demo#KZ2026` |
 
 ---
@@ -118,10 +124,11 @@ KOZMOK/
         ├── js/               # api, layout, chatbot, tema, toasts, etc.
         └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)
                               #   y ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
-                              #   reportes-erp, panel-roles)
+                              #   recursos, reportes-erp, panel-roles)
+                              # admin/js/permisos.js: permisos por rol (menú + API)
 ```
 
-**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas.
+**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`.
 
 ---
 

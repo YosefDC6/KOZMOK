@@ -70,7 +70,7 @@ function graficaVentasMes(canvas, ventas) {
 function renderIntegracion(el, k) {
     if (!el) return;
     const u = Sesion.usuario();
-    const rol = (u && u.rol) || 'vendedor';
+    const rol = (u && u.rol) || '';
     const mod = (href, key, ic, titulo, desc, dato, central) => {
         const tag = puedeVer(rol, key) ? `a href="${href}"` : 'div';
         return `<${tag} class="integra-mod ${central ? 'central' : ''}">

@@ -22,6 +22,8 @@
             <button class="btn btn-ghost btn-sm" onclick="todo()">Todo el histórico</button>
         </div>
 
+        <div class="pago-box" id="aviso-guardado" hidden style="margin-bottom:16px"></div>
+
         <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
 
         <div class="erp-grid-2">
@@ -56,6 +58,22 @@
         </div>
 
         <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <div>
+                    <h3 style="margin:0">Reportes guardados</h3>
+                    <p style="margin:4px 0 0">Una foto de los indicadores del periodo: se consulta igual aunque los datos cambien después.</p>
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="guardarReporte()">Guardar este periodo</button>
+            </div>
+            <div class="table-wrap" style="margin-top:12px">
+                <table>
+                    <thead><tr><th>Nombre</th><th>Periodo</th><th>Ventas</th><th>Órdenes</th><th>Guardó</th><th>Fecha</th><th></th></tr></thead>
+                    <tbody id="tabla-guardados"><tr><td colspan="7">Cargando…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
             <h3>Integración entre módulos</h3>
             <div class="integra" id="integracion"></div>
         </div>
@@ -66,6 +84,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
 <script>
@@ -115,20 +134,32 @@ function nueva(id, cfg) {
     graficas[id] = new Chart(document.getElementById(id), cfg);
 }
 
+let METRICAS = null;
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const periodoDe = (desde, hasta) => (desde || hasta ? `${desde ? String(desde).slice(0, 10) : 'inicio'} a ${hasta ? String(hasta).slice(0, 10) : 'hoy'}` : 'Todo el histórico');
+
 async function cargar() {
     const p = new URLSearchParams();
     const d = document.getElementById('f-desde').value;
     const h = document.getElementById('f-hasta').value;
     if (d) p.set('desde', d);
     if (h) p.set('hasta', h);
-    DATA = await api('/admin/erp/reportes?' + p.toString());
+    [DATA, METRICAS] = await Promise.all([api('/admin/erp/reportes?' + p.toString()), api('/admin/erp/metricas')]);
+    document.getElementById('aviso-guardado').hidden = true;
+    await pintar(DATA, METRICAS);
+}
+
+// Pinta el dashboard con unos datos (en vivo o de un reporte guardado).
+async function pintar(DATA, METRICAS) {
     const k = DATA.kpis;
+    const inv = (METRICAS && METRICAS.inventario_disponible) || DATA.inventario_disponible;
 
     document.getElementById('stat-grid').innerHTML = `
         <div class="stat-card"><span class="kpi-ico">${icon('wallet', 18)}</span><div class="stat-label">Ventas totales</div><div class="stat-value" style="font-size:1.5rem">${formatoMoneda(k.ventas_totales)}</div><div class="stat-sub">ticket promedio ${formatoMoneda(k.ticket_promedio)}</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('clipboard', 18)}</span><div class="stat-label">Órdenes de clientes</div><div class="stat-value">${k.ordenes}</div><div class="stat-sub">${k.ordenes_erp} ERP · ${k.ordenes_en_linea} en línea</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('user', 18)}</span><div class="stat-label">Clientes activos</div><div class="stat-value">${k.clientes_activos}</div><div class="stat-sub">${k.clientes_con_compra} compraron en el periodo</div></div>
+        ${inv ? `<div class="stat-card"><span class="kpi-ico">${icon('layers', 18)}</span><div class="stat-label">Inventario disponible</div><div class="stat-value">${inv.unidades}</div><div class="stat-sub">unidades · ${formatoMoneda(inv.valor)}${inv.productos_criticos ? ` · <span style="color:var(--danger)">${inv.productos_criticos} críticos</span>` : ''}</div></div>` : ''}
         <div class="stat-card"><span class="kpi-ico">${icon('clock', 18)}</span><div class="stat-label">Por cobrar</div><div class="stat-value" style="font-size:1.5rem;color:var(--warning)">${formatoMoneda(k.por_cobrar)}</div><div class="stat-sub">${k.pagos_pendientes} ${k.pagos_pendientes === 1 ? 'orden' : 'órdenes'} con pago pendiente</div></div>
     `;
 
@@ -175,7 +206,61 @@ async function cargar() {
     const res = await api('/admin/erp/resumen');
     renderIntegracion(document.getElementById('integracion'), res.kpis);
 }
+
+async function cargarGuardados() {
+    const lista = await api('/admin/erp/reportes/guardados');
+    document.getElementById('tabla-guardados').innerHTML = lista.length ? lista.map((r) => `
+        <tr>
+            <td><strong>${esc(r.nombre)}</strong></td>
+            <td style="font-size:.82rem">${periodoDe(r.desde, r.hasta)}</td>
+            <td class="mono">${formatoMoneda(r.ventas_totales)}</td>
+            <td class="mono">${r.ordenes}</td>
+            <td>${esc(r.usuario_nombre || '—')}</td>
+            <td style="font-size:.8rem">${formatoFecha(r.fecha)}</td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-ghost btn-sm" onclick="verGuardado(${r.id})">Ver</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="borrarGuardado(${r.id})">Eliminar</button>
+            </td>
+        </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-muted)">Todavía no hay reportes guardados.</td></tr>';
+}
+
+async function guardarReporte() {
+    const desde = document.getElementById('f-desde').value || null;
+    const hasta = document.getElementById('f-hasta').value || null;
+    const nombre = prompt('Nombre del reporte', `Reporte ERP · ${periodoDe(desde, hasta)}`);
+    if (nombre === null) return;
+    try {
+        const r = await api('/admin/erp/reportes/guardados', { method: 'POST', body: { nombre, desde, hasta } });
+        toast(r.message, 'ok');
+        cargarGuardados();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function verGuardado(id) {
+    try {
+        const r = await api('/admin/erp/reportes/guardados/' + id);
+        DATA = r.datos;
+        const aviso = document.getElementById('aviso-guardado');
+        aviso.innerHTML = `<h4>${icon('info', 15)} Viendo el reporte guardado “${esc(r.nombre)}”</h4>
+            <div class="pb-sub" style="margin:0">Periodo: ${periodoDe(r.desde, r.hasta)} · guardado el ${formatoFecha(r.fecha)}${r.usuario_nombre ? ' por ' + esc(r.usuario_nombre) : ''}.
+            <a href="#" onclick="cargar();return false">Volver a los datos en vivo</a></div>`;
+        aviso.hidden = false;
+        await pintar(DATA, null);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function borrarGuardado(id) {
+    if (!(await confirmar('¿Eliminar este reporte guardado?', { okText: 'Eliminar', peligro: true }))) return;
+    try {
+        const r = await api('/admin/erp/reportes/guardados/' + id, { method: 'DELETE' });
+        toast(r.message, 'ok');
+        cargarGuardados();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
 cargar().catch((e) => toast(e.message, 'error'));
+cargarGuardados().catch((e) => toast(e.message, 'error'));
 </script>
 </body>
 </html>

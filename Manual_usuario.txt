@@ -9,8 +9,8 @@ para estos perfiles:
 
    - CLIENTE   : la persona que compra en la tienda en linea.
    - ADMIN     : administrador del negocio, acceso total al panel.
-   - VENDEDOR / SOPORTE / ALMACEN : personal interno con un menu recortado
-                 segun su rol (ver seccion 5).
+   - VENTAS / LOGISTICA : personal interno con un menu recortado segun su
+                 rol (ver seccion 5).
 
 Si eres un admin nuevo, lee las secciones 1, 2, 4 y 6. El resto sirve de
 consulta.
@@ -64,24 +64,38 @@ CLIENTE
    - Compra en la tienda. Solo ve y edita SUS datos, pedidos, carrito, puntos.
    - Nunca entra al panel interno.
 
-ROLES INTERNOS (entran por /admin/login.html; el menu se adapta al rol)
-   - ADMINISTRADOR : acceso total, incluida la gestion de cuentas y equipo.
-   - VENDEDOR      : todo el CRM, el SCM y el ERP (captura ordenes de
-                     clientes); NO gestiona cuentas ni ve Nivel ERP
-                     ni Panel por rol.
-   - SOPORTE       : Dashboard, Clientes, Interacciones, Evaluaciones,
-                     Soporte, Garantias, Reportes, Mi actividad, Config.
-   - ALMACEN       : Dashboard, Pedidos, Inventario, Garantias, Analitica
-                     chatbot, bloque SCM y consulta del ERP (Dashboard,
-                     Ordenes de clientes, Reportes), Mi actividad,
-                     Configuracion.
+ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
+   Solo hay tres, como en un ERP comercial (SAP, Odoo, Dynamics):
+   - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
+                     Nivel ERP, Recursos y Panel por rol. Entra al
+                     Dashboard CRM.
+   - VENTAS        : Clientes, Interacciones, Evaluaciones, Soporte,
+                     Garantias, Pedidos y Reportes (CRM); consulta de
+                     Productos (SCM); Dashboard, Ordenes de clientes
+                     (CAPTURA ordenes) y Reportes del ERP; Mi actividad.
+                     Entra al Dashboard CRM.
+   - LOGISTICA     : todo el SCM (Productos con alta y edicion,
+                     Proveedores, Inventario, Movimientos, Pedidos de
+                     reposicion, Logistica push/pull, Nivel de madurez,
+                     Reportes); Dashboard, Ordenes de clientes (surte, envia
+                     y registra pagos, pero NO captura ordenes) y Reportes
+                     del ERP; Mi actividad. Entra al Dashboard SCM.
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
-   alguien abre por URL una seccion que no le toca, se le manda al Dashboard.
+   alguien abre por URL una seccion que no le toca, se le manda a su inicio.
+   Ademas el SERVIDOR valida cada llamada: aunque alguien llame a la API a
+   mano, recibe "Tu rol no tiene acceso a esta seccion" (403).
+
+   Los permisos viven en UN solo archivo:  public/admin/js/permisos.js .
+   Lo usan el menu (navegador) y el control de acceso (server.js), asi que
+   nunca se contradicen.
+
+   Al arrancar sobre una base vieja, el servidor migra los roles anteriores:
+   vendedor y soporte -> Ventas;  almacen -> Logistica.
 
    Para AGREGAR un rol nuevo hay que tocar 3 lugares:
      1. db/database.sql        -> CHECK (rol IN (...)) de la tabla usuarios
-     2. server.js              -> objeto ROLES_INTERNOS
-     3. admin/js/admin-layout.js -> objeto PERMISOS (que secciones ve)
+     2. server.js              -> objeto ROLES_INTERNOS (nombre y descripcion)
+     3. admin/js/permisos.js   -> objeto PERMISOS (que secciones ve)
 
 Cuentas de prueba (tras cargar db/database.sql)
 
@@ -89,9 +103,8 @@ Cuentas de prueba (tras cargar db/database.sql)
    | Rol      | Correo                       | Contraseña      | Notas                            |
    +----------+------------------------------+-----------------+----------------------------------+
    | Admin    | admin@kozmok.mx          | Admin#KZ2026    | acceso total al panel            |
-   | Vendedor | laura.vendedor@kozmok.mx | Vendedor#KZ2026 | todo menos admin (ver sec. 5)    |
-   | Soporte  | ruben.soporte@kozmok.mx  | Soporte#KZ2026  | CRM y soporte                    |
-   | Almacen  | paola.almacen@kozmok.mx  | Almacen#KZ2026  | pedidos, inventario, proveedores |
+   | Ventas   | laura.ventas@kozmok.mx   | Ventas#KZ2026   | CRM y captura de ordenes ERP     |
+   | Logistica| paola.logistica@kozmok.mx| Logistica#KZ2026| SCM y surtido de ordenes ERP     |
    | Cliente  | mariana@correo.com           | Demo#KZ2026     | nivel Oro, con pedidos y puntos  |
    | Cliente  | diego@correo.com             | Demo#KZ2026     | nivel Oro                        |
    | Cliente  | sofia@correo.com             | Demo#KZ2026     | prospecto, sin compras           |
@@ -660,16 +673,18 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      registrado.
 
 4.12 CUENTAS Y EQUIPO  (admin/usuarios.html)  [CUENTA]  -- solo ADMIN
-   - Tabla con el personal interno (administradores, vendedores, soporte,
-     almacen) y su estado.
+   - Tabla con el personal interno (Administrador, Ventas, Logistica) y su
+     estado. En la columna Rol el admin cambia el rol de cualquier persona
+     con un selector (pide confirmacion). No puede quitarse a si mismo el
+     rol de administrador.
    - "Nueva cuenta": primero eliges el TIPO y el formulario se adapta:
         * Cliente          -> nombre, correo, contrasena, telefono, empresa,
                               ciudad, estado. Se crea con su codigo de socio
                               y aparece en la seccion Clientes (no en esta
                               tabla). Ofrece abrir su ficha al terminar.
         * Rol interno       -> nombre, email, contrasena, telefono. El rol es
-          (Admin/Vendedor/    el tipo elegido.
-           Soporte/Almacen)
+          (Administrador/     el tipo elegido.
+           Ventas/Logistica)
    - Tambien puedes crear un cliente desde Clientes -> "Nuevo cliente".
    - A los roles que no son admin, esta seccion no les aparece en el menu.
 
@@ -678,7 +693,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Etapas del CRM: recordatorio del embudo Prospecto/Activo/Frecuente/
      Inactivo.
    - Club de puntos: recordatorio de las reglas.
-   - Acceso al Panel por rol (solo admin, ver 4.14f).
+   - Acceso al Panel por rol (solo admin, ver 4.14g).
    - Acerca de: version y stack.
 
 4.14 MODULO ERP  (Etapa 3)  [ERP]
@@ -717,8 +732,13 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         ordenes con pago pendiente.
       - Lupa / clic en la fila: abre el gestor de pedidos (4.8) aqui
         mismo, sin salir del ERP: cliente e historial (CRM), estado del
-        envio, registro del pago, cancelacion, productos con su stock y
-        movimientos de inventario (SCM) y comprobante.
+        envio, registro del pago, cancelacion, productos con su stock,
+        PROCESOS INTERNOS de la orden y movimientos de inventario (SCM) y
+        comprobante.
+      - Procesos internos: la bitacora de la orden, paso por paso (orden
+        creada, stock validado, movimientos registrados, reabasto,
+        historial del cliente, pago, cada cambio de estado, cancelacion),
+        con fecha, quien lo hizo y si fue automatico o manual.
       - En el Dashboard ERP, clic en una de las "Ultimas ordenes" abre el
         mismo gestor sin cambiar de pantalla.
       - "Exportar CSV": descarga el listado tal como esta filtrado.
@@ -776,7 +796,12 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 
    4.14d NIVEL ERP  (admin/nivel-erp.html)  -- solo ADMIN
       - Nivel de implementacion: Basico -> Integrado -> Automatizado ->
-        Optimizado, calculado de datos reales (no se marca a mano).
+        Optimizado, calculado de datos reales, con la barra de "Progreso
+        empresarial" (0%, 33%, 67%, 100%).
+      - "Fijar el nivel (administrador)": modo Automatico (segun el
+        checklist) o Manual (eliges el nivel y un motivo, p. ej. una
+        auditoria). En manual la pantalla avisa quien lo fijo y que nivel
+        daria el checklist. Se regresa a Automatico cuando se quiera.
       - Checklist de avance (6 puntos):
           1. Clientes integrados (CRM): hay clientes con compras o
              interacciones.
@@ -794,18 +819,36 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Con los datos de ejemplo arranca en "Integrado"; al capturar la
         primera orden en el ERP sube solo.
 
-   4.14e REPORTES ERP  (admin/reportes-erp.html)
+   4.14e RECURSOS  (admin/recursos.html)  -- solo ADMIN
+      - Recursos HUMANOS: personas activas por rol (de Cuentas y equipo).
+      - Recursos MATERIALES: productos, unidades en stock, valor a costo y a
+        precio de venta y productos en stock critico (del SCM).
+      - Recursos FINANCIEROS: ingresos cobrados, por cobrar, reposicion
+        comprometida con proveedores y presupuestos asignados.
+        Estos tres bloques se leen de sus propias tablas: el ERP no duplica.
+      - Tabla de equipo, vehiculos, instalaciones y presupuestos (lo que no
+        vive en otro modulo): area, cantidad, valor, responsable y estado
+        (Disponible / En uso / Mantenimiento / Baja). Filtros por tipo y
+        area; "Nuevo recurso", Editar y Eliminar.
+
+   4.14f REPORTES ERP  (admin/reportes-erp.html)
       - Rango de fechas ("Del ... al ...") o "Todo el historico".
       - KPIs: ventas totales y ticket promedio, ordenes de clientes (ERP /
-        en linea), productos vendidos, clientes activos y monto por cobrar.
+        en linea), productos vendidos, clientes activos, inventario
+        disponible (unidades, valor y criticos) y monto por cobrar.
       - Graficas: ventas por mes (6 meses, por canal), productos mas
         vendidos, inventario disponible por rotacion (alta / media / baja,
         segun lo vendido en 90 dias contra el stock) y ordenes por estado.
       - Resumen del nivel ERP y bloque de integracion entre modulos.
       - "Exportar CSV": todos los indicadores del periodo.
+      - Reportes guardados: "Guardar este periodo" guarda una foto de los
+        indicadores con un nombre. "Ver" la vuelve a pintar tal como
+        estaba (con un aviso y el enlace "Volver a los datos en vivo");
+        "Eliminar" la borra.
 
-   4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
-      - Menu dinamico: una columna por rol con las secciones que ve,
+   4.14g PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
+      - Menu dinamico: una columna por rol (Administrador, Ventas,
+        Logistica) con la pantalla a la que entra y las secciones que ve,
         agrupadas por modulo (CRM, SCM, ERP, Cuenta), incluido el permiso
         de "Capturar ordenes".
       - Matriz de permisos: cada seccion contra cada rol.
@@ -820,44 +863,40 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 
 Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 
-VENDEDOR
-   Ve todo menos "Cuentas y equipo", "Nivel ERP" y "Panel por rol". En el ERP ve Dashboard,
-   Ordenes de clientes y Reportes, y SI puede capturar ordenes nuevas.
+VENTAS
+   Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Garantias,
+   Pedidos, Analitica chatbot y Reportes (CRM); Productos (SCM, solo
+   consulta); Dashboard, Ordenes de clientes y Reportes del ERP, y SI puede
+   capturar ordenes nuevas; Mi actividad y Configuracion.
+   No ve Inventario, Proveedores ni el resto del SCM, Nivel ERP, Recursos,
+   Panel por rol ni Cuentas.
    Flujo tipico:
    1. Dashboard: clientes en riesgo y tickets activos.
    2. Clientes: buscar al cliente y abrir su ficha.
    3. Registrar la interaccion (llamada/correo/reunion) con lo acordado.
    4. Atender tickets en Soporte si hay una queja formal.
-   5. Actualizar el estado del pedido en Pedidos cuando avance el envio.
-   6. Ajustar stock en Inventario si se recibe mercancia.
-   7. Capturar en ERP -> "Nueva orden" las ventas por telefono o mostrador.
+   5. Capturar en ERP -> "Nueva orden" las ventas por telefono o mostrador.
+   6. Dar seguimiento en Ordenes de clientes (pago, estado).
 
-SOPORTE
-   Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Garantias,
-   Reportes, Mi actividad, Configuracion. No ve Pedidos, Inventario, ERP ni Cuentas.
-   Flujo tipico: revisar la cola de tickets, responder al cliente, cambiar
-   estado/prioridad, y dejar registrada la interaccion en la ficha.
-
-ALMACEN
-   Ve: Dashboard (CRM), Pedidos, Garantias, Analitica chatbot -- y en el
-   bloque SCM: Dashboard, Productos, Proveedores, Inventario, Movimientos,
-   Pedidos (reposicion), Logistica, Nivel de madurez, Reportes -- en el
-   bloque ERP: Dashboard, Ordenes de clientes y Reportes (solo consulta: NO captura ordenes) -- ademas de Mi
-   actividad y Configuracion. No ve Clientes, Interacciones, Soporte ni
-   Cuentas.
-   Flujo tipico: procesar pedidos (confirmado -> procesando -> enviado ->
-   entregado), vigilar el stock critico, generar un pedido de reposicion al
-   proveedor cuando haga falta, marcarlo "Surtir" cuando llegue (el stock
-   sube solo) y revisar el Dashboard de SCM para ver el nivel de madurez y
-   las metricas generales.
+LOGISTICA
+   Ve: todo el bloque SCM (Dashboard, Productos con alta y edicion,
+   Proveedores, Inventario, Movimientos, Pedidos de reposicion, Logistica,
+   Nivel de madurez, Reportes), Analitica chatbot, y en el ERP: Dashboard,
+   Ordenes de clientes y Reportes (NO captura ordenes); Mi actividad y
+   Configuracion. No ve Clientes, Interacciones, Soporte, Nivel ERP,
+   Recursos, Panel por rol ni Cuentas.
+   Flujo tipico: surtir ordenes de clientes (confirmado -> procesando ->
+   enviado -> entregado), vigilar el stock critico, generar un pedido de
+   reposicion al proveedor cuando haga falta, marcarlo "Surtir" cuando
+   llegue (el stock sube solo) y revisar el Dashboard de SCM.
 
 ADMINISTRADOR
-   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y roles),
-   "Nivel ERP" y "Panel por rol".
+   Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
+   "Nivel ERP" (y fijarlo a mano), "Recursos" y "Panel por rol".
 
-El permiso para capturar ordenes en el ERP se llama "orden-nueva" en
-PERMISOS (admin-layout.js) y el servidor lo valida aparte con
-ROLES_ORDEN_ERP (server.js): hoy son admin y vendedor.
+El permiso para capturar ordenes en el ERP se llama "orden-nueva" y el de
+editar el catalogo "productos-editar", ambos en PERMISOS
+(admin/js/permisos.js). Hoy capturan ordenes Administrador y Ventas.
 
 
 ===============================================================================
@@ -1020,7 +1059,7 @@ R: Es correcto: la compra requiere una cuenta de cliente. Tras iniciar
 
 P: Un cliente no puede entrar al panel.
 R: Es correcto. El panel solo acepta usuarios internos
-   (admin/vendedor/soporte/almacen).
+   (Administrador, Ventas o Logistica).
 
 P: Como doy de alta una cuenta nueva (cliente o de personal)?
 R: Con una cuenta de admin: panel -> "Cuentas y equipo" -> "Nueva cuenta".
@@ -1031,8 +1070,8 @@ R: Con una cuenta de admin: panel -> "Cuentas y equipo" -> "Nueva cuenta".
 P: Necesito un rol distinto a los que hay.
 R: Se agrega en 3 lugares: el CHECK de la tabla usuarios (db/database.sql),
    el objeto ROLES_INTERNOS en server.js y el objeto PERMISOS en
-   admin/js/admin-layout.js (para decir que secciones ve). Recarga
-   database.sql y reinicia.
+   admin/js/permisos.js (para decir que secciones ve; el servidor usa el
+   mismo archivo). Recarga database.sql y reinicia.
 
 P: Como reinicio los datos de ejemplo?
 R: Vuelve a ejecutar  psql -U postgres -d kozmok -f db/database.sql .
@@ -1070,8 +1109,9 @@ Estructura
                configuracion.html
                erp.html ordenes-erp.html orden-nueva.html nivel-erp.html
                inventario.html nivel-scm.html          (modulo SCM)
-               reportes-erp.html panel-roles.html      (modulo ERP)
+               recursos.html reportes-erp.html panel-roles.html  (modulo ERP)
                js/admin-layout.js  interaccion-sim.js  erp.js
+               js/permisos.js       (permisos por rol: menu + servidor)
                js/gestion-pedido.js (gestor de pedidos compartido CRM/ERP/SCM)
                js/scm-acciones.js   (movimiento, reposicion y abastecimiento en ventana)
 
@@ -1082,6 +1122,9 @@ Tablas principales
    movimientos_inventario, ordenes_compra, chatbot_consultas, direcciones,
    metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
    ticket_mensajes, garantias
+   ERP: estado_erp (nivel de implementacion, una fila), procesos_erp
+   (procesos internos de cada orden), recursos_erp (equipo, vehiculos,
+   instalaciones, presupuestos) y reportes_erp (reportes guardados).
 
 Autenticacion
    - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
@@ -1094,6 +1137,9 @@ Endpoints utiles
    POST /api/auth/registro-cliente        alta de cliente (+ codigo de socio)
    POST /api/auth/login-cliente           login tienda   (campo "correo")
    POST /api/auth/login-usuario           login panel    (campo "email")
+   POST /api/auth/login                   igual; responde tambien los permisos
+   GET  /api/usuarios/rol                 rol y permisos de la sesion
+   PUT  /api/admin/usuarios/:id/rol       cambiar rol (solo admin)
    GET  /api/admin/whoami                 valida sesion interna
    GET  /api/clientes/:id/recompensas     estado del Club (puntos, nivel...)
    GET  /api/clientes/:id/metodos-pago    tarjetas guardadas
@@ -1105,11 +1151,20 @@ Endpoints utiles
    GET  /api/admin/erp/ordenes            ordenes de clientes (busqueda,
                                           estado, origen)
    GET  /api/admin/erp/clientes           clientes del CRM para el paso 1
-   POST /api/admin/erp/clientes           alta rapida de cliente (admin/vendedor)
+   POST /api/admin/erp/clientes           alta rapida de cliente (admin/ventas)
    GET  /api/admin/erp/productos          productos del SCM para el paso 2
-   POST /api/admin/erp/ordenes            crear orden ERP (admin/vendedor)
-   GET  /api/admin/erp/nivel              nivel de implementacion ERP
+   POST /api/admin/erp/ordenes            crear orden ERP (admin/ventas)
+   POST /api/admin/erp/ordenes/procesar   igual (nombre del documento)
+   GET  /api/admin/erp/ordenes/:id        detalle con procesos internos
+   PUT  /api/admin/erp/ordenes/:id/estado cambiar estado de una orden
+   GET  /api/admin/erp/estado             nivel ERP (tambien /erp/nivel)
+   PUT  /api/admin/erp/estado             fijar nivel {modo, nivel, nota} (admin)
+   GET  /api/admin/erp/metricas           ventas, ordenes procesadas, productos
+                                          vendidos, clientes activos, inventario
+   GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
+   POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
    GET  /api/admin/erp/reportes?desde=&hasta=  reportes empresariales
+   GET/POST/DELETE /api/admin/erp/reportes/guardados[/:id]  reportes guardados
 
 Reglas de negocio embebidas
    - IVA 16%. Envio $199, gratis desde $10,000 de subtotal.
