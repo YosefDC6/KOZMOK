@@ -1,5 +1,102 @@
+===============================================================================
+ COMANDOS GIT  -  GUIA RAPIDA PARA EL EQUIPO KOZMOK
+===============================================================================
+
+Todos los comandos se escriben en la terminal, DENTRO de la carpeta del
+proyecto (KOZMOK). Para entrar:   cd KOZMOK
+
+
+-------------------------------------------------------------------------------
+ 1. LA PRIMERA VEZ (solo una vez por computadora)
+-------------------------------------------------------------------------------
+
+git clone https://github.com/YosefDC6/KOZMOK.git
+   Descarga el proyecto completo de GitHub a tu computadora.
+   Usalo solo si todavia no tienes la carpeta del proyecto.
+
+
+-------------------------------------------------------------------------------
+ 2. ANTES DE EMPEZAR A TRABAJAR (siempre)
+-------------------------------------------------------------------------------
+
 git pull
-git add .
+   Obtiene los cambios que tus companeros ya subieron a GitHub y los
+   mezcla con tu copia.
+   Cuando: SIEMPRE al empezar a trabajar y antes de subir tus cambios.
+   Asi trabajas sobre la version mas reciente y evitas conflictos.
+
+
+-------------------------------------------------------------------------------
+ 3. PARA SUBIR TUS CAMBIOS (en este orden)
+-------------------------------------------------------------------------------
+
 git status
+   Muestra que archivos cambiaste, agregaste o borraste.
+   Cuando: antes de guardar, para revisar que no vaya nada de mas.
+   En rojo = cambios sin preparar; en verde = listos para el commit.
+
+git add .
+   Prepara TODOS tus cambios para guardarlos (el punto = "todo").
+   Para preparar un solo archivo:   git add nombre_del_archivo
+
 git commit -m "Descripcion de los cambios"
+   Guarda los cambios preparados en tu computadora con un mensaje.
+   El mensaje debe decir QUE hiciste, por ejemplo:
+      git commit -m "Inventario: agrega filtro por proveedor"
+   Ojo: el commit todavia NO esta en GitHub, solo en tu computadora.
+
 git push
+   Sube tus commits a GitHub para que el equipo los vea.
+   Cuando: despues del commit.
+
+
+-------------------------------------------------------------------------------
+ 4. RESUMEN DEL FLUJO DE CADA DIA
+-------------------------------------------------------------------------------
+
+   git pull                          <- 1. traer lo nuevo del equipo
+   ... trabajas en el proyecto ...
+   git status                        <- 2. revisar que cambiaste
+   git add .                         <- 3. preparar los cambios
+   git commit -m "Lo que hice"       <- 4. guardarlos con un mensaje
+   git pull                          <- 5. traer lo que subieron mientras
+   git push                          <- 6. subir tus cambios a GitHub
+
+
+-------------------------------------------------------------------------------
+ 5. SI ALGO SALE MAL
+-------------------------------------------------------------------------------
+
+"git push" dice "rejected" o "fetch first"
+   Alguien subio cambios antes que tu. Haz:
+      git pull
+      git push
+
+"git pull" dice "CONFLICT" (conflicto)
+   Tu y otra persona cambiaron las mismas lineas de un archivo.
+   1. Abre el archivo marcado y busca las marcas  <<<<<<<  =======  >>>>>>>
+   2. Deja la version correcta y borra las marcas.
+   3. Guarda y termina con:
+         git add .
+         git commit -m "Resuelve conflicto en <archivo>"
+         git push
+
+"git pull" dice que tienes cambios sin guardar
+   Primero guarda los tuyos (git add . y git commit -m "...") y despues
+   vuelve a hacer git pull.
+
+
+-------------------------------------------------------------------------------
+ 6. OTROS COMANDOS UTILES
+-------------------------------------------------------------------------------
+
+git log --oneline
+   Lista los commits recientes (uno por linea), del mas nuevo al mas viejo.
+   Sirve para ver que se ha subido y quien lo hizo.  Sal con la tecla q.
+
+git diff
+   Muestra linea por linea lo que cambiaste y aun no preparas con git add.
+
+git restore nombre_del_archivo
+   Descarta los cambios de ese archivo y lo regresa a como estaba en el
+   ultimo commit.  CUIDADO: lo que borres asi no se puede recuperar.
