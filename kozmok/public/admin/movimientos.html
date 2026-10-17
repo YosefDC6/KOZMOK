@@ -30,15 +30,13 @@
     </main>
 </div>
 
-<div class="modal-overlay" id="modal-movimiento">
-    <div class="modal" style="max-width:480px" id="modal-movimiento-body"></div>
-</div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('movimientos');
@@ -48,7 +46,6 @@ document.getElementById('topbar').innerHTML = adminHeader(
 );
 
 let MOVIMIENTOS = [];
-let PRODUCTOS_MOV = [];
 // Desde Inventario se puede llegar con ?producto=<nombre> para ver su historial.
 const productoURL = new URLSearchParams(location.search).get('producto');
 if (productoURL) document.getElementById('f-producto').value = productoURL;
@@ -87,68 +84,8 @@ async function cargarMovimientos() {
     renderTabla();
 }
 
-async function abrirNuevoMovimiento() {
-    if (!PRODUCTOS_MOV.length) PRODUCTOS_MOV = await api('/admin/productos');
-    const opciones = PRODUCTOS_MOV.map((p) => `<option value="${p.id}">${p.nombre} (stock ${p.stock})</option>`).join('');
-    document.getElementById('modal-movimiento-body').innerHTML = `
-        <button class="modal-close" onclick="document.getElementById('modal-movimiento').classList.remove('open')">${icon('x', 18)}</button>
-        <h3>Nuevo movimiento</h3>
-        <div class="field"><label>Producto</label><select id="mv-producto">${opciones}</select></div>
-        <div class="field"><label>Tipo</label>
-            <div style="display:flex;gap:18px;align-items:center;padding:6px 0">
-                <label style="display:flex;align-items:center;gap:6px;width:auto;margin:0"><input type="radio" name="mv-tipo" value="entrada" checked style="width:auto" onchange="pintarMotivos()" /> Entrada</label>
-                <label style="display:flex;align-items:center;gap:6px;width:auto;margin:0"><input type="radio" name="mv-tipo" value="salida" style="width:auto" onchange="pintarMotivos()" /> Salida</label>
-            </div>
-        </div>
-        <div class="field-row">
-            <div class="field"><label>Cantidad</label><input type="number" min="1" id="mv-cantidad" value="1" /></div>
-            <div class="field"><label>Motivo</label><select id="mv-motivo" onchange="document.getElementById('mv-otro-wrap').hidden = this.value !== 'otro'"></select></div>
-        </div>
-        <div class="field" id="mv-otro-wrap" hidden><label>Describe el motivo</label><input id="mv-otro" placeholder="Ej. traspaso entre sucursales" /></div>
-        <div class="field-row">
-            <div class="field"><label>Fecha</label><input type="datetime-local" id="mv-fecha" value="${ahoraLocal()}" max="${ahoraLocal()}" /></div>
-            <div class="field"><label>Usuario</label><input value="${(Sesion.usuario() || {}).nombre || ''}" disabled /></div>
-        </div>
-        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardarMovimiento()">Registrar movimiento</button>
-    `;
-    document.getElementById('modal-movimiento').classList.add('open');
-    pintarMotivos();
-}
-
-// Motivos frecuentes según el tipo (las ventas, cancelaciones y pedidos
-// surtidos ya generan su movimiento solos; aquí van los manuales).
-const MOTIVOS = {
-    entrada: ['Compra a proveedor', 'Devolución de cliente', 'Ajuste de inventario', 'Conteo físico'],
-    salida: ['Merma / daño', 'Ajuste de inventario', 'Conteo físico', 'Muestra o uso interno'],
-};
-function pintarMotivos() {
-    const tipo = document.querySelector('input[name="mv-tipo"]:checked').value;
-    document.getElementById('mv-motivo').innerHTML = MOTIVOS[tipo].map((m) => `<option>${m}</option>`).join('') + '<option value="otro">Otro…</option>';
-    document.getElementById('mv-otro-wrap').hidden = true;
-}
-function ahoraLocal() {
-    const d = new Date();
-    return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
-async function guardarMovimiento() {
-    const body = {
-        producto_id: Number(document.getElementById('mv-producto').value),
-        tipo: document.querySelector('input[name="mv-tipo"]:checked').value,
-        cantidad: Number(document.getElementById('mv-cantidad').value),
-        motivo: document.getElementById('mv-motivo').value === 'otro' ? document.getElementById('mv-otro').value.trim() : document.getElementById('mv-motivo').value,
-        fecha: document.getElementById('mv-fecha').value || null,
-    };
-    if (!body.motivo) { toast('Escribe el motivo', 'warn'); return; }
-    if (!body.cantidad || body.cantidad < 1) { toast('La cantidad debe ser mayor a 0', 'warn'); return; }
-    try {
-        await api('/admin/movimientos-inventario', { method: 'POST', body });
-        document.getElementById('modal-movimiento').classList.remove('open');
-        toast('Movimiento registrado', 'ok');
-        PRODUCTOS_MOV = []; // refrescar stocks la próxima vez que se abra el formulario
-        cargarMovimientos();
-    } catch (e) { toast(e.message, 'error'); }
-}
+// Mismo formulario que en Inventario (ver admin/js/scm-acciones.js).
+function abrirNuevoMovimiento() { ScmAcciones.nuevoMovimiento({ onListo: cargarMovimientos }); }
 
 cargarMovimientos();
 </script>

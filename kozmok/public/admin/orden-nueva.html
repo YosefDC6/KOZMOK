@@ -131,6 +131,7 @@
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('ordenes-erp');
@@ -265,7 +266,7 @@ function pintarProductos() {
         return `
         <tr class="${c > 0 ? 'en-orden' : ''}">
             <td>${p.nombre}<div style="color:var(--text-muted);font-size:.76rem">${p.categoria || ''}${p.marca ? ' · ' + p.marca : ''}</div></td>
-            <td class="mono ${agotado ? 'stock-out' : bajo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
+            <td class="mono ${agotado ? 'stock-out' : bajo ? 'stock-low' : 'stock-ok'}">${p.stock}${bajo ? reposicion(p) : ''}</td>
             <td class="mono">${formatoMoneda(p.precio)}</td>
             <td>
                 ${agotado ? '<span style="color:var(--text-muted);font-size:.8rem">Agotado</span>' : `
@@ -277,6 +278,25 @@ function pintarProductos() {
             </td>
         </tr>`;
     }).join('') || '<tr><td colspan="4">Sin productos con esa búsqueda.</td></tr>';
+}
+
+// Integración con el SCM: si un producto está agotado o en su mínimo se
+// ve su pedido de reposición en curso o se puede pedir al proveedor aquí
+// mismo, sin salir de la orden.
+function reposicion(p) {
+    if (p.reposicion_en_curso) {
+        const [folio, fecha] = p.reposicion_en_curso.split('|');
+        const llega = fecha ? new Date(fecha.slice(0, 10) + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '';
+        return `<div style="font-family:var(--font-body);font-size:.7rem;color:var(--info);white-space:nowrap">${folio}${llega ? ' · llega ' + llega : ''}</div>`;
+    }
+    if (!puedeVer(USR && USR.rol, 'ordenes-compra')) return '';
+    return `<div><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 0;font-size:.72rem" onclick="pedirProveedor(${p.id})">Pedir al proveedor</button></div>`;
+}
+function pedirProveedor(id) {
+    ScmAcciones.pedidoReposicion({
+        productoId: id,
+        onListo: async () => { await cargarProductos(); pintarProductos(); },
+    });
 }
 
 function calcular() {
@@ -325,7 +345,7 @@ function pintarResumen() {
 function notaMetodo() {
     const m = document.getElementById('metodo').value;
     document.getElementById('metodo-nota').textContent = m === 'transferencia'
-        ? 'La orden queda con pago pendiente; los puntos del cliente se acreditan cuando se registre el pago en Pedidos.'
+        ? 'La orden queda con pago pendiente; los puntos del cliente se acreditan cuando se registre el pago desde Órdenes de clientes ("Marcar pago recibido").'
         : 'La orden queda confirmada y pagada; el cliente gana sus puntos del Club al instante.';
 }
 document.getElementById('metodo').addEventListener('change', notaMetodo);

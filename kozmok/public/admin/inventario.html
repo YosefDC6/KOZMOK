@@ -45,12 +45,14 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('inventario');
 document.getElementById('topbar').innerHTML = adminHeader(
     'Inventario', 'Existencias y estado de stock de cada producto activo.',
-    '<a class="btn btn-outline" href="/admin/movimientos.html">Registrar movimiento</a>'
+    '<button class="btn btn-outline" onclick="movimiento()">Registrar movimiento</button>' +
+    (puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra') ? ' <button class="btn btn-primary" onclick="generarPedido()">Generar pedido</button>' : '')
 );
 
 let INVENTARIO = [];
@@ -129,7 +131,7 @@ function accionOC(p) {
     if (!puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra')) return '';
     return p.orden_abierta_folio
         ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio} en curso</span>`
-        : `<a class="btn btn-ghost btn-sm" href="/admin/ordenes-compra.html?nuevo=${p.id}">Generar pedido</a>`;
+        : `<button class="btn btn-ghost btn-sm" onclick="generarPedido(${p.id})">Generar pedido</button>`;
 }
 
 function renderTabla() {
@@ -182,8 +184,9 @@ async function verDetalle(id) {
         <div id="det-movs" style="font-size:.84rem;color:var(--text-muted)">Cargando…</div>
         <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="restock(${p.id})">Restock</button>
-            ${puedeVer(rol, 'movimientos') ? `<a class="btn btn-outline" href="/admin/movimientos.html?producto=${encodeURIComponent(p.nombre)}">Ver todos los movimientos</a>` : ''}
-            ${puedeVer(rol, 'productos') ? `<a class="btn btn-ghost" href="/admin/productos.html?editar=${p.id}">Editar producto</a>` : ''}
+            <button class="btn btn-outline" onclick="movimiento(${p.id})">Registrar movimiento</button>
+            ${puedeVer(rol, 'productos') ? `<button class="btn btn-outline" onclick="ScmAcciones.abasto({ productoId: ${p.id}, onListo: alTerminar })">Mínimo, proveedor y push/pull</button>` : ''}
+            ${!CRITICOS[id] && puedeVer(rol, 'ordenes-compra') ? `<button class="btn btn-ghost" onclick="generarPedido(${p.id})">Generar pedido</button>` : ''}
         </div>`;
     document.getElementById('modal-detalle').classList.add('open');
     try {
@@ -199,6 +202,11 @@ async function verDetalle(id) {
     } catch (err) { document.getElementById('det-movs').textContent = err.message; }
 }
 function cerrarDetalle() { document.getElementById('modal-detalle').classList.remove('open'); }
+
+// Formularios del SCM en ventana, aquí mismo (admin/js/scm-acciones.js).
+function alTerminar() { cerrarDetalle(); cargar(); }
+function movimiento(productoId) { ScmAcciones.nuevoMovimiento({ productoId, onListo: alTerminar }); }
+function generarPedido(productoId) { ScmAcciones.pedidoReposicion({ productoId, onListo: alTerminar }); }
 
 async function restock(id) {
     const cantidad = await pedirDato('¿Cuántas unidades vas a agregar al stock?', { tipo: 'number', placeholder: 'Ej. 10' });

@@ -38,9 +38,6 @@
     </main>
 </div>
 
-<div class="modal-overlay" id="modal-orden">
-    <div class="modal" style="max-width:620px" id="modal-orden-body"></div>
-</div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
@@ -48,13 +45,14 @@
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('ordenes-erp');
 const USR = Sesion.usuario();
 const ROL = (USR && USR.rol) || 'vendedor';
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Órdenes de clientes', 'Consulta de las órdenes registradas: las capturadas por el equipo en el ERP y las de la tienda en línea.',
+    'Órdenes de clientes', 'Órdenes de los dos canales (ERP y tienda en línea): consulta, envío, pago y cancelación desde aquí.',
     '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +
     (puedeVer(ROL, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
 );
@@ -101,41 +99,9 @@ async function cargar() {
         </tr>`).join('') || '<tr><td colspan="9">No hay órdenes con ese filtro.</td></tr>';
 }
 
-async function verOrden(id) {
-    try {
-        const d = await api(`/pedidos/${id}/detalle`);
-        const o = ORDENES.find((x) => x.id === id) || {};
-        document.getElementById('modal-orden-body').innerHTML = `
-            <button class="modal-close" onclick="document.getElementById('modal-orden').classList.remove('open')">${icon('x', 18)}</button>
-            <h3 style="margin-bottom:2px">${d.numero_orden} ${origenPill(d.origen)}</h3>
-            <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${formatoFecha(d.fecha_pedido)} · ${o.cliente_nombre || ''}${o.registrado_por ? ' · capturó ' + o.registrado_por : ''}</p>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-                <span class="estado-pill e-${d.estado}">${d.estado}</span> ${pagoPill(d.pago_estado)}
-                <span style="font-size:.8rem;color:var(--text-muted)">${d.metodo_pago || ''}${d.pago_referencia ? ' · ref. ' + d.pago_referencia : ''}</span>
-            </div>
-            <div class="table-wrap" style="margin-bottom:14px">
-                <table>
-                    <thead><tr><th>Producto</th><th>Cant.</th><th>P. unit.</th><th>Subtotal</th></tr></thead>
-                    <tbody>${d.items.map((i) => `
-                        <tr><td>${i.nombre}</td><td class="mono">${i.cantidad}</td><td class="mono">${formatoMoneda(i.precio_unitario)}</td><td class="mono">${formatoMoneda(i.subtotal)}</td></tr>`).join('')}
-                    </tbody>
-                </table>
-            </div>
-            <div style="display:flex;justify-content:space-between"><span>Subtotal</span><span class="mono">${formatoMoneda(d.subtotal)}</span></div>
-            <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>IVA</span><span class="mono">${formatoMoneda(d.impuestos)}</span></div>
-            <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio)}</span></div>
-            ${Number(d.descuento) > 0 ? `<div style="display:flex;justify-content:space-between;color:var(--success)"><span>Descuento</span><span class="mono">-${formatoMoneda(d.descuento)}</span></div>` : ''}
-            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.05rem"><span>Total</span><span class="mono">${formatoMoneda(d.total)}</span></div>
-            ${d.notas ? `<p style="margin:12px 0 0;font-size:.85rem;color:var(--text-muted)">Notas: ${d.notas}</p>` : ''}
-            <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
-                ${puedeVer(ROL, 'pedidos') ? `<a class="btn btn-primary btn-sm" style="flex:1" href="/admin/pedidos.html?open=${d.id}">Gestionar envío y pago</a>` : ''}
-                ${puedeVer(ROL, 'clientes') && o.cliente_id ? `<a class="btn btn-outline btn-sm" style="flex:1" href="/admin/cliente.html?id=${o.cliente_id}">Ficha del cliente</a>` : ''}
-                <a class="btn btn-outline btn-sm" style="flex:1" href="/admin/recibo.html?id=${d.id}" target="_blank" rel="noopener">Comprobante</a>
-            </div>
-        `;
-        document.getElementById('modal-orden').classList.add('open');
-    } catch (e) { toast(e.message, 'error'); }
-}
+// La orden se gestiona completa aquí mismo (estado del envío, pago,
+// cliente e inventario), sin salir del ERP.
+function verOrden(id) { GestionPedido.abrir(id, { onCambio: cargar }); }
 
 document.getElementById('f-busqueda').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(cargar, 250); });
 document.getElementById('f-origen').addEventListener('change', cargar);

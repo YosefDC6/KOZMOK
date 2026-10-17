@@ -65,12 +65,14 @@ const DESCRIPCION = {
 // A dónde ir para cumplir (o revisar) cada punto. Si el rol no puede ver
 // esa pantalla, el punto se muestra sin enlace.
 const DESTINO = {
-    crm: { key: 'clientes', href: '/admin/clientes.html', texto: 'Ir a Clientes' },
-    scm: { key: 'productos', href: '/admin/productos.html', texto: 'Ir a Productos' },
+    // Lo que se resuelve dentro del ERP se manda a pantallas del ERP; solo
+    // "Productos con proveedor" vive en el SCM.
+    crm: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden (elige o da de alta al cliente)' },
+    scm: { key: 'productos', href: '/admin/productos.html', texto: 'Asignar proveedores (SCM)' },
     ordenes: { key: 'orden-nueva', href: '/admin/orden-nueva.html', texto: 'Registrar una orden' },
-    movimientos: { key: 'movimientos', href: '/admin/movimientos.html', texto: 'Ver movimientos' },
+    movimientos: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Ver órdenes y sus movimientos' },
     reportes: { key: 'reportes-erp', href: '/admin/reportes-erp.html', texto: 'Ver reportes' },
-    optimizado: { key: 'ordenes-compra', href: '/admin/ordenes-compra.html', texto: 'Ver pedidos de reposición' },
+    optimizado: { key: 'ordenes-erp', href: '/admin/ordenes-erp.html', texto: 'Entregar órdenes ERP' },
 };
 
 async function cargar() {

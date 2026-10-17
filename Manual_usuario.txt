@@ -41,7 +41,7 @@ Levantar el servidor
    - Luego:   npm start
    - Al arrancar, la consola muestra DOS lineas:
         Kozmok escuchando en http://localhost:3000
-        Base de datos: conectada (kozmok@localhost:5432) - 20 productos
+        Base de datos: conectada (kozmok@localhost:5432) - 28 productos
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
      PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
      cargar db/database.sql.
@@ -243,8 +243,10 @@ Seguridad de sesion
                       un CODIGO y un QR para presentar en caja, mas el monto
                       y la fecha limite.
      En SPEI y tienda el stock se reserva, pero los puntos GANADOS solo se
-     acreditan cuando el equipo registra el pago. Si se cancela el pedido se
-     devuelven el stock y los puntos que se hubieran canjeado.
+     acreditan cuando el equipo registra el pago. Si se cancela el pedido
+     (desde la tienda o desde el panel) se devuelven el stock y los puntos
+     canjeados, se retiran los puntos que se hubieran ganado con el y se
+     resta de las compras del cliente.
    - Boton "Ya realice el pago": el cliente avisa al equipo (no confirma el
      pago por si solo).
 
@@ -436,16 +438,34 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 4.8  PEDIDOS  (admin/pedidos.html)  [CRM]
    - Listado con filtro por estado. Cada fila muestra el estado y el pago
      como pildoras de color. Clic en la fila o en "Gestionar" abre el panel.
-   - Panel de gestion:
+   - Panel de gestion (GESTOR DE PEDIDOS). Es el mismo en CRM > Pedidos,
+     ERP > Ordenes de clientes, ERP > Dashboard y SCM > Pedidos: el pedido
+     se gestiona completo desde el modulo en el que estes, sin saltar a
+     otro (admin/js/gestion-pedido.js):
+        * Cliente (CRM): nombre, empresa, contacto, etapa, compras y
+          puntos, con "Ver historial de compras" (clic en otra orden del
+          historial la abre en la misma ventana).
         * PIPELINE visual de 5 pasos (Pendiente -> Confirmado -> Procesando
           -> Enviado -> Entregado). Haz clic en un paso para mover el pedido
-          ahi (te pide confirmar si es un retroceso). "Cancelar pedido"
-          aparte.
+          ahi (te pide confirmar si es un retroceso). Reglas:
+             - "Pendiente" = esperando pago. No se avanza sin cobrar: si el
+               pago esta pendiente, el sistema ofrece registrarlo primero.
+             - Una vez confirmado ya no regresa a "Pendiente".
+        * "Cancelar pedido" (solo Pendiente, Confirmado o Procesando): en
+          una sola transaccion regresa el stock con su movimiento de
+          entrada ("Cancelacion de pedido ..."), cancela las garantias,
+          devuelve los puntos canjeados, retira los puntos ganados y lo
+          resta de las compras del cliente (si era su unica compra vuelve
+          a Prospecto). La cancelacion es definitiva. Un pedido Enviado o
+          Entregado ya no se cancela: se registra como devolucion
+          (movimiento de entrada).
         * Bloque de PAGO: si esta pendiente, muestra el metodo y la
           referencia y un boton grande "Marcar pago recibido" -> pasa a
           "Confirmado", otorga los puntos y actualiza las metricas del
           cliente. Si el cliente pulso "Ya realice el pago", lo indica.
-        * Productos, totales y "Ver comprobante".
+        * Productos con su STOCK ACTUAL en el inventario (SCM), totales,
+          garantias, "Movimientos de inventario que genero" y "Ver
+          comprobante".
    - "Exportar CSV": descarga los pedidos tal como estan filtrados.
    - Enlace directo:  /admin/pedidos.html?open=<id>  abre ese panel.
 
@@ -470,11 +490,20 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      minimo o por debajo, aparece arriba con su proveedor, tiempo de
      entrega, metodo de reabastecimiento, "Generar pedido" (o "OC-100x en
      curso") y "Restock".
+   - Todo se hace aqui mismo, en ventanas, sin ir a otra seccion:
+     "Registrar movimiento" y "Generar pedido" (arriba), "Generar pedido"
+     en la alerta y en el detalle (abre el formulario de pedido de
+     reposicion ya con el producto).
    - Tabla con busqueda, filtro por categoria y por estado: stock actual,
      stock minimo, estado (Normal / Stock bajo / Agotado) y valor.
    - Lupa / clic en la fila: detalle del producto con sus ultimos
-     movimientos, boton "Restock", "Ver todos los movimientos" y "Editar
-     producto".
+     movimientos y los botones "Restock", "Registrar movimiento",
+     "Minimo, proveedor y push/pull" (cambia stock minimo, costo,
+     proveedor y estrategia sin ir a Productos ni a Logistica; si el
+     producto queda en su minimo se aplica el reabasto automatico) y
+     "Generar pedido".
+   - Los formularios de movimiento y de pedido de reposicion son los
+     mismos de Movimientos y Pedidos (admin/js/scm-acciones.js).
 
 4.9b PROVEEDORES  (admin/proveedores.html)  [SCM]
    - Lista de proveedores con contacto, telefono, correo, cuantos
@@ -512,8 +541,11 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      tipos de pedido que mueven el inventario:
         * Reposicion (entra stock): pedidos a proveedores, folio OC-100x.
         * Venta (sale stock): partidas de los pedidos de clientes, de la
-          tienda en linea (ORD-...) y del ERP (OR-...). Solo de consulta;
-          se capturan en la tienda o en Ordenes de clientes (ERP).
+          tienda en linea (ORD-...) y del ERP (OR-...). Se capturan en la
+          tienda o en Ordenes de clientes (ERP), pero se GESTIONAN aqui
+          mismo: el boton "Gestionar" abre el gestor de pedidos (4.8) para
+          prepararlas, enviarlas, entregarlas, registrar su pago o
+          cancelarlas (el stock regresa solo).
    - Columnas: folio, fecha, producto, cantidad (+ entra / - sale), tipo,
      proveedor o cliente, estado, entrega (fecha estimada o fecha en que
      se surtio) y acciones. Los generados por el sistema llevan la
@@ -580,6 +612,9 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Resumen del nivel de madurez (con "Ver detalle"), productos mas
      vendidos, estrategia push vs. pull (productos y valor en stock) e
      inventario critico con su pedido de reposicion en curso.
+   - Acciones sin salir del Dashboard: "Registrar movimiento" y "Generar
+     pedido" arriba, y en cada fila del inventario critico "Generar
+     pedido" (si no tiene uno en curso) y "Movimiento".
 
 4.9g NIVEL DE MADUREZ SCM  (admin/nivel-scm.html)  [SCM]
    - Nivel actual: Inicial (procesos basicos) -> En desarrollo
@@ -680,9 +715,12 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Busqueda por folio, nombre o correo; filtros por canal y estado.
       - Tarjetas: ordenes del filtro, capturadas en ERP, importe cobrado y
         ordenes con pago pendiente.
-      - Lupa / clic en la fila: detalle con productos, totales y notas, y
-        botones "Gestionar envio y pago" (abre Pedidos), "Ficha del
-        cliente" y "Comprobante".
+      - Lupa / clic en la fila: abre el gestor de pedidos (4.8) aqui
+        mismo, sin salir del ERP: cliente e historial (CRM), estado del
+        envio, registro del pago, cancelacion, productos con su stock y
+        movimientos de inventario (SCM) y comprobante.
+      - En el Dashboard ERP, clic en una de las "Ultimas ordenes" abre el
+        mismo gestor sin cambiar de pantalla.
       - "Exportar CSV": descarga el listado tal como esta filtrado.
       - Enlace directo:  /admin/ordenes-erp.html?open=<id>
 
@@ -700,6 +738,11 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
          - Catalogo activo con stock real y precio. Con [-] cantidad [+] se
            agrega a la orden; nunca deja pedir mas que el stock. Los
            agotados no se pueden agregar.
+         - Si un producto esta agotado o en su stock minimo, debajo del
+           stock se ve su pedido de reposicion en curso ("OC-100x - llega
+           20 oct") o, si no tiene, el boton "Pedir al proveedor" que abre
+           el formulario de reposicion del SCM ahi mismo (roles con acceso
+           a Pedidos del SCM).
          - A la derecha, la mini-orden con el subtotal en vivo.
       Paso 3 - Confirmar
          - Resumen: producto, cantidad, precio unitario, subtotal, IVA 16%,
@@ -709,7 +752,8 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
                y Pagada; el cliente gana sus puntos al instante.
              * Transferencia bancaria -> queda con Pago pendiente y una
                referencia ERP-XXXXXXXXXX; los puntos se acreditan cuando se
-               registra el pago en Pedidos (4.8).
+               registra el pago ("Marcar pago recibido") desde Ordenes de
+               clientes.
          - Direccion de envio (se precarga la del cliente) y notas.
          - "Confirmar orden".
       Procesamiento
@@ -951,7 +995,7 @@ P: Al cargar db/database.sql salen muchos "NOTICE: ... does not exist,
    skipping". Esta mal?
 R: No. El archivo empieza borrando tablas que en una base nueva todavia no
    existen; PostgreSQL solo avisa que las salta. Si no hay lineas "ERROR",
-   la carga fue correcta. Verifica con:  SELECT COUNT(*) FROM productos;  (=20)
+   la carga fue correcta. Verifica con:  SELECT COUNT(*) FROM productos;  (=28)
 
 P: npm start no dice nada sobre la base.
 R: Ahora si: la segunda linea de la consola indica "conectada" o el problema.
@@ -1028,6 +1072,8 @@ Estructura
                inventario.html nivel-scm.html          (modulo SCM)
                reportes-erp.html panel-roles.html      (modulo ERP)
                js/admin-layout.js  interaccion-sim.js  erp.js
+               js/gestion-pedido.js (gestor de pedidos compartido CRM/ERP/SCM)
+               js/scm-acciones.js   (movimiento, reposicion y abastecimiento en ventana)
 
 Tablas principales
    usuarios, proveedores, categorias, productos, clientes, interacciones,

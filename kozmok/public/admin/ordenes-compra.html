@@ -75,6 +75,8 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('ordenes-compra');
@@ -91,8 +93,6 @@ const ESTADO = {
 };
 
 let PEDIDOS = [];
-let PRODUCTOS = [];
-let PROVEEDORES = [];
 
 const fechaCorta = (f) => f ? new Date(f).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 // "2026-10-20" (DATE) sin que la zona horaria lo mueva un día
@@ -185,6 +185,11 @@ function renderTabla() {
 }
 
 function acciones(p, idx) {
+    if (p.tipo === 'venta') {
+        // La venta (de la tienda o del ERP) se gestiona aquí mismo: preparar,
+        // enviar, entregar, registrar pago o cancelar (regresa el stock).
+        return `<button class="btn btn-outline btn-sm" title="Gestionar la venta" onclick="GestionPedido.abrir(${p.id}, { onCambio: cargarPedidos })">${p.estado === 'surtido' || p.estado === 'cancelado' ? icon('search', 14) : 'Gestionar'}</button>`;
+    }
     const ver = `<button class="btn btn-ghost btn-sm" title="Ver detalle" onclick="verPedido(${idx})">${icon('search', 14)}</button>`;
     if (p.tipo !== 'reposicion' || !['pendiente', 'en_proceso'].includes(p.estado)) return ver;
     const avanzar = p.estado === 'pendiente'
@@ -224,118 +229,13 @@ function verPedido(idx) {
         ${fila(p.tipo === 'reposicion' ? 'Costo estimado' : 'Importe', formatoMoneda(p.total || 0))}
         ${p.tipo === 'reposicion' ? fila('Generado por', p.automatico ? `Sistema (reabasto ${p.restock === 'pull' ? 'pull' : 'push'})` : (p.usuario_nombre || '—')) : ''}
         ${p.notas ? `<p style="font-size:.84rem;color:var(--text-muted);margin:12px 0 0">${p.notas}</p>` : ''}
-        ${p.tipo === 'venta' ? `<p style="font-size:.8rem;color:var(--text-muted);margin:12px 0 0">Las ventas se capturan en la tienda o en Órdenes de clientes (ERP); aquí se ven porque descuentan inventario.</p>` : ''}
     `;
     document.getElementById('modal-pedido').classList.add('open');
 }
 
-// ---------- Formulario (nuevo / editar) ----------
-async function cargarCatalogos() {
-    if (!PRODUCTOS.length) [PRODUCTOS, PROVEEDORES] = await Promise.all([api('/admin/productos'), api('/proveedores')]);
-}
-
-function sugerirCantidad(p) {
-    if (!p) return 1;
-    return Math.max((p.stock_minimo * 2) - p.stock, p.stock_minimo, 1);
-}
-
-function formularioPedido({ productoId = null, pedido = null } = {}) {
-    const p = PRODUCTOS.find((x) => x.id === productoId);
-    const provSel = pedido ? pedido.proveedor_id : (p && p.proveedor_id);
-    const prov = PROVEEDORES.find((x) => x.id === provSel);
-    const opcionesProducto = `<option value="">Selecciona un producto</option>` + PRODUCTOS.filter((x) => x.activo).map((x) =>
-        `<option value="${x.id}" ${productoId === x.id ? 'selected' : ''}>${x.nombre} (stock ${x.stock}/${x.stock_minimo})</option>`).join('');
-    const opcionesProveedor = `<option value="">Selecciona un proveedor</option>` + PROVEEDORES.map((pv) =>
-        `<option value="${pv.id}" ${provSel === pv.id ? 'selected' : ''}>${pv.nombre} · ${pv.tiempo_entrega_dias} días</option>`).join('');
-    const fecha = pedido ? String(pedido.fecha_estimada || '').slice(0, 10) : masDias(prov ? prov.tiempo_entrega_dias : 7);
-    return `
-        <div class="field"><label>Producto</label><select id="pd-producto" onchange="alCambiarProducto()" ${pedido ? 'disabled' : ''}>${opcionesProducto}</select></div>
-        <div class="field-row">
-            <div class="field"><label>Cantidad</label><input type="number" min="1" id="pd-cantidad" value="${pedido ? pedido.cantidad : sugerirCantidad(p)}" oninput="pintarCosto()" /></div>
-            <div class="field"><label>Tipo</label>
-                <select id="pd-tipo" disabled>
-                    <option value="reposicion" selected>Reposición</option>
-                </select>
-            </div>
-        </div>
-        <div class="field"><label>Proveedor</label><select id="pd-proveedor" onchange="alCambiarProveedor()">${opcionesProveedor}</select></div>
-        <div class="field"><label>Fecha estimada de entrega</label><input type="date" id="pd-fecha" min="${hoyISO()}" value="${fecha}" /></div>
-        <div class="field"><label>Notas</label><textarea id="pd-notas" rows="2" placeholder="Notas…">${pedido && pedido.notas ? pedido.notas : ''}</textarea></div>
-        <p id="pd-costo" style="font-size:.84rem;color:var(--text-muted);margin:0 0 4px"></p>
-        <p style="font-size:.76rem;color:var(--text-muted);margin:0">Los pedidos de venta se capturan en la tienda o en Órdenes de clientes (ERP).</p>
-    `;
-}
-
-function productoForm() {
-    const id = Number(document.getElementById('pd-producto').value) || null;
-    return PRODUCTOS.find((x) => x.id === id);
-}
-function alCambiarProducto() {
-    const p = productoForm();
-    document.getElementById('pd-cantidad').value = sugerirCantidad(p);
-    if (p && p.proveedor_id) document.getElementById('pd-proveedor').value = p.proveedor_id;
-    alCambiarProveedor();
-}
-function alCambiarProveedor() {
-    const pv = PROVEEDORES.find((x) => x.id === Number(document.getElementById('pd-proveedor').value));
-    if (pv) document.getElementById('pd-fecha').value = masDias(pv.tiempo_entrega_dias);
-    pintarCosto();
-}
-function pintarCosto() {
-    const p = productoForm();
-    const cant = Number(document.getElementById('pd-cantidad').value) || 0;
-    document.getElementById('pd-costo').innerHTML = p && p.costo_unitario
-        ? `Costo estimado: <strong>${formatoMoneda(p.costo_unitario * cant)}</strong> (${formatoMoneda(p.costo_unitario)} c/u)`
-        : '';
-}
-
-async function abrirNuevoPedido(productoId) {
-    await cargarCatalogos();
-    document.getElementById('modal-pedido-body').innerHTML = `
-        <button class="modal-close" onclick="cerrarModal()">${icon('x', 18)}</button>
-        <h3>Nuevo pedido</h3>
-        ${formularioPedido({ productoId: productoId || null })}
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
-            <button class="btn btn-outline" onclick="cerrarModal()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarPedido()">Guardar</button>
-        </div>`;
-    document.getElementById('modal-pedido').classList.add('open');
-    pintarCosto();
-}
-
-async function editarPedido(idx) {
-    await cargarCatalogos();
-    const ped = PEDIDOS[idx];
-    document.getElementById('modal-pedido-body').innerHTML = `
-        <button class="modal-close" onclick="cerrarModal()">${icon('x', 18)}</button>
-        <h3>Editar pedido ${ped.folio}</h3>
-        ${formularioPedido({ productoId: ped.producto_id, pedido: ped })}
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
-            <button class="btn btn-outline" onclick="cerrarModal()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarPedido(${ped.id})">Guardar cambios</button>
-        </div>`;
-    document.getElementById('modal-pedido').classList.add('open');
-    pintarCosto();
-}
-
-async function guardarPedido(id) {
-    const body = {
-        producto_id: Number(document.getElementById('pd-producto').value) || null,
-        proveedor_id: Number(document.getElementById('pd-proveedor').value) || null,
-        cantidad: Number(document.getElementById('pd-cantidad').value),
-        fecha_estimada: document.getElementById('pd-fecha').value || null,
-        notas: document.getElementById('pd-notas').value,
-    };
-    if (!body.producto_id) { toast('Selecciona un producto', 'warn'); return; }
-    if (!body.cantidad || body.cantidad < 1) { toast('La cantidad debe ser mayor a 0', 'warn'); return; }
-    try {
-        if (id) await api(`/admin/ordenes-compra/${id}`, { method: 'PUT', body });
-        else await api('/admin/ordenes-compra', { method: 'POST', body });
-        cerrarModal();
-        toast(id ? 'Pedido actualizado' : 'Pedido de reposición generado', 'ok');
-        cargarPedidos();
-    } catch (e) { toast(e.message, 'error'); }
-}
+// ---------- Formulario (nuevo / editar): el mismo de Inventario y Dashboard SCM ----------
+function abrirNuevoPedido(productoId) { ScmAcciones.pedidoReposicion({ productoId: productoId || null, onListo: cargarPedidos }); }
+function editarPedido(idx) { ScmAcciones.pedidoReposicion({ pedido: PEDIDOS[idx], onListo: cargarPedidos }); }
 
 (async () => {
     try {

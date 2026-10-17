@@ -57,6 +57,7 @@
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('erp');
@@ -78,11 +79,12 @@ async function cargar() {
         <div class="stat-card"><span class="kpi-ico">${icon('alert', 18)}</span><div class="stat-label">Stock crítico</div><div class="stat-value" style="color:var(--danger)">${k.stock_critico}</div><div class="stat-sub">${k.ordenes_compra_abiertas} pedidos de reposición abiertos</div></div>
     `;
 
-    graficaVentasMes(document.getElementById('chart-ventas'), r.ventas_por_mes);
+    if (window._chVentas) window._chVentas.destroy();
+    window._chVentas = graficaVentasMes(document.getElementById('chart-ventas'), r.ventas_por_mes);
     renderBarrasH(document.getElementById('mas-vendidos'), r.mas_vendidos);
 
     document.getElementById('tabla-ultimas').innerHTML = r.ultimas_ordenes.map((o) => `
-        <tr onclick="location.href='/admin/ordenes-erp.html?open=${o.id}'" style="cursor:pointer">
+        <tr onclick="GestionPedido.abrir(${o.id}, { onCambio: cargar })" style="cursor:pointer">
             <td class="mono">${o.numero_orden}</td>
             <td>${o.cliente_nombre}</td>
             <td>${formatoFecha(o.fecha_pedido)}</td>

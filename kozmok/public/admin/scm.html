@@ -46,8 +46,8 @@
             </div>
             <div class="table-wrap" style="margin-top:10px">
                 <table>
-                    <thead><tr><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Proveedor</th><th>Pedido en curso</th></tr></thead>
-                    <tbody id="tabla-critico"><tr><td colspan="5">Cargando…</td></tr></tbody>
+                    <thead><tr><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Proveedor</th><th>Pedido en curso</th><th></th></tr></thead>
+                    <tbody id="tabla-critico"><tr><td colspan="6">Cargando…</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -60,11 +60,15 @@
 <script src="/js/toast.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
+<script src="/admin/js/scm-acciones.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('scm');
+const ROL = (Sesion.usuario() || {}).rol;
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Dashboard SCM', 'Cadena de suministro: productos, inventario, proveedores y logística.'
+    'Dashboard SCM', 'Cadena de suministro: productos, inventario, proveedores y logística.',
+    '<button class="btn btn-outline" onclick="ScmAcciones.nuevoMovimiento({ onListo: cargar })">Registrar movimiento</button>' +
+    (puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra') ? ' <button class="btn btn-primary" onclick="ScmAcciones.pedidoReposicion({ onListo: cargar })">Generar pedido</button>' : '')
 );
 renderModuloTiles('modulo-tiles', 'SCM', 'scm');
 
@@ -101,7 +105,7 @@ async function cargar() {
             <div style="width:${Math.round(pp.push / tot * 100)}%;background:var(--info)"></div>
             <div style="width:${Math.round(pp.pull / tot * 100)}%;background:var(--warning)"></div>
         </div>
-        <p style="font-size:.8rem;color:var(--text-muted);margin:8px 0 0">Push: se repone por calendario. Pull: se repone bajo demanda. <a href="/admin/logistica.html">Configurar en Logística</a></p>`;
+        <p style="font-size:.8rem;color:var(--text-muted);margin:8px 0 0">Push: se pide en cuanto el stock toca el mínimo. Pull: solo cuando una venta o salida lo deja en el mínimo.</p>`;
 
     document.getElementById('tabla-critico').innerHTML = mp.inventario_critico.length ? mp.inventario_critico.map((p) => `
         <tr>
@@ -110,7 +114,11 @@ async function cargar() {
             <td class="mono">${p.stock_minimo}</td>
             <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
             <td>${p.orden_abierta_folio ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio}</span>` : '—'}</td>
-        </tr>`).join('') : `<tr><td colspan="5" style="color:var(--text-muted)">Ningún producto está en su stock mínimo.</td></tr>`;
+            <td style="white-space:nowrap;text-align:right">
+                ${!p.orden_abierta_folio && puedeVer(ROL, 'ordenes-compra') ? `<button class="btn btn-outline btn-sm" onclick="ScmAcciones.pedidoReposicion({ productoId: ${p.id}, onListo: cargar })">Generar pedido</button>` : ''}
+                <button class="btn btn-ghost btn-sm" onclick="ScmAcciones.nuevoMovimiento({ productoId: ${p.id}, onListo: cargar })">Movimiento</button>
+            </td>
+        </tr>`).join('') : `<tr><td colspan="6" style="color:var(--text-muted)">Ningún producto está en su stock mínimo.</td></tr>`;
 }
 
 cargar().catch((e) => toast(e.message, 'error'));

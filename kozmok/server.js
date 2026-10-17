@@ -599,6 +599,77 @@ async function aplicarCobroPedido(client, pedido, opciones = {}) {
     return puntos_ganados;
 }
 
+// Estados en los que el pedido ya contó como compra en metricas_clientes
+// (ver trigger trg_pedido_metricas y aplicarCobroPedido).
+const ESTADOS_COBRADOS = ['confirmado', 'procesando', 'enviado', 'entregado'];
+
+// Cancela un pedido (de la tienda o del ERP) y deshace todo lo que
+// generó, en la transacción de `client`:
+//   - regresa el stock y registra un movimiento de entrada por producto,
+//   - cancela sus garantías,
+//   - devuelve los puntos que el cliente canjeó en él,
+//   - quita los puntos que ganó con él y lo resta de sus métricas CRM.
+// Así el inventario del SCM y los reportes del ERP no se desajustan.
+async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
+    if (pedido.estado === 'cancelado') throw new Error('El pedido ya está cancelado');
+    if (['enviado', 'entregado'].includes(pedido.estado)) {
+        throw new Error('El pedido ya salió del almacén; regístralo como devolución (movimiento de entrada) en lugar de cancelarlo');
+    }
+    const items = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [pedido.id]);
+    for (const it of items.rows) {
+        await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
+        await client.query(
+            `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'entrada',$2,$3,$4)`,
+            [it.producto_id, it.cantidad, `Cancelación de pedido ${pedido.numero_orden}`, usuarioId]
+        );
+    }
+    await client.query(`UPDATE garantias SET estado = 'cancelada' WHERE pedido_id = $1 AND estado = 'activa'`, [pedido.id]);
+
+    // Puntos canjeados (el descuento se retuvo al crear el pedido): se devuelven.
+    const canjeados = Math.round(Number(pedido.descuento || 0) / VALOR_PUNTO);
+    if (canjeados > 0) {
+        await client.query('UPDATE clientes SET puntos = puntos + $1 WHERE id = $2', [canjeados, pedido.cliente_id]);
+        await client.query(
+            `INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
+            [pedido.cliente_id, canjeados, `Devolución por cancelar ${pedido.numero_orden}`, pedido.id]
+        );
+    }
+    // Puntos ganados con este pedido: se retiran (sin dejar el saldo en negativo).
+    const g = await client.query(
+        `SELECT COALESCE(SUM(puntos),0)::int AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`,
+        [pedido.id]
+    );
+    const ganados = g.rows[0].n;
+    if (ganados > 0) {
+        await client.query('UPDATE clientes SET puntos = GREATEST(puntos - $1, 0) WHERE id = $2', [ganados, pedido.cliente_id]);
+        await client.query(
+            `INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
+            [pedido.cliente_id, -ganados, `Puntos retirados por cancelar ${pedido.numero_orden}`, pedido.id]
+        );
+    }
+    // Si ya contaba como compra, se resta de las métricas del cliente.
+    if (ESTADOS_COBRADOS.includes(pedido.estado)) {
+        await client.query(
+            `UPDATE metricas_clientes SET
+                 total_compras       = GREATEST(total_compras - 1, 0),
+                 valor_total_compras = GREATEST(valor_total_compras - $2, 0),
+                 ticket_promedio     = CASE WHEN total_compras - 1 > 0
+                                            THEN GREATEST(valor_total_compras - $2, 0) / (total_compras - 1) ELSE 0 END
+             WHERE cliente_id = $1`,
+            [pedido.cliente_id, Number(pedido.total)]
+        );
+        // Si era su única compra, vuelve a Prospecto (pasó a Activo por ella).
+        await client.query(
+            `UPDATE clientes SET etapa_crm = 'Prospecto'
+             WHERE id = $1 AND etapa_crm = 'Activo'
+               AND COALESCE((SELECT total_compras FROM metricas_clientes WHERE cliente_id = $1), 0) = 0`,
+            [pedido.cliente_id]
+        );
+    }
+    await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedido.id]);
+    return { canjeados, ganados, productos: items.rows.length };
+}
+
 function generarReferenciaPago(tipo) {
     const n = String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
     return (tipo === 'spei' ? 'SPEI-' : 'TIENDA-') + n;
@@ -646,6 +717,7 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
         let subtotal = 0;
         let garantiasTotal = 0;
         const detalles = [];
+        const numero_orden = 'ORD-' + Date.now();
 
         for (const item of items) {
             const prod = await client.query('SELECT precio, stock, nombre FROM productos WHERE id = $1 FOR UPDATE', [item.producto_id]);
@@ -667,8 +739,8 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
 
             await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [item.cantidad, item.producto_id]);
             await client.query(
-                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,'Venta en línea')`,
-                [item.producto_id, item.cantidad]
+                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,$3)`,
+                [item.producto_id, item.cantidad, `Venta en línea ${numero_orden}`]
             );
             await generarOrdenAutomaticaSiCritico(client, item.producto_id, 'demanda');
         }
@@ -689,7 +761,6 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
         }
 
         const total = Math.round((subtotal + impuestos + envio - descuento) * 100) / 100;
-        const numero_orden = 'ORD-' + Date.now();
 
         // Tarjeta = se paga al instante. SPEI / tienda = pago pendiente + código.
         const inmediato = metodo_tipo === 'tarjeta';
@@ -1318,27 +1389,7 @@ app.put('/api/pedidos/:id/cancelar', requireCliente, asyncRoute(async (req, res)
             throw new Error('Este pedido ya está en preparación y no se puede cancelar en línea');
         }
 
-        const items = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [req.params.id]);
-        for (const it of items.rows) {
-            await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
-            await client.query(
-                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'entrada',$2,'Cancelación de pedido')`,
-                [it.producto_id, it.cantidad]
-            );
-        }
-        // Cancelar las garantías de este pedido
-        await client.query(`UPDATE garantias SET estado = 'cancelada' WHERE pedido_id = $1 AND estado = 'activa'`, [req.params.id]);
-
-        // Devolver los puntos canjeados (el descuento se retuvo al crear el pedido)
-        const canjeados = Math.round(Number(pedido.descuento || 0) / VALOR_PUNTO);
-        if (canjeados > 0) {
-            await client.query('UPDATE clientes SET puntos = puntos + $1 WHERE id = $2', [canjeados, cliente_id]);
-            await client.query(
-                `INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
-                [cliente_id, canjeados, `Devolución por cancelar ${pedido.numero_orden}`, pedido.id]
-            );
-        }
-        await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [req.params.id]);
+        const { canjeados } = await cancelarPedido(client, pedido);
         await client.query('COMMIT');
         res.json({ message: canjeados > 0 ? `Pedido cancelado. Se devolvieron ${canjeados} puntos y el stock.` : 'Pedido cancelado y stock restaurado' });
     } catch (error) {
@@ -2501,21 +2552,86 @@ app.get('/api/admin/pedidos', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
+// Detalle completo de un pedido para gestionarlo desde cualquier panel
+// (CRM, ERP o SCM): partidas, garantías, datos del cliente (CRM) y los
+// movimientos de inventario que generó (SCM).
+app.get('/api/admin/pedidos/:id', asyncRoute(async (req, res) => {
+    const p = await pool.query(`
+        SELECT p.*, u.nombre AS registrado_por,
+               c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
+               c.empresa AS cliente_empresa, c.ciudad AS cliente_ciudad, c.etapa_crm AS cliente_etapa, c.puntos AS cliente_puntos,
+               COALESCE(m.total_compras, 0)::int AS cliente_compras, COALESCE(m.valor_total_compras, 0) AS cliente_valor
+        FROM pedidos p
+        JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN metricas_clientes m ON m.cliente_id = c.id
+        LEFT JOIN usuarios u ON p.vendedor_id = u.id
+        WHERE p.id = $1`, [req.params.id]);
+    if (p.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
+    const pedido = p.rows[0];
+    const items = await pool.query(
+        `SELECT pi.*, pr.nombre, pr.stock, pr.stock_minimo FROM pedido_items pi JOIN productos pr ON pi.producto_id = pr.id WHERE pi.pedido_id = $1`,
+        [pedido.id]
+    );
+    const garantias = await pool.query(
+        `SELECT g.folio, g.plan, g.meses, g.estado, pr.nombre AS producto FROM garantias g
+         LEFT JOIN productos pr ON pr.id = g.producto_id WHERE g.pedido_id = $1 ORDER BY g.id`, [pedido.id]
+    );
+    // Movimientos que este pedido generó (la venta lleva el folio en el
+    // motivo; las de la tienda antiguas dicen solo "Venta en línea").
+    const movimientos = await pool.query(`
+        SELECT m.fecha, m.tipo, m.cantidad, m.motivo, pr.nombre AS producto_nombre, us.nombre AS usuario_nombre
+        FROM movimientos_inventario m
+        JOIN productos pr ON pr.id = m.producto_id
+        LEFT JOIN usuarios us ON us.id = m.usuario_id
+        WHERE m.motivo LIKE '%' || $1 || '%'
+        ORDER BY m.fecha, m.id`, [pedido.numero_orden]);
+    res.json({ ...pedido, items: items.rows, garantias: garantias.rows, movimientos: movimientos.rows });
+}));
+
 app.put('/api/admin/pedidos/:id/estado', asyncRoute(async (req, res) => {
     const { estado } = req.body;
     const validos = ['pendiente', 'confirmado', 'procesando', 'enviado', 'entregado', 'cancelado'];
     if (!validos.includes(estado)) return res.status(400).json({ message: 'Estado no válido' });
 
-    const campoFecha = estado === 'enviado' ? ', fecha_envio = CURRENT_TIMESTAMP'
-        : estado === 'entregado' ? ', fecha_entrega = CURRENT_TIMESTAMP'
-        : estado === 'confirmado' ? ', fecha_confirmacion = CURRENT_TIMESTAMP' : '';
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const pr = await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (pr.rows.length === 0) throw Object.assign(new Error('Pedido no encontrado'), { status: 404 });
+        const pedido = pr.rows[0];
+        if (pedido.estado === estado) throw new Error(`El pedido ya está en "${estado}"`);
+        if (pedido.estado === 'cancelado') throw new Error('El pedido está cancelado; la cancelación es definitiva');
 
-    const result = await pool.query(
-        `UPDATE pedidos SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
-        [estado, req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
-    res.json({ message: 'Estado actualizado', pedido: result.rows[0] });
+        // Cancelar desde el panel deshace stock, garantías, puntos y métricas
+        // (igual que cuando cancela el cliente).
+        if (estado === 'cancelado') {
+            const r = await cancelarPedido(client, pedido, { usuarioId: req.usuario.id });
+            await client.query('COMMIT');
+            return res.json({
+                message: `Pedido cancelado: stock regresado (${r.productos} producto${r.productos === 1 ? '' : 's'})` +
+                    (r.canjeados ? `, ${r.canjeados} puntos devueltos` : '') + (r.ganados ? `, ${r.ganados} puntos retirados` : ''),
+            });
+        }
+        // "Pendiente" significa esperando pago: no se regresa ahí, y no se
+        // avanza sin cobrar (para eso está "Marcar pago recibido").
+        if (estado === 'pendiente') throw new Error('Un pedido no puede regresar a "pendiente" una vez confirmado');
+        if (pedido.pago_estado !== 'pagado') throw new Error('Primero registra el pago del pedido ("Marcar pago recibido")');
+
+        const campoFecha = estado === 'enviado' ? ', fecha_envio = COALESCE(fecha_envio, CURRENT_TIMESTAMP)'
+            : estado === 'entregado' ? ', fecha_entrega = CURRENT_TIMESTAMP'
+            : estado === 'confirmado' ? ', fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP)' : '';
+        const result = await client.query(
+            `UPDATE pedidos SET estado = $1 ${campoFecha} WHERE id = $2 RETURNING *`,
+            [estado, req.params.id]
+        );
+        await client.query('COMMIT');
+        res.json({ message: 'Estado actualizado', pedido: result.rows[0] });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        res.status(e.status || 400).json({ message: e.message });
+    } finally {
+        client.release();
+    }
 }));
 
 // Registrar el pago de un pedido SPEI / en tienda: lo marca como pagado,
@@ -2711,7 +2827,9 @@ app.post('/api/admin/erp/clientes', requireRol(ROLES_ORDEN_ERP), asyncRoute(asyn
 app.get('/api/admin/erp/productos', asyncRoute(async (req, res) => {
     const q = (req.query.busqueda || '').trim();
     const r = await pool.query(`
-        SELECT p.id, p.nombre, p.marca, p.precio, p.stock, p.stock_minimo, p.imagen_url, c.nombre AS categoria
+        SELECT p.id, p.nombre, p.marca, p.precio, p.stock, p.stock_minimo, p.imagen_url, p.proveedor_id, c.nombre AS categoria,
+               (SELECT oc.folio || '|' || oc.fecha_estimada FROM ordenes_compra oc
+                 WHERE oc.producto_id = p.id AND oc.estado IN ('pendiente','en_proceso') ORDER BY oc.id DESC LIMIT 1) AS reposicion_en_curso
         FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id
         WHERE p.activo = true
           AND ($1 = '' OR p.nombre ILIKE '%' || $1 || '%' OR p.marca ILIKE '%' || $1 || '%' OR c.nombre ILIKE '%' || $1 || '%')
