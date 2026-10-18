@@ -45,7 +45,6 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 - **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera el pedido de reposición automático si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
 - **Procesos internos**: cada orden guarda su bitácora (orden creada, stock validado, inventario actualizado, reabasto, historial, pago, cambios de estado, cancelación), marcando qué fue automático y qué hizo alguien del equipo. Se ve en el detalle de la orden.
 - **Nivel de implementación ERP**: Básico → Integrado → Automatizado → Optimizado, calculado con datos reales a partir de un checklist de 6 puntos, con barra de progreso empresarial. El último punto (reabasto automático en uso y órdenes ERP entregadas) se resuelve en la misma pantalla, sin ir al SCM. El administrador puede fijarlo a mano (con motivo) y regresarlo al cálculo automático (`GET/PUT /api/admin/erp/estado`).
-- **Recursos** (solo admin): recursos humanos (equipo por rol), materiales (inventario) y financieros (ingresos, por cobrar, reposición comprometida) leídos de sus tablas sin duplicarlos, más el registro de equipo, vehículos, instalaciones y presupuestos con área, responsable y estado.
 - **Reportes ERP**: KPIs por rango de fechas (ventas, órdenes, productos vendidos, clientes activos, inventario disponible, por cobrar), ventas por mes, más vendidos, inventario por rotación, órdenes por estado y exportación a CSV. Los reportes se pueden **guardar** como foto del periodo y consultarse después. `GET /api/admin/erp/metricas` devuelve los indicadores globales.
 - **Panel por rol** (solo admin): columnas por rol y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
 
@@ -59,7 +58,7 @@ Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**
 
 | Rol | Entra a | Acceso |
 |---|---|---|
-| **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP, Recursos y Panel por rol |
+| **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP y Panel por rol |
 | **Ventas** | Dashboard CRM | Clientes e interacciones (CRM), consulta de productos, captura y seguimiento de órdenes de clientes (ERP), reportes y Mi actividad |
 | **Logística** | Dashboard SCM | Productos, inventario, proveedores, movimientos y reposición (SCM); surte y envía las órdenes de clientes (ERP, sin capturarlas) y reportes |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
@@ -124,11 +123,11 @@ KOZMOK/
         ├── js/               # api, layout, chatbot, tema, toasts, etc.
         └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)
                               #   y ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
-                              #   recursos, reportes-erp, panel-roles)
+                              #   reportes-erp, panel-roles)
                               # admin/js/permisos.js: permisos por rol (menú + API)
 ```
 
-**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`.
+**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`.
 
 ---
 

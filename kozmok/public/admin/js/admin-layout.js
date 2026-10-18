@@ -37,7 +37,6 @@ const ADMIN_SECCIONES = [
         { href: '/admin/erp.html',          key: 'erp',          ic: 'home',    label: 'Dashboard',           desc: 'Vista integrada del negocio' },
         { href: '/admin/ordenes-erp.html',  key: 'ordenes-erp',  ic: 'cart',    label: 'Órdenes de clientes', desc: 'Captura y consulta de órdenes' },
         { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
-        { href: '/admin/recursos.html',     key: 'recursos',     ic: 'layers',  label: 'Recursos',            desc: 'Humanos, materiales y financieros' },
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
         { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'id',      label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },

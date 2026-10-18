@@ -399,26 +399,6 @@ CREATE TABLE reportes_erp (
     fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Recursos de la empresa que NO viven en otra tabla: equipo, vehículos,
--- instalaciones y presupuestos. Los recursos humanos (usuarios), los
--- materiales (inventario) y los financieros (ventas y compras) se leen
--- de sus propias tablas en GET /erp/recursos: el ERP integra, no duplica.
-CREATE TABLE recursos_erp (
-    id              SERIAL PRIMARY KEY,
-    nombre          VARCHAR(120) NOT NULL,
-    tipo            VARCHAR(15) NOT NULL
-                     CHECK (tipo IN ('equipo','vehiculo','instalacion','presupuesto')),
-    area            VARCHAR(15) NOT NULL DEFAULT 'administracion'
-                     CHECK (area IN ('administracion','ventas','logistica')),
-    descripcion     VARCHAR(300),
-    cantidad        INTEGER NOT NULL DEFAULT 1 CHECK (cantidad >= 0),
-    valor           DECIMAL(12,2) NOT NULL DEFAULT 0 CHECK (valor >= 0),  -- costo / monto asignado
-    estado          VARCHAR(15) NOT NULL DEFAULT 'disponible'
-                     CHECK (estado IN ('disponible','en_uso','mantenimiento','baja')),
-    responsable_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-    fecha_registro  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- ---------------------------------------------------------
 -- CHATBOT: historial de consultas de recomendación
 -- (permite ver en el admin qué está buscando la gente:
@@ -648,16 +628,6 @@ INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUE
   crypt('Logistica#KZ2026', gen_salt('bf', 10)), '555-000-0003', 'logistica', true);
 
 INSERT INTO estado_erp (id, modo, nivel) VALUES (1, 'auto', 'basico');
-
-INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id) VALUES
- ('Camioneta de reparto Nissan NV200', 'vehiculo',    'logistica',      'Entregas locales en CDMX y área metropolitana', 1, 385000.00, 'en_uso',       3),
- ('Almacén principal Iztapalapa',      'instalacion', 'logistica',      'Bodega de 220 m² con racks y zona de recepción', 1, 28000.00, 'en_uso',        3),
- ('Terminal punto de venta',           'equipo',      'ventas',         'Terminal bancaria para cobro con tarjeta en mostrador', 2, 4200.00, 'disponible', 2),
- ('Laptops del equipo de ventas',      'equipo',      'ventas',         'Equipos para captura de órdenes y seguimiento CRM', 3, 54000.00, 'en_uso',     2),
- ('Lector de código de barras',        'equipo',      'logistica',      'Escaneo de entradas y salidas de inventario', 2, 1800.00, 'mantenimiento',     3),
- ('Presupuesto de reabasto trimestral','presupuesto', 'logistica',      'Monto asignado para pedidos de reposición a proveedores', 1, 250000.00, 'disponible', 1),
- ('Presupuesto de marketing',          'presupuesto', 'ventas',         'Campañas y promociones del trimestre', 1, 60000.00, 'disponible',          1),
- ('Servidor y hosting de la tienda',   'equipo',      'administracion', 'Infraestructura del sistema (CRM, SCM y ERP)', 1, 3500.00, 'en_uso',         1);
 
 INSERT INTO proveedores (nombre, contacto, email, telefono, direccion, tiempo_entrega_dias) VALUES
  ('DistriTech MX', 'Marco Aurelio', 'ventas@distritech.mx', '555-100-2000', 'Av. Insurgentes Sur 1500, CDMX', 5),

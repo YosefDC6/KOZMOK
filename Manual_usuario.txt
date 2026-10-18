@@ -67,7 +67,7 @@ CLIENTE
 ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
    Solo hay tres, como en un ERP comercial (SAP, Odoo, Dynamics):
    - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
-                     Nivel ERP, Recursos y Panel por rol. Entra al
+                     Nivel ERP y Panel por rol. Entra al
                      Dashboard CRM.
    - VENTAS        : Clientes, Interacciones, Evaluaciones, Soporte,
                      Garantias, Pedidos y Reportes (CRM); consulta de
@@ -693,7 +693,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Etapas del CRM: recordatorio del embudo Prospecto/Activo/Frecuente/
      Inactivo.
    - Club de puntos: recordatorio de las reglas.
-   - Acceso al Panel por rol (solo admin, ver 4.14g).
+   - Acceso al Panel por rol (solo admin, ver 4.14f).
    - Acerca de: version y stack.
 
 4.14 MODULO ERP  (Etapa 3)  [ERP]
@@ -827,19 +827,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Con los datos de ejemplo arranca en "Integrado"; al capturar la
         primera orden en el ERP sube solo.
 
-   4.14e RECURSOS  (admin/recursos.html)  -- solo ADMIN
-      - Recursos HUMANOS: personas activas por rol (de Cuentas y equipo).
-      - Recursos MATERIALES: productos, unidades en stock, valor a costo y a
-        precio de venta y productos en stock critico (del SCM).
-      - Recursos FINANCIEROS: ingresos cobrados, por cobrar, reposicion
-        comprometida con proveedores y presupuestos asignados.
-        Estos tres bloques se leen de sus propias tablas: el ERP no duplica.
-      - Tabla de equipo, vehiculos, instalaciones y presupuestos (lo que no
-        vive en otro modulo): area, cantidad, valor, responsable y estado
-        (Disponible / En uso / Mantenimiento / Baja). Filtros por tipo y
-        area; "Nuevo recurso", Editar y Eliminar.
-
-   4.14f REPORTES ERP  (admin/reportes-erp.html)
+   4.14e REPORTES ERP  (admin/reportes-erp.html)
       - Rango de fechas ("Del ... al ...") o "Todo el historico".
       - KPIs: ventas totales y ticket promedio, ordenes de clientes (ERP /
         en linea), productos vendidos, clientes activos, inventario
@@ -854,7 +842,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         estaba (con un aviso y el enlace "Volver a los datos en vivo");
         "Eliminar" la borra.
 
-   4.14g PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
+   4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
       - Menu dinamico: una columna por rol (Administrador, Ventas,
         Logistica) con la pantalla a la que entra y las secciones que ve,
         agrupadas por modulo (CRM, SCM, ERP, Cuenta), incluido el permiso
@@ -876,7 +864,7 @@ VENTAS
    Pedidos, Analitica chatbot y Reportes (CRM); Productos (SCM, solo
    consulta); Dashboard, Ordenes de clientes y Reportes del ERP, y SI puede
    capturar ordenes nuevas; Mi actividad y Configuracion.
-   No ve Inventario, Proveedores ni el resto del SCM, Nivel ERP, Recursos,
+   No ve Inventario, Proveedores ni el resto del SCM, Nivel ERP,
    Panel por rol ni Cuentas.
    Flujo tipico:
    1. Dashboard: clientes en riesgo y tickets activos.
@@ -892,7 +880,7 @@ LOGISTICA
    Nivel de madurez, Reportes), Analitica chatbot, y en el ERP: Dashboard,
    Ordenes de clientes y Reportes (NO captura ordenes); Mi actividad y
    Configuracion. No ve Clientes, Interacciones, Soporte, Nivel ERP,
-   Recursos, Panel por rol ni Cuentas.
+   Panel por rol ni Cuentas.
    Flujo tipico: surtir ordenes de clientes (confirmado -> procesando ->
    enviado -> entregado), vigilar el stock critico, generar un pedido de
    reposicion al proveedor cuando haga falta, marcarlo "Surtir" cuando
@@ -900,7 +888,7 @@ LOGISTICA
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
-   "Nivel ERP" (y fijarlo a mano), "Recursos" y "Panel por rol".
+   "Nivel ERP" (y fijarlo a mano) y "Panel por rol".
 
 El permiso para capturar ordenes en el ERP se llama "orden-nueva" y el de
 editar el catalogo "productos-editar", ambos en PERMISOS
@@ -1117,7 +1105,7 @@ Estructura
                configuracion.html
                erp.html ordenes-erp.html orden-nueva.html nivel-erp.html
                inventario.html nivel-scm.html          (modulo SCM)
-               recursos.html reportes-erp.html panel-roles.html  (modulo ERP)
+               reportes-erp.html panel-roles.html  (modulo ERP)
                js/admin-layout.js  interaccion-sim.js  erp.js
                js/permisos.js       (permisos por rol: menu + servidor)
                js/gestion-pedido.js (gestor de pedidos compartido CRM/ERP/SCM)
@@ -1131,8 +1119,7 @@ Tablas principales
    metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
    ticket_mensajes, garantias
    ERP: estado_erp (nivel de implementacion, una fila), procesos_erp
-   (procesos internos de cada orden), recursos_erp (equipo, vehiculos,
-   instalaciones, presupuestos) y reportes_erp (reportes guardados).
+   (procesos internos de cada orden) y reportes_erp (reportes guardados).
 
 Autenticacion
    - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
@@ -1169,8 +1156,6 @@ Endpoints utiles
    PUT  /api/admin/erp/estado             fijar nivel {modo, nivel, nota} (admin)
    GET  /api/admin/erp/metricas           ventas, ordenes procesadas, productos
                                           vendidos, clientes activos, inventario
-   GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
-   POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
    GET  /api/admin/erp/reportes?desde=&hasta=  reportes empresariales
    GET/POST/DELETE /api/admin/erp/reportes/guardados[/:id]  reportes guardados
 

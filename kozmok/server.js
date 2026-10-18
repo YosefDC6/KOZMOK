@@ -1472,7 +1472,6 @@ const PERMISOS_API = [
     { ruta: /^\/erp\/ordenes\/\d+\/estado$/,            metodos: ['PUT'], permisos: ['ordenes-erp'] },
     { ruta: /^\/erp\/estado$/,                          metodos: ['PUT'], permisos: ['nivel-erp'] },
     { ruta: /^\/erp\/reportes\/guardados(\/|$)/,        metodos: TODO, permisos: ['reportes-erp'] },
-    { ruta: /^\/erp\/recursos(\/|$)/,                 metodos: TODO, permisos: ['recursos'] },
     { ruta: /^\/erp\//,                                metodos: LEER, permisos: ['erp', 'ordenes-erp', 'reportes-erp', 'nivel-erp'] },
     // Cuentas (solo admin; además cada ruta lleva requireAdmin)
     { ruta: /^\/usuarios(\/|$)/,                       metodos: TODO, permisos: ['usuarios'] },
@@ -3280,102 +3279,6 @@ app.delete('/api/admin/erp/reportes/guardados/:id', asyncRoute(async (req, res) 
     res.json({ message: 'Reporte eliminado' });
 }));
 
-// ---------------------------------------------------------
-// RECURSOS (ERP): una sola vista de los recursos de la empresa.
-//   - Humanos     -> usuarios internos por rol (tabla usuarios)
-//   - Materiales  -> inventario del SCM (tabla productos)
-//   - Financieros -> ventas cobradas, por cobrar y reposición comprometida
-//   - Registrados -> equipo, vehículos, instalaciones y presupuestos
-//                    (tabla recursos_erp, lo único que no existía)
-// ---------------------------------------------------------
-const TIPOS_RECURSO = ['equipo', 'vehiculo', 'instalacion', 'presupuesto'];
-const AREAS_RECURSO = ['administracion', 'ventas', 'logistica'];
-const ESTADOS_RECURSO = ['disponible', 'en_uso', 'mantenimiento', 'baja'];
-
-app.get('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
-    const [humanos, materiales, financieros, registrados] = await Promise.all([
-        pool.query(`
-            SELECT rol, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE activo)::int AS activos
-            FROM usuarios GROUP BY rol`),
-        pool.query(`
-            SELECT COUNT(*)::int AS productos,
-                   COALESCE(SUM(stock),0)::int AS unidades,
-                   COALESCE(SUM(stock * COALESCE(NULLIF(costo_unitario,0), precio)),0) AS valor_costo,
-                   COALESCE(SUM(stock * precio),0) AS valor_venta,
-                   COUNT(*) FILTER (WHERE stock <= stock_minimo)::int AS criticos
-            FROM productos WHERE activo = true`),
-        pool.query(`
-            SELECT
-              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado') AS ingresos,
-              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pendiente') AS por_cobrar,
-              (SELECT COALESCE(SUM(oc.cantidad * COALESCE(NULLIF(pr.costo_unitario,0), pr.precio)),0)
-                 FROM ordenes_compra oc JOIN productos pr ON pr.id = oc.producto_id
-                WHERE oc.estado IN ('pendiente','en_proceso')) AS reposicion_comprometida`),
-        pool.query(`
-            SELECT r.*, u.nombre AS responsable_nombre, u.rol AS responsable_rol
-            FROM recursos_erp r LEFT JOIN usuarios u ON u.id = r.responsable_id
-            ORDER BY r.tipo, r.nombre`),
-    ]);
-    const m = materiales.rows[0];
-    const f = financieros.rows[0];
-    const presupuestos = registrados.rows.filter((r) => r.tipo === 'presupuesto' && r.estado !== 'baja');
-    res.json({
-        humanos: Object.keys(ROLES_INTERNOS).map((rol) => {
-            const h = humanos.rows.find((x) => x.rol === rol) || { total: 0, activos: 0 };
-            return { rol, nombre: ROLES_INTERNOS[rol].nombre, total: h.total, activos: h.activos };
-        }),
-        materiales: {
-            productos: m.productos, unidades: m.unidades, criticos: m.criticos,
-            valor_costo: Number(m.valor_costo), valor_venta: Number(m.valor_venta),
-        },
-        financieros: {
-            ingresos: Number(f.ingresos), por_cobrar: Number(f.por_cobrar),
-            reposicion_comprometida: Number(f.reposicion_comprometida),
-            presupuesto_asignado: presupuestos.reduce((a, r) => a + Number(r.valor) * r.cantidad, 0),
-        },
-        registrados: registrados.rows.map((r) => ({ ...r, valor: Number(r.valor) })),
-    });
-}));
-
-function validarRecurso(b) {
-    const nombre = String(b.nombre || '').trim().slice(0, 120);
-    if (!nombre) return { error: 'El nombre es obligatorio' };
-    if (!TIPOS_RECURSO.includes(b.tipo)) return { error: 'Tipo no válido (equipo, vehiculo, instalacion o presupuesto)' };
-    const area = AREAS_RECURSO.includes(b.area) ? b.area : 'administracion';
-    const estado = ESTADOS_RECURSO.includes(b.estado) ? b.estado : 'disponible';
-    const cantidad = b.cantidad === undefined || b.cantidad === '' ? 1 : Number(b.cantidad);
-    const valor = b.valor === undefined || b.valor === '' ? 0 : Number(b.valor);
-    if (!Number.isInteger(cantidad) || cantidad < 0) return { error: 'La cantidad debe ser un entero de 0 o más' };
-    if (!Number.isFinite(valor) || valor < 0) return { error: 'El valor debe ser 0 o más' };
-    const responsable_id = b.responsable_id ? Number(b.responsable_id) : null;
-    return { datos: [nombre, b.tipo, area, String(b.descripcion || '').trim().slice(0, 300) || null, cantidad, valor, estado, responsable_id] };
-}
-
-app.post('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
-    const v = validarRecurso(req.body);
-    if (v.error) return res.status(400).json({ message: v.error });
-    const r = await pool.query(`
-        INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, v.datos);
-    res.status(201).json({ message: 'Recurso registrado', recurso: r.rows[0] });
-}));
-
-app.put('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
-    const v = validarRecurso(req.body);
-    if (v.error) return res.status(400).json({ message: v.error });
-    const r = await pool.query(`
-        UPDATE recursos_erp SET nombre=$1, tipo=$2, area=$3, descripcion=$4, cantidad=$5, valor=$6, estado=$7, responsable_id=$8
-        WHERE id = $9 RETURNING *`, [...v.datos, req.params.id]);
-    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
-    res.json({ message: 'Recurso actualizado', recurso: r.rows[0] });
-}));
-
-app.delete('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
-    const r = await pool.query('DELETE FROM recursos_erp WHERE id = $1 RETURNING id', [req.params.id]);
-    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
-    res.json({ message: 'Recurso eliminado' });
-}));
-
 // =========================================================
 // ADMIN: GARANTÍAS EXTENDIDAS
 // =========================================================
@@ -3570,14 +3473,7 @@ async function migrarEsquema() {
         paso VARCHAR(30) NOT NULL, descripcion VARCHAR(300) NOT NULL, automatico BOOLEAN NOT NULL DEFAULT TRUE,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_procesos_erp_pedido ON procesos_erp(pedido_id)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS recursos_erp (
-        id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL,
-        tipo VARCHAR(15) NOT NULL CHECK (tipo IN ('equipo','vehiculo','instalacion','presupuesto')),
-        area VARCHAR(15) NOT NULL DEFAULT 'administracion' CHECK (area IN ('administracion','ventas','logistica')),
-        descripcion VARCHAR(300), cantidad INTEGER NOT NULL DEFAULT 1 CHECK (cantidad >= 0),
-        valor DECIMAL(12,2) NOT NULL DEFAULT 0 CHECK (valor >= 0),
-        estado VARCHAR(15) NOT NULL DEFAULT 'disponible' CHECK (estado IN ('disponible','en_uso','mantenimiento','baja')),
-        responsable_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('DROP TABLE IF EXISTS recursos_erp');
     await pool.query(`CREATE TABLE IF NOT EXISTS reportes_erp (
         id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL, desde DATE, hasta DATE, datos JSONB NOT NULL,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
