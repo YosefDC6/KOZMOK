@@ -95,7 +95,7 @@ async function guardarEstrategia() {
     const id = Number(document.getElementById('lg-producto').value);
     if (!id) { toast('Elige un producto', 'warn'); return; }
     try {
-        await api(`/admin/productos/${id}`, { method: 'PUT', body: { restock: ESTRATEGIA_ELEGIDA } });
+        await api(`/admin/productos/${id}/estrategia`, { method: 'PUT', body: { estrategia: ESTRATEGIA_ELEGIDA } });
         toast('Estrategia guardada', 'ok');
         await cargarProductos();
         document.getElementById('lg-producto').value = id;

@@ -18,6 +18,9 @@
                 <option>Todas</option>
                 <option>Prospecto</option><option>Activo</option><option>Frecuente</option><option>Inactivo</option>
             </select>
+            <select id="f-estado" aria-label="Filtrar por estado">
+                <option value="">Todos los estados</option><option value="activo">Activos</option><option value="inactivo">Inactivos</option>
+            </select>
         </div>
 
         <div class="toolbar"><span class="result-count" id="conteo">&nbsp;</span></div>
@@ -63,6 +66,8 @@ async function cargar() {
     const etapa = document.getElementById('f-etapa').value;
     if (busqueda) params.set('busqueda', busqueda);
     if (etapa) params.set('etapa', etapa);
+    const estado = document.getElementById('f-estado').value;
+    if (estado) params.set('estado', estado);
     ROWS = await api('/admin/clientes?' + params.toString());
     document.getElementById('conteo').textContent = `${ROWS.length} cliente(s)`;
     document.getElementById('tabla-clientes').innerHTML = ROWS.length === 0
@@ -72,8 +77,20 @@ async function cargar() {
                 <td class="mono">${c.id}</td><td>${c.nombre}</td><td>${c.correo}</td><td>${c.empresa || '—'}</td>
                 <td><span class="tag tag-etapa-${c.etapa_crm}">${c.etapa_crm}</span></td>
                 <td style="text-transform:capitalize">${c.estado_cliente}</td>
-                <td><a class="btn btn-outline btn-sm" href="/admin/cliente.html?id=${c.id}">Ver ficha</a></td>
+                <td style="white-space:nowrap"><a class="btn btn-outline btn-sm" href="/admin/cliente.html?id=${c.id}">Ver ficha</a>
+                    ${ES_ADMIN ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); eliminar(${c.id})">Eliminar</button>` : ''}</td>
             </tr>`).join('');
+}
+
+const ES_ADMIN = (Sesion.usuario() || {}).rol === 'admin';
+async function eliminar(id) {
+    const c = ROWS.find((x) => x.id === id);
+    if (!await confirmar(`¿Eliminar a ${c ? c.nombre : 'este cliente'}? Si ya tiene pedidos no se borra: se marca como inactivo para conservar su historial.`, { okText: 'Eliminar', peligro: true })) return;
+    try {
+        const r = await api('/admin/clientes/' + id, { method: 'DELETE' });
+        toast(r.message, 'ok');
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
 }
 
 function formNuevo() {
@@ -109,6 +126,7 @@ async function crearCliente() {
 const v = (id) => document.getElementById(id).value.trim();
 document.getElementById('f-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargar(); });
 document.getElementById('f-etapa').addEventListener('change', cargar);
+document.getElementById('f-estado').addEventListener('change', cargar);
 cargar();
 </script>
 </body>

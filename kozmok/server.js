@@ -1464,6 +1464,7 @@ const PERMISOS_API = [
     { ruta: /^\/proveedores(\/|$)/,                    metodos: TODO, permisos: ['proveedores'] },
     { ruta: /^\/movimientos-inventario$/,              metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
     { ruta: /^\/(ordenes-compra|pedidos-scm)(\/|$)/,   metodos: TODO, permisos: ['ordenes-compra', 'inventario', 'scm'] },
+    { ruta: /^\/scm\/nivel$/,                            metodos: ['PUT'], permisos: ['nivel-scm'] },
     { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
     { ruta: /^\/scm\//,                                metodos: LEER, permisos: ['scm', 'nivel-scm', 'reportes-scm', 'ordenes-compra'] },
     // ERP
@@ -1472,10 +1473,31 @@ const PERMISOS_API = [
     { ruta: /^\/erp\/ordenes\/\d+\/estado$/,            metodos: ['PUT'], permisos: ['ordenes-erp'] },
     { ruta: /^\/erp\/estado$/,                          metodos: ['PUT'], permisos: ['nivel-erp'] },
     { ruta: /^\/erp\/reportes\/guardados(\/|$)/,        metodos: TODO, permisos: ['reportes-erp'] },
+    { ruta: /^\/erp\/recursos(\/|$)/,                 metodos: TODO, permisos: ['recursos'] },
     { ruta: /^\/erp\//,                                metodos: LEER, permisos: ['erp', 'ordenes-erp', 'reportes-erp', 'nivel-erp'] },
     // Cuentas (solo admin; además cada ruta lleva requireAdmin)
     { ruta: /^\/usuarios(\/|$)/,                       metodos: TODO, permisos: ['usuarios'] },
 ];
+
+// Rutas con el nombre exacto que pide el documento de etapas. Apuntan al
+// mismo endpoint del panel (no se duplica la lógica) y se resuelven antes
+// del control de permisos, así heredan los mismos permisos.
+const ALIAS_API = [
+    { metodo: 'POST', ruta: /^\/inventario\/movimiento$/,        destino: () => '/movimientos-inventario' },
+    { metodo: 'GET',  ruta: /^\/productos\/(\d+)\/movimientos$/,  destino: (m, req) => { req.query.producto_id = m[1]; return '/movimientos-inventario'; } },
+];
+app.use('/api/admin', (req, res, next) => {
+    const ruta = req.path.replace(/\/+$/, '');
+    for (const a of ALIAS_API) {
+        const m = a.metodo === req.method && ruta.match(a.ruta);
+        if (m) {
+            const q = req.url.indexOf('?');
+            req.url = a.destino(m, req) + (q >= 0 ? req.url.slice(q) : '');
+            break;
+        }
+    }
+    next();
+});
 
 app.use('/api/admin', (req, res, next) => {
     const rol = req.usuario && req.usuario.rol;
@@ -1496,12 +1518,13 @@ app.get('/api/admin/whoami', (req, res) => res.json(req.usuario));
 // =========================================================
 
 app.get('/api/admin/clientes', asyncRoute(async (req, res) => {
-    const { busqueda, etapa } = req.query;
+    const { busqueda, etapa, estado } = req.query;
     const cond = [];
     const values = [];
     let i = 1;
     if (busqueda) { cond.push(`(nombre ILIKE $${i} OR correo ILIKE $${i} OR empresa ILIKE $${i})`); values.push(`%${busqueda}%`); i++; }
     if (etapa && etapa !== 'Todas') { cond.push(`etapa_crm = $${i++}`); values.push(etapa); }
+    if (estado === 'activo' || estado === 'inactivo') { cond.push(`estado_cliente = $${i++}`); values.push(estado); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
 
     const result = await pool.query(
@@ -1510,6 +1533,21 @@ app.get('/api/admin/clientes', asyncRoute(async (req, res) => {
         values
     );
     res.json(result.rows);
+}));
+
+// Baja de cliente. Si ya tiene pedidos no se borra (se perdería el
+// historial de ventas, inventario y reportes): se marca inactivo.
+app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) => {
+    const c = await pool.query('SELECT id FROM clientes WHERE id = $1', [req.params.id]);
+    if (c.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
+    const conPedidos = await pool.query('SELECT 1 FROM pedidos WHERE cliente_id = $1 LIMIT 1', [req.params.id]);
+    if (conPedidos.rows.length > 0) {
+        await pool.query(`UPDATE clientes SET estado_cliente = 'inactivo', etapa_crm = 'Inactivo' WHERE id = $1`, [req.params.id]);
+        return res.json({ message: 'El cliente tiene pedidos; se marcó como inactivo en lugar de eliminarlo', desactivado: true });
+    }
+    await pool.query('UPDATE chatbot_consultas SET cliente_id = NULL WHERE cliente_id = $1', [req.params.id]);
+    await pool.query('DELETE FROM clientes WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Cliente eliminado', desactivado: false });
 }));
 
 // Alta de cliente desde el panel (equivale al registro, pero lo hace un admin)
@@ -1993,13 +2031,18 @@ app.get('/api/admin/chatbot-consultas', asyncRoute(async (req, res) => {
 // =========================================================
 
 app.get('/api/admin/productos', asyncRoute(async (req, res) => {
+    // ?estrategia=PUSH | PULL  (estrategia logística del producto)
+    const estrategia = String(req.query.estrategia || '').toLowerCase();
+    const filtro = ['push', 'pull'].includes(estrategia) ? 'WHERE p.restock = $1' : '';
     const result = await pool.query(`
-        SELECT p.*, c.nombre AS categoria_nombre, pr.nombre AS proveedor_nombre
+        SELECT p.*, UPPER(p.restock) AS estrategia_logistica,
+               c.nombre AS categoria_nombre, pr.nombre AS proveedor_nombre
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.id
         LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+        ${filtro}
         ORDER BY p.id ASC
-    `);
+    `, filtro ? [estrategia] : []);
     res.json(result.rows);
 }));
 
@@ -2057,6 +2100,18 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.json({ message: 'Producto actualizado', producto: result.rows[0] });
+}));
+
+// Estrategia logística de un producto: PUSH (reposición automática al
+// llegar al mínimo) o PULL (reposición solo bajo pedido / demanda).
+app.put('/api/admin/productos/:id/estrategia', asyncRoute(async (req, res) => {
+    const estrategia = String(req.body.estrategia || req.body.restock || '').toLowerCase();
+    if (!['push', 'pull'].includes(estrategia)) return res.status(400).json({ message: 'Estrategia no válida (PUSH o PULL)' });
+    const r = await pool.query('UPDATE productos SET restock = $1 WHERE id = $2 RETURNING *', [estrategia, req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    // Si pasa a PUSH y ya está en su mínimo, se genera su pedido de reposición.
+    await generarOrdenAutomaticaSiCritico(pool, r.rows[0].id);
+    res.json({ message: `Estrategia actualizada a ${estrategia.toUpperCase()}`, producto: { ...r.rows[0], estrategia_logistica: estrategia.toUpperCase() } });
 }));
 
 app.delete('/api/admin/productos/:id', asyncRoute(async (req, res) => {
@@ -2497,15 +2552,71 @@ app.get('/api/admin/scm/resumen', asyncRoute(async (req, res) => {
         { clave: 'reportes', etiqueta: 'Reportes con datos reales de ventas', cumplido: vendidas > 0 },
     ];
     const cumplidos = checklist.filter((c) => c.cumplido).length;
-    const nivel = cumplidos <= 1 ? 'inicial' : cumplidos <= 3 ? 'en_desarrollo' : 'optimizado';
+    const est = await estadoNivelScm(cumplidos);
+    const nivel = est.nivel;
 
     res.json({
         stats: stats.rows[0],
         mas_vendidos: masVendidos.rows,
         rotacion_pct: rotacionPct,
         push_pull: { push, pull, valor_push: valorPush, valor_pull: valorPull },
-        madurez: { nivel, checklist, cumplidos, total: checklist.length },
+        madurez: { nivel, checklist, cumplidos, total: checklist.length, modo: est.modo, nivel_calculado: est.nivel_calculado, nota: est.nota },
     });
+}));
+
+// nivel_scm (campo global, en config_scm): en modo automático es el nivel
+// calculado del checklist; el administrador lo puede fijar a mano.
+const NIVELES_SCM = ['inicial', 'en_desarrollo', 'optimizado'];
+async function estadoNivelScm(cumplidos) {
+    const calculado = cumplidos <= 1 ? 'inicial' : cumplidos <= 3 ? 'en_desarrollo' : 'optimizado';
+    const cfg = await leerConfigScm(pool);
+    const modo = cfg.nivel_scm_modo === 'manual' && NIVELES_SCM.includes(cfg.nivel_scm) ? 'manual' : 'auto';
+    if (modo === 'auto' && cfg.nivel_scm !== calculado) {
+        await pool.query(`INSERT INTO config_scm (clave, valor) VALUES ('nivel_scm', $1)
+                          ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`, [calculado]);
+    }
+    return { modo, nivel: modo === 'manual' ? cfg.nivel_scm : calculado, nivel_calculado: calculado, nota: modo === 'manual' ? (cfg.nivel_scm_nota || null) : null };
+}
+
+// GET /scm/estado: nivel de madurez SCM con su checklist.
+app.get('/api/admin/scm/estado', asyncRoute(async (req, res) => {
+    const r = await pool.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM productos WHERE activo = true AND proveedor_id IS NOT NULL) AS con_proveedor,
+          (SELECT COUNT(*)::int FROM movimientos_inventario) AS movimientos,
+          (SELECT COUNT(*)::int FROM productos WHERE activo = true AND restock = 'push') AS push,
+          (SELECT COUNT(*)::int FROM productos WHERE activo = true AND restock = 'pull') AS pull,
+          (SELECT COUNT(*)::int FROM ordenes_compra) AS ordenes,
+          (SELECT COALESCE(SUM(pi.cantidad),0)::int FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+            WHERE pe.estado <> 'cancelado') AS vendidas`);
+    const d = r.rows[0];
+    const checklist = [
+        { clave: 'proveedores', etiqueta: 'Productos con proveedor asignado', cumplido: d.con_proveedor > 0 },
+        { clave: 'movimientos', etiqueta: 'Movimientos de inventario registrados', cumplido: d.movimientos > 0 },
+        { clave: 'estrategia', etiqueta: 'Estrategia push y pull en uso (no solo una)', cumplido: d.push > 0 && d.pull > 0 },
+        { clave: 'ordenes', etiqueta: 'Órdenes de compra generadas', cumplido: d.ordenes > 0 },
+        { clave: 'reportes', etiqueta: 'Reportes con datos reales de ventas', cumplido: d.vendidas > 0 },
+    ];
+    const cumplidos = checklist.filter((c) => c.cumplido).length;
+    res.json({ ...(await estadoNivelScm(cumplidos)), checklist, cumplidos, total: checklist.length });
+}));
+
+// PUT /scm/nivel: { modo: 'manual', nivel: 'inicial'|'en_desarrollo'|'optimizado', nota }
+// o { modo: 'auto' } para regresar al cálculo automático. Solo admin.
+app.put('/api/admin/scm/nivel', requireAdmin, asyncRoute(async (req, res) => {
+    const modo = req.body.modo === 'auto' ? 'auto' : 'manual';
+    const nivel = String(req.body.nivel || '').toLowerCase().replace(' ', '_');
+    if (modo === 'manual' && !NIVELES_SCM.includes(nivel)) {
+        return res.status(400).json({ message: 'Nivel no válido (inicial, en_desarrollo u optimizado)' });
+    }
+    const filas = modo === 'manual'
+        ? [['nivel_scm_modo', 'manual'], ['nivel_scm', nivel], ['nivel_scm_nota', String(req.body.nota || '').slice(0, 40)]]
+        : [['nivel_scm_modo', 'auto']];
+    for (const [clave, valor] of filas) {
+        await pool.query(`INSERT INTO config_scm (clave, valor) VALUES ($1, $2)
+                          ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`, [clave, valor]);
+    }
+    res.json({ message: modo === 'manual' ? `Nivel SCM fijado en "${nivel}"` : 'Nivel SCM en cálculo automático', modo, nivel: modo === 'manual' ? nivel : undefined });
 }));
 
 // Reportes SCM: rotación por producto (alta / media / baja) y la
@@ -3279,6 +3390,102 @@ app.delete('/api/admin/erp/reportes/guardados/:id', asyncRoute(async (req, res) 
     res.json({ message: 'Reporte eliminado' });
 }));
 
+// ---------------------------------------------------------
+// RECURSOS (ERP): una sola vista de los recursos de la empresa.
+//   - Humanos     -> usuarios internos por rol (tabla usuarios)
+//   - Materiales  -> inventario del SCM (tabla productos)
+//   - Financieros -> ventas cobradas, por cobrar y reposición comprometida
+//   - Registrados -> equipo, vehículos, instalaciones y presupuestos
+//                    (tabla recursos_erp, lo único que no existía)
+// ---------------------------------------------------------
+const TIPOS_RECURSO = ['equipo', 'vehiculo', 'instalacion', 'presupuesto'];
+const AREAS_RECURSO = ['administracion', 'ventas', 'logistica'];
+const ESTADOS_RECURSO = ['disponible', 'en_uso', 'mantenimiento', 'baja'];
+
+app.get('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
+    const [humanos, materiales, financieros, registrados] = await Promise.all([
+        pool.query(`
+            SELECT rol, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE activo)::int AS activos
+            FROM usuarios GROUP BY rol`),
+        pool.query(`
+            SELECT COUNT(*)::int AS productos,
+                   COALESCE(SUM(stock),0)::int AS unidades,
+                   COALESCE(SUM(stock * COALESCE(NULLIF(costo_unitario,0), precio)),0) AS valor_costo,
+                   COALESCE(SUM(stock * precio),0) AS valor_venta,
+                   COUNT(*) FILTER (WHERE stock <= stock_minimo)::int AS criticos
+            FROM productos WHERE activo = true`),
+        pool.query(`
+            SELECT
+              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pagado') AS ingresos,
+              (SELECT COALESCE(SUM(total),0) FROM pedidos WHERE estado <> 'cancelado' AND pago_estado = 'pendiente') AS por_cobrar,
+              (SELECT COALESCE(SUM(oc.cantidad * COALESCE(NULLIF(pr.costo_unitario,0), pr.precio)),0)
+                 FROM ordenes_compra oc JOIN productos pr ON pr.id = oc.producto_id
+                WHERE oc.estado IN ('pendiente','en_proceso')) AS reposicion_comprometida`),
+        pool.query(`
+            SELECT r.*, u.nombre AS responsable_nombre, u.rol AS responsable_rol
+            FROM recursos_erp r LEFT JOIN usuarios u ON u.id = r.responsable_id
+            ORDER BY r.tipo, r.nombre`),
+    ]);
+    const m = materiales.rows[0];
+    const f = financieros.rows[0];
+    const presupuestos = registrados.rows.filter((r) => r.tipo === 'presupuesto' && r.estado !== 'baja');
+    res.json({
+        humanos: Object.keys(ROLES_INTERNOS).map((rol) => {
+            const h = humanos.rows.find((x) => x.rol === rol) || { total: 0, activos: 0 };
+            return { rol, nombre: ROLES_INTERNOS[rol].nombre, total: h.total, activos: h.activos };
+        }),
+        materiales: {
+            productos: m.productos, unidades: m.unidades, criticos: m.criticos,
+            valor_costo: Number(m.valor_costo), valor_venta: Number(m.valor_venta),
+        },
+        financieros: {
+            ingresos: Number(f.ingresos), por_cobrar: Number(f.por_cobrar),
+            reposicion_comprometida: Number(f.reposicion_comprometida),
+            presupuesto_asignado: presupuestos.reduce((a, r) => a + Number(r.valor) * r.cantidad, 0),
+        },
+        registrados: registrados.rows.map((r) => ({ ...r, valor: Number(r.valor) })),
+    });
+}));
+
+function validarRecurso(b) {
+    const nombre = String(b.nombre || '').trim().slice(0, 120);
+    if (!nombre) return { error: 'El nombre es obligatorio' };
+    if (!TIPOS_RECURSO.includes(b.tipo)) return { error: 'Tipo no válido (equipo, vehiculo, instalacion o presupuesto)' };
+    const area = AREAS_RECURSO.includes(b.area) ? b.area : 'administracion';
+    const estado = ESTADOS_RECURSO.includes(b.estado) ? b.estado : 'disponible';
+    const cantidad = b.cantidad === undefined || b.cantidad === '' ? 1 : Number(b.cantidad);
+    const valor = b.valor === undefined || b.valor === '' ? 0 : Number(b.valor);
+    if (!Number.isInteger(cantidad) || cantidad < 0) return { error: 'La cantidad debe ser un entero de 0 o más' };
+    if (!Number.isFinite(valor) || valor < 0) return { error: 'El valor debe ser 0 o más' };
+    const responsable_id = b.responsable_id ? Number(b.responsable_id) : null;
+    return { datos: [nombre, b.tipo, area, String(b.descripcion || '').trim().slice(0, 300) || null, cantidad, valor, estado, responsable_id] };
+}
+
+app.post('/api/admin/erp/recursos', asyncRoute(async (req, res) => {
+    const v = validarRecurso(req.body);
+    if (v.error) return res.status(400).json({ message: v.error });
+    const r = await pool.query(`
+        INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, v.datos);
+    res.status(201).json({ message: 'Recurso registrado', recurso: r.rows[0] });
+}));
+
+app.put('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
+    const v = validarRecurso(req.body);
+    if (v.error) return res.status(400).json({ message: v.error });
+    const r = await pool.query(`
+        UPDATE recursos_erp SET nombre=$1, tipo=$2, area=$3, descripcion=$4, cantidad=$5, valor=$6, estado=$7, responsable_id=$8
+        WHERE id = $9 RETURNING *`, [...v.datos, req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
+    res.json({ message: 'Recurso actualizado', recurso: r.rows[0] });
+}));
+
+app.delete('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
+    const r = await pool.query('DELETE FROM recursos_erp WHERE id = $1 RETURNING id', [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Recurso no encontrado' });
+    res.json({ message: 'Recurso eliminado' });
+}));
+
 // =========================================================
 // ADMIN: GARANTÍAS EXTENDIDAS
 // =========================================================
@@ -3473,7 +3680,14 @@ async function migrarEsquema() {
         paso VARCHAR(30) NOT NULL, descripcion VARCHAR(300) NOT NULL, automatico BOOLEAN NOT NULL DEFAULT TRUE,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_procesos_erp_pedido ON procesos_erp(pedido_id)');
-    await pool.query('DROP TABLE IF EXISTS recursos_erp');
+    await pool.query(`CREATE TABLE IF NOT EXISTS recursos_erp (
+        id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL,
+        tipo VARCHAR(15) NOT NULL CHECK (tipo IN ('equipo','vehiculo','instalacion','presupuesto')),
+        area VARCHAR(15) NOT NULL DEFAULT 'administracion' CHECK (area IN ('administracion','ventas','logistica')),
+        descripcion VARCHAR(300), cantidad INTEGER NOT NULL DEFAULT 1 CHECK (cantidad >= 0),
+        valor DECIMAL(12,2) NOT NULL DEFAULT 0 CHECK (valor >= 0),
+        estado VARCHAR(15) NOT NULL DEFAULT 'disponible' CHECK (estado IN ('disponible','en_uso','mantenimiento','baja')),
+        responsable_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS reportes_erp (
         id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL, desde DATE, hasta DATE, datos JSONB NOT NULL,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);

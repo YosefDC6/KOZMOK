@@ -17,7 +17,7 @@
                 <h3 style="margin:0">Nivel actual</h3>
                 <span id="nivel-actual"></span>
             </div>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0">
+            <p style="color:var(--text-muted);font-size:.85rem;margin:6px 0 0" id="nivel-modo">
                 Calculado a partir de datos reales del sistema, no de una lista marcada a mano: conforme se usa cada parte del módulo, el nivel avanza solo.
             </p>
             <div class="nivel-steps" id="nivel-steps"></div>
@@ -25,6 +25,26 @@
 
             <h4 style="margin:0 0 6px">Checklist de avance</h4>
             <div id="checklist"></div>
+        </div>
+
+        <div class="card" id="card-control" hidden>
+            <h3 style="margin-top:0">Fijar el nivel (administrador)</h3>
+            <p style="font-size:.86rem">Por defecto el nivel se calcula solo con el checklist. Si la empresa evalúa su madurez de otra forma, aquí se puede fijar a mano y regresar al cálculo automático cuando se quiera.</p>
+            <div class="field-row">
+                <div class="field"><label>Modo</label>
+                    <select id="c-modo" onchange="pintarControl()">
+                        <option value="auto">Automático (según el checklist)</option>
+                        <option value="manual">Manual (lo fija el administrador)</option>
+                    </select>
+                </div>
+                <div class="field" id="c-nivel-wrap"><label>Nivel</label>
+                    <select id="c-nivel">
+                        <option value="inicial">Inicial</option><option value="en_desarrollo">En desarrollo</option><option value="optimizado">Optimizado</option>
+                    </select>
+                </div>
+            </div>
+            <div class="field" id="c-nota-wrap"><label>Motivo (opcional)</label><input id="c-nota" maxlength="40" placeholder="Ej. Auditoría de octubre" /></div>
+            <button class="btn btn-primary" onclick="guardarNivel()">Guardar</button>
         </div>
 
         <div class="card">
@@ -70,8 +90,19 @@ const DESTINO = {
 };
 
 async function cargar() {
-    const { madurez: m } = await api('/admin/scm/resumen');
+    const m = await api('/admin/scm/estado');
     const rol = (Sesion.usuario() || {}).rol;
+    const labelDe = (c) => (NIVELES.find((n) => n.clave === c) || {}).label || c;
+    document.getElementById('nivel-modo').innerHTML = m.modo === 'manual'
+        ? `${icon('lock', 13)} Nivel fijado a mano por el administrador${m.nota ? ` · “${m.nota.replace(/</g, '&lt;')}”` : ''}. Según el checklist sería <strong>${labelDe(m.nivel_calculado)}</strong>.`
+        : 'Calculado a partir de datos reales del sistema, no de una lista marcada a mano: conforme se usa cada parte del módulo, el nivel avanza solo.';
+    if (rol === 'admin') {
+        document.getElementById('card-control').hidden = false;
+        document.getElementById('c-modo').value = m.modo;
+        document.getElementById('c-nivel').value = m.nivel;
+        document.getElementById('c-nota').value = m.modo === 'manual' ? (m.nota || '') : '';
+        pintarControl();
+    }
     const idx = NIVELES.findIndex((n) => n.clave === m.nivel);
     document.getElementById('nivel-actual').innerHTML = `<span class="madurez-nivel n-${m.nivel}">${icon('medal', 18)} ${NIVELES[idx].label}</span>`;
     document.getElementById('nivel-steps').innerHTML = NIVELES.map((n, i) => `
@@ -93,6 +124,24 @@ async function cargar() {
         </${tag.split(' ')[0]}>`;
     }).join('');
 }
+function pintarControl() {
+    const manual = document.getElementById('c-modo').value === 'manual';
+    document.getElementById('c-nivel-wrap').style.visibility = manual ? 'visible' : 'hidden';
+    document.getElementById('c-nota-wrap').hidden = !manual;
+}
+
+async function guardarNivel() {
+    const modo = document.getElementById('c-modo').value;
+    const body = modo === 'manual'
+        ? { modo, nivel: document.getElementById('c-nivel').value, nota: document.getElementById('c-nota').value.trim() }
+        : { modo };
+    try {
+        const r = await api('/admin/scm/nivel', { method: 'PUT', body });
+        toast(r.message, 'ok');
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
 cargar().catch((e) => toast(e.message, 'error'));
 </script>
 </body>

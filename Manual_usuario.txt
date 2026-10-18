@@ -375,12 +375,15 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Tabla "Productos mas vendidos".
 
 4.2  CLIENTES  (admin/clientes.html)  [CRM]
-   - Listado con buscador (nombre, correo, empresa) y filtro por etapa.
+   - Listado con buscador (nombre, correo, empresa), filtro por etapa y
+     filtro por estado (activo / inactivo).
    - Columnas: ID, nombre, correo, empresa, etapa CRM, estado.
    - "Nuevo cliente": crea la cuenta (contrasena editable, temporal por
      defecto) y abre su ficha.
    - "Exportar CSV": descarga el listado tal como esta filtrado.
    - Clic en una fila o en "Ver ficha" -> ficha del cliente.
+   - "Eliminar" (solo admin): si el cliente no tiene pedidos se borra; si
+     ya compro, se marca Inactivo para no perder su historial de ventas.
 
 4.3  FICHA DE CLIENTE  (admin/cliente.html?id=...)  [CRM]
    Es la pantalla central del CRM (equivale al "Detalle de cliente").
@@ -641,6 +644,9 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Checklist de avance: cada punto es un enlace a la pantalla donde
      resolverlo (Productos, Movimientos, Logistica, Pedidos o
      Reportes) o a revisarlo si ya esta cumplido.
+   - Fijar el nivel (solo admin): por defecto es automatico; se puede
+     fijar a mano (con motivo) y regresar al calculo automatico. El nivel
+     se guarda en config_scm como nivel_scm.
 
 4.9h REPORTES SCM  (admin/reportes-scm.html)  [SCM]
    - Metricas: productos, proveedores, pedidos en proceso (con cuantos
@@ -1119,7 +1125,9 @@ Tablas principales
    metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
    ticket_mensajes, garantias
    ERP: estado_erp (nivel de implementacion, una fila), procesos_erp
-   (procesos internos de cada orden) y reportes_erp (reportes guardados).
+   (procesos internos de cada orden), recursos_erp (recursos de la
+   empresa: equipo, vehiculos, instalaciones y presupuestos; solo API,
+   sin pantalla) y reportes_erp (reportes guardados).
 
 Autenticacion
    - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
@@ -1141,6 +1149,14 @@ Endpoints utiles
    GET  /api/clientes/:id/tickets         tickets del cliente
    GET  /api/socio/:codigo                verificacion publica de socio (QR)
    GET  /api/admin/dashboard              KPIs del panel
+   GET  /api/admin/clientes?estado=       clientes (busqueda, etapa, estado)
+   DELETE /api/admin/clientes/:id         baja (inactivo si tiene pedidos)
+   POST /api/admin/inventario/movimiento  registrar movimiento de inventario
+   GET  /api/admin/productos/:id/movimientos   historial de un producto
+   GET  /api/admin/productos?estrategia=PUSH   filtrar por estrategia
+   PUT  /api/admin/productos/:id/estrategia    {estrategia: PUSH | PULL}
+   GET  /api/admin/scm/estado             nivel de madurez SCM + checklist
+   PUT  /api/admin/scm/nivel              fijar nivel SCM {modo, nivel, nota}
    GET  /api/admin/reportes?desde=&hasta= reportes por rango de fechas
    GET  /api/admin/erp/resumen            KPIs del Dashboard ERP
    GET  /api/admin/erp/ordenes            ordenes de clientes (busqueda,
@@ -1158,6 +1174,8 @@ Endpoints utiles
                                           vendidos, clientes activos, inventario
    GET  /api/admin/erp/reportes?desde=&hasta=  reportes empresariales
    GET/POST/DELETE /api/admin/erp/reportes/guardados[/:id]  reportes guardados
+   GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
+   POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
 
 Reglas de negocio embebidas
    - IVA 16%. Envio $199, gratis desde $10,000 de subtotal.
