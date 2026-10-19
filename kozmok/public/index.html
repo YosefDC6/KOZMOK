@@ -110,6 +110,7 @@
             <option value="35000">Hasta $35,000</option>
             <option value="60000">Hasta $60,000</option>
         </select>
+        <select id="f-marca" aria-label="Marca"><option value="">Todas las marcas</option></select>
         <button class="btn btn-outline btn-sm" onclick="limpiarFiltros()">Limpiar</button>
     </div>
 
@@ -311,6 +312,8 @@ async function cargarProductos() {
     if (categoria) params.set('categoria', categoria);
     if (uso) params.set('uso', uso);
     if (precio) params.set('precio_max', precio);
+    const marca = document.getElementById('f-marca').value;
+    if (marca) params.set('marca', marca);
     if (![...params].length) params.set('ver', 'todo');
 
     // Refleja el estado en la URL (para compartir / volver atrás)
@@ -319,11 +322,17 @@ async function cargarProductos() {
 
     const grid = document.getElementById('grid-productos');
     grid.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
-    renderFilterChips(busqueda, categoria, uso, precio);
+    renderFilterChips(busqueda, categoria, uso, precio, marca);
     try {
-        const productos = await api('/productos?' + params.toString());
-        TODOS_LOS_PRODUCTOS = productos;
-        renderProductos(ordenar(productos));
+        const consulta = new URLSearchParams(params); consulta.delete('marca');
+        const productos = await api('/productos?' + consulta.toString());
+        // Marcas disponibles con los demás filtros; la marca se filtra aquí.
+        const sel = document.getElementById('f-marca');
+        const marcas = [...new Set(productos.map((p) => p.marca).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+        sel.innerHTML = '<option value="">Todas las marcas</option>' + marcas.map((m) => `<option ${m === marca ? 'selected' : ''}>${m}</option>`).join('');
+        const lista = marca ? productos.filter((p) => p.marca === marca) : productos;
+        TODOS_LOS_PRODUCTOS = lista;
+        renderProductos(ordenar(lista));
         abrirDesdeHash();
     } catch (e) {
         grid.innerHTML = '<div class="empty-state">No se pudo conectar con el servidor. Verifica que el backend esté corriendo.</div>';
@@ -331,13 +340,14 @@ async function cargarProductos() {
 }
 
 const USO_LABEL = { gaming: 'Gaming', oficina: 'Oficina', diseno: 'Diseño', programacion: 'Programación', estudiante: 'Estudiante', streaming: 'Streaming' };
-function renderFilterChips(busqueda, categoria, uso, precio) {
+function renderFilterChips(busqueda, categoria, uso, precio, marca) {
     const cont = document.getElementById('active-filters');
     const chips = [];
     if (busqueda) chips.push(['busqueda', `“${busqueda}”`]);
     if (categoria) chips.push(['f-categoria', categoria]);
     if (uso) chips.push(['f-uso', USO_LABEL[uso] || uso]);
     if (precio) chips.push(['f-precio', `Hasta ${formatoMoneda(precio)}`]);
+    if (marca) chips.push(['f-marca', marca]);
     cont.innerHTML = chips.length === 0 ? '' : (
         chips.map(([campo, txt]) =>
             `<span class="filter-chip">${txt} <button onclick="quitarFiltro('${campo}')" aria-label="Quitar">${icon('x', 12)}</button></span>`
@@ -371,7 +381,7 @@ function actualizarEncabezado(categoria, busqueda, uso) {
 
 function limpiarFiltros() {
     BUSQUEDA = '';
-    ['f-categoria', 'f-uso', 'f-precio'].forEach((id) => document.getElementById(id).value = '');
+    ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].forEach((id) => document.getElementById(id).value = '');
     cargarProductos();
 }
 
@@ -497,16 +507,13 @@ function ajustarQty(delta, max) {
 }
 
 async function agregarAlCarrito(productoId, cerrarModal) {
-    const cliente = Sesion.cliente();
-    if (!cliente) { irALogin('Inicia sesión para comprar'); return; }
     const qtyEl = document.getElementById('modal-qty');
     const cantidad = (cerrarModal && qtyEl) ? Number(qtyEl.textContent) || 1 : 1;
     const gEl = document.getElementById('modal-garantia');
     const garantia = (cerrarModal && gEl) ? gEl.value : 'none';
     try {
-        await api('/carrito', { method: 'POST', body: { producto_id: productoId, cantidad, garantia } });
-        actualizarBadgeCarrito();
-        toast(cantidad > 1 ? `${cantidad} agregados al carrito` : 'Agregado al carrito', 'ok');
+        await agregarProducto(productoId, cantidad, garantia);
+        toast((cantidad > 1 ? `${cantidad} agregados al carrito` : 'Agregado al carrito') + (Sesion.cliente() ? '' : '. Se guarda aunque no hayas iniciado sesión.'), 'ok');
         if (cerrarModal) document.getElementById('modal-producto').classList.remove('open');
     } catch (e) { toast(e.message, 'error'); }
 }
@@ -545,7 +552,7 @@ function abrirDesdeHash() {
 }
 window.addEventListener('hashchange', abrirDesdeHash);
 
-['f-categoria', 'f-uso', 'f-precio'].forEach((id) => {
+['f-categoria', 'f-uso', 'f-precio', 'f-marca'].forEach((id) => {
     document.getElementById(id).addEventListener('change', cargarProductos);
 });
 document.getElementById('f-orden').addEventListener('change', () => renderProductos(ordenar(TODOS_LOS_PRODUCTOS)));
@@ -557,6 +564,7 @@ function aplicarFiltrosDeURL() {
     if (q.get('categoria')) document.getElementById('f-categoria').value = q.get('categoria');
     if (q.get('uso')) document.getElementById('f-uso').value = q.get('uso');
     if (q.get('precio_max')) document.getElementById('f-precio').value = q.get('precio_max');
+    if (q.get('marca')) document.getElementById('f-marca').innerHTML = `<option value="${q.get('marca').replace(/"/g, '')}" selected>${q.get('marca').replace(/</g, '')}</option>`;
 }
 
 (async () => {

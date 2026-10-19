@@ -41,7 +41,7 @@ Levantar el servidor
    - Luego:   npm start
    - Al arrancar, la consola muestra DOS lineas:
         Kozmok escuchando en http://localhost:3000
-        Base de datos: conectada (kozmok@localhost:5432) - 28 productos
+        Base de datos: conectada (kozmok@localhost:5432) - 73 productos
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
      PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
      cargar db/database.sql.
@@ -139,8 +139,12 @@ Seguridad de sesion
    - "Como funciona": 3 pasos (explora / pregunta al asesor / compra y gana
      puntos).
    - "Destacados" y "Vistos recientemente".
-   - Cuando la URL lleva un filtro (busqueda, categoria, uso, precio) la
+   - Cuando la URL lleva un filtro (busqueda, categoria, uso, precio, marca) la
      portada se convierte en CATALOGO: solo la lista de productos con filtros.
+   - Filtro por MARCA: muestra solo las marcas que hay con los demas filtros
+     (por ejemplo, en Monitores: AOC, ASUS, BenQ, Dell, LG, Samsung).
+   - Si un producto no tiene foto se muestra una ilustracion segun su tipo
+     (laptop, monitor, procesador, etc.).
 
 3.2  BUSCADOR Y NAVEGACION  (barra superior, en todas las paginas)
    - Campo de busqueda + selector de alcance ("Todo" o una categoria) +
@@ -230,7 +234,14 @@ Seguridad de sesion
    - Al terminar todas las piezas, resume el total y te lleva al carrito.
 
 3.5  CARRITO Y COMPRA  (carrito.html)
-   - Para comprar hay que iniciar sesion (si no, te manda al login y vuelve).
+   - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
+     PC, asesor, comparador): se guarda en el navegador, sin pasarse del
+     stock, y el contador de arriba lo muestra. El carrito muestra los
+     productos, la garantia y un total estimado.
+   - Para pagar hay que iniciar sesion o crear cuenta ("Iniciar sesion y
+     pagar" / "Crear cuenta"): el carrito guardado pasa solo a la cuenta y
+     regresas al carrito listo para confirmar. Si algo ya no tiene stock,
+     se avisa.
    - Lista de productos con [-] cantidad [+], "Quitar" y "Vaciar carrito".
    - Barra de progreso de envio gratis (gratis desde $10,000; si no, $199).
    - Resumen: Subtotal, IVA 16%, Envio, Descuento por puntos, Total.
@@ -1073,7 +1084,7 @@ P: Al cargar db/database.sql salen muchos "NOTICE: ... does not exist,
    skipping". Esta mal?
 R: No. El archivo empieza borrando tablas que en una base nueva todavia no
    existen; PostgreSQL solo avisa que las salta. Si no hay lineas "ERROR",
-   la carga fue correcta. Verifica con:  SELECT COUNT(*) FROM productos;  (=28)
+   la carga fue correcta. Verifica con:  SELECT COUNT(*) FROM productos;  (=73)
 
 P: npm start no dice nada sobre la base.
 R: Ahora si: la segunda linea de la consola indica "conectada" o el problema.

@@ -266,10 +266,8 @@
             });
             card.querySelector('[data-add]').addEventListener('click', async (e) => {
                 e.stopPropagation();
-                const cli = window.Sesion ? Sesion.cliente() : null;
-                if (!cli) { window.irALogin ? irALogin() : (location.href = '/login.html'); return; }
                 try {
-                    await api('/carrito', { method: 'POST', body: { cliente_id: cli.id, producto_id: p.id, cantidad: 1 } });
+                    await agregarProducto(p.id, 1);
                     if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
                     window.toast ? toast('Agregado al carrito', 'ok') : agregarMensaje('Agregado al carrito', 'bot');
                 } catch (err) {
@@ -514,10 +512,8 @@
     }
 
     async function elegirComponenteArmado(slot, producto) {
-        const cli = window.Sesion ? Sesion.cliente() : null;
-        if (!cli) { window.irALogin ? irALogin() : (location.href = '/login.html'); return; }
         try {
-            await api('/carrito', { method: 'POST', body: { producto_id: producto.id, cantidad: 1 } });
+            await agregarProducto(producto.id, 1);
             if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
             ELEGIDO_ARMADO[slot.tipo] = producto;
             if (PRESUPUESTO_RESTANTE) PRESUPUESTO_RESTANTE = Math.max(0, PRESUPUESTO_RESTANTE - Number(producto.precio));

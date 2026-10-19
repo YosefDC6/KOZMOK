@@ -63,7 +63,7 @@ async function quitarFav(pid) {
 }
 async function favAlCarrito(pid) {
     try {
-        await api('/carrito', { method: 'POST', body: { producto_id: pid, cantidad: 1 } });
+        await agregarProducto(pid, 1);
         toast('Agregado al carrito', 'ok');
         actualizarBadgeCarrito();
     } catch (e) { toast(e.message, 'error'); }

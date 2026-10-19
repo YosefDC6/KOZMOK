@@ -47,6 +47,7 @@ const ILUSTRACIONES = [
     [/placa base|motherboard|tarjeta madre/, 'board'], [/procesador|ryzen|intel core|cpu/, 'cpu'],
     [/tarjeta gr[aá]fica|rtx|gtx|radeon|gpu/, 'gpu'], [/monitor/, 'monitor'],
     [/laptop|macbook|notebook|port[aá]til/, 'laptop'],
+    [/\bhub\b|adaptador|dock/, 'hub'],
     [/perif[eé]rico/, 'mouse'], [/accesorio/, 'headphones'], [/componente/, 'cpu'],
 ];
 function ilustracionProducto(p) {
@@ -126,11 +127,73 @@ function formatoFecha(fecha) {
     return new Date(fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// ---- Carrito sin sesión ----
+// Lo que agrega un visitante sin cuenta se guarda en el navegador y se pasa
+// a su carrito real (servidor) en cuanto inicia sesión o crea su cuenta.
+const CarritoInvitado = {
+    CLAVE: 'kz_carrito_invitado',
+    leer() { try { return JSON.parse(localStorage.getItem(this.CLAVE) || '[]'); } catch { return []; } },
+    guardar(lista) { try { localStorage.setItem(this.CLAVE, JSON.stringify(lista)); } catch { /* sin almacenamiento */ } },
+    total() { return this.leer().reduce((a, i) => a + i.cantidad, 0); },
+    cantidadDe(id) { const it = this.leer().find((x) => x.producto_id === Number(id)); return it ? it.cantidad : 0; },
+    agregar(id, cantidad = 1, garantia = 'none') {
+        const lista = this.leer();
+        const it = lista.find((x) => x.producto_id === Number(id));
+        if (it) { it.cantidad += cantidad; if (garantia && garantia !== 'none') it.garantia = garantia; }
+        else lista.push({ producto_id: Number(id), cantidad, garantia: garantia || 'none' });
+        this.guardar(lista);
+    },
+    cambiar(id, cambios) {
+        const lista = this.leer();
+        const it = lista.find((x) => x.producto_id === Number(id));
+        if (it) Object.assign(it, cambios);
+        this.guardar(lista);
+    },
+    quitar(id) { this.guardar(this.leer().filter((x) => x.producto_id !== Number(id))); },
+    vaciar() { try { localStorage.removeItem(this.CLAVE); } catch { /* nada */ } },
+    // Pasa lo guardado al carrito de la cuenta. Lo que ya no tenga stock se avisa.
+    async fusionar() {
+        const lista = this.leer();
+        const res = { pasados: 0, avisos: [] };
+        for (const it of lista) {
+            try {
+                await api('/carrito', { method: 'POST', body: { producto_id: it.producto_id, cantidad: it.cantidad, garantia: it.garantia } });
+                res.pasados += it.cantidad;
+            } catch (e) { res.avisos.push(e.message); }
+        }
+        this.vaciar();
+        return res;
+    },
+};
+window.CarritoInvitado = CarritoInvitado;
+
+// Agregar al carrito desde cualquier parte de la tienda (catálogo, ficha,
+// Arma tu PC, asesor, comparador, favoritos). Con sesión va al servidor;
+// sin sesión se guarda en el navegador sin pasarse del stock.
+async function agregarProducto(productoId, cantidad = 1, garantia = 'none') {
+    if (Sesion.cliente()) {
+        await api('/carrito', { method: 'POST', body: { producto_id: productoId, cantidad, garantia } });
+    } else {
+        const p = await api(`/productos/${productoId}`);
+        const ya = CarritoInvitado.cantidadDe(productoId);
+        if (Number(p.stock) <= 0) throw new Error(`"${p.nombre}" está agotado`);
+        if (ya + cantidad > Number(p.stock)) throw new Error(ya ? `Solo hay ${p.stock} disponibles y ya tienes ${ya} en tu carrito` : `Solo hay ${p.stock} disponibles`);
+        CarritoInvitado.agregar(productoId, cantidad, garantia);
+    }
+    actualizarBadgeCarrito();
+}
+window.agregarProducto = agregarProducto;
+
 function actualizarBadgeCarrito() {
     const cliente = Sesion.cliente();
     const el = document.getElementById('cart-badge');
     if (!el) return;
-    if (!cliente) { el.style.display = 'none'; return; }
+    if (!cliente) {
+        const n = CarritoInvitado.total();
+        el.style.display = n > 0 ? 'flex' : 'none';
+        el.textContent = n;
+        return;
+    }
     api(`/carrito/${cliente.id}`).then((items) => {
         const total = items.reduce((acc, i) => acc + i.cantidad, 0);
         el.style.display = total > 0 ? 'flex' : 'none';

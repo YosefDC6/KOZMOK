@@ -9,7 +9,8 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ## Funcionalidades principales
 
 ### Tienda (cliente)
-- **Catálogo** con búsqueda, filtros por categoría, uso y precio (guardados en la URL), orden y vistos recientemente.
+- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio y marca (guardados en la URL), orden y vistos recientemente.
+- **Carrito sin sesión**: se puede llenar sin cuenta (catálogo, Arma tu PC, asesor); al iniciar sesión o registrarse pasa solo a la cuenta.
 - **Ficha de producto** con especificaciones, stock real, reseñas y **garantía extendida** (12, 24 o 36 meses, con certificado y folio).
 - **Comparador** de hasta 4 productos lado a lado.
 - **Arma tu PC**: armado pieza por pieza con validación de compatibilidad en vivo (socket, DDR4/DDR5, formato de placa y watts de la fuente) y builds recomendadas por uso.
@@ -95,7 +96,7 @@ npm start        # o: npm run dev  (con nodemon)
 - **Tienda:** http://localhost:3000
 - **Panel interno:** http://localhost:3000/admin/login.html (a propósito, no hay enlace desde la tienda)
 
-Si al arrancar la consola muestra `Base de datos: conectada … 28 productos`, todo está listo.
+Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, todo está listo.
 
 ### Cuentas de prueba
 

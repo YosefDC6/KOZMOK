@@ -32,7 +32,6 @@
 <script src="/js/garantia.js"></script>
 <script>
 const cliente = Sesion.cliente();
-if (!cliente) irALogin();
 
 const ENVIO_GRATIS_DESDE = 10000;
 const COSTO_ENVIO = 199;
@@ -255,6 +254,7 @@ async function quitarDelCarrito(itemId) {
 }
 document.getElementById('btn-vaciar').addEventListener('click', async () => {
     if (!(await confirmar('¿Vaciar todo el carrito?', { okText: 'Vaciar', peligro: true }))) return;
+    if (!cliente) { CarritoInvitado.vaciar(); actualizarBadgeCarrito(); cargarCarritoInvitado(); toast('Carrito vaciado', 'ok'); return; }
     try {
         await api('/carrito', { method: 'DELETE' });
         toast('Carrito vaciado', 'ok');
@@ -321,7 +321,86 @@ async function confirmarCompra() {
     }
 }
 
-if (cliente) cargarCarrito();
+// ---- Carrito sin sesión: lo guardado en el navegador ----
+// Se puede revisar y ajustar; para pagar se inicia sesión (o se crea la
+// cuenta) y el carrito se pasa solo a la cuenta.
+async function cargarCarritoInvitado() {
+    const cont = document.getElementById('carrito-contenido');
+    const guardados = CarritoInvitado.leer();
+    document.getElementById('btn-vaciar').hidden = guardados.length === 0;
+    if (!guardados.length) {
+        cont.innerHTML = `
+            <div class="vacio-card">
+                <span class="vacio-ico">${icon('cart', 30)}</span>
+                <h3>Tu carrito está vacío</h3>
+                <p>Agrega productos desde el catálogo o arma tu PC pieza por pieza. No necesitas cuenta para ir llenándolo.</p>
+                <div class="vacio-acciones">
+                    <a href="/index.html?ver=todo" class="btn btn-primary">Ver catálogo</a>
+                    <a href="/armar-pc.html" class="btn btn-outline">Arma tu PC</a>
+                </div>
+            </div>`;
+        return;
+    }
+    const productos = await api('/productos').catch(() => []);
+    const items = guardados.map((g) => ({ ...g, p: productos.find((x) => x.id === g.producto_id) })).filter((i) => i.p);
+    let subtotal = 0;
+    const filas = items.map((i) => {
+        const gCosto = costoGarantia(i.p.precio, i.garantia) * i.cantidad;
+        const linea = Number(i.p.precio) * i.cantidad + gCosto;
+        subtotal += linea;
+        return `
+        <div class="card cart-line">
+            <img class="cart-thumb" src="${imagenProducto(i.p)}" alt="${i.p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(i.p)}'" />
+            <div class="cart-info">
+                <div class="nm">${i.p.nombre}</div>
+                <div class="mono" style="color:var(--text-muted);font-size:.82rem">${formatoMoneda(i.p.precio)} c/u</div>
+                <div class="qty-stepper" style="margin-top:8px">
+                    <button type="button" onclick="cantidadInvitado(${i.producto_id}, ${i.cantidad - 1}, ${i.p.stock})" ${i.cantidad <= 1 ? 'disabled' : ''}>−</button>
+                    <span class="qty-val">${i.cantidad}</span>
+                    <button type="button" onclick="cantidadInvitado(${i.producto_id}, ${i.cantidad + 1}, ${i.p.stock})" ${i.cantidad >= i.p.stock ? 'disabled' : ''}>+</button>
+                </div>
+                <div class="cart-gar">
+                    <span class="ic-gar">${icon('shield', 13)}</span>
+                    <select onchange="garantiaInvitado(${i.producto_id}, this.value)">
+                        ${PLANES_GARANTIA.map((g) => `<option value="${g.clave}" ${g.clave === i.garantia ? 'selected' : ''}>${g.label}${g.factor ? ' · +' + formatoMoneda(costoGarantia(i.p.precio, g.clave)) : ''}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="cart-sub">
+                <div class="mono">${formatoMoneda(linea)}</div>
+                <div><button class="btn btn-ghost btn-sm" style="padding:2px 6px" onclick="quitarInvitado(${i.producto_id})">Quitar</button></div>
+            </div>
+        </div>`;
+    }).join('');
+    const iva = subtotal * 0.16;
+    const envio = subtotal >= ENVIO_GRATIS_DESDE ? 0 : COSTO_ENVIO;
+    const next = encodeURIComponent('/carrito.html');
+    cont.innerHTML = `
+        <div class="cart-layout">
+        <div class="cart-items">${filas}</div>
+        <div class="card cart-resumen">
+            <h3 class="cart-resumen-tit">Resumen del pedido</h3>
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Subtotal</span><span class="mono">${formatoMoneda(subtotal)}</span></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>IVA (16%)</span><span class="mono">${formatoMoneda(iva)}</span></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Envío</span><span class="mono">${envio === 0 ? 'Gratis' : formatoMoneda(envio)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin:10px 0 16px"><span>Total estimado</span><span class="mono">${formatoMoneda(subtotal + iva + envio)}</span></div>
+            <div class="pago-box" style="margin-bottom:14px">
+                <h4>${icon('lock', 15)} Inicia sesión para pagar</h4>
+                <div class="pb-sub" style="margin:0">Tu carrito se guarda: al entrar o crear tu cuenta lo encuentras aquí mismo, listo para confirmar. Además ganas puntos del Club con esta compra.</div>
+            </div>
+            <a class="btn btn-primary btn-lg" style="width:100%" href="/login.html?next=${next}">Iniciar sesión y pagar</a>
+            <a class="btn btn-outline" style="width:100%;margin-top:8px" href="/registro.html?next=${next}">Crear cuenta</a>
+        </div>
+        </div>`;
+}
+function cantidadInvitado(id, n, stock) {
+    if (n < 1 || n > stock) return;
+    CarritoInvitado.cambiar(id, { cantidad: n }); actualizarBadgeCarrito(); cargarCarritoInvitado();
+}
+function garantiaInvitado(id, clave) { CarritoInvitado.cambiar(id, { garantia: clave }); cargarCarritoInvitado(); }
+function quitarInvitado(id) { CarritoInvitado.quitar(id); actualizarBadgeCarrito(); cargarCarritoInvitado(); }
+
+if (cliente) cargarCarrito(); else cargarCarritoInvitado();
 </script>
 </body>
 </html>

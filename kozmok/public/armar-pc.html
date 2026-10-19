@@ -236,14 +236,13 @@ function renderArmador() {
 }
 
 async function agregarBuildAlCarrito() {
-    if (!cliente) { irALogin(); return; }
     const btn = document.getElementById('btn-agregar-build');
     btn.disabled = true;
     btn.textContent = 'Agregando…';
     try {
         const piezas = SLOTS.map((s) => SELECCION[s.tipo]).filter(Boolean);
         for (const producto_id of piezas) {
-            await api('/carrito', { method: 'POST', body: { producto_id, cantidad: 1 } });
+            await agregarProducto(producto_id, 1);
         }
         actualizarBadgeCarrito();
         toast('Tu PC armada se agregó al carrito', 'ok');

@@ -151,13 +151,24 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
         Sesion.guardarCliente(data.cliente, data.token);
-        toast('¡Cuenta creada!', 'ok');
-        setTimeout(() => location.href = '/perfil.html', 500);
+        const r = await CarritoInvitado.fusionar();
+        toast(r.pasados ? `¡Cuenta creada! Tu carrito (${r.pasados} producto(s)) ya está en tu cuenta.` : '¡Cuenta creada!', 'ok');
+        r.avisos.forEach((m) => toast(m, 'warn'));
+        // Vuelve a donde iba (p. ej. el carrito); si tenía carrito guardado, al carrito.
+        const next = new URLSearchParams(location.search).get('next');
+        const destino = next && next.startsWith('/') && !next.startsWith('//') ? next : (r.pasados ? '/carrito.html' : '/perfil.html');
+        setTimeout(() => location.href = destino, 600);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.style.display = 'block';
     }
 });
+
+// Conserva a dónde volver (p. ej. el carrito) al cambiar entre entrar y crear cuenta.
+(() => {
+    const next = new URLSearchParams(location.search).get('next');
+    if (next) document.querySelectorAll('a[href="/login.html"]').forEach((a) => { a.href = '/login.html?next=' + encodeURIComponent(next); });
+})();
 </script>
 </body>
 </html>

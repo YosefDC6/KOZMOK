@@ -109,10 +109,8 @@ const ids = (new URLSearchParams(location.search).get('ids') || '')
 })();
 
 async function agregar(id) {
-    const cli = Sesion.cliente();
-    if (!cli) { irALogin('Inicia sesión para comprar'); return; }
     try {
-        await api('/carrito', { method: 'POST', body: { cliente_id: cli.id, producto_id: id, cantidad: 1 } });
+        await agregarProducto(id, 1);
         toast('Agregado al carrito', 'ok');
         if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
     } catch (e) { toast(e.message, 'error'); }

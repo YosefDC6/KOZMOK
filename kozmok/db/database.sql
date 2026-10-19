@@ -803,6 +803,202 @@ VALUES
   'gabinete', NULL, NULL, 'MicroATX', NULL, NULL);
 
 -- Costo de compra al proveedor: ~70% del precio de venta.
+
+-- ---------------------------------------------------------
+-- MÁS PRODUCTOS (variedad de marcas). Van después de los 28
+-- originales para no mover los ids que usan los pedidos, favoritos
+-- y reseñas de ejemplo.
+-- ---------------------------------------------------------
+INSERT INTO productos
+ (nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
+  procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
+  uso_recomendado, imagen_url, proveedor_id, activo, restock)
+VALUES
+ ('Laptop HP Pavilion 15', 'Laptop de uso diario con buen teclado y pantalla amplia para estudio y oficina.',
+  1, 'HP', 12999.00, 16, 5, 'AMD Ryzen 5 7530U', 16, '512GB SSD NVMe', 'AMD Radeon (integrada)', '15.6" FHD IPS',
+  '{oficina,estudiante,programacion}', NULL, 1, true, 'push'),
+
+ ('Laptop Acer Nitro V 15', 'Laptop gamer de entrada con RTX 4050 y pantalla de 144Hz.',
+  1, 'Acer', 19999.00, 11, 4, 'Intel Core i5-13420H', 16, '512GB SSD NVMe', 'NVIDIA RTX 4050 6GB', '15.6" FHD 144Hz',
+  '{gaming,estudiante}', NULL, 2, true, 'push'),
+
+ ('Laptop MSI Katana 15', 'Laptop gamer con RTX 4060 y procesador Intel de 13a generación.',
+  1, 'MSI', 24999.00, 8, 3, 'Intel Core i7-13620H', 16, '1TB SSD NVMe', 'NVIDIA RTX 4060 8GB', '15.6" FHD 144Hz',
+  '{gaming,streaming}', NULL, 2, true, 'push'),
+
+ ('Laptop ASUS ROG Strix G16', 'Laptop gamer de alto rendimiento con RTX 4070 y pantalla QHD+ de 240Hz.',
+  1, 'ASUS', 42999.00, 5, 2, 'Intel Core i9-14900HX', 32, '1TB SSD NVMe', 'NVIDIA RTX 4070 8GB', '16" QHD+ 240Hz',
+  '{gaming,streaming,diseno}', NULL, 2, true, 'pull'),
+
+ ('Laptop Huawei MateBook D15', 'Laptop ligera de aluminio con buena autonomía para oficina y escuela.',
+  1, 'Huawei', 11499.00, 13, 4, 'Intel Core i5-1155G7', 8, '512GB SSD NVMe', 'Intel Iris Xe (integrada)', '15.6" FHD IPS',
+  '{oficina,estudiante}', NULL, 3, true, 'push'),
+
+ ('MacBook Pro 14 M3 Pro', 'Laptop profesional para edición de video, diseño y desarrollo, con pantalla Liquid Retina XDR.',
+  1, 'Apple', 46999.00, 4, 2, 'Apple M3 Pro', 18, '512GB SSD', 'GPU integrada 14-core', '14.2" Liquid Retina XDR',
+  '{diseno,programacion,streaming}', NULL, 3, true, 'pull'),
+
+ ('PC HP Pavilion Desktop TP01', 'Equipo de escritorio compacto para oficina, tareas escolares y multimedia.',
+  2, 'HP', 13499.00, 9, 3, 'Intel Core i5-12400', 16, '512GB SSD NVMe', 'Intel UHD 730 (integrada)', NULL,
+  '{oficina,estudiante}', NULL, 1, true, 'push'),
+
+ ('PC Gamer Acer Nitro 50', 'PC gamer lista para jugar en 1080p con RTX 4060 y procesador Intel de 13a generación.',
+  2, 'Acer', 26999.00, 6, 3, 'Intel Core i5-13400F', 16, '1TB SSD NVMe', 'NVIDIA RTX 4060 8GB', NULL,
+  '{gaming,streaming}', NULL, 2, true, 'pull'),
+
+ ('PC Dell OptiPlex 7010 Micro', 'Mini PC empresarial que cabe detrás del monitor, ideal para puestos de oficina.',
+  2, 'Dell', 15999.00, 10, 4, 'Intel Core i5-13500T', 16, '256GB SSD NVMe', 'Intel UHD 770 (integrada)', NULL,
+  '{oficina}', NULL, 1, true, 'push'),
+
+ ('Monitor LG UltraGear 27" 144Hz', 'Monitor gamer IPS QHD con 144Hz y 1ms para juegos competitivos.',
+  5, 'LG', 6299.00, 12, 4, NULL, NULL, NULL, NULL, '27" QHD IPS 144Hz',
+  '{gaming,streaming}', NULL, 2, true, 'push'),
+
+ ('Monitor Samsung Odyssey G5 32" Curvo', 'Monitor curvo QHD de 32 pulgadas para una experiencia más inmersiva.',
+  5, 'Samsung', 7499.00, 7, 3, NULL, NULL, NULL, NULL, '32" QHD VA 165Hz curvo',
+  '{gaming}', NULL, 2, true, 'push'),
+
+ ('Monitor AOC 24G2 24" 144Hz', 'Monitor gamer de entrada con panel IPS y 144Hz a un gran precio.',
+  5, 'AOC', 3499.00, 18, 5, NULL, NULL, NULL, NULL, '24" FHD IPS 144Hz',
+  '{gaming,estudiante}', NULL, 1, true, 'push'),
+
+ ('Monitor Dell UltraSharp U2723QE 27" 4K', 'Monitor profesional 4K con USB-C y alta precisión de color.',
+  5, 'Dell', 12499.00, 5, 2, NULL, NULL, NULL, NULL, '27" 4K IPS USB-C',
+  '{diseno,programacion,oficina}', NULL, 1, true, 'pull'),
+
+ ('Monitor ASUS ProArt PA278QV 27"', 'Monitor para diseño con calibración de fábrica y cobertura 100% sRGB.',
+  5, 'ASUS', 6999.00, 6, 3, NULL, NULL, NULL, NULL, '27" QHD IPS 100% sRGB',
+  '{diseno}', NULL, 2, true, 'pull'),
+
+ ('Monitor BenQ GW2490 24"', 'Monitor de oficina con tecnología de cuidado visual y marcos delgados.',
+  5, 'BenQ', 2499.00, 20, 6, NULL, NULL, NULL, NULL, '24" FHD IPS',
+  '{oficina,estudiante}', NULL, 3, true, 'push'),
+
+ ('Mouse Logitech G502 Hero', 'Mouse gamer con sensor HERO de 25K DPI, 11 botones y pesas ajustables.',
+  4, 'Logitech', 899.00, 30, 8, NULL, NULL, NULL, NULL, NULL,
+  '{gaming}', NULL, 1, true, 'push'),
+
+ ('Mouse Razer DeathAdder V3', 'Mouse gamer ergonómico y ligero de 59 g para esports.',
+  4, 'Razer', 1499.00, 15, 5, NULL, NULL, NULL, NULL, NULL,
+  '{gaming,streaming}', NULL, 2, true, 'push'),
+
+ ('Mouse Logitech MX Master 3S', 'Mouse inalámbrico de productividad con scroll electromagnético y clics silenciosos.',
+  4, 'Logitech', 1899.00, 14, 5, NULL, NULL, NULL, NULL, NULL,
+  '{oficina,diseno,programacion}', NULL, 1, true, 'push'),
+
+ ('Teclado Razer BlackWidow V4', 'Teclado mecánico gamer con switches Razer Green y RGB Chroma.',
+  4, 'Razer', 2799.00, 9, 4, NULL, NULL, NULL, NULL, NULL,
+  '{gaming,streaming}', NULL, 2, true, 'pull'),
+
+ ('Teclado HyperX Alloy Origins', 'Teclado mecánico compacto de aluminio con switches HyperX Red.',
+  4, 'HyperX', 1699.00, 12, 4, NULL, NULL, NULL, NULL, NULL,
+  '{gaming,programacion}', NULL, 3, true, 'push'),
+
+ ('Teclado Logitech MX Keys', 'Teclado inalámbrico de perfil bajo para escribir cómodo todo el día.',
+  4, 'Logitech', 2199.00, 11, 4, NULL, NULL, NULL, NULL, NULL,
+  '{oficina,programacion,diseno}', NULL, 1, true, 'push'),
+
+ ('Audífonos Razer BlackShark V2 X', 'Audífonos gamer ligeros con sonido envolvente 7.1 y micrófono cardioide.',
+  6, 'Razer', 999.00, 20, 6, NULL, NULL, NULL, NULL, NULL,
+  '{gaming,streaming}', NULL, 2, true, 'push'),
+
+ ('Audífonos SteelSeries Arctis Nova 7', 'Audífonos inalámbricos multiplataforma con 38 horas de batería.',
+  6, 'SteelSeries', 3499.00, 7, 3, NULL, NULL, NULL, NULL, NULL,
+  '{gaming,streaming}', NULL, 3, true, 'pull'),
+
+ ('Webcam Logitech C920 HD Pro', 'Webcam Full HD 1080p con dos micrófonos para videollamadas y clases.',
+  6, 'Logitech', 1399.00, 16, 5, NULL, NULL, NULL, NULL, NULL,
+  '{oficina,estudiante,streaming}', NULL, 1, true, 'push'),
+
+ ('Hub USB-C Anker 7 en 1', 'Adaptador USB-C con HDMI 4K, lector SD y carga de 100W para laptops.',
+  6, 'Anker', 799.00, 25, 8, NULL, NULL, NULL, NULL, NULL,
+  '{oficina,diseno,programacion}', NULL, 3, true, 'push');
+
+INSERT INTO productos
+ (nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
+  uso_recomendado, imagen_url, proveedor_id, activo, restock,
+  tipo_componente, socket, ram_tipo, formato, consumo_w, potencia_w)
+VALUES
+ ('Procesador Intel Core i5-13400F', 'CPU de 10 núcleos socket LGA1700, gran opción para gaming en 1080p sin gráficos integrados.',
+  3, 'Intel', 3699.00, 16, 5, '{gaming,programacion}', NULL, 1, true, 'push',
+  'cpu', 'LGA1700', NULL, NULL, 65, NULL),
+
+ ('Procesador Intel Core i7-14700K', 'CPU de 20 núcleos socket LGA1700 para gaming exigente, streaming y edición de video.',
+  3, 'Intel', 8499.00, 7, 3, '{gaming,streaming,diseno}', NULL, 2, true, 'pull',
+  'cpu', 'LGA1700', NULL, NULL, 125, NULL),
+
+ ('Procesador AMD Ryzen 7 7800X3D', 'CPU socket AM5 con 3D V-Cache, de lo mejor para gaming.',
+  3, 'AMD', 8999.00, 6, 3, '{gaming,streaming}', NULL, 2, true, 'pull',
+  'cpu', 'AM5', NULL, NULL, 120, NULL),
+
+ ('Placa Base MSI PRO B760M-A', 'Placa base MicroATX socket LGA1700 con soporte DDR5 para procesadores Intel de 12a a 14a generación.',
+  3, 'MSI', 2999.00, 10, 4, '{oficina,programacion,gaming}', NULL, 1, true, 'push',
+  'placa_base', 'LGA1700', 'DDR5', 'MicroATX', NULL, NULL),
+
+ ('Placa Base ASRock B760 Pro RS', 'Placa base ATX socket LGA1700 con DDR4, buena opción para reutilizar memoria.',
+  3, 'ASRock', 2599.00, 8, 3, '{oficina,estudiante,gaming}', NULL, 3, true, 'push',
+  'placa_base', 'LGA1700', 'DDR4', 'ATX', NULL, NULL),
+
+ ('Placa Base MSI MAG B650 Tomahawk', 'Placa base ATX socket AM5 DDR5 con buena alimentación para Ryzen 7 y 9.',
+  3, 'MSI', 4799.00, 6, 3, '{gaming,streaming,diseno}', NULL, 2, true, 'pull',
+  'placa_base', 'AM5', 'DDR5', 'ATX', NULL, NULL),
+
+ ('Memoria RAM Crucial 16GB DDR5 5600', 'Módulo DDR5 de 16 GB a 5600 MHz para plataformas AM5 e Intel recientes.',
+  3, 'Crucial', 1099.00, 22, 6, '{oficina,programacion,estudiante}', NULL, 3, true, 'push',
+  'ram', NULL, 'DDR5', NULL, NULL, NULL),
+
+ ('Memoria RAM G.Skill Ripjaws V 32GB (2x16) DDR4', 'Kit DDR4 de 32 GB a 3600 MHz para gaming y edición en plataformas DDR4.',
+  3, 'G.Skill', 1599.00, 14, 5, '{gaming,diseno,programacion}', NULL, 2, true, 'push',
+  'ram', NULL, 'DDR4', NULL, NULL, NULL),
+
+ ('Tarjeta Gráfica AMD Radeon RX 7600', 'GPU de 8 GB para gaming en 1080p con gran relación precio-rendimiento.',
+  3, 'Sapphire', 5999.00, 9, 4, '{gaming}', NULL, 2, true, 'push',
+  'gpu', NULL, NULL, NULL, 165, NULL),
+
+ ('Tarjeta Gráfica RTX 4070 Super', 'GPU de 12 GB para gaming en 1440p, streaming y render.',
+  3, 'ASUS', 13999.00, 5, 2, '{gaming,streaming,diseno}', NULL, 2, true, 'pull',
+  'gpu', NULL, NULL, NULL, 220, NULL),
+
+ ('Tarjeta Gráfica AMD Radeon RX 7700 XT', 'GPU de 12 GB para gaming fluido en 1440p.',
+  3, 'XFX', 9999.00, 6, 3, '{gaming,streaming}', NULL, 3, true, 'pull',
+  'gpu', NULL, NULL, NULL, 245, NULL),
+
+ ('SSD NVMe WD Black SN770 1TB', 'Unidad NVMe PCIe 4.0 de hasta 5150 MB/s, ideal para juegos.',
+  3, 'Western Digital', 1499.00, 20, 6, '{gaming,diseno,programacion}', NULL, 1, true, 'push',
+  'almacenamiento', NULL, NULL, NULL, NULL, NULL),
+
+ ('SSD NVMe Crucial P3 Plus 2TB', 'Unidad NVMe de 2 TB para bibliotecas grandes de juegos y proyectos.',
+  3, 'Crucial', 2499.00, 12, 4, '{gaming,diseno,streaming}', NULL, 3, true, 'push',
+  'almacenamiento', NULL, NULL, NULL, NULL, NULL),
+
+ ('SSD NVMe Kingston NV2 500GB', 'Unidad NVMe económica para equipos de oficina y estudio.',
+  3, 'Kingston', 649.00, 28, 8, '{oficina,estudiante}', NULL, 1, true, 'push',
+  'almacenamiento', NULL, NULL, NULL, NULL, NULL),
+
+ ('Fuente de Poder Corsair RM850e 850W 80+ Gold', 'Fuente modular 850 W Gold, silenciosa, para equipos con GPU de gama alta.',
+  3, 'Corsair', 2899.00, 9, 3, '{gaming,streaming,diseno}', NULL, 3, true, 'push',
+  'fuente', NULL, NULL, NULL, NULL, 850),
+
+ ('Fuente de Poder Seasonic Focus GX-1000 1000W', 'Fuente modular 1000 W 80+ Gold para configuraciones muy exigentes.',
+  3, 'Seasonic', 4299.00, 4, 2, '{gaming,streaming}', NULL, 2, true, 'pull',
+  'fuente', NULL, NULL, NULL, NULL, 1000),
+
+ ('Fuente de Poder Thermaltake Smart 550W 80+', 'Fuente de 550 W para equipos de oficina y gaming ligero.',
+  3, 'Thermaltake', 999.00, 18, 6, '{oficina,estudiante}', NULL, 1, true, 'push',
+  'fuente', NULL, NULL, NULL, NULL, 550),
+
+ ('Gabinete Corsair 4000D Airflow', 'Gabinete ATX con frente de malla para muy buen flujo de aire.',
+  3, 'Corsair', 1999.00, 10, 4, '{gaming,streaming,diseno}', NULL, 3, true, 'push',
+  'gabinete', NULL, NULL, 'ATX', NULL, NULL),
+
+ ('Gabinete Lian Li Lancool 216', 'Gabinete ATX con dos ventiladores frontales de 160 mm incluidos.',
+  3, 'Lian Li', 2299.00, 7, 3, '{gaming,streaming}', NULL, 2, true, 'pull',
+  'gabinete', NULL, NULL, 'ATX', NULL, NULL),
+
+ ('Gabinete Thermaltake Versa H18', 'Gabinete MicroATX compacto con ventana lateral para equipos de entrada.',
+  3, 'Thermaltake', 899.00, 15, 5, '{oficina,estudiante}', NULL, 1, true, 'push',
+  'gabinete', NULL, NULL, 'MicroATX', NULL, NULL);
+
 UPDATE productos SET costo_unitario = ROUND(precio * 0.7, 2);
 
 INSERT INTO config_scm (clave, valor) VALUES ('reabasto_automatico', 'si'), ('entrega', 'fecha');

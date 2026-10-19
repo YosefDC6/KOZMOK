@@ -87,13 +87,21 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     try {
         const data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password } });
         Sesion.guardarCliente(data.cliente, data.token);
-        toast('Bienvenido de vuelta', 'ok');
-        setTimeout(() => location.href = destinoNext(), 400);
+        const r = await CarritoInvitado.fusionar();
+        toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
+        r.avisos.forEach((m) => toast(m, 'warn'));
+        setTimeout(() => location.href = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext(), 500);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.style.display = 'block';
     }
 });
+
+// Conserva a dónde volver (p. ej. el carrito) al cambiar entre entrar y crear cuenta.
+(() => {
+    const next = new URLSearchParams(location.search).get('next');
+    if (next) document.querySelectorAll('a[href="/registro.html"]').forEach((a) => { a.href = '/registro.html?next=' + encodeURIComponent(next); });
+})();
 </script>
 </body>
 </html>
