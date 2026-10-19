@@ -91,6 +91,13 @@
     }
 
     function bloqueCliente(d) {
+        if (!d.cliente_id) {
+            return `<div class="card" style="padding:12px 14px;margin:0 0 14px;background:var(--bg-panel-2)">
+                <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">Cliente (CRM)</div>
+                <strong>Cliente eliminado</strong>
+                <div style="font-size:.8rem;color:var(--text-muted)">El cliente se borró del CRM; el pedido se conserva por ser una venta registrada.</div>
+            </div>`;
+        }
         return `<div class="card" style="padding:12px 14px;margin:0 0 14px;background:var(--bg-panel-2)">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
                 <div>

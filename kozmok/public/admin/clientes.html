@@ -85,7 +85,11 @@ async function cargar() {
 const ES_ADMIN = (Sesion.usuario() || {}).rol === 'admin';
 async function eliminar(id) {
     const c = ROWS.find((x) => x.id === id);
-    if (!await confirmar(`¿Eliminar a ${c ? c.nombre : 'este cliente'}? Si ya tiene pedidos no se borra: se marca como inactivo para conservar su historial.`, { okText: 'Eliminar', peligro: true })) return;
+    const inactivo = c && c.estado_cliente === 'inactivo';
+    const msg = inactivo
+        ? `¿Eliminar por completo a ${c.nombre}? Se borran sus datos, puntos, direcciones, tarjetas, reseñas, tickets, garantías e interacciones. Sus pedidos se conservan como "Cliente eliminado" para no alterar ventas ni inventario. No se puede deshacer.`
+        : `¿Eliminar a ${c ? c.nombre : 'este cliente'}? Si ya tiene pedidos, primero se marca como inactivo; eliminándolo otra vez se borra por completo.`;
+    if (!await confirmar(msg, { okText: inactivo ? 'Eliminar por completo' : 'Eliminar', peligro: true })) return;
     try {
         const r = await api('/admin/clientes/' + id, { method: 'DELETE' });
         toast(r.message, 'ok');

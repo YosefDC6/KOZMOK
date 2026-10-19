@@ -896,8 +896,8 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
     if (!quien) return res.status(401).json({ message: 'Inicia sesión para ver el comprobante' });
 
     const pr = await pool.query(
-        `SELECT p.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo
-         FROM pedidos p JOIN clientes c ON c.id = p.cliente_id WHERE p.id = $1`,
+        `SELECT p.*, COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre, c.correo AS cliente_correo
+         FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id WHERE p.id = $1`,
         [req.params.id]
     );
     if (pr.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
@@ -1468,7 +1468,7 @@ const PERMISOS_API = [
     { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
     { ruta: /^\/scm\//,                                metodos: LEER, permisos: ['scm', 'nivel-scm', 'reportes-scm', 'ordenes-compra'] },
     // ERP
-    { ruta: /^\/erp\/(clientes|productos)$/,            metodos: TODO, permisos: ['orden-nueva'] },
+    { ruta: /^\/erp\/(clientes|productos)$/,            metodos: ['POST', 'PUT', 'DELETE'], permisos: ['orden-nueva'] },
     { ruta: /^\/erp\/ordenes(\/procesar)?$/,            metodos: ['POST'], permisos: ['orden-nueva'] },
     { ruta: /^\/erp\/ordenes\/\d+\/estado$/,            metodos: ['PUT'], permisos: ['ordenes-erp'] },
     { ruta: /^\/erp\/estado$/,                          metodos: ['PUT'], permisos: ['nivel-erp'] },
@@ -1535,19 +1535,42 @@ app.get('/api/admin/clientes', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
-// Baja de cliente. Si ya tiene pedidos no se borra (se perdería el
-// historial de ventas, inventario y reportes): se marca inactivo.
+// Baja de cliente en dos pasos:
+//   1) Activo con pedidos -> se marca Inactivo (se conserva todo).
+//   2) Inactivo (o sin pedidos) -> se elimina por completo: datos, puntos,
+//      direcciones, tarjetas, reseñas, tickets, garantías, interacciones.
+//      Sus pedidos NO se borran (son ventas e inventario ya registrados):
+//      quedan como "Cliente eliminado" para que los reportes no cambien.
+//   No se elimina si tiene órdenes en curso (hay que terminarlas o
+//   cancelarlas antes, porque cancelar ajusta los puntos del cliente).
 app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) => {
-    const c = await pool.query('SELECT id FROM clientes WHERE id = $1', [req.params.id]);
+    const c = await pool.query('SELECT id, nombre, estado_cliente FROM clientes WHERE id = $1', [req.params.id]);
     if (c.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
-    const conPedidos = await pool.query('SELECT 1 FROM pedidos WHERE cliente_id = $1 LIMIT 1', [req.params.id]);
-    if (conPedidos.rows.length > 0) {
-        await pool.query(`UPDATE clientes SET estado_cliente = 'inactivo', etapa_crm = 'Inactivo' WHERE id = $1`, [req.params.id]);
-        return res.json({ message: 'El cliente tiene pedidos; se marcó como inactivo en lugar de eliminarlo', desactivado: true });
+    const cli = c.rows[0];
+    const pedidos = await pool.query(
+        `SELECT numero_orden, estado FROM pedidos WHERE cliente_id = $1 ORDER BY id`, [cli.id]);
+    if (pedidos.rows.length > 0 && cli.estado_cliente === 'activo') {
+        await pool.query(`UPDATE clientes SET estado_cliente = 'inactivo', etapa_crm = 'Inactivo' WHERE id = $1`, [cli.id]);
+        return res.json({ message: `${cli.nombre} tiene pedidos: se marcó como inactivo. Si lo eliminas de nuevo se borra por completo.`, resultado: 'inactivo' });
     }
-    await pool.query('UPDATE chatbot_consultas SET cliente_id = NULL WHERE cliente_id = $1', [req.params.id]);
-    await pool.query('DELETE FROM clientes WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Cliente eliminado', desactivado: false });
+    const enCurso = pedidos.rows.filter((p) => !['entregado', 'cancelado'].includes(p.estado));
+    if (enCurso.length > 0) {
+        return res.status(400).json({ message: `No se puede eliminar: tiene ${enCurso.length === 1 ? 'una orden' : 'órdenes'} en curso (${enCurso.map((p) => p.numero_orden).join(', ')}). Entrégalas o cancélalas primero.` });
+    }
+    const db = await pool.connect();
+    try {
+        await db.query('BEGIN');
+        await db.query('UPDATE pedidos SET cliente_id = NULL WHERE cliente_id = $1', [cli.id]);
+        await db.query('UPDATE chatbot_consultas SET cliente_id = NULL WHERE cliente_id = $1', [cli.id]);
+        await db.query('DELETE FROM clientes WHERE id = $1', [cli.id]);
+        await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+    res.json({
+        message: pedidos.rows.length
+            ? `${cli.nombre} se eliminó por completo. Sus ${pedidos.rows.length} pedido(s) se conservan como "Cliente eliminado".`
+            : `${cli.nombre} se eliminó por completo.`,
+        resultado: 'eliminado',
+    });
 }));
 
 // Alta de cliente desde el panel (equivale al registro, pero lo hace un admin)
@@ -2738,8 +2761,8 @@ app.get('/api/admin/pedidos', asyncRoute(async (req, res) => {
     const cond = estado && estado !== 'Todos' ? 'WHERE p.estado = $1' : '';
     const values = estado && estado !== 'Todos' ? [estado] : [];
     const result = await pool.query(`
-        SELECT p.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo
-        FROM pedidos p JOIN clientes c ON p.cliente_id = c.id
+        SELECT p.*, COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre, c.correo AS cliente_correo
+        FROM pedidos p LEFT JOIN clientes c ON p.cliente_id = c.id
         ${cond} ORDER BY p.fecha_pedido DESC
     `, values);
     res.json(result.rows);
@@ -2751,11 +2774,11 @@ app.get('/api/admin/pedidos', asyncRoute(async (req, res) => {
 const detallePedido = asyncRoute(async (req, res) => {
     const p = await pool.query(`
         SELECT p.*, u.nombre AS registrado_por,
-               c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
+               COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
                c.empresa AS cliente_empresa, c.ciudad AS cliente_ciudad, c.etapa_crm AS cliente_etapa, c.puntos AS cliente_puntos,
                COALESCE(m.total_compras, 0)::int AS cliente_compras, COALESCE(m.valor_total_compras, 0) AS cliente_valor
         FROM pedidos p
-        JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN clientes c ON p.cliente_id = c.id
         LEFT JOIN metricas_clientes m ON m.cliente_id = c.id
         LEFT JOIN usuarios u ON p.vendedor_id = u.id
         WHERE p.id = $1`, [req.params.id]);
@@ -2942,8 +2965,8 @@ app.get('/api/admin/erp/resumen', asyncRoute(async (req, res) => {
             (SELECT COUNT(*) FROM interacciones)::int AS interacciones
     `);
     const ultimas = await pool.query(`
-        SELECT p.id, p.numero_orden, p.fecha_pedido, p.total, p.estado, p.pago_estado, p.origen, c.nombre AS cliente_nombre
-        FROM pedidos p JOIN clientes c ON p.cliente_id = c.id
+        SELECT p.id, p.numero_orden, p.fecha_pedido, p.total, p.estado, p.pago_estado, p.origen, COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre
+        FROM pedidos p LEFT JOIN clientes c ON p.cliente_id = c.id
         ORDER BY p.fecha_pedido DESC LIMIT 5
     `);
     const kp = k.rows[0];
@@ -2966,11 +2989,11 @@ app.get('/api/admin/erp/ordenes', asyncRoute(async (req, res) => {
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const r = await pool.query(`
         SELECT p.id, p.numero_orden, p.fecha_pedido, p.subtotal, p.total, p.estado, p.pago_estado, p.metodo_pago, p.origen,
-               c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.empresa AS cliente_empresa,
+               c.id AS cliente_id, COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre, c.correo AS cliente_correo, c.empresa AS cliente_empresa,
                u.nombre AS registrado_por,
                (SELECT COALESCE(SUM(cantidad),0)::int FROM pedido_items WHERE pedido_id = p.id) AS piezas
         FROM pedidos p
-        JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN clientes c ON p.cliente_id = c.id
         LEFT JOIN usuarios u ON p.vendedor_id = u.id
         ${where}
         ORDER BY p.fecha_pedido DESC
@@ -2994,6 +3017,56 @@ app.get('/api/admin/erp/clientes', asyncRoute(async (req, res) => {
         ORDER BY c.nombre LIMIT 30
     `, [q, soloId]);
     res.json(r.rows);
+}));
+
+// Consulta de clientes desde el ERP (sin ir al CRM): listado con lo que
+// cada uno le ha comprado a la empresa por los dos canales.
+app.get('/api/admin/erp/clientes-consulta', asyncRoute(async (req, res) => {
+    const q = (req.query.busqueda || '').trim();
+    const etapa = ['Prospecto', 'Activo', 'Frecuente', 'Inactivo'].includes(req.query.etapa) ? req.query.etapa : null;
+    const r = await pool.query(`
+        SELECT c.id, c.nombre, c.correo, c.telefono, c.empresa, c.ciudad, c.etapa_crm, c.estado_cliente, c.puntos, c.fecha_registro,
+               COUNT(p.id) FILTER (WHERE p.estado <> 'cancelado')::int AS ordenes,
+               COUNT(p.id) FILTER (WHERE p.estado <> 'cancelado' AND p.origen = 'erp')::int AS ordenes_erp,
+               COALESCE(SUM(p.total) FILTER (WHERE p.estado <> 'cancelado' AND p.pago_estado = 'pagado'), 0) AS total_cobrado,
+               COALESCE(SUM(p.total) FILTER (WHERE p.estado <> 'cancelado' AND p.pago_estado = 'pendiente'), 0) AS por_cobrar,
+               MAX(p.fecha_pedido) FILTER (WHERE p.estado <> 'cancelado') AS ultima_orden
+        FROM clientes c LEFT JOIN pedidos p ON p.cliente_id = c.id
+        WHERE ($1 = '' OR c.nombre ILIKE '%' || $1 || '%' OR c.correo ILIKE '%' || $1 || '%' OR c.empresa ILIKE '%' || $1 || '%')
+          AND ($2::text IS NULL OR c.etapa_crm = $2)
+        GROUP BY c.id
+        ORDER BY total_cobrado DESC, c.nombre`, [q, etapa]);
+    res.json(r.rows.map((x) => ({ ...x, total_cobrado: Number(x.total_cobrado), por_cobrar: Number(x.por_cobrar) })));
+}));
+
+// Ficha de un cliente para el ERP: datos del CRM, métricas y sus órdenes.
+app.get('/api/admin/erp/clientes-consulta/:id', asyncRoute(async (req, res) => {
+    const c = await pool.query(`
+        SELECT c.id, c.nombre, c.correo, c.telefono, c.empresa, c.ciudad, c.estado, c.etapa_crm, c.estado_cliente,
+               c.puntos, c.fecha_registro,
+               COALESCE(m.total_compras, 0)::int AS total_compras, COALESCE(m.valor_total_compras, 0) AS valor_total,
+               COALESCE(m.ticket_promedio, 0) AS ticket_promedio,
+               (SELECT CONCAT_WS(', ', d.calle, d.ciudad, d.estado) FROM direcciones d
+                 WHERE d.cliente_id = c.id ORDER BY d.predeterminada DESC, d.id LIMIT 1) AS direccion,
+               (SELECT MAX(i.fecha) FROM interacciones i WHERE i.cliente_id = c.id) AS ultima_interaccion
+        FROM clientes c LEFT JOIN metricas_clientes m ON m.cliente_id = c.id
+        WHERE c.id = $1`, [req.params.id]);
+    if (c.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
+    const ordenes = await pool.query(`
+        SELECT p.id, p.numero_orden, p.fecha_pedido, p.total, p.estado, p.pago_estado, p.origen,
+               (SELECT COALESCE(SUM(cantidad),0)::int FROM pedido_items WHERE pedido_id = p.id) AS piezas
+        FROM pedidos p WHERE p.cliente_id = $1 ORDER BY p.fecha_pedido DESC`, [req.params.id]);
+    const masComprados = await pool.query(`
+        SELECT pr.nombre, SUM(pi.cantidad)::int AS unidades
+        FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id JOIN productos pr ON pr.id = pi.producto_id
+        WHERE p.cliente_id = $1 AND p.estado <> 'cancelado'
+        GROUP BY pr.nombre ORDER BY unidades DESC LIMIT 5`, [req.params.id]);
+    const x = c.rows[0];
+    res.json({
+        ...x, valor_total: Number(x.valor_total), ticket_promedio: Number(x.ticket_promedio),
+        ordenes: ordenes.rows.map((o) => ({ ...o, total: Number(o.total) })),
+        mas_comprados: masComprados.rows,
+    });
 }));
 
 // Alta rápida de cliente desde el paso 1 (queda en el CRM como Prospecto
@@ -3239,8 +3312,8 @@ app.get('/api/admin/erp/optimizar', asyncRoute(async (req, res) => {
             WHERE p.activo = true AND p.proveedor_id IS NOT NULL
             ORDER BY (p.stock - p.stock_minimo), p.nombre LIMIT 6`),
         pool.query(`
-            SELECT p.id, p.numero_orden, p.estado, p.pago_estado, p.total, p.fecha_pedido, c.nombre AS cliente_nombre
-            FROM pedidos p JOIN clientes c ON c.id = p.cliente_id
+            SELECT p.id, p.numero_orden, p.estado, p.pago_estado, p.total, p.fecha_pedido, COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre
+            FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
             WHERE p.origen = 'erp' AND p.estado NOT IN ('entregado','cancelado')
             ORDER BY p.fecha_pedido LIMIT 10`),
     ]);

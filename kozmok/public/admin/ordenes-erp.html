@@ -47,6 +47,7 @@
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/erp.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
+<script src="/admin/js/clientes-erp.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('ordenes-erp');
@@ -54,6 +55,7 @@ const USR = Sesion.usuario();
 const ROL = (USR && USR.rol) || '';
 document.getElementById('topbar').innerHTML = adminHeader(
     'Órdenes de clientes', 'Órdenes de los dos canales (ERP y tienda en línea): consulta, envío, pago y cancelación desde aquí.',
+    `<button class="btn btn-outline" onclick="ClientesERP.abrir()">${icon('user', 16)} Clientes</button> ` +
     '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +
     (puedeVer(ROL, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
 );
@@ -103,6 +105,7 @@ async function cargar() {
 // La orden se gestiona completa aquí mismo (estado del envío, pago,
 // cliente e inventario), sin salir del ERP.
 function verOrden(id) { GestionPedido.abrir(id, { onCambio: cargar }); }
+window.onCambioClientesERP = () => cargar();
 
 document.getElementById('f-busqueda').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(cargar, 250); });
 document.getElementById('f-origen').addEventListener('change', cargar);

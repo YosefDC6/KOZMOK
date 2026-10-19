@@ -22,7 +22,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 
 ### Panel interno – CRM
 - **Dashboard** con KPIs, clientes en riesgo y productos más vendidos.
-- **Clientes**: búsqueda, filtros por etapa y por estado, alta, edición y baja (si ya compró se marca inactivo); etapas `Prospecto → Activo → Frecuente → Inactivo`; un cliente pasa a *Activo* automáticamente con su primera compra.
+- **Clientes**: búsqueda, filtros por etapa y por estado, alta, edición y baja en dos pasos (si ya compró primero se marca inactivo; ya inactivo se elimina por completo y sus pedidos quedan como "Cliente eliminado"); etapas `Prospecto → Activo → Frecuente → Inactivo`; un cliente pasa a *Activo* automáticamente con su primera compra.
 - **Interacciones** (llamada, correo, reunión, soporte y chat), **evaluaciones** y **reportes** por rango de fechas.
 - **Soporte** con tickets (`TK-1001…`), estados y prioridades.
 - **Pedidos**, **garantías** y **analítica del chatbot** (qué se busca y qué búsquedas quedaron sin recomendación).
@@ -41,6 +41,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo lugar.
 - **Dashboard ERP**: clientes activos, órdenes de clientes, ventas totales, ventas de los últimos 6 meses por canal, productos más vendidos, últimas órdenes y el bloque de **integración entre módulos** (CRM ⇄ ERP ⇄ SCM).
 - **Órdenes de clientes**: listado de las órdenes de los dos canales (capturadas en el ERP o hechas en la tienda en línea) con búsqueda, filtros y exportación a CSV. Cada orden se gestiona completa sin salir del ERP: cliente e historial, estado del envío, registro del pago, cancelación (regresa stock, garantías y puntos) y movimientos de inventario.
+- **Clientes** (botón en Dashboard ERP y Órdenes de clientes): consulta de los clientes del CRM sin salir del ERP, con lo que ha comprado cada uno, su ficha y sus órdenes de los dos canales.
 - **Nueva orden** en 3 pasos: *Cliente* (se elige del CRM o se da de alta ahí mismo) → *Productos* (del inventario del SCM, con stock real) → *Confirmar* (resumen con IVA y envío, forma de pago y dirección).
 - **Procesamiento** en una sola transacción: crea la orden (`OR-001…`), valida y descuenta el stock, registra los movimientos de inventario, genera el pedido de reposición automático si algo cae en stock crítico y actualiza el historial del cliente (compras, etapa CRM y puntos del Club). Si algo falla, no se guarda nada.
 - **Procesos internos**: cada orden guarda su bitácora (orden creada, stock validado, inventario actualizado, reabasto, historial, pago, cambios de estado, cancelación), marcando qué fue automático y qué hizo alguien del equipo. Se ve en el detalle de la orden.
