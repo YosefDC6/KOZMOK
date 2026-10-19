@@ -5,6 +5,123 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Panel por rol · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
+<style>
+/* ---- Panel por rol (estilos propios de esta pantalla) ---- */
+.pr-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.pr-rol {
+    --c: var(--accent);
+    position: relative; text-align: left; cursor: pointer; font: inherit; color: var(--text);
+    background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 18px 16px; overflow: hidden; transition: border-color .18s, box-shadow .18s, transform .18s;
+    display: flex; flex-direction: column; justify-content: flex-start;
+}
+.pr-rol::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--c); opacity: .55; transition: opacity .18s;
+}
+.pr-rol:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--c) 45%, var(--line)); }
+.pr-rol[aria-pressed="true"] {
+    border-color: var(--c);
+    box-shadow: 0 0 0 1px var(--c), 0 14px 30px -18px var(--c);
+    background: color-mix(in srgb, var(--c) 7%, var(--bg-panel));
+}
+.pr-rol[aria-pressed="true"]::before { opacity: 1; }
+.pr-rol:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+.pr-rol-top { display: flex; gap: 12px; align-items: center; }
+.pr-avatar {
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0;
+    color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent);
+}
+.pr-rol h3 { margin: 0; font-size: 1.08rem; }
+.pr-rol .pr-entra { font-size: .76rem; color: var(--text-muted); margin-top: 2px; }
+.pr-rol p { font-size: .82rem; color: var(--text-muted); margin: 12px 0 14px; line-height: 1.45; min-height: 2.9em; }
+.pr-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.pr-rol .pr-pie { margin-top: auto; }
+.pr-chip {
+    font-size: .72rem; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--text-muted); display: inline-flex; gap: 5px; align-items: center; background: var(--bg-elev);
+}
+.pr-chip strong { color: var(--text); font-family: var(--font-mono); font-weight: 600; }
+.pr-barra { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.pr-barra span { display: block; height: 100%; background: var(--c); border-radius: inherit; transition: width .5s; }
+.pr-barra-label { display: flex; justify-content: space-between; font-size: .72rem; color: var(--text-muted); margin-bottom: 5px; }
+
+.pr-detalle { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 18px; margin-bottom: 18px; align-items: start; }
+@media (max-width: 860px) { .pr-detalle { grid-template-columns: 1fr; } }
+
+/* Vista previa del menú lateral */
+.pr-menu {
+    --c: var(--accent);
+    background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+}
+.pr-menu-head {
+    display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--c) 8%, var(--bg-elev));
+}
+.pr-menu-head .pr-avatar { width: 34px; height: 34px; border-radius: 10px; }
+.pr-menu-head strong { display: block; font-size: .92rem; }
+.pr-menu-head small { color: var(--text-muted); font-size: .72rem; }
+.pr-menu-body { padding: 8px 10px 12px; max-height: 620px; overflow: auto; }
+.pr-menu-grupo { font-size: .66rem; letter-spacing: .09em; color: var(--text-muted); font-weight: 700; padding: 12px 8px 5px; }
+.pr-menu-item {
+    display: flex; gap: 9px; align-items: center; padding: 7px 8px; border-radius: 8px; font-size: .84rem; color: var(--text);
+}
+.pr-menu-item .ic { color: var(--text-muted); flex-shrink: 0; }
+.pr-menu-item.inicio { background: color-mix(in srgb, var(--c) 14%, transparent); }
+.pr-menu-item.inicio .ic { color: var(--c); }
+.pr-menu-item .pr-tag {
+    margin-left: auto; font-size: .64rem; padding: 1px 7px; border-radius: 999px; color: var(--c);
+    border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); white-space: nowrap;
+}
+.pr-menu-ocultas { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 6px; }
+.pr-menu-ocultas summary { cursor: pointer; font-size: .76rem; color: var(--text-muted); padding: 6px 8px; list-style: none; display: flex; gap: 6px; align-items: center; }
+.pr-menu-ocultas summary::-webkit-details-marker { display: none; }
+.pr-menu-ocultas .pr-menu-item { color: var(--text-muted); opacity: .6; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-muted) 50%, transparent); }
+
+/* Acceso por módulo */
+.pr-mods { display: grid; gap: 14px; }
+.pr-mod-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.pr-mod-top strong { font-size: .9rem; }
+.pr-mod-top span { font-family: var(--font-mono); font-size: .8rem; color: var(--text-muted); }
+.pr-segs { display: flex; gap: 4px; }
+.pr-seg { flex: 1; height: 26px; border-radius: 6px; background: var(--bg-elev); border: 1px solid var(--line); position: relative; }
+.pr-seg.si { background: color-mix(in srgb, var(--c) 70%, transparent); border-color: transparent; }
+.pr-seg[data-tip]:hover::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    background: var(--bg-panel-2, var(--bg-elev)); border: 1px solid var(--line); color: var(--text); font-size: .72rem;
+    padding: 4px 8px; border-radius: 6px; white-space: nowrap; z-index: 5; box-shadow: var(--shadow-sm);
+}
+.pr-leyenda { display: flex; gap: 14px; flex-wrap: wrap; font-size: .74rem; color: var(--text-muted); margin-top: 14px; }
+.pr-leyenda i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+
+/* Matriz */
+.pr-matriz { width: 100%; border-collapse: separate; border-spacing: 0; }
+.pr-matriz th, .pr-matriz td { padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: .85rem; }
+.pr-matriz thead th { white-space: nowrap; position: sticky; top: 0; background: var(--bg-panel); z-index: 1; font-size: .78rem; color: var(--text-muted); font-weight: 600; }
+.pr-matriz th.pr-col, .pr-matriz td.pr-col { text-align: center; width: 120px; }
+.pr-matriz th.pr-col .pr-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+.pr-matriz .pr-col.sel { background: color-mix(in srgb, var(--c) 9%, transparent); }
+.pr-matriz thead .pr-col.sel { color: var(--text); background: color-mix(in srgb, var(--c) 14%, var(--bg-panel)); }
+.pr-matriz tr.pr-grupo td {
+    background: var(--bg-elev); font-size: .68rem; letter-spacing: .09em; font-weight: 700; color: var(--text-muted); padding: 7px 12px;
+}
+.pr-matriz tbody tr:not(.pr-grupo):hover td { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.pr-si {
+    display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+    color: #fff; background: var(--c); box-shadow: 0 2px 8px -3px var(--c);
+}
+.pr-no { display: inline-block; width: 10px; height: 2px; border-radius: 2px; background: var(--line); vertical-align: middle; }
+.pr-accion { font-size: .68rem; color: var(--text-muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+
+/* Pasos para agregar un rol */
+.pr-pasos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.pr-paso { display: flex; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-elev); }
+.pr-num {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-family: var(--font-mono);
+    font-weight: 700; font-size: .85rem; color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.pr-paso code { font-size: .78rem; }
+.pr-paso p { margin: 4px 0 0; font-size: .8rem; color: var(--text-muted); line-height: 1.45; }
+</style>
 </head>
 <body>
 <div class="admin-shell">
@@ -12,19 +129,27 @@
     <main class="admin-main">
         <div id="topbar"></div>
 
-        <div class="card">
-            <h3 style="margin-top:0">Vistas y accesos por rol</h3>
-            <p style="color:var(--text-muted);font-size:.88rem">
-                Se genera de los mismos permisos que arman el menú lateral, así que siempre coincide con lo que de verdad ve cada quien.
-                Si alguien abre por URL una sección que no le toca, el panel lo regresa a su inicio, y el servidor rechaza cualquier llamada a un módulo que no le corresponde.
-            </p>
-            <div class="roles-grid" id="roles-grid"></div>
+        <div class="pr-roles" id="pr-roles" role="group" aria-label="Elegir rol"></div>
+
+        <div class="pr-detalle">
+            <div class="pr-menu" id="pr-menu"></div>
+            <div class="card" style="margin:0">
+                <h3 style="margin-top:0" id="pr-mods-titulo">Acceso por módulo</h3>
+                <p style="color:var(--text-muted);font-size:.84rem;margin-top:-4px">Cada bloque es una sección del módulo; en color, las que este rol puede abrir. Pasa el cursor para ver el nombre.</p>
+                <div class="pr-mods" id="pr-mods"></div>
+                <div class="pr-leyenda" id="pr-leyenda"></div>
+            </div>
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0">Matriz de permisos</h3>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                    <h3 style="margin:0">Matriz de permisos</h3>
+                    <p style="color:var(--text-muted);font-size:.84rem;margin:4px 0 0">Cada sección contra cada rol. Se genera de los mismos permisos que arman el menú y que valida el servidor, así que siempre coincide con lo que de verdad ve cada quien.</p>
+                </div>
+            </div>
             <div class="table-wrap">
-                <table>
+                <table class="pr-matriz">
                     <thead id="matriz-head"></thead>
                     <tbody id="matriz-body"></tbody>
                 </table>
@@ -33,11 +158,11 @@
 
         <div class="card">
             <h3 style="margin-top:0">Agregar un rol nuevo</h3>
-            <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:.9rem">
-                <li><code>db/database.sql</code> → CHECK <code>(rol IN (...))</code> de la tabla usuarios.</li>
-                <li><code>server.js</code> → objeto <code>ROLES_INTERNOS</code> (nombre y descripción).</li>
-                <li><code>admin/js/permisos.js</code> → objeto <code>PERMISOS</code> con las secciones que verá. El servidor usa ese mismo archivo para validar cada llamada.</li>
-            </ol>
+            <div class="pr-pasos">
+                <div class="pr-paso"><span class="pr-num">1</span><div><code>db/database.sql</code><p>Agregarlo al CHECK <code>(rol IN (...))</code> de la tabla usuarios.</p></div></div>
+                <div class="pr-paso"><span class="pr-num">2</span><div><code>server.js</code><p>Agregarlo a <code>ROLES_INTERNOS</code> con su nombre y descripción.</p></div></div>
+                <div class="pr-paso"><span class="pr-num">3</span><div><code>admin/js/permisos.js</code><p>Agregarlo a <code>PERMISOS</code> con las secciones que verá. El servidor valida cada llamada con ese mismo archivo.</p></div></div>
+            </div>
         </div>
     </main>
 </div>
@@ -53,39 +178,131 @@ requireAuthAdmin();
 renderAdminSidebar('panel-roles');
 document.getElementById('topbar').innerHTML = adminHeader('Panel por rol', 'Menú dinámico: vistas y accesos según el rol de cada usuario.');
 
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ROLES = Object.keys(PERMISOS);
+// Color e ícono de cada rol (un rol nuevo toma el siguiente color de la lista).
+// Ventas usa un violeta fijo para no confundirse con el color de acento de
+// ningún tema (índigo, esmeralda, grafito o claro).
+const PALETA = ['var(--accent)', '#9B6FE8', 'var(--warning)', 'var(--info)', 'var(--danger)'];
+const ICONO = { admin: 'shield', ventas: 'cart', logistica: 'truck' };
+const colorDe = (rol) => PALETA[ROLES.indexOf(rol) % PALETA.length];
+const iconoDe = (rol) => ICONO[rol] || 'user';
 
-// Una columna por rol, agrupada por módulo.
-document.getElementById('roles-grid').innerHTML = ROLES.map((rol) => {
-    const grupos = ADMIN_SECCIONES.map((s) => {
-        const items = s.links.filter((l) => puedeVer(rol, l.key));
-        if (s.titulo === 'ERP' && puedeVer(rol, 'orden-nueva')) items.push({ label: 'Capturar órdenes', ic: 'plus' });
-        if (!items.length) return '';
-        return `<li style="margin-top:6px"><small style="font-weight:700;letter-spacing:.04em">${s.titulo.toUpperCase()}</small></li>` +
-            items.map((l) => `<li>${icon('check', 13)} ${l.label}</li>`).join('');
-    }).join('');
-    const inicio = (ADMIN_SECCIONES.flatMap((x) => x.links).find((l) => l.href === homeDe(rol)) || {}).label;
-    const modulo = (ADMIN_SECCIONES.find((x) => x.links.some((l) => l.href === homeDe(rol))) || {}).titulo;
-    return `<div class="rol-col"><h4>${ROL_LABEL[rol] || rol}</h4>
-        <div style="font-size:.76rem;color:var(--text-muted);padding:8px 12px 0">Entra a: ${modulo ? modulo + ' › ' : ''}${inicio || '—'}</div>
-        <ul>${grupos}</ul></div>`;
-}).join('');
-
-// Matriz sección × rol.
-document.getElementById('matriz-head').innerHTML = `<tr><th>Módulo</th><th>Sección</th>${ROLES.map((r) => `<th style="text-align:center">${ROL_LABEL[r] || r}</th>`).join('')}</tr>`;
-const filas = ADMIN_SECCIONES.flatMap((s) => {
+// Secciones de cada módulo, con el permiso de acción "Capturar órdenes" en el ERP.
+const MODULOS = ADMIN_SECCIONES.map((s) => {
     const links = [...s.links];
-    if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes' });
-    return links.map((l) => ({ modulo: s.titulo, ...l }));
+    if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes', ic: 'plus', accion: true });
+    return { titulo: s.titulo, links };
 });
-const si = `<span style="color:var(--success)">${icon('check', 15)}</span>`;
-const no = `<span style="color:var(--text-muted)">—</span>`;
-document.getElementById('matriz-body').innerHTML = filas.map((f) => `
-    <tr>
-        <td style="color:var(--text-muted);font-size:.8rem">${f.modulo}</td>
-        <td>${f.label}</td>
-        ${ROLES.map((r) => `<td style="text-align:center">${puedeVer(r, f.key) ? si : no}</td>`).join('')}
-    </tr>`).join('');
+const TOTAL = MODULOS.reduce((n, m) => n + m.links.length, 0);
+const visibles = (rol) => MODULOS.reduce((n, m) => n + m.links.filter((l) => puedeVer(rol, l.key)).length, 0);
+const inicioDe = (rol) => {
+    for (const s of ADMIN_SECCIONES) {
+        const l = s.links.find((x) => x.href === homeDe(rol));
+        if (l) return `${s.titulo} › ${l.label}`;
+    }
+    return '—';
+};
+
+let ROL = ROLES[0];
+let INFO = {};       // descripción de cada rol (servidor)
+let PERSONAS = {};   // usuarios activos por rol
+
+function pintarRoles() {
+    document.getElementById('pr-roles').innerHTML = ROLES.map((rol) => {
+        const n = visibles(rol);
+        const pct = Math.round((n / TOTAL) * 100);
+        const personas = PERSONAS[rol];
+        return `<button type="button" class="pr-rol" style="--c:${colorDe(rol)}" aria-pressed="${rol === ROL}" onclick="elegir('${rol}')">
+            <div class="pr-rol-top">
+                <span class="pr-avatar">${icon(iconoDe(rol), 22)}</span>
+                <div><h3>${esc(ROL_LABEL[rol] || rol)}</h3><div class="pr-entra">Entra a ${esc(inicioDe(rol))}</div></div>
+            </div>
+            <p>${esc((INFO[rol] && INFO[rol].descripcion) || '')}</p>
+            <div class="pr-chips">
+                <span class="pr-chip"><strong>${n}</strong> secciones</span>
+                ${personas !== undefined ? `<span class="pr-chip">${icon('user', 12)} <strong>${personas}</strong> ${personas === 1 ? 'persona' : 'personas'}</span>` : ''}
+                ${puedeVer(rol, 'orden-nueva') ? `<span class="pr-chip">${icon('plus', 12)} Captura órdenes</span>` : ''}
+            </div>
+            <div class="pr-pie">
+                <div class="pr-barra-label"><span>Acceso al sistema</span><span class="mono">${pct}%</span></div>
+                <div class="pr-barra"><span style="width:${pct}%"></span></div>
+            </div>
+        </button>`;
+    }).join('');
+}
+
+function pintarMenu() {
+    const c = colorDe(ROL);
+    const el = document.getElementById('pr-menu');
+    el.style.setProperty('--c', c);
+    const home = homeDe(ROL);
+    const ocultas = [];
+    const grupos = MODULOS.map((m) => {
+        const si = m.links.filter((l) => puedeVer(ROL, l.key));
+        m.links.filter((l) => !puedeVer(ROL, l.key)).forEach((l) => ocultas.push({ ...l, modulo: m.titulo }));
+        if (!si.length) return '';
+        return `<div class="pr-menu-grupo">${m.titulo.toUpperCase()}</div>` + si.map((l) => `
+            <div class="pr-menu-item ${l.href === home ? 'inicio' : ''}">${icon(l.ic || 'grid', 15)} <span>${esc(l.label)}</span>
+                ${l.href === home ? '<span class="pr-tag">Inicio</span>' : l.accion ? '<span class="pr-tag">Acción</span>' : ''}</div>`).join('');
+    }).join('');
+    el.innerHTML = `
+        <div class="pr-menu-head">
+            <span class="pr-avatar" style="--c:${c}">${icon(iconoDe(ROL), 18)}</span>
+            <div><strong>Menú de ${esc(ROL_LABEL[ROL] || ROL)}</strong><small>Así se ve su barra lateral</small></div>
+        </div>
+        <div class="pr-menu-body">
+            ${grupos}
+            ${ocultas.length ? `<details class="pr-menu-ocultas">
+                <summary>${icon('lock', 13)} Sin acceso (${ocultas.length})</summary>
+                ${ocultas.map((l) => `<div class="pr-menu-item">${icon(l.ic || 'grid', 15)} <span>${esc(l.label)}</span></div>`).join('')}
+            </details>` : ''}
+        </div>`;
+}
+
+function pintarModulos() {
+    const c = colorDe(ROL);
+    document.getElementById('pr-mods-titulo').textContent = `Acceso por módulo · ${ROL_LABEL[ROL] || ROL}`;
+    document.getElementById('pr-mods').innerHTML = MODULOS.map((m) => {
+        const n = m.links.filter((l) => puedeVer(ROL, l.key)).length;
+        return `<div style="--c:${c}">
+            <div class="pr-mod-top"><strong>${m.titulo}</strong><span>${n} / ${m.links.length}</span></div>
+            <div class="pr-segs">${m.links.map((l) => `<span class="pr-seg ${puedeVer(ROL, l.key) ? 'si' : ''}" data-tip="${esc(l.label)}${puedeVer(ROL, l.key) ? '' : ' (sin acceso)'}"></span>`).join('')}</div>
+        </div>`;
+    }).join('');
+    document.getElementById('pr-leyenda').innerHTML =
+        `<span><i style="background:color-mix(in srgb, ${c} 70%, transparent)"></i>Con acceso</span>` +
+        `<span><i style="background:var(--bg-elev);border:1px solid var(--line)"></i>Sin acceso</span>`;
+}
+
+function pintarMatriz() {
+    document.getElementById('matriz-head').innerHTML = `<tr><th>Sección</th>${ROLES.map((r) =>
+        `<th class="pr-col ${r === ROL ? 'sel' : ''}" style="--c:${colorDe(r)}"><span class="pr-dot"></span>${esc(ROL_LABEL[r] || r)}</th>`).join('')}</tr>`;
+    document.getElementById('matriz-body').innerHTML = MODULOS.map((m) =>
+        `<tr class="pr-grupo"><td colspan="${ROLES.length + 1}">${m.titulo.toUpperCase()}</td></tr>` +
+        m.links.map((l) => `<tr>
+            <td>${esc(l.label)}${l.accion ? '<span class="pr-accion">acción</span>' : ''}</td>
+            ${ROLES.map((r) => `<td class="pr-col ${r === ROL ? 'sel' : ''}" style="--c:${colorDe(r)}">${puedeVer(r, l.key)
+                ? `<span class="pr-si" title="${esc(ROL_LABEL[r] || r)} puede ver ${esc(l.label)}">${icon('check', 14)}</span>`
+                : '<span class="pr-no" title="Sin acceso"></span>'}</td>`).join('')}
+        </tr>`).join('')).join('');
+}
+
+function elegir(rol) {
+    ROL = rol;
+    pintarRoles(); pintarMenu(); pintarModulos(); pintarMatriz();
+}
+
+elegir(ROL);
+
+// Descripción de cada rol y cuántas personas lo tienen (datos del servidor).
+Promise.all([api('/admin/roles').catch(() => []), api('/admin/usuarios').catch(() => null)]).then(([roles, usuarios]) => {
+    roles.forEach((r) => { INFO[r.clave] = r; });
+    if (Array.isArray(usuarios)) {
+        ROLES.forEach((r) => { PERSONAS[r] = usuarios.filter((u) => u.rol === r && u.activo).length; });
+    }
+    pintarRoles();
+});
 </script>
 </body>
 </html>
