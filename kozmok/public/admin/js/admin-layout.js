@@ -62,6 +62,49 @@ function avatarIni(nombre) {
 }
 window.avatarIni = avatarIni;
 
+const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Cuenta: 'settings' };
+
+function menuCorto() {
+    try { return localStorage.getItem('kz_menu_corto') === '1'; } catch { return false; }
+}
+// Oculta (deja solo los módulos) o muestra el menú lateral completo.
+function alternarMenuCorto() {
+    const corto = !menuCorto();
+    try { localStorage.setItem('kz_menu_corto', corto ? '1' : '0'); } catch { /* sin almacenamiento */ }
+    const shell = document.querySelector('.admin-shell');
+    if (shell) shell.classList.toggle('menu-corto', corto);
+}
+window.alternarMenuCorto = alternarMenuCorto;
+
+// Ventana al centro con las secciones de un módulo (desde el menú corto).
+function abrirMenuModulo(titulo) {
+    const rol = (Sesion.usuario() || {}).rol || '';
+    const ic = window.icon || (() => '');
+    const grupo = ADMIN_SECCIONES.find((s) => s.titulo === titulo);
+    if (!grupo) return;
+    const links = grupo.links.filter((l) => puedeVer(rol, l.key));
+    let ov = document.getElementById('modal-menu-modulo');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.className = 'modal-overlay';
+        ov.id = 'modal-menu-modulo';
+        ov.innerHTML = '<div class="modal menu-modulo" role="dialog" aria-modal="true"></div>';
+        ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ov.classList.remove('open'); });
+        document.body.appendChild(ov);
+    }
+    ov.querySelector('.modal').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-menu-modulo').classList.remove('open')" aria-label="Cerrar">${ic('x', 20)}</button>
+        <div class="mm-head"><span class="mm-ico">${ic(ICONO_MODULO[titulo] || 'grid', 20)}</span><div><h3>${titulo}</h3><p>${links.length} secciones</p></div></div>
+        <div class="mm-grid">${links.map((l) => `
+            <a class="modulo-tile ${l.key === window.ADMIN_ACTIVO ? 'actual' : ''}" href="${l.href}">
+                <span class="mt-ico">${ic(l.ic, 20)}</span>
+                <span class="mt-txt"><span class="mt-title">${l.label}</span>${l.desc ? `<span class="mt-desc">${l.desc}</span>` : ''}</span>
+            </a>`).join('')}</div>`;
+    ov.classList.add('open');
+}
+window.abrirMenuModulo = abrirMenuModulo;
+
 function renderAdminSidebar(activo) {
     window.ADMIN_ACTIVO = activo;
     const el = document.getElementById('admin-sidebar-placeholder');
@@ -84,9 +127,23 @@ function renderAdminSidebar(activo) {
         .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
         .filter((s) => s.links.length > 0);
 
+    // Menú corto (solo íconos de módulo): se recuerda en el navegador.
+    const shell = el.closest('.admin-shell');
+    if (shell) shell.classList.toggle('menu-corto', menuCorto());
+    const grupoActivo = (secciones.find((s) => s.links.some((l) => l.key === activo)) || {}).titulo;
+
     el.innerHTML = `
-        <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> Kozmok</div>
+        <div class="brand-fila">
+            <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
+            <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
+        </div>
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>
+        <nav class="admin-rail" aria-label="Módulos">
+            ${secciones.map((s) => `
+                <button type="button" class="rail-mod ${s.titulo === grupoActivo ? 'activo' : ''}" onclick="abrirMenuModulo('${s.titulo}')" title="${s.titulo}">
+                    ${ic(ICONO_MODULO[s.titulo] || 'grid', 20)}<span>${s.titulo}</span>
+                </button>`).join('')}
+        </nav>
         <div class="admin-nav-links" id="admin-nav-links">
             ${secciones.map((s) => {
                 const enlaces = s.links.map((l) => `<a href="${l.href}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
@@ -117,7 +174,7 @@ function renderAdminSidebar(activo) {
                     <div class="au-rol">${ROL_LABEL[rol] || rol}</div>
                 </div>
             </div>
-            <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()">${ic('logout', 15)} Cerrar sesión</button>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
     `;
     const t = document.getElementById('admin-nav-toggle');

@@ -45,8 +45,6 @@
 .pr-barra span { display: block; height: 100%; background: var(--c); border-radius: inherit; transition: width .5s; }
 .pr-barra-label { display: flex; justify-content: space-between; font-size: .72rem; color: var(--text-muted); margin-bottom: 5px; }
 
-.pr-detalle { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 18px; margin-bottom: 18px; align-items: start; }
-@media (max-width: 860px) { .pr-detalle { grid-template-columns: 1fr; } }
 
 /* Vista previa del menú lateral */
 .pr-menu {
@@ -60,7 +58,8 @@
 .pr-menu-head .pr-avatar { width: 34px; height: 34px; border-radius: 10px; }
 .pr-menu-head strong { display: block; font-size: .92rem; }
 .pr-menu-head small { color: var(--text-muted); font-size: .72rem; }
-.pr-menu-body { padding: 8px 10px 12px; max-height: 620px; overflow: auto; }
+.pr-menu-body { padding: 8px 10px 14px; }
+.pr-menu-head .modal-close { margin-left: auto; float: none; }
 .pr-menu-grupo { font-size: .66rem; letter-spacing: .09em; color: var(--text-muted); font-weight: 700; padding: 12px 8px 5px; }
 .pr-menu-item {
     display: flex; gap: 9px; align-items: center; padding: 7px 8px; border-radius: 8px; font-size: .84rem; color: var(--text);
@@ -131,14 +130,21 @@
 
         <div class="pr-roles" id="pr-roles" role="group" aria-label="Elegir rol"></div>
 
-        <div class="pr-detalle">
-            <div class="pr-menu" id="pr-menu"></div>
-            <div class="card" style="margin:0">
-                <h3 style="margin-top:0" id="pr-mods-titulo">Acceso por módulo</h3>
-                <p style="color:var(--text-muted);font-size:.84rem;margin-top:-4px">Cada bloque es una sección del módulo; en color, las que este rol puede abrir. Pasa el cursor para ver el nombre.</p>
-                <div class="pr-mods" id="pr-mods"></div>
-                <div class="pr-leyenda" id="pr-leyenda"></div>
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+                <div>
+                    <h3 style="margin:0" id="pr-mods-titulo">Acceso por módulo</h3>
+                    <p style="color:var(--text-muted);font-size:.84rem;margin:4px 0 0">Cada bloque es una sección del módulo; en color, las que este rol puede abrir. Pasa el cursor para ver el nombre.</p>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" id="pr-ver-menu" onclick="abrirMenuRol()"></button>
             </div>
+            <div class="pr-mods" id="pr-mods" style="margin-top:16px"></div>
+            <div class="pr-leyenda" id="pr-leyenda"></div>
+        </div>
+
+        <!-- Vista previa del menú del rol: se abre al centro -->
+        <div class="modal-overlay" id="pr-modal-menu" onclick="if (event.target === this) this.classList.remove('open')">
+            <div class="modal" style="max-width:360px;padding:0" role="dialog" aria-modal="true"><div class="pr-menu" id="pr-menu"></div></div>
         </div>
 
         <div class="card">
@@ -250,6 +256,7 @@ function pintarMenu() {
         <div class="pr-menu-head">
             <span class="pr-avatar" style="--c:${c}">${icon(iconoDe(ROL), 18)}</span>
             <div><strong>Menú de ${esc(ROL_LABEL[ROL] || ROL)}</strong><small>Así se ve su barra lateral</small></div>
+            <button class="modal-close" onclick="document.getElementById('pr-modal-menu').classList.remove('open')" aria-label="Cerrar">${icon('x', 18)}</button>
         </div>
         <div class="pr-menu-body">
             ${grupos}
@@ -263,6 +270,7 @@ function pintarMenu() {
 function pintarModulos() {
     const c = colorDe(ROL);
     document.getElementById('pr-mods-titulo').textContent = `Acceso por módulo · ${ROL_LABEL[ROL] || ROL}`;
+    document.getElementById('pr-ver-menu').innerHTML = `${icon('menu', 15)} Ver menú de ${esc(ROL_LABEL[ROL] || ROL)}`;
     document.getElementById('pr-mods').innerHTML = MODULOS.map((m) => {
         const n = m.links.filter((l) => puedeVer(ROL, l.key)).length;
         return `<div style="--c:${c}">
@@ -287,6 +295,9 @@ function pintarMatriz() {
                 : '<span class="pr-no" title="Sin acceso"></span>'}</td>`).join('')}
         </tr>`).join('')).join('');
 }
+
+function abrirMenuRol() { document.getElementById('pr-modal-menu').classList.add('open'); }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.getElementById('pr-modal-menu').classList.remove('open'); });
 
 function elegir(rol) {
     ROL = rol;

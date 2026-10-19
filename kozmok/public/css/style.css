@@ -71,7 +71,7 @@
 :root[data-tema="claro"] .bottom-nav, :root[data-tema="claro"] .cookie-bar { background: rgba(255, 255, 255, .96); }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; overflow-x: hidden; }
+html, body { margin: 0; padding: 0; overflow-x: hidden; overflow-x: clip; }
 
 /* Íconos SVG (icons.js) */
 .ic { display: inline-block; vertical-align: -0.16em; flex-shrink: 0; }
@@ -1612,3 +1612,66 @@ tr.en-orden td { background: color-mix(in srgb, var(--accent) 7%, transparent); 
     .admin-shell .admin-topbar h2 { font-size: 1.4rem; }
     .admin-shell .modulo-tiles { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 }
+
+/* ---- Menú lateral ocultable (modo corto: solo módulos) ---- */
+.admin-shell .brand-fila { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.admin-shell .brand-fila .brand { border: 0; margin: 0; }
+.admin-colapsar {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-elev);
+    color: var(--text-muted); display: grid; place-items: center; cursor: pointer; flex-shrink: 0; transition: color .15s, border-color .15s;
+}
+.admin-colapsar:hover { color: var(--text); border-color: var(--accent); }
+.admin-colapsar .ic { transform: rotate(90deg); transition: transform .2s; }
+.admin-rail { display: none; }
+.admin-shell .admin-sidebar { transition: width .2s ease, padding .2s ease; }
+
+.admin-shell.menu-corto .admin-sidebar { width: 78px; padding: 14px 10px; overflow-x: hidden; }
+.admin-shell.menu-corto .brand-fila { flex-direction: column; gap: 10px; padding-bottom: 12px; }
+.admin-shell.menu-corto .brand-fila .brand { padding: 4px 0 0; }
+.admin-shell.menu-corto .brand-txt,
+.admin-shell.menu-corto .admin-nav-links,
+.admin-shell.menu-corto .au-name, .admin-shell.menu-corto .au-rol,
+.admin-shell.menu-corto .au-salir span { display: none; }
+.admin-shell.menu-corto .admin-colapsar .ic { transform: rotate(-90deg); }
+.admin-shell.menu-corto .admin-rail { display: flex; flex-direction: column; gap: 6px; flex: 1; padding-top: 6px; }
+.rail-mod {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0 8px; border-radius: 12px;
+    border: 1px solid transparent; background: none; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .66rem;
+    font-weight: 700; letter-spacing: .06em; transition: background .15s, color .15s;
+}
+.rail-mod:hover { background: var(--bg-panel-2); color: var(--text); }
+.rail-mod.activo { color: var(--accent-light); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.admin-shell.menu-corto .admin-user { padding: 12px 0 0; }
+.admin-shell.menu-corto .au-fila { justify-content: center; }
+.admin-shell.menu-corto .au-salir { justify-content: center; padding: 8px 0; }
+
+/* Ventana al centro con las secciones de un módulo */
+.modal.menu-modulo { max-width: 640px; }
+.menu-modulo .mm-head { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.menu-modulo .mm-head h3 { margin: 0; }
+.menu-modulo .mm-head p { margin: 0; font-size: .8rem; }
+.menu-modulo .mm-ico {
+    width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-light);
+}
+.menu-modulo .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.menu-modulo .modulo-tile { flex-direction: row; align-items: center; gap: 12px; padding: 12px 14px; }
+.menu-modulo .modulo-tile .mt-ico { width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent-light); }
+.menu-modulo .modulo-tile .mt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.menu-modulo .modulo-tile .mt-desc { font-size: .72rem; }
+.menu-modulo .modulo-tile.actual { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel)); }
+
+/* Textos dentro de tarjetas del panel: que usen el ancho disponible */
+.admin-shell .card p { max-width: 90ch; }
+
+@media (max-width: 900px) {
+    .admin-colapsar { display: none; }
+    .admin-shell.menu-corto .admin-sidebar { width: 100%; padding: 18px 14px; }
+    .admin-shell.menu-corto .admin-rail { display: none; }
+    .admin-shell.menu-corto .brand-fila { flex-direction: row; }
+    .admin-shell.menu-corto .brand-txt, .admin-shell.menu-corto .au-salir span { display: inline; }
+    .admin-shell.menu-corto .admin-nav-links.open { display: block; }
+}
+
+/* En pantallas anchas el contenido se centra (se nota con el menú corto) */
+.admin-shell .admin-main { margin: 0 auto; width: 100%; min-width: 0; }
