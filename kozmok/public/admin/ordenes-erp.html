@@ -100,7 +100,7 @@ async function cargar() {
         <tr onclick="verOrden(${o.id})" style="cursor:pointer">
             <td class="mono">${o.numero_orden}</td>
             <td>${formatoFecha(o.fecha_pedido)}</td>
-            <td>${o.cliente_nombre}<div style="color:var(--text-muted);font-size:.78rem">${o.cliente_empresa || o.cliente_correo}</div></td>
+            <td><span class="cel-persona">${avatarIni(o.cliente_nombre)}<span>${o.cliente_nombre}<div style="color:var(--text-muted);font-size:.78rem">${o.cliente_empresa || o.cliente_correo || ''}</div></span></span></td>
             <td>${origenPill(o.origen)}${o.registrado_por ? `<div style="color:var(--text-muted);font-size:.72rem;margin-top:3px">${o.registrado_por}</div>` : ''}</td>
             <td class="mono">${o.piezas}</td>
             <td class="mono">${formatoMoneda(o.total)}</td>

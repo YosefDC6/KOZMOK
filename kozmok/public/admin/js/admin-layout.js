@@ -52,7 +52,18 @@ const ADMIN_SECCIONES = [
 // validar cada llamada, así que el menú y el acceso real siempre coinciden.
 window.ADMIN_SECCIONES = ADMIN_SECCIONES;
 
+const inicialesUsuario = (nombre) => String(nombre || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+
+// Avatar con iniciales para listas de clientes (color estable por nombre).
+function avatarIni(nombre) {
+    const n = String(nombre || '?');
+    let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return `<span class="av-ini" style="--h:${h}">${inicialesUsuario(n)}</span>`;
+}
+window.avatarIni = avatarIni;
+
 function renderAdminSidebar(activo) {
+    window.ADMIN_ACTIVO = activo;
     const el = document.getElementById('admin-sidebar-placeholder');
     if (!el) return;
     const usuario = Sesion.usuario();
@@ -99,9 +110,14 @@ function renderAdminSidebar(activo) {
             }).join('')}
         </div>
         <div class="admin-user">
-            <div class="au-name">${usuario ? usuario.nombre : ''}</div>
-            <div class="au-rol">${ROL_LABEL[rol] || rol}</div>
-            <button class="btn btn-ghost btn-sm" style="padding-left:0;margin-top:4px" onclick="cerrarSesionAdmin()">Cerrar sesión</button>
+            <div class="au-fila">
+                <span class="au-avatar">${inicialesUsuario(usuario ? usuario.nombre : '')}</span>
+                <div style="min-width:0">
+                    <div class="au-name">${usuario ? usuario.nombre : ''}</div>
+                    <div class="au-rol">${ROL_LABEL[rol] || rol}</div>
+                </div>
+            </div>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()">${ic('logout', 15)} Cerrar sesión</button>
         </div>
     `;
     const t = document.getElementById('admin-nav-toggle');
@@ -153,18 +169,22 @@ function renderModuloTiles(elId, grupoTitulo, excluirKey) {
     const tiles = grupo.links.filter((l) => l.key !== excluirKey && puedeVer(rol, l.key));
     el.innerHTML = tiles.map((l) => `
         <a class="modulo-tile" href="${l.href}">
-            <span class="mt-ico">${ic(l.ic, 22)}</span>
-            <span class="mt-title">${l.label}</span>
-            <span class="mt-desc">${l.desc || ''}</span>
+            <span class="mt-ico">${ic(l.ic, 20)}</span>
+            <span class="mt-txt">
+                <span class="mt-title">${l.label}</span>
+                <span class="mt-desc">${l.desc || ''}</span>
+            </span>
         </a>
     `).join('');
 }
 window.renderModuloTiles = renderModuloTiles;
 
 // Encabezado de página estándar del panel
+// Muestra arriba del título el módulo de la pantalla (CRM, SCM, ERP o Cuenta).
 function adminHeader(titulo, subtitulo, accionHTML) {
+    const grupo = ADMIN_SECCIONES.find((s) => s.links.some((l) => l.key === window.ADMIN_ACTIVO));
     return `<div class="admin-topbar">
-        <div><h2>${titulo}</h2>${subtitulo ? `<p>${subtitulo}</p>` : ''}</div>
+        <div>${grupo ? `<span class="at-modulo">${grupo.titulo}</span>` : ''}<h2>${titulo}</h2>${subtitulo ? `<p>${subtitulo}</p>` : ''}</div>
         <div class="at-actions">${accionHTML || ''}</div>
     </div>`;
 }

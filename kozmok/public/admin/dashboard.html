@@ -69,11 +69,11 @@ async function cargarDashboard() {
     const [d, mp] = await Promise.all([api('/admin/dashboard'), api('/admin/metricas-productos')]);
 
     document.getElementById('stat-grid').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Total de clientes</div><div class="stat-value">${d.total_clientes}</div></div>
-        <div class="stat-card"><div class="stat-label">Clientes activos</div><div class="stat-value">${d.activos}</div><div class="stat-sub">${d.total_clientes ? Math.round(d.activos / d.total_clientes * 100) : 0}% del total</div></div>
-        <div class="stat-card"><div class="stat-label">Interacciones (este mes)</div><div class="stat-value">${d.interacciones_mes}</div></div>
-        <div class="stat-card"><div class="stat-label">Tickets de soporte activos</div><div class="stat-value" style="color:var(--warning)">${d.tickets_activos || 0}</div><div class="stat-sub">${d.tickets_abiertos || 0} sin abrir</div></div>
-        <div class="stat-card"><div class="stat-label">Productos con stock crítico</div><div class="stat-value" style="color:var(--danger)">${mp.stats.criticos}</div><div class="stat-sub">${mp.stats.agotados} agotados</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('user', 17)}</span><div class="stat-label">Total de clientes</div><div class="stat-value">${d.total_clientes}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('check', 17)}</span><div class="stat-label">Clientes activos</div><div class="stat-value">${d.activos}</div><div class="stat-sub">${d.total_clientes ? Math.round(d.activos / d.total_clientes * 100) : 0}% del total</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('chat', 17)}</span><div class="stat-label">Interacciones (este mes)</div><div class="stat-value">${d.interacciones_mes}</div></div>
+        <div class="stat-card"><span class="kpi-ico warn">${icon('help', 17)}</span><div class="stat-label">Tickets de soporte activos</div><div class="stat-value" style="color:var(--warning)">${d.tickets_activos || 0}</div><div class="stat-sub">${d.tickets_abiertos || 0} sin abrir</div></div>
+        <div class="stat-card"><span class="kpi-ico danger">${icon('alert', 17)}</span><div class="stat-label">Productos con stock crítico</div><div class="stat-value" style="color:var(--danger)">${mp.stats.criticos}</div><div class="stat-sub">${mp.stats.agotados} agotados</div></div>
     `;
 
     new Chart(document.getElementById('chart-etapas'), {
@@ -99,7 +99,7 @@ async function cargarDashboard() {
         ? '<tr><td colspan="3">No hay clientes en riesgo por ahora.</td></tr>'
         : d.clientes_sin_interaccion.map((c) => `
             <tr>
-                <td>${c.nombre}<div style="color:var(--text-muted);font-size:.78rem">${c.correo}</div></td>
+                <td><span class="cel-persona">${avatarIni(c.nombre)}<span>${c.nombre}<div style="color:var(--text-muted);font-size:.78rem">${c.correo}</div></span></span></td>
                 <td class="mono">${c.dias_sin_contacto}</td>
                 <td><a href="/admin/cliente.html?id=${c.id}">Ver</a></td>
             </tr>

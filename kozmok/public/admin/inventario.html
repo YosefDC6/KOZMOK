@@ -88,11 +88,11 @@ async function cargar() {
     const bajos = INVENTARIO.filter((p) => estadoDe(p) === 'bajo').length;
     const agotados = INVENTARIO.filter((p) => estadoDe(p) === 'agotado').length;
     document.getElementById('stat-grid').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Productos activos</div><div class="stat-value">${INVENTARIO.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Unidades en stock</div><div class="stat-value">${unidades}</div></div>
-        <div class="stat-card"><div class="stat-label">Valor del inventario</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(valor)}</div><div class="stat-sub">stock × precio</div></div>
-        <div class="stat-card"><div class="stat-label">Stock bajo</div><div class="stat-value" style="color:var(--warning)">${bajos}</div></div>
-        <div class="stat-card"><div class="stat-label">Agotados</div><div class="stat-value" style="color:var(--danger)">${agotados}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('laptop', 17)}</span><div class="stat-label">Productos activos</div><div class="stat-value">${INVENTARIO.length}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('package', 17)}</span><div class="stat-label">Unidades en stock</div><div class="stat-value">${unidades}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('wallet', 17)}</span><div class="stat-label">Valor del inventario</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(valor)}</div><div class="stat-sub">stock × precio</div></div>
+        <div class="stat-card"><span class="kpi-ico warn">${icon('alert', 17)}</span><div class="stat-label">Stock bajo</div><div class="stat-value" style="color:var(--warning)">${bajos}</div></div>
+        <div class="stat-card"><span class="kpi-ico danger">${icon('x', 17)}</span><div class="stat-label">Agotados</div><div class="stat-value" style="color:var(--danger)">${agotados}</div></div>
     `;
     renderAlerta(metricas.inventario_critico);
     renderTabla();

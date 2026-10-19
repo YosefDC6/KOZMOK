@@ -74,7 +74,7 @@ async function cargar() {
         ? '<tr><td colspan="7">Sin resultados.</td></tr>'
         : ROWS.map((c) => `
             <tr onclick="location.href='/admin/cliente.html?id=${c.id}'" style="cursor:pointer">
-                <td class="mono">${c.id}</td><td>${c.nombre}</td><td>${c.correo}</td><td>${c.empresa || '—'}</td>
+                <td class="mono">${c.id}</td><td><span class="cel-persona">${avatarIni(c.nombre)}<strong>${c.nombre}</strong></span></td><td>${c.correo}</td><td>${c.empresa || '—'}</td>
                 <td><span class="tag tag-etapa-${c.etapa_crm}">${c.etapa_crm}</span></td>
                 <td style="text-transform:capitalize">${c.estado_cliente}</td>
                 <td style="white-space:nowrap"><a class="btn btn-outline btn-sm" href="/admin/cliente.html?id=${c.id}">Ver ficha</a>

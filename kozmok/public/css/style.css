@@ -1478,3 +1478,137 @@ tr.en-orden td { background: color-mix(in srgb, var(--accent) 7%, transparent); 
 .rol-col li { display: flex; gap: 6px; align-items: center; }
 .rol-col li .ic { color: var(--success); flex-shrink: 0; }
 .rol-col li small { color: var(--text-muted); }
+
+/* =====================================================================
+   PANEL INTERNO — pulido visual
+   Todo va bajo .admin-shell para no tocar la tienda. Usa los mismos
+   tokens de color, así funciona con los 4 temas.
+   ===================================================================== */
+
+/* Fondo con un leve brillo del color del tema arriba */
+.admin-shell .admin-main {
+    background:
+        radial-gradient(1100px 380px at 30% -120px, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%);
+}
+
+/* ---- Encabezado de cada pantalla ---- */
+.admin-shell .admin-topbar { align-items: flex-end; padding-bottom: 18px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+.admin-shell .admin-topbar h2 { font-size: 1.7rem; letter-spacing: -.01em; margin-bottom: 4px; }
+.admin-shell .admin-topbar p { color: var(--text-muted); font-size: .9rem; max-width: 70ch; }
+.admin-shell .at-modulo {
+    display: inline-block; font-size: .66rem; font-weight: 700; letter-spacing: .12em; color: var(--accent-light);
+    background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    padding: 2px 9px; border-radius: 999px; margin-bottom: 8px;
+}
+.admin-shell .at-actions { align-items: center; }
+
+/* ---- Botones del panel: un poco más compactos ---- */
+.admin-shell .btn { font-size: .88rem; padding: 10px 16px; border-radius: 10px; }
+.admin-shell .btn-sm { padding: 6px 11px; font-size: .8rem; border-radius: 8px; }
+.admin-shell .btn-outline { background: var(--bg-panel); }
+.admin-shell .btn-outline:hover { background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); }
+.admin-shell .btn-ghost:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* ---- Tarjetas ---- */
+.admin-shell .card { border-radius: var(--radius); padding: 22px; margin-bottom: 18px; }
+.admin-shell .card > h3:first-child, .admin-shell .card h3 { font-size: 1.02rem; letter-spacing: -.005em; }
+.admin-shell .card h3 + p, .admin-shell .card > p { font-size: .86rem; color: var(--text-muted); line-height: 1.5; }
+
+/* ---- KPIs: se reparten solos (sin tarjetas huérfanas) ---- */
+.admin-shell .stat-grid { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.admin-shell .stat-card {
+    position: relative; overflow: hidden; padding: 18px 18px 16px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--text) 3%, var(--bg-panel)), var(--bg-panel));
+    box-shadow: var(--shadow-sm); transition: border-color .15s, transform .15s;
+}
+.admin-shell .stat-card::after {
+    content: ''; position: absolute; left: 18px; right: 18px; top: 0; height: 2px; border-radius: 0 0 2px 2px;
+    background: linear-gradient(90deg, var(--accent), transparent); opacity: .55;
+}
+.admin-shell .stat-card[onclick]:hover, .admin-shell a.stat-card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); transform: translateY(-2px); }
+.admin-shell .stat-card .stat-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; padding-right: 40px; min-height: 2.6em; line-height: 1.3; }
+.admin-shell .stat-card .stat-value { font-size: 1.85rem; letter-spacing: -.02em; line-height: 1.15; }
+.admin-shell .stat-card .stat-sub { font-size: .76rem; }
+.admin-shell .kpi-ico {
+    position: absolute; top: 14px; right: 14px; margin: 0; width: 32px; height: 32px; border-radius: 9px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-light);
+}
+
+/* ---- Accesos directos del módulo: en fila, más compactos ---- */
+.admin-shell .modulo-tiles { grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 10px; margin-bottom: 22px; }
+.admin-shell .modulo-tile { flex-direction: row; align-items: center; gap: 12px; padding: 12px 14px; }
+.admin-shell .modulo-tile .mt-ico {
+    width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent-light);
+}
+.admin-shell .modulo-tile .mt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.admin-shell .modulo-tile .mt-title { font-size: .88rem; }
+.admin-shell .modulo-tile .mt-desc { font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-shell .modulo-tile:hover { background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel)); }
+
+/* ---- Filtros: en una barra propia ---- */
+.admin-shell .filters-bar {
+    background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px; gap: 8px; margin-bottom: 14px;
+}
+.admin-shell .filters-bar select, .admin-shell .filters-bar input {
+    padding: 9px 12px; font-size: .86rem; border-radius: 9px; min-width: 150px; background-color: var(--bg-elev);
+}
+.admin-shell .filters-bar input[type="search"], .admin-shell .filters-bar input[type="text"] {
+    padding-left: 34px; flex: 1 1 200px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A93A7' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 11px 50%;
+}
+.admin-shell .card .filters-bar, .admin-shell .modal .filters-bar { background: transparent; border: 0; padding: 0; }
+
+/* ---- Tablas ---- */
+.admin-shell .table-wrap { box-shadow: var(--shadow-sm); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.admin-shell .table-wrap th {
+    background: color-mix(in srgb, var(--text) 3%, var(--bg-panel)); font-size: .7rem; letter-spacing: .07em;
+    padding-top: 11px; padding-bottom: 11px;
+}
+.admin-shell td { padding-top: 11px; padding-bottom: 11px; }
+.admin-shell tbody tr:last-child td { border-bottom: 0; }
+.admin-shell tr:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.admin-shell .card .table-wrap, .admin-shell .modal .table-wrap { box-shadow: none; }
+
+/* ---- Menú lateral ---- */
+.admin-shell .admin-sidebar {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 5%, var(--bg-panel)), var(--bg-panel) 220px);
+}
+.admin-shell .admin-sidebar .brand { padding: 6px 8px 18px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.admin-shell .admin-sidebar a.active { box-shadow: inset 3px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.admin-shell .admin-user { padding: 14px 6px 2px; }
+.admin-shell .au-fila { display: flex; gap: 10px; align-items: center; }
+.admin-shell .au-avatar {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center;
+    font-size: .78rem; font-weight: 700; color: #fff; background: linear-gradient(140deg, var(--accent-light), var(--accent));
+}
+.admin-shell .admin-user .au-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-shell .au-salir { width: 100%; justify-content: flex-start; margin-top: 10px; padding-left: 8px; gap: 8px; }
+
+/* Íconos de KPI en tono de aviso o alerta */
+.admin-shell .kpi-ico.warn { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+.admin-shell .kpi-ico.danger { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+
+/* Avatar con iniciales en listas de clientes */
+.admin-shell .cel-persona { display: inline-flex; align-items: center; gap: 10px; }
+.admin-shell .cel-persona strong { font-weight: 600; }
+.av-ini {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: inline-grid; place-items: center;
+    font-size: .7rem; font-weight: 700; letter-spacing: .02em;
+    color: hsl(var(--h) 70% 72%); background: hsl(var(--h) 45% 50% / .18); border: 1px solid hsl(var(--h) 50% 60% / .35);
+}
+:root[data-tema="claro"] .av-ini { color: hsl(var(--h) 55% 38%); background: hsl(var(--h) 60% 55% / .14); }
+
+/* ---- Pastillas de estado y etiquetas un poco más llenas ---- */
+.admin-shell .tag { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+/* ---- Modales del panel ---- */
+.admin-shell ~ .modal-overlay, .modal-overlay { backdrop-filter: blur(3px); }
+
+@media (max-width: 900px) {
+    .admin-shell .admin-topbar { align-items: flex-start; }
+    .admin-shell .admin-topbar h2 { font-size: 1.4rem; }
+    .admin-shell .modulo-tiles { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}

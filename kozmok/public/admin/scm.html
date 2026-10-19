@@ -79,11 +79,11 @@ async function cargar() {
     const [r, mp] = await Promise.all([api('/admin/scm/resumen'), api('/admin/metricas-productos')]);
 
     document.getElementById('stat-grid').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Productos activos</div><div class="stat-value">${r.stats.total_productos}</div></div>
-        <div class="stat-card"><div class="stat-label">Proveedores</div><div class="stat-value">${r.stats.total_proveedores}</div></div>
-        <div class="stat-card"><div class="stat-label">Pedidos de reposición abiertos</div><div class="stat-value" style="color:var(--warning)">${r.stats.ordenes_pendientes}</div></div>
-        <div class="stat-card"><div class="stat-label">Productos en stock bajo</div><div class="stat-value" style="color:var(--danger)">${r.stats.stock_bajo}</div></div>
-        <div class="stat-card"><div class="stat-label">Rotación de inventario</div><div class="stat-value" style="color:var(--accent)">${r.rotacion_pct}%</div><div class="stat-sub">unidades vendidas vs. stock actual</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('laptop', 17)}</span><div class="stat-label">Productos activos</div><div class="stat-value">${r.stats.total_productos}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('id', 17)}</span><div class="stat-label">Proveedores</div><div class="stat-value">${r.stats.total_proveedores}</div></div>
+        <div class="stat-card"><span class="kpi-ico warn">${icon('undo', 17)}</span><div class="stat-label">Pedidos de reposición abiertos</div><div class="stat-value" style="color:var(--warning)">${r.stats.ordenes_pendientes}</div></div>
+        <div class="stat-card"><span class="kpi-ico danger">${icon('alert', 17)}</span><div class="stat-label">Productos en stock bajo</div><div class="stat-value" style="color:var(--danger)">${r.stats.stock_bajo}</div></div>
+        <div class="stat-card"><span class="kpi-ico">${icon('clock', 17)}</span><div class="stat-label">Rotación de inventario</div><div class="stat-value" style="color:var(--accent)">${r.rotacion_pct}%</div><div class="stat-sub">unidades vendidas vs. stock actual</div></div>
     `;
 
     const m = r.madurez;
