@@ -24,21 +24,11 @@ Requisitos
    - Node.js 18 o superior.
    - PostgreSQL 16 o superior (se probo con 18).
 
-Configuracion (archivo .env)
-   - Las contrasenas y claves NO van en el codigo: van en  kozmok/.env ,
-     que no se sube a GitHub. Para crearlo, copia  kozmok/.env.example
-     como  kozmok/.env  y llena:
-        DB_HOST, DB_PORT, DB_NAME, DB_USER   (por defecto localhost, 5432,
-                                              kozmok, postgres)
-        DB_PASSWORD      contrasena de PostgreSQL
-        SESSION_SECRET   clave larga y aleatoria para firmar las sesiones.
-                         Para generarla:
-                         node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-        SESION_HORAS_EQUIPO / SESION_HORAS_CLIENTE   duracion de la sesion
-                         (12 y 168 horas por defecto)
-   - Si falta algo, al arrancar la consola muestra un "Aviso" que dice que.
-     Sin SESSION_SECRET el sistema funciona, pero las sesiones se cierran
-     cada vez que se reinicia el servidor.
+Configuracion de la base
+   - El archivo  kozmok/db.config.js  tiene usuario, host, base, password
+     y puerto. Ajustalo a tu instalacion local. Por defecto:
+        user: postgres   host: localhost   database: kozmok
+        password: 12345678   port: 5432
 
 Crear y cargar la base (todo en un solo archivo, se puede repetir)
    1. Crear la base:              CREATE DATABASE kozmok;
@@ -53,7 +43,7 @@ Levantar el servidor
         Kozmok escuchando en http://localhost:3000
         Base de datos: conectada (kozmok@localhost:5432) - 28 productos
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
-     PostgreSQL este encendido y que el .env sea correcto, o vuelve a
+     PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
      cargar db/database.sql.
 
 Direcciones
@@ -129,22 +119,13 @@ Cuentas de prueba (tras cargar db/database.sql)
    Kozmok; la solucion real es no usar contrasenas de ese tipo.
 
 Seguridad de sesion
-   - Al iniciar sesion el servidor entrega un token FIRMADO (HMAC-SHA256
-     con la clave SESSION_SECRET del .env). Nadie puede fabricarlo ni
-     cambiarlo sin esa clave.
-   - Vence: 12 horas para el equipo y 7 dias para los clientes
-     (configurable en el .env). Al vencer se pide iniciar sesion de nuevo.
-   - Si cambia la contrasena, las sesiones abiertas con la anterior se
-     cierran (la del cliente que la cambio sigue activa).
    - El token de cliente y el token de admin se guardan por separado en el
      navegador y NUNCA se mezclan: la tienda usa el de cliente, /admin/* usa
      el de admin.
    - Si el token de admin vence o es invalido, cualquier pantalla del panel
-     regresa sola a /admin/login.html; en la tienda, al login de clientes.
+     regresa sola a /admin/login.html.
    - "Cerrar sesion": en la tienda esta en el menu de la cuenta (arriba a la
      derecha); en el panel, al pie de la barra lateral.
-   - Las cuentas de ejemplo de esta seccion estan publicadas: cambia sus
-     contrasenas (o desactivalas) antes de usar el sistema con datos reales.
 
 
 ===============================================================================
@@ -261,9 +242,8 @@ Seguridad de sesion
           marcar "guardar esta tarjeta"),
         * Transferencia bancaria (SPEI),
         * Pago en tienda.
-     Nota: Kozmok no esta conectado a una pasarela de pago, asi que no se
-     hace ningun cargo. Del numero de tarjeta solo se guardan la marca y
-     los ultimos 4 digitos; el CVV nunca se guarda.
+     Nota: es una demo, no se cobra nada real. Del numero de tarjeta solo se
+     guardan la marca y los ultimos 4 digitos; el CVV nunca se guarda.
    - Al confirmar SIEMPRE se genera un COMPROBANTE (recibo.html), se guarda
      en la cuenta y lo puede ver el equipo. Segun el metodo:
         * Tarjeta  -> el pedido queda "Confirmado" y "Pagado"; los puntos se
@@ -629,8 +609,8 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      encenderlo se generan los que falten).
    - Entrega del proveedor:
         * Segun los dias de entrega del proveedor (lo real).
-        * Inmediata (para pruebas): el pedido se genera y se surte al
-          instante, para revisar el ciclo completo sin esperar la entrega.
+        * Inmediata (para demostracion): el pedido se genera y se surte
+          al instante, para ver el ciclo completo en clase sin esperar.
    - Nunca se duplica: si el producto ya tiene un pedido Pendiente o En
      proceso no se genera otro; en Inventario la alerta muestra "OC-100x
      en curso" mientras eso sea cierto.
@@ -759,17 +739,6 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         la CONSULTA DE CLIENTES sin salir del ERP (ver 4.14b).
       - Boton "Productos" (y clic en la tarjeta "Productos vendidos"):
         abre la CONSULTA DE PRODUCTOS sin salir del ERP (ver 4.14b).
-      - Boton "Recursos" (solo ADMIN): recursos de la empresa en una
-        ventana, sin pantalla aparte en el menu.
-          * Humanos: personas activas por rol (de Cuentas y equipo).
-          * Materiales: productos, unidades, valor a costo y a precio de
-            venta y productos en stock critico (del SCM).
-          * Financieros: ingresos cobrados, por cobrar, reposicion
-            comprometida con proveedores y presupuestos asignados.
-          * Equipo, vehiculos, instalaciones y presupuestos (lo que no
-            vive en otro modulo): area, cantidad, valor, responsable y
-            estado (Disponible / En uso / Mantenimiento / Baja). Filtros
-            por tipo y area; "Nuevo recurso", Editar y Eliminar.
 
    4.14b ORDENES DE CLIENTES  (admin/ordenes-erp.html)
       - Listado de TODAS las ordenes de clientes: las capturadas en el ERP
@@ -1044,7 +1013,7 @@ En el pedido
      "Tarjeta Visa ****4821", "Transferencia SPEI" o "Pago en tienda".
 
 Aviso
-   - Kozmok no esta conectado a una pasarela de pago: no se hacen cargos.
+   - Es una demo educativa: no hay pasarela de pago ni cargos reales.
 
 
 ===============================================================================
@@ -1102,7 +1071,7 @@ R: No. El archivo empieza borrando tablas que en una base nueva todavia no
 
 P: npm start no dice nada sobre la base.
 R: Ahora si: la segunda linea de la consola indica "conectada" o el problema.
-   Si dice "SIN CONEXION", enciende PostgreSQL o corrige el .env.
+   Si dice "SIN CONEXION", enciende PostgreSQL o corrige db.config.js.
    Si dice "SIN TABLAS", vuelve a cargar db/database.sql.
 
 P: Inicio sesion (o creo cuenta) y me regresa al login una y otra vez.
@@ -1150,10 +1119,7 @@ R: Vuelve a ejecutar  psql -U postgres -d kozmok -f db/database.sql .
 Estructura
    kozmok/
      server.js            API Express (todas las rutas /api/...)
-     .env.example         plantilla de configuracion (copiar como .env)
-     env.js               carga el .env
-     sesion.js            sesiones firmadas (HMAC-SHA256) con vencimiento
-     db.config.js         conexion a PostgreSQL (lee el .env)
+     db.config.js         datos de conexion a PostgreSQL
      db/database.sql      esquema + triggers + datos, re-ejecutable
      public/              front estatico (HTML + CSS + JS, sin framework)
        index.html, carrito.html, gracias.html, recibo.html, ayuda.html,

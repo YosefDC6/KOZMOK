@@ -43,10 +43,8 @@ async function cambiarPassword() {
     if (nueva.length < 6) { toast('La nueva contraseña debe tener 6+ caracteres', 'warn'); return; }
     if (nueva !== rep) { toast('Las contraseñas nuevas no coinciden', 'warn'); return; }
     try {
-        const r = await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
-        // Las demás sesiones se cerraron; esta sigue con el token nuevo.
-        if (r.token) localStorage.setItem('kz_token', r.token);
-        toast('Contraseña actualizada. Se cerraron tus sesiones en otros dispositivos.', 'ok');
+        await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
+        toast('Contraseña actualizada', 'ok');
         ['s-actual', 's-nueva', 's-rep'].forEach((i) => document.getElementById(i).value = '');
     } catch (e) { toast(e.message, 'error'); }
 }

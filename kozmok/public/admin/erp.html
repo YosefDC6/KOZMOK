@@ -61,7 +61,6 @@
 <script src="/admin/js/gestion-pedido.js"></script>
 <script src="/admin/js/clientes-erp.js"></script>
 <script src="/admin/js/productos-erp.js"></script>
-<script src="/admin/js/recursos-erp.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('erp');
@@ -70,7 +69,6 @@ document.getElementById('topbar').innerHTML = adminHeader(
     'Dashboard ERP', 'Planificación de recursos empresariales: vista integrada del negocio.',
     `<button class="btn btn-outline" onclick="ClientesERP.abrir()">${icon('user', 16)} Clientes</button> ` +
     `<button class="btn btn-outline" onclick="ProductosERP.abrir()">${icon('package', 16)} Productos</button>` +
-    (puedeVer(USR && USR.rol, 'recursos') ? ` <button class="btn btn-outline" onclick="RecursosERP.abrir()">${icon('layers', 16)} Recursos</button>` : '') +
     (puedeVer(USR && USR.rol, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
 );
 window.onCambioClientesERP = () => cargar();

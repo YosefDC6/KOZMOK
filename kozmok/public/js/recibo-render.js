@@ -116,7 +116,7 @@
                 ${gar}
                 ${puntos}
 
-                <p class="rec-pie">Comprobante generado por Kozmok. Documento sin validez fiscal.</p>
+                <p class="rec-pie">Comprobante generado por Kozmok. Documento sin validez fiscal (demo educativa).</p>
             </div>`;
     };
 })();

@@ -22,10 +22,7 @@ autenticación con roles.
 ```
 kozmok/
 ├── server.js              # API REST (Express)
-├── .env.example           # plantilla de configuración (copiar como .env)
-├── env.js                 # carga el .env
-├── sesion.js              # sesiones firmadas con vencimiento
-├── db.config.js           # conexión a PostgreSQL (lee el .env)
+├── db.config.js           # credenciales de conexión a PostgreSQL
 ├── db/
 │   └── database.sql       # TODO en un archivo: tablas, triggers, datos
 │                          #   de ejemplo y contraseñas (bcrypt vía pgcrypto)
@@ -66,8 +63,7 @@ npm install
    ```sql
    CREATE DATABASE kozmok;
    ```
-2. Copia `.env.example` como `.env` y pon tu contraseña de PostgreSQL
-   (`DB_PASSWORD`) y una clave para las sesiones (`SESSION_SECRET`).
+2. Edita `db.config.js` con tu usuario/contraseña de PostgreSQL.
 3. Carga **todo** con un solo archivo (esquema + triggers + datos +
    contraseñas hasheadas con bcrypt vía `pgcrypto`):
    ```bash
@@ -184,16 +180,14 @@ El widget (botón flotante en todas las páginas de la tienda) guía al
 usuario con preguntas rápidas de uso y presupuesto, y también acepta
 texto libre.
 
-## Seguridad
+## Notas para producción
 
-- Credenciales y claves en `.env` (no se sube a GitHub); `.env.example`
-  es la plantilla.
-- Sesiones firmadas con HMAC-SHA256 (`sesion.js`), con vencimiento y
-  huella de la contraseña: un token alterado, vencido o emitido antes de
-  un cambio de contraseña se rechaza. Los middlewares `requireUsuario`,
-  `requireCliente` y `requireAdmin` (en `server.js`) lo validan contra la
-  base en cada llamada.
-- Permisos por rol validados en el servidor (`PERMISOS_API`), con la
-  misma fuente que arma el menú (`public/admin/js/permisos.js`).
-- Las cuentas de ejemplo de `db/database.sql` tienen contraseñas
-  publicadas: cámbialas o desactívalas antes de usar datos reales.
+- Cambia `db.config.js` y usa variables de entorno reales.
+- El token de sesión es simplificado (Base64) y sin expiración,
+  pensado para el alcance del proyecto escolar. Ya hay un middleware
+  (`requireUsuario` / `requireAdmin` en `server.js`) que verifica el
+  token contra la tabla `usuarios` en cada ruta `/api/admin/*`. Para
+  producción real conviene cambiarlo por JWT firmado con expiración.
+- Las imágenes de producto son URLs externas de ejemplo; para un
+  entorno real conviene subirlas a almacenamiento propio (S3, Cloud
+  Storage, etc.).
