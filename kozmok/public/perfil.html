@@ -43,12 +43,14 @@ function tarjetaSocio(P, rec) {
     const codigo = P.codigo_socio || '';
     const urlSocio = location.origin + '/socio.html?c=' + encodeURIComponent(codigo);
     return `
-        <div class="socio-card">
+        <div class="socio-card lv-${rec.nivel.clave}">
+            <span class="socio-fantasma" aria-hidden="true">${icon('ghost', 200)}</span>
             <div class="socio-main">
                 <div class="socio-top">
-                    <span class="socio-brand">${icon('ghost', 15)} Kozmok</span>
+                    <span class="socio-brand"><span class="socio-logo">${icon('ghost', 16)}</span> Kozmok <em>Club</em></span>
                     <span class="socio-tier">${nivelBadge(rec.nivel.clave, 18)} Nivel ${rec.nivel.nombre}</span>
                 </div>
+                <div class="socio-chip" aria-hidden="true"></div>
                 <div class="socio-num">${numero}</div>
                 <div class="socio-grid">
                     <div><span>Titular</span><strong>${P.nombre}</strong></div>
