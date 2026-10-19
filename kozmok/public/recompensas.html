@@ -37,9 +37,10 @@ montarCuenta('recompensas', async (panel, P) => {
         <div class="club-hero">
             <div class="club-card lv-${r.nivel.clave}">
                 <div class="cc-top">
-                    <span class="cc-marca">${icon('star', 15)} Kozmok <em>Club</em></span>
+                    <span class="cc-marca"><span class="cc-logo">${icon('ghost', 16)}</span> Kozmok <em>Club</em></span>
                     <span class="cc-nivel">${nivelBadge(r.nivel.clave, 18)} ${r.nivel.nombre}</span>
                 </div>
+                <span class="cc-fantasma" aria-hidden="true">${icon('ghost', 190)}</span>
                 <div class="cc-chip" aria-hidden="true"></div>
                 <div class="cc-saldo">
                     <span class="cc-pts">${r.puntos.toLocaleString('es-MX')}<small>pts</small></span>

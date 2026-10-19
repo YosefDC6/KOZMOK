@@ -964,12 +964,15 @@ footer .container { display: flex; justify-content: space-between; color: var(--
     transform: rotate(8deg);
 }
 .club-card::after {            /* trama sutil */
-    content: ''; position: absolute; inset: 0; z-index: -1; opacity: .18;
-    background: radial-gradient(circle at 85% 110%, rgba(255, 255, 255, .5) 0 18%, transparent 19%),
-                radial-gradient(circle at 105% 80%, rgba(255, 255, 255, .35) 0 22%, transparent 23%);
+    content: ''; position: absolute; inset: 0; z-index: -1; opacity: .12;
+    background: radial-gradient(circle at 100% 100%, rgba(255, 255, 255, .5) 0 30%, transparent 31%);
 }
 .club-card .cc-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .club-card .cc-marca { display: inline-flex; align-items: center; gap: 7px; font-weight: 800; letter-spacing: .02em; font-size: 1rem; text-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.club-card .cc-logo { width: 28px; height: 28px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, .22); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3); backdrop-filter: blur(4px); }
+.club-card .cc-logo .ic { display: block; }
+.club-card .cc-fantasma { position: absolute; right: -26px; bottom: -34px; z-index: -1; color: #fff; opacity: .16; transform: rotate(-12deg); pointer-events: none; }
+.club-card .cc-fantasma .ic { display: block; stroke-width: 1.4; }
 .club-card .cc-marca em { font-style: normal; font-weight: 500; opacity: .85; }
 .club-card .cc-nivel { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; font-size: .7rem; padding: 5px 11px; border-radius: 100px; background: rgba(0, 0, 0, .22); backdrop-filter: blur(4px); display: inline-flex; align-items: center; gap: 6px; }
 .club-card .cc-chip {
