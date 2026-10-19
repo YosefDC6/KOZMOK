@@ -450,7 +450,7 @@ async function cargarResenas(pid) {
     let data;
     try { data = await api(`/productos/${pid}/resenas`); } catch { cont.innerHTML = ''; return; }
     const cli = Sesion.cliente();
-    const mia = data.resenas.find((r) => cli && r.cliente_nombre === cli.nombre);
+    const mia = data.mi_resena;
     RESENA_VAL = mia ? mia.calificacion : 0;
 
     cont.innerHTML = `
@@ -463,7 +463,9 @@ async function cargarResenas(pid) {
                 <div class="mr-meta">${r.cliente_nombre} · ${formatoFecha(r.fecha)}</div>
                 ${r.comentario ? `<div>${r.comentario.replace(/</g, '&lt;')}</div>` : ''}
             </div>`).join('')}
-        ${cli ? `
+        ${cli && !data.puede_resenar && !mia
+            ? '<p style="font-size:.82rem;color:var(--text-muted);margin-top:10px">Podrás reseñar este producto cuando recibas tu compra.</p>'
+            : cli ? `
             <div style="margin-top:12px">
                 <div style="font-size:.85rem;margin-bottom:4px">${mia ? 'Editar tu reseña' : 'Escribir reseña'}</div>
                 ${estrellasHTML(RESENA_VAL, true)}

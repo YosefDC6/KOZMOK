@@ -154,8 +154,9 @@ Seguridad de sesion
      stock real.
    - Selector de cantidad y aviso "Solo quedan N" cuando hay poco stock.
    - Boton "Agregar al carrito".
-   - Resenas del producto: promedio de estrellas y comentarios. Si has
-     iniciado sesion, puedes dejar o editar tu resena.
+   - Resenas del producto: promedio de estrellas y comentarios. Solo puede
+     dejar o editar una resena quien ya recibio el producto (pedido
+     entregado); asi las Evaluaciones del CRM son de compras reales.
    - Boton "Comparar" (tambien en cada tarjeta del catalogo): ver 3.3b.
    - Si no hay imagen del producto se muestra una imagen generica; nunca
      aparece una imagen rota.
@@ -262,6 +263,11 @@ Seguridad de sesion
      resta de las compras del cliente.
    - Boton "Ya realice el pago": el cliente avisa al equipo (no confirma el
      pago por si solo).
+   - Plazo de pago: SPEI 3 dias, pago en tienda 5 dias (transferencia de una
+     orden ERP, 3 dias). Si vence sin pago, el sistema cancela el pedido solo
+     y libera el stock apartado (revisa cada minuto); queda la nota
+     "Cancelado automaticamente: vencio el plazo de pago".
+   - El carrito no deja apartar mas piezas de las que hay en inventario.
 
 3.6  MI CUENTA  (menu arriba a la derecha -> "Perfil")
    Cada seccion es su propia pagina:

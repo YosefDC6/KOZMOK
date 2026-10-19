@@ -340,12 +340,47 @@ app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
          WHERE re.producto_id = $1 ORDER BY re.fecha DESC LIMIT 30`,
         [req.params.id]
     );
+    // Si viene la sesión de un cliente: su reseña (si tiene) y si puede
+    // reseñar, que es solo cuando ya recibió el producto.
+    let mi_resena = null;
+    let puede_resenar = false;
+    const cid = clienteDeToken(req);
+    if (cid) {
+        const [mia, compra] = await Promise.all([
+            pool.query('SELECT calificacion, comentario, fecha FROM resenas WHERE cliente_id = $1 AND producto_id = $2', [cid, req.params.id]),
+            clienteRecibioProducto(cid, req.params.id),
+        ]);
+        mi_resena = mia.rows[0] || null;
+        puede_resenar = compra;
+    }
     res.json({
         promedio: Number(stats.rows[0].promedio) || 0,
         total: stats.rows[0].total,
         resenas: lista.rows,
+        mi_resena,
+        puede_resenar,
+        sesion: Boolean(cid),
     });
 }));
+
+// Id del cliente de una sesión opcional (rutas públicas), o null.
+function clienteDeToken(req) {
+    const h = req.headers.authorization || '';
+    if (!h.startsWith('Bearer ')) return null;
+    try {
+        const [tipo, id] = Buffer.from(h.slice(7), 'base64').toString('utf8').split(':');
+        return tipo === 'cliente' && Number(id) ? Number(id) : null;
+    } catch { return null; }
+}
+
+// Una reseña solo la deja quien recibió el producto (pedido entregado).
+async function clienteRecibioProducto(clienteId, productoId) {
+    const r = await pool.query(
+        `SELECT 1 FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+          WHERE p.cliente_id = $1 AND pi.producto_id = $2 AND p.estado = 'entregado' LIMIT 1`,
+        [clienteId, productoId]);
+    return r.rows.length > 0;
+}
 
 // =========================================================
 // CHATBOT DE RECOMENDACIONES
@@ -510,7 +545,7 @@ app.post('/api/carrito', asyncRoute(async (req, res) => {
     const { producto_id, cantidad = 1 } = req.body;
     const gClave = planGarantia(req.body.garantia).clave;
 
-    const prod = await pool.query('SELECT precio FROM productos WHERE id = $1', [producto_id]);
+    const prod = await pool.query('SELECT precio, stock, nombre FROM productos WHERE id = $1 AND activo = true', [producto_id]);
     if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
     const precio = prod.rows[0].precio;
     const gPlan = planGarantia(gClave);
@@ -519,6 +554,15 @@ app.post('/api/carrito', asyncRoute(async (req, res) => {
         'SELECT id, cantidad, garantia_clave FROM carrito_items WHERE cliente_id = $1 AND producto_id = $2',
         [cliente_id, producto_id]
     );
+    // No se aparta más de lo que hay en inventario.
+    const yaEnCarrito = existente.rows.length ? existente.rows[0].cantidad : 0;
+    const disponible = Number(prod.rows[0].stock);
+    if (disponible <= 0) return res.status(400).json({ message: `"${prod.rows[0].nombre}" está agotado` });
+    if (yaEnCarrito + Number(cantidad) > disponible) {
+        return res.status(400).json({ message: yaEnCarrito
+            ? `Solo hay ${disponible} disponibles y ya tienes ${yaEnCarrito} en tu carrito`
+            : `Solo hay ${disponible} disponibles` });
+    }
     if (existente.rows.length > 0) {
         const row = existente.rows[0];
         const nuevaCantidad = row.cantidad + cantidad;
@@ -542,7 +586,7 @@ app.post('/api/carrito', asyncRoute(async (req, res) => {
 
 app.put('/api/carrito/:id', asyncRoute(async (req, res) => {
     const cur = await pool.query(
-        `SELECT ci.id, ci.cantidad, ci.garantia_clave, p.precio
+        `SELECT ci.id, ci.cantidad, ci.garantia_clave, p.precio, p.stock
          FROM carrito_items ci JOIN productos p ON p.id = ci.producto_id
          WHERE ci.id = $1 AND ci.cliente_id = $2`,
         [req.params.id, req.cliente.id]
@@ -550,6 +594,9 @@ app.put('/api/carrito/:id', asyncRoute(async (req, res) => {
     if (cur.rows.length === 0) return res.status(404).json({ message: 'Ítem no encontrado en tu carrito' });
     const row = cur.rows[0];
     const cantidad = req.body.cantidad !== undefined ? Math.max(1, Number(req.body.cantidad)) : row.cantidad;
+    if (req.body.cantidad !== undefined && cantidad > Number(row.stock)) {
+        return res.status(400).json({ message: `Solo hay ${row.stock} disponibles` });
+    }
     const gClave = req.body.garantia !== undefined ? planGarantia(req.body.garantia).clave : row.garantia_clave;
     const pf = planGarantia(gClave);
     await pool.query(
@@ -691,6 +738,42 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
     }
     await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedido.id]);
     return { canjeados, ganados, productos: items.rows.length };
+}
+
+// Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
+// cuyo plazo de pago ya venció: se cancelan solos para liberar el stock
+// apartado. Usa la misma rutina que una cancelación manual (stock,
+// movimientos, garantías y puntos) y deja nota y bitácora en la orden.
+async function cancelarPagosVencidos() {
+    const vencidos = await pool.query(
+        `SELECT id FROM pedidos WHERE estado = 'pendiente' AND pago_estado = 'pendiente'
+           AND pago_vence IS NOT NULL AND pago_vence < CURRENT_TIMESTAMP`);
+    let n = 0;
+    for (const { id } of vencidos.rows) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const r = await client.query(
+                `SELECT * FROM pedidos WHERE id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente' FOR UPDATE`, [id]);
+            if (!r.rows.length) { await client.query('ROLLBACK'); continue; }
+            await cancelarPedido(client, r.rows[0]);
+            await client.query(
+                `UPDATE pedidos SET notas = CONCAT_WS(' · ', NULLIF(notas, ''), 'Cancelado automáticamente: venció el plazo de pago') WHERE id = $1`, [id]);
+            await registrarProceso(client, id, 'cancelacion', 'Cancelada automáticamente: venció el plazo de pago y se liberó el stock apartado');
+            await client.query('COMMIT');
+            n++;
+        } catch (e) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('Pago vencido', id, '->', e.message);
+        } finally { client.release(); }
+    }
+    return n;
+}
+
+// Tareas que corren cada minuto: reabasto automático y pagos vencidos.
+async function tareasPeriodicas() {
+    await procesarReabastoAutomatico().catch((e) => console.error('Reabasto:', e.message));
+    await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
 }
 
 function generarReferenciaPago(tipo) {
@@ -880,7 +963,7 @@ app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
 }));
 
 // Recibo / comprobante de un pedido. Lo puede ver el cliente dueño o
-// cualquier usuario interno (admin / vendedor / soporte / almacén).
+// cualquier usuario interno (administrador, ventas o logística).
 app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -1118,6 +1201,9 @@ app.post('/api/clientes/:id/resenas', asyncRoute(async (req, res) => {
     const cal = Math.round(Number(calificacion));
     if (!producto_id || !(cal >= 1 && cal <= 5)) {
         return res.status(400).json({ message: 'Producto y calificación (1 a 5) son requeridos' });
+    }
+    if (!(await clienteRecibioProducto(req.params.id, producto_id))) {
+        return res.status(403).json({ message: 'Podrás reseñar este producto cuando recibas tu compra' });
     }
     const r = await pool.query(
         `INSERT INTO resenas (cliente_id, producto_id, calificacion, comentario)
@@ -2476,7 +2562,8 @@ app.put('/api/admin/ordenes-compra/:id', asyncRoute(async (req, res) => {
 }));
 
 app.put('/api/admin/ordenes-compra/:id/estado', asyncRoute(async (req, res) => {
-    const { estado } = req.body;
+    // 'surtido' es el nombre que usa el documento; internamente es 'recibido'.
+    const estado = req.body.estado === 'surtido' ? 'recibido' : req.body.estado;
     if (!['pendiente', 'en_proceso', 'recibido', 'cancelado'].includes(estado)) {
         return res.status(400).json({ message: 'Estado no válido' });
     }
@@ -3838,8 +3925,8 @@ app.listen(PORT, async () => {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
         console.log(`Base de datos: conectada (${dbConfig.database}@${dbConfig.host}:${dbConfig.port}) - ${r.rows[0].n} productos`);
         await migrarEsquema();
-        await procesarReabastoAutomatico();
-        setInterval(procesarReabastoAutomatico, 60 * 1000);
+        await tareasPeriodicas();
+        setInterval(tareasPeriodicas, 60 * 1000);
     } catch (err) {
         if (/relation .* does not exist/i.test(err.message)) {
             console.error(`Base de datos: conectada a ${dbConfig.database}, pero SIN TABLAS. Carga db/database.sql.`);

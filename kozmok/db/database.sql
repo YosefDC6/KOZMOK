@@ -892,6 +892,9 @@ INSERT INTO pedidos
    'pagado', NULL, 'Blvd. López Mateos 456, Col. Jardines, León', NULL, CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '39 days', CURRENT_TIMESTAMP - INTERVAL '37 days'),
  ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 1, 2, 'erp',  5999.00,  959.84, 199.00, 0, 7157.84, 'pendiente', 'Transferencia bancaria',
    'pendiente', 'ERP-4471029385', 'Av. Universidad 123, Col. Centro, Aguascalientes', 'Monitor para la segunda estación', CURRENT_TIMESTAMP - INTERVAL '1 days', NULL, NULL, NULL);
+-- Plazo de pago de la orden pendiente (3 días desde la captura, igual que
+-- una orden nueva): si vence sin pago, el sistema la cancela y libera el stock.
+UPDATE pedidos SET pago_vence = fecha_pedido + INTERVAL '3 days' WHERE pago_estado = 'pendiente' AND pago_vence IS NULL;
 
 INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 15, 1, 5999.00,  5999.00),
