@@ -9,7 +9,7 @@
 <body>
 <div id="navbar-placeholder"></div>
 
-<div class="container" style="padding-top:36px;padding-bottom:60px;max-width:900px">
+<div class="container carrito-page" style="padding-top:36px;padding-bottom:60px;max-width:1160px">
     <div class="page-hero">
         <div class="hero-badge" data-ic="cart" data-ic-size="28"></div>
         <h1>Tu carrito</h1>
@@ -58,9 +58,14 @@ async function cargarCarrito() {
 
     if (items.length === 0) {
         cont.innerHTML = `
-            <div class="empty-state">
-                Tu carrito está vacío.<br>
-                <a href="/index.html">Ver catálogo</a> · <a href="/favoritos.html">Ver favoritos</a>
+            <div class="vacio-card">
+                <span class="vacio-ico">${icon('cart', 30)}</span>
+                <h3>Tu carrito está vacío</h3>
+                <p>Agrega productos desde el catálogo o recupera los que guardaste en favoritos.</p>
+                <div class="vacio-acciones">
+                    <a href="/index.html?ver=todo" class="btn btn-primary">Ver catálogo</a>
+                    <a href="/favoritos.html" class="btn btn-outline">Ver favoritos</a>
+                </div>
             </div>`;
         return;
     }
@@ -75,7 +80,7 @@ async function cargarCarrito() {
         const claveActual = i.garantia_clave || 'none';
         return `
         <div class="card cart-line">
-            <img class="cart-thumb" src="${i.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/img/producto.svg'"
+            <img class="cart-thumb" src="${imagenProducto(i)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${ilustracionProducto(i)}'"
                  onclick="location.href='/index.html#producto-${i.producto_id}'" alt="${i.nombre}" />
             <div class="cart-info">
                 <div class="nm">${i.nombre}</div>
@@ -142,8 +147,10 @@ async function cargarCarrito() {
         : `<p style="font-size:.82rem;color:var(--text-muted)">Tip: guarda direcciones en <a href="/direcciones.html">tu perfil</a> para el próximo pedido.</p>`;
 
     cont.innerHTML = `
-        ${filas}
-        <div class="card" style="margin-top:16px">
+        <div class="cart-layout">
+        <div class="cart-items">${filas}</div>
+        <div class="card cart-resumen">
+            <h3 class="cart-resumen-tit">Resumen del pedido</h3>
             ${shipHint}
             <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Productos</span><span class="mono">${formatoMoneda(subtotal - garTotal)}</span></div>
             ${garTotal > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Garantías extendidas</span><span class="mono">${formatoMoneda(garTotal)}</span></div>` : ''}
@@ -177,6 +184,7 @@ async function cargarCarrito() {
                 <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Demo: no se procesa ningún cargo real. Solo se guardan marca y últimos 4 dígitos.</p>
             </div>
             <button class="btn btn-primary btn-lg" style="width:100%" id="btn-comprar" onclick="confirmarCompra()">Confirmar pedido</button>
+        </div>
         </div>
     `;
     ENVIO_ACTUAL = envio; IVA_ACTUAL = impuestos;

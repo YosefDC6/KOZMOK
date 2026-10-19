@@ -34,6 +34,28 @@ async function api(path, options = {}) {
     return data;
 }
 
+// ---- Imagen de producto ----
+// Si el producto no tiene imagen propia se usa una ilustración según su
+// tipo (laptop, monitor, procesador...), con fondo transparente para que
+// se integre con cualquier tema.
+const ILUSTRACIONES = [
+    [/aud[ií]fono|headset|diadema/, 'headphones'], [/webcam|c[aá]mara/, 'webcam'],
+    [/mouse|rat[oó]n/, 'mouse'], [/teclado|keyboard/, 'keyboard'],
+    [/fuente de poder|psu/, 'psu'], [/gabinete|case\b/, 'case'],
+    [/memoria|ram\b|ddr/, 'ram'], [/ssd|nvme|disco|almacenamiento/, 'ssd'],
+    [/^pc\b|escritorio|mini torre|workstation|servidor/, 'desktop'],
+    [/placa base|motherboard|tarjeta madre/, 'board'], [/procesador|ryzen|intel core|cpu/, 'cpu'],
+    [/tarjeta gr[aá]fica|rtx|gtx|radeon|gpu/, 'gpu'], [/monitor/, 'monitor'],
+    [/laptop|macbook|notebook|port[aá]til/, 'laptop'],
+    [/perif[eé]rico/, 'mouse'], [/accesorio/, 'headphones'], [/componente/, 'cpu'],
+];
+function ilustracionProducto(p) {
+    const t = `${(p && p.nombre) || ''} ${(p && (p.categoria_nombre || p.categoria)) || ''}`.toLowerCase();
+    const r = ILUSTRACIONES.find(([re]) => re.test(t));
+    return `/img/productos/${r ? r[1] : 'generico'}.svg`;
+}
+function imagenProducto(p) { return (p && p.imagen_url) || ilustracionProducto(p); }
+
 const Sesion = {
     guardarCliente(cliente, token) {
         localStorage.setItem('kz_cliente', JSON.stringify(cliente));

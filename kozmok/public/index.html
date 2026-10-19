@@ -20,48 +20,27 @@
     </div>
 </header>
 
-<section class="section container" id="explorar">
-    <div class="asesor-band" style="margin-bottom:16px">
-        <div class="ab-txt">
-            <strong>¿No sabes cuál elegir?</strong>
-            <span>Dile al asesor para qué lo quieres y cuánto quieres gastar. Te recomienda solo lo que hay en stock.</span>
-        </div>
-        <button class="btn btn-primary" onclick="document.getElementById('chatbot-toggle').click()">Preguntar al asesor</button>
-    </div>
-
-    <div class="asesor-band" style="margin-bottom:32px">
-        <div class="ab-txt">
-            <strong>¿Prefieres armarla tú mismo?</strong>
-            <span>Elige procesador, placa base, RAM, gráfica, fuente y gabinete: te avisamos al momento si algo no es compatible.</span>
-        </div>
-        <a href="/armar-pc.html" class="btn btn-primary">Arma tu PC</a>
-    </div>
-
-    <h2 class="home-h2">Cómo funciona</h2>
-    <div class="como-func" style="margin-bottom:36px">
-        <div class="cf-paso"><span class="cf-num">1</span><strong>Explora o busca</strong><span>Filtra por categoría, uso o presupuesto, o busca por marca desde la barra de arriba.</span></div>
-        <div class="cf-paso"><span class="cf-num">2</span><strong>Pregunta al asesor</strong><span>El botón azul abajo a la derecha abre el asistente: te sugiere equipos según tu presupuesto y el stock real.</span></div>
-        <div class="cf-paso"><span class="cf-num">3</span><strong>Compra y gana puntos</strong><span>Cada compra suma puntos del Club que valen dinero en tu siguiente pedido.</span></div>
-    </div>
-
+<section class="section container home-sec" id="explorar">
     <div class="section-head">
         <h2 class="home-h2" style="margin:0">Explora por categoría</h2>
         <a href="/index.html?ver=todo">Ver todo el catálogo</a>
     </div>
     <div class="cat-tiles" id="cat-tiles"></div>
 
-    <h2 class="home-h2" style="margin-top:40px">¿Para qué lo vas a usar?</h2>
-    <div class="use-chips">
-        <a href="/index.html?uso=gaming">Gaming</a>
-        <a href="/index.html?uso=oficina">Oficina</a>
-        <a href="/index.html?uso=diseno">Diseño</a>
-        <a href="/index.html?uso=programacion">Programación</a>
-        <a href="/index.html?uso=estudiante">Estudiante</a>
-        <a href="/index.html?uso=streaming">Streaming</a>
+    <div class="usos-fila">
+        <span class="usos-label">¿Para qué lo vas a usar?</span>
+        <div class="use-chips">
+            <a href="/index.html?uso=gaming">Gaming</a>
+            <a href="/index.html?uso=oficina">Oficina</a>
+            <a href="/index.html?uso=diseno">Diseño</a>
+            <a href="/index.html?uso=programacion">Programación</a>
+            <a href="/index.html?uso=estudiante">Estudiante</a>
+            <a href="/index.html?uso=streaming">Streaming</a>
+        </div>
     </div>
 </section>
 
-<section class="section container" id="destacados" hidden>
+<section class="section container home-sec" id="destacados" hidden>
     <div class="section-head">
         <h2 class="home-h2" style="margin:0">Destacados</h2>
         <a href="/index.html?ver=todo">Ver todos</a>
@@ -69,7 +48,37 @@
     <div class="grid-products" id="grid-destacados"></div>
 </section>
 
-<section class="section container" id="recientes" hidden>
+<section class="section container home-sec" id="promos">
+    <div class="promo-duo">
+        <div class="promo">
+            <span class="promo-ico" id="promo-ico-asesor"></span>
+            <div>
+                <strong>¿No sabes cuál elegir?</strong>
+                <p>Dile al asesor para qué lo quieres y cuánto quieres gastar. Te recomienda solo lo que hay en stock.</p>
+                <button class="btn btn-primary btn-sm" onclick="document.getElementById('chatbot-toggle').click()">Preguntar al asesor</button>
+            </div>
+        </div>
+        <div class="promo">
+            <span class="promo-ico" id="promo-ico-pc"></span>
+            <div>
+                <strong>¿Prefieres armarla tú mismo?</strong>
+                <p>Elige procesador, placa base, RAM, gráfica, fuente y gabinete: te avisamos al momento si algo no es compatible.</p>
+                <a href="/armar-pc.html" class="btn btn-outline btn-sm">Arma tu PC</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="section container home-sec" id="como">
+    <h2 class="home-h2">Cómo funciona</h2>
+    <div class="como-func">
+        <div class="cf-paso"><span class="cf-num">1</span><strong>Explora o busca</strong><span>Filtra por categoría, uso o presupuesto, o busca por marca desde la barra de arriba.</span></div>
+        <div class="cf-paso"><span class="cf-num">2</span><strong>Pregunta al asesor</strong><span>El botón abajo a la derecha abre el asistente: te sugiere equipos según tu presupuesto y el stock real.</span></div>
+        <div class="cf-paso"><span class="cf-num">3</span><strong>Compra y gana puntos</strong><span>Cada compra suma puntos del Club que valen dinero en tu siguiente pedido.</span></div>
+    </div>
+</section>
+
+<section class="section container home-sec" id="recientes" hidden>
     <h2 class="home-h2">Vistos recientemente</h2>
     <div class="recent-strip" id="recent-strip"></div>
 </section>
@@ -167,7 +176,7 @@ function modoResultados() {
     const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max'));
     document.getElementById('catalogo').hidden = !enCatalogo;
     // hero + explorar: solo en la portada
-    ['hero', 'explorar'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
+    ['hero', 'explorar', 'promos', 'como'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
     // destacados + recientes: siempre ocultos aquí; sus render() los muestran si hay contenido
     ['destacados', 'recientes'].forEach((id) => document.getElementById(id).hidden = true);
     return enCatalogo;
@@ -177,7 +186,12 @@ function modoResultados() {
 function renderDestacados() {
     const cont = document.getElementById('grid-destacados');
     if (!cont) return;
-    const lista = TODOS_LOS_PRODUCTOS.filter((p) => p.stock > 0).slice(0, 8);
+    // Uno de cada categoría por vuelta, para que la portada sea variada.
+    const porCat = {};
+    TODOS_LOS_PRODUCTOS.filter((p) => p.stock > 0).forEach((p) => { (porCat[p.categoria_nombre || ''] ||= []).push(p); });
+    const grupos = Object.values(porCat);
+    const lista = [];
+    for (let i = 0; lista.length < 8 && grupos.some((g) => g[i]); i++) grupos.forEach((g) => { if (g[i] && lista.length < 8) lista.push(g[i]); });
     if (lista.length === 0) { document.getElementById('destacados').hidden = true; return; }
     document.getElementById('destacados').hidden = false;
     cont.innerHTML = tarjetasProducto(lista);
@@ -199,7 +213,7 @@ function renderRecientes() {
     document.getElementById('recientes').hidden = false;
     document.getElementById('recent-strip').innerHTML = prods.map((p) => `
         <div class="recent-card" onclick="location.href='/index.html#producto-${p.id}'">
-            <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/img/producto.svg'" alt="${p.nombre}" />
+            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" alt="${p.nombre}" />
             <div class="rc-body">
                 <span class="rc-name">${p.nombre}</span>
                 <span class="rc-price">${formatoMoneda(p.precio)}</span>
@@ -218,6 +232,17 @@ function specsLinea(p) {
     return partes.join(' · ') || (p.categoria_nombre || '');
 }
 
+// Especificaciones como tabla (solo las que tiene el producto).
+function specsTabla(p) {
+    const filas = [
+        ['Procesador', p.procesador], ['Memoria RAM', p.ram_gb ? `${p.ram_gb} GB` : ''], ['Almacenamiento', p.almacenamiento],
+        ['Gráfica', p.tarjeta_grafica], ['Pantalla', p.pantalla],
+        ['Ideal para', (p.uso_recomendado || []).join(', ')],
+    ].filter(([, v]) => v);
+    if (!filas.length) return '';
+    return `<dl class="pm-specs">${filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
+}
+
 function stockTexto(p) {
     if (p.stock === 0) return '<span class="product-stock stock-out">Agotado</span>';
     if (p.stock <= p.stock_minimo) return `<span class="product-stock stock-low">Últimas ${p.stock} piezas</span>`;
@@ -225,24 +250,36 @@ function stockTexto(p) {
 }
 
 function tarjetasProducto(lista) {
-    return lista.map((p) => `
+    return lista.map((p) => {
+        const agotado = p.stock === 0;
+        const pocas = !agotado && p.stock <= p.stock_minimo;
+        return `
         <div class="product-card" id="producto-${p.id}">
-            <button class="fav-btn ${Favoritos.tiene(p.id) ? 'on' : ''}" title="Guardar en favoritos" aria-label="Favorito" onclick="toggleFav(event, ${p.id})">${icon('heart', 16)}</button>
-            <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" loading="lazy" onerror="this.onerror=null;this.src='/img/producto.svg'" onclick="verProducto(${p.id})" style="cursor:pointer" />
-            <div class="product-body">
-                <span class="product-brand">${p.marca || ''}</span>
-                <span class="product-name" onclick="verProducto(${p.id})" style="cursor:pointer">${p.nombre}</span>
-                <span class="product-specs">${specsLinea(p)}</span>
-                <span class="product-price">${formatoMoneda(p.precio)}</span>
-                ${stockTexto(p)}
-                <div class="card-actions">
-                    <button class="btn btn-outline btn-sm" onclick="verProducto(${p.id})">Ver</button>
-                    <button class="btn btn-primary btn-sm" ${p.stock === 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})">${p.stock === 0 ? 'Sin stock' : 'Agregar'}</button>
-                </div>
-                <button class="cmp-toggle ${Comparar.tiene(p.id) ? 'on' : ''}" data-cmp="${p.id}" aria-pressed="${Comparar.tiene(p.id)}" onclick="alternarComparar(event, ${p.id})">${icon('grid', 13)} Comparar</button>
+            <div class="pc-media" onclick="verProducto(${p.id})" role="button" tabindex="0" aria-label="Ver ${p.nombre}"
+                 onkeydown="if (event.key === 'Enter') verProducto(${p.id})">
+                <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" loading="lazy" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
+                ${agotado ? '<span class="pc-badge out">Agotado</span>' : pocas ? `<span class="pc-badge low">Últimas ${p.stock}</span>` : ''}
             </div>
-        </div>
-    `).join('');
+            <div class="pc-flot">
+                <button class="fav-btn ${Favoritos.tiene(p.id) ? 'on' : ''}" title="Guardar en favoritos" aria-label="Favorito" onclick="toggleFav(event, ${p.id})">${icon('heart', 16)}</button>
+                <button class="cmp-toggle cmp-ico ${Comparar.tiene(p.id) ? 'on' : ''}" data-cmp="${p.id}" aria-pressed="${Comparar.tiene(p.id)}" title="Comparar" aria-label="Comparar" onclick="alternarComparar(event, ${p.id})">${icon('grid', 15)}</button>
+            </div>
+            <div class="product-body">
+                <span class="product-brand">${p.marca || p.categoria_nombre || ''}</span>
+                <span class="product-name" onclick="verProducto(${p.id})">${p.nombre}</span>
+                <span class="product-specs">${specsLinea(p)}</span>
+                <div class="pc-pie">
+                    <div>
+                        <span class="product-price">${formatoMoneda(p.precio)}</span>
+                        ${stockTexto(p)}
+                    </div>
+                    <button class="btn btn-primary btn-sm pc-agregar" ${agotado ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})" title="${agotado ? 'Sin stock' : 'Agregar al carrito'}" aria-label="Agregar al carrito">
+                        ${icon('cart', 16)}<span>${agotado ? 'Sin stock' : 'Agregar'}</span>
+                    </button>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
 }
 
 function renderProductos(lista) {
@@ -347,12 +384,16 @@ function verProducto(id) {
         ? `<div class="stock-urgente">${icon('alert', 14)} ¡Solo quedan ${p.stock}! Cómpralo antes de que se agote.</div>` : '';
     document.getElementById('modal-producto-body').innerHTML = `
         <button class="modal-close" onclick="document.getElementById('modal-producto').classList.remove('open')">${icon('x', 20)}</button>
-        <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" style="width:100%;max-height:220px;object-fit:contain;background:var(--bg-panel-2);border-radius:8px;margin-bottom:16px" onerror="this.onerror=null;this.src='/img/producto.svg'" />
-        <span class="product-brand">${p.marca || ''}</span>
-        <h3>${p.nombre}</h3>
-        <p>${p.descripcion || ''}</p>
-        <div class="product-specs" style="margin-bottom:14px">${specsLinea(p)}</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="pm-grid">
+        <div class="pm-media">
+            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
+            ${specsTabla(p)}
+        </div>
+        <div class="pm-info">
+        <span class="product-brand">${[p.marca, p.categoria_nombre].filter(Boolean).join(' · ')}</span>
+        <h3 class="pm-nombre">${p.nombre}</h3>
+        <p class="pm-desc">${p.descripcion || ''}</p>
+        <div class="pm-precio">
             <span class="product-price">${formatoMoneda(p.precio)}</span>
             ${stockTexto(p)}
         </div>
@@ -382,6 +423,8 @@ function verProducto(id) {
             <button class="btn btn-outline ${fav ? 'fav-on' : ''}" id="modal-fav" onclick="toggleFav(event, ${p.id}, true)">${icon('heart', 16)} ${fav ? 'Guardado' : 'Guardar'}</button>
         </div>
         <button class="cmp-toggle ${Comparar.tiene(p.id) ? 'on' : ''}" data-cmp="${p.id}" style="margin-top:10px" aria-pressed="${Comparar.tiene(p.id)}" onclick="alternarComparar(event, ${p.id})">${icon('grid', 13)} Añadir a comparar</button>
+        </div>
+        </div>
         <div class="modal-resenas" id="modal-resenas"><div style="color:var(--text-muted);font-size:.85rem">Cargando reseñas…</div></div>
     `;
     document.getElementById('modal-producto').classList.add('open');
@@ -515,6 +558,9 @@ function aplicarFiltrosDeURL() {
 }
 
 (async () => {
+    const pa = document.getElementById('promo-ico-asesor'), pp = document.getElementById('promo-ico-pc');
+    if (pa) pa.innerHTML = icon('chat', 22);
+    if (pp) pp.innerHTML = icon('cpu', 22);
     const enCatalogo = modoResultados();
     await cargarCategorias();
     await Favoritos.cargar();

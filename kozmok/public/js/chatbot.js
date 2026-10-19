@@ -230,7 +230,7 @@
         const body = document.getElementById('chatbot-body');
         const card = document.createElement('div');
         card.className = 'chat-suggestion';
-        const img = `<img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='/img/producto.svg'" />`;
+        const img = `<img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />`;
 
         if (variante === 'armado') {
             const detalle = [p.socket, p.ram_tipo, p.formato, p.consumo_w ? `${p.consumo_w}W` : null, p.potencia_w ? `${p.potencia_w}W` : null]

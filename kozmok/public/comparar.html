@@ -79,7 +79,7 @@ const ids = (new URLSearchParams(location.search).get('ids') || '')
                         <th></th>
                         ${prods.map((p) => `
                             <th>
-                                <img src="${p.imagen_url || '/img/producto.svg'}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/img/producto.svg'" alt="${p.nombre}" />
+                                <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" alt="${p.nombre}" />
                                 <a href="/index.html#producto-${p.id}" class="cmp-nombre">${p.nombre}</a>
                                 <div class="cmp-th-acts">
                                     <button class="btn btn-primary btn-sm" ${p.stock === 0 ? 'disabled' : ''} onclick="agregar(${p.id})">${p.stock === 0 ? 'Sin stock' : 'Agregar'}</button>
