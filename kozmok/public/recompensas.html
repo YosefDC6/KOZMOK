@@ -34,28 +34,50 @@ montarCuenta('recompensas', async (panel, P) => {
             <p>Gana puntos con cada compra y canjéalos como descuento. 100 puntos = ${formatoMoneda(100 * r.valor_punto)}.</p>
         </div>
 
-        <div class="club-card">
-            <div>
-                <span class="cc-label">Tus puntos</span>
-                <span class="cc-pts">${r.puntos.toLocaleString('es-MX')}</span>
-                <span class="cc-val">equivalen a ${formatoMoneda(r.valor_en_dinero)} en la tienda</span>
+        <div class="club-hero">
+            <div class="club-card lv-${r.nivel.clave}">
+                <div class="cc-top">
+                    <span class="cc-marca">${icon('star', 15)} Kozmok <em>Club</em></span>
+                    <span class="cc-nivel">${nivelBadge(r.nivel.clave, 18)} ${r.nivel.nombre}</span>
+                </div>
+                <div class="cc-chip" aria-hidden="true"></div>
+                <div class="cc-saldo">
+                    <span class="cc-pts">${r.puntos.toLocaleString('es-MX')}<small>pts</small></span>
+                    <span class="cc-val">= ${formatoMoneda(r.valor_en_dinero)} para tu próxima compra</span>
+                </div>
+                <div class="cc-pie">
+                    <div><span class="cc-label">Socio</span><strong>${P.nombre}</strong></div>
+                    <div class="cc-der"><span class="cc-label">Desde</span><strong>${P.fecha_registro ? new Date(P.fecha_registro).toLocaleDateString('es-MX', { month: '2-digit', year: '2-digit' }) : '—'}</strong></div>
+                    <div class="cc-der"><span class="cc-label">No.</span><strong class="mono">KZ ${String(P.id).padStart(4, '0')}</strong></div>
+                </div>
             </div>
-            <span class="cc-nivel">${nivelBadge(r.nivel.clave, 20)} ${r.nivel.nombre}</span>
-        </div>
 
-        ${sig ? `
-        <div class="card" style="margin-bottom:20px">
-            <div style="display:flex;justify-content:space-between;font-size:.86rem;margin-bottom:8px">
-                <span>Nivel <strong>${r.nivel.nombre}</strong></span>
-                <span>Siguiente: <strong>${sig.nombre}</strong></span>
+            <div class="club-resumen">
+                <div class="cr-stats">
+                    <div><span>Ganas por compra</span><strong>x${r.nivel.multiplicador}</strong></div>
+                    <div><span>Valor del punto</span><strong>$${Number(r.valor_punto).toFixed(2)}</strong></div>
+                    <div><span>Pedidos</span><strong>${r.compras_total}</strong></div>
+                </div>
+                ${sig ? `
+                <div class="cr-sig">
+                    <div class="cr-sig-head">
+                        <span>Rumbo a ${nivelBadge(sig.clave, 16)} <strong>${sig.nombre}</strong></span>
+                        <span class="mono">${r.progreso}%</span>
+                    </div>
+                    <div class="cr-meta">
+                        <span>Compras <em class="mono">${formatoMoneda(r.gasto_total)} / ${formatoMoneda(sig.minGasto)}</em></span>
+                        <div class="club-bar"><span style="width:${Math.min(100, Math.round(r.gasto_total / sig.minGasto * 100))}%"></span></div>
+                    </div>
+                    <div class="cr-meta">
+                        <span>Pedidos <em class="mono">${r.compras_total} / ${sig.minCompras}</em></span>
+                        <div class="club-bar"><span style="width:${Math.min(100, Math.round(r.compras_total / sig.minCompras * 100))}%"></span></div>
+                    </div>
+                    <p>Cumple cualquiera de las dos y subes a ${sig.nombre} (x${sig.multiplicador} puntos).</p>
+                </div>` : `
+                <div class="cr-sig"><p style="margin:0">Estás en el nivel máximo: <strong>${r.nivel.nombre}</strong>. Ganas x${r.nivel.multiplicador} puntos en cada compra.</p></div>`}
+                <a class="btn btn-primary" href="/carrito.html">${icon('cart', 16)} Canjear en el carrito</a>
             </div>
-            <div class="club-bar"><span style="width:${r.progreso}%"></span></div>
-            <p style="font-size:.82rem;color:var(--text-muted);margin:8px 0 0">
-                Llegas a ${sig.nombre} con ${formatoMoneda(sig.minGasto)} en compras o ${sig.minCompras} pedidos.
-                Llevas ${formatoMoneda(r.gasto_total)} y ${r.compras_total} pedido(s).
-            </p>
-        </div>` : `
-        <div class="card" style="margin-bottom:20px"><p style="margin:0">Estás en el nivel máximo: <strong>${r.nivel.nombre}</strong>. Ganas x${r.nivel.multiplicador} puntos en cada compra.</p></div>`}
+        </div>
 
         <h3 style="margin-bottom:12px">Niveles</h3>
         <div class="niveles-grid">
