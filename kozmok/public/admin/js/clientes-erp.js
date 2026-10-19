@@ -91,6 +91,7 @@
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                     <span class="tag tag-etapa-${c.etapa_crm}">${c.etapa_crm}</span>
+                    <button class="btn btn-outline btn-sm" onclick="ClientesERP.verOrdenes(${c.id})">${ic('clipboard', 14)} Ver sus órdenes</button>
                     ${puedeCapturar ? `<a class="btn btn-primary btn-sm" href="/admin/orden-nueva.html?cliente=${c.id}">${ic('plus', 14)} Nueva orden</a>` : ''}
                 </div>
             </div>
@@ -146,5 +147,13 @@
         }
     }
 
-    window.ClientesERP = { abrir, cerrar, ficha, orden };
+    // Filtra Órdenes de clientes por este cliente (ahí mismo si ya estamos
+    // en esa pantalla; si no, la abre ya filtrada).
+    function verOrdenes(id) {
+        cerrar();
+        if (window.filtrarOrdenes) window.filtrarOrdenes({ cliente: id });
+        else location.href = '/admin/ordenes-erp.html?cliente=' + id;
+    }
+
+    window.ClientesERP = { abrir, cerrar, ficha, orden, verOrdenes };
 })();

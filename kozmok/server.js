@@ -2981,9 +2981,13 @@ app.get('/api/admin/erp/resumen', asyncRoute(async (req, res) => {
 // Listado de órdenes de clientes (de ambos canales) con búsqueda.
 app.get('/api/admin/erp/ordenes', asyncRoute(async (req, res) => {
     const { busqueda, estado, origen } = req.query;
+    const clienteId = Number(req.query.cliente_id) || null;
+    const productoId = Number(req.query.producto_id) || null;
     const cond = [];
     const values = [];
     if (busqueda) { values.push(`%${busqueda}%`); cond.push(`(p.numero_orden ILIKE $${values.length} OR c.nombre ILIKE $${values.length} OR c.correo ILIKE $${values.length})`); }
+    if (clienteId) { values.push(clienteId); cond.push(`p.cliente_id = $${values.length}`); }
+    if (productoId) { values.push(productoId); cond.push(`EXISTS (SELECT 1 FROM pedido_items pi WHERE pi.pedido_id = p.id AND pi.producto_id = $${values.length})`); }
     if (estado && estado !== 'Todos') { values.push(estado); cond.push(`p.estado = $${values.length}`); }
     if (origen && origen !== 'Todos') { values.push(origen); cond.push(`p.origen = $${values.length}`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
@@ -3109,6 +3113,67 @@ app.get('/api/admin/erp/productos', asyncRoute(async (req, res) => {
         ORDER BY c.nombre, p.nombre
     `, [q]);
     res.json(r.rows);
+}));
+
+// Consulta de productos desde el ERP (sin ir al SCM): inventario con lo
+// vendido de cada producto y su reposición en curso.
+app.get('/api/admin/erp/productos-consulta', asyncRoute(async (req, res) => {
+    const q = (req.query.busqueda || '').trim();
+    const categoria = Number(req.query.categoria_id) || null;
+    const r = await pool.query(`
+        SELECT p.id, p.nombre, p.marca, p.precio, p.stock, p.stock_minimo, UPPER(p.restock) AS estrategia,
+               p.categoria_id, c.nombre AS categoria, pr.nombre AS proveedor,
+               CASE WHEN p.stock = 0 THEN 'agotado' WHEN p.stock <= p.stock_minimo THEN 'bajo' ELSE 'normal' END AS estado_stock,
+               COALESCE((SELECT SUM(pi.cantidad) FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+                          WHERE pi.producto_id = p.id AND pe.estado <> 'cancelado'), 0)::int AS vendidos,
+               (SELECT COUNT(DISTINCT pi.pedido_id) FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+                 WHERE pi.producto_id = p.id AND pe.estado <> 'cancelado')::int AS ordenes,
+               (SELECT oc.folio FROM ordenes_compra oc WHERE oc.producto_id = p.id
+                  AND oc.estado IN ('pendiente','en_proceso') ORDER BY oc.id DESC LIMIT 1) AS reposicion_en_curso
+        FROM productos p
+        LEFT JOIN categorias c ON c.id = p.categoria_id
+        LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+        WHERE p.activo = true
+          AND ($1 = '' OR p.nombre ILIKE '%' || $1 || '%' OR p.marca ILIKE '%' || $1 || '%')
+          AND ($2::int IS NULL OR p.categoria_id = $2::int)
+        ORDER BY p.nombre`, [q, categoria]);
+    res.json(r.rows.map((x) => ({ ...x, precio: Number(x.precio) })));
+}));
+
+// Ficha de un producto para el ERP: datos, inventario, órdenes de clientes
+// que lo incluyen y sus últimos movimientos de inventario.
+app.get('/api/admin/erp/productos-consulta/:id', asyncRoute(async (req, res) => {
+    const p = await pool.query(`
+        SELECT p.*, UPPER(p.restock) AS estrategia, c.nombre AS categoria, pr.nombre AS proveedor,
+               pr.tiempo_entrega_dias,
+               CASE WHEN p.stock = 0 THEN 'agotado' WHEN p.stock <= p.stock_minimo THEN 'bajo' ELSE 'normal' END AS estado_stock,
+               (SELECT oc.folio || '|' || COALESCE(oc.fecha_estimada::text, '') FROM ordenes_compra oc WHERE oc.producto_id = p.id
+                  AND oc.estado IN ('pendiente','en_proceso') ORDER BY oc.id DESC LIMIT 1) AS reposicion_en_curso
+        FROM productos p
+        LEFT JOIN categorias c ON c.id = p.categoria_id
+        LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+        WHERE p.id = $1`, [req.params.id]);
+    if (p.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    const [ordenes, movimientos] = await Promise.all([
+        pool.query(`
+            SELECT pe.id, pe.numero_orden, pe.fecha_pedido, pe.estado, pe.origen, pi.cantidad, pi.precio_unitario,
+                   COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre
+            FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+            LEFT JOIN clientes c ON c.id = pe.cliente_id
+            WHERE pi.producto_id = $1 ORDER BY pe.fecha_pedido DESC LIMIT 30`, [req.params.id]),
+        pool.query(`
+            SELECT m.fecha, m.tipo, m.cantidad, m.motivo FROM movimientos_inventario m
+            WHERE m.producto_id = $1 ORDER BY m.fecha DESC LIMIT 8`, [req.params.id]),
+    ]);
+    const x = p.rows[0];
+    const activas = ordenes.rows.filter((o) => o.estado !== 'cancelado');
+    res.json({
+        ...x, precio: Number(x.precio),
+        vendidos: activas.reduce((s, o) => s + Number(o.cantidad), 0),
+        ingresos: activas.reduce((s, o) => s + Number(o.cantidad) * Number(o.precio_unitario), 0),
+        ordenes: ordenes.rows.map((o) => ({ ...o, precio_unitario: Number(o.precio_unitario) })),
+        movimientos: movimientos.rows,
+    });
 }));
 
 // Crear una orden de cliente (paso 3 → "Confirmar orden"). Todo en una

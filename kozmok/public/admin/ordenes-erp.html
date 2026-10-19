@@ -15,7 +15,9 @@
         <div class="stat-grid" id="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
 
         <div class="filters-bar">
-            <input type="search" id="f-busqueda" placeholder="Buscar folio o cliente…" style="min-width:240px" />
+            <input type="search" id="f-busqueda" placeholder="Buscar folio…" style="min-width:180px" />
+            <select id="f-cliente" aria-label="Filtrar por cliente"><option value="">Todos los clientes</option></select>
+            <select id="f-producto" aria-label="Filtrar por producto"><option value="">Todos los productos</option></select>
             <select id="f-origen">
                 <option value="Todos">Todos los canales</option>
                 <option value="erp">Capturadas en ERP</option>
@@ -48,6 +50,7 @@
 <script src="/admin/js/erp.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
 <script src="/admin/js/clientes-erp.js"></script>
+<script src="/admin/js/productos-erp.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('ordenes-erp');
@@ -56,6 +59,7 @@ const ROL = (USR && USR.rol) || '';
 document.getElementById('topbar').innerHTML = adminHeader(
     'Órdenes de clientes', 'Órdenes de los dos canales (ERP y tienda en línea): consulta, envío, pago y cancelación desde aquí.',
     `<button class="btn btn-outline" onclick="ClientesERP.abrir()">${icon('user', 16)} Clientes</button> ` +
+    `<button class="btn btn-outline" onclick="ProductosERP.abrir()">${icon('package', 16)} Productos</button> ` +
     '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +
     (puedeVer(ROL, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
 );
@@ -75,6 +79,10 @@ async function cargar() {
     const p = new URLSearchParams();
     const b = document.getElementById('f-busqueda').value.trim();
     if (b) p.set('busqueda', b);
+    const cli = document.getElementById('f-cliente').value;
+    const prod = document.getElementById('f-producto').value;
+    if (cli) p.set('cliente_id', cli);
+    if (prod) p.set('producto_id', prod);
     p.set('origen', document.getElementById('f-origen').value);
     p.set('estado', document.getElementById('f-estado').value);
     ORDENES = await api('/admin/erp/ordenes?' + p.toString());
@@ -107,10 +115,37 @@ async function cargar() {
 function verOrden(id) { GestionPedido.abrir(id, { onCambio: cargar }); }
 window.onCambioClientesERP = () => cargar();
 
+// Selectores de cliente y producto (en vez de escribir el nombre).
+// También aceptan ?cliente=<id> y ?producto=<id> en la URL.
+async function cargarSelectores() {
+    const [clientes, productos] = await Promise.all([
+        api('/admin/erp/clientes-consulta').catch(() => []),
+        api('/admin/erp/productos-consulta').catch(() => []),
+    ]);
+    const esc = (t) => String(t || '').replace(/</g, '&lt;');
+    document.getElementById('f-cliente').insertAdjacentHTML('beforeend', clientes
+        .slice().sort((a, b) => a.nombre.localeCompare(b.nombre))
+        .map((c) => `<option value="${c.id}">${esc(c.nombre)}${c.ordenes ? ` (${c.ordenes})` : ''}</option>`).join(''));
+    document.getElementById('f-producto').insertAdjacentHTML('beforeend', productos
+        .map((p) => `<option value="${p.id}">${esc(p.nombre)}${p.ordenes ? ` (${p.ordenes})` : ''}</option>`).join(''));
+}
+window.filtrarOrdenes = ({ cliente = '', producto = '' } = {}) => {
+    document.getElementById('f-cliente').value = cliente ? String(cliente) : '';
+    document.getElementById('f-producto').value = producto ? String(producto) : '';
+    cargar();
+};
+document.getElementById('f-cliente').addEventListener('change', cargar);
+document.getElementById('f-producto').addEventListener('change', cargar);
+
 document.getElementById('f-busqueda').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(cargar, 250); });
 document.getElementById('f-origen').addEventListener('change', cargar);
 document.getElementById('f-estado').addEventListener('change', cargar);
-cargar().then(() => {
+cargarSelectores().then(() => {
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('cliente')) document.getElementById('f-cliente').value = qs.get('cliente');
+    if (qs.get('producto')) document.getElementById('f-producto').value = qs.get('producto');
+    return cargar();
+}).then(() => {
     const op = new URLSearchParams(location.search).get('open');
     if (op) verOrden(Number(op));
 }).catch((e) => toast(e.message, 'error'));

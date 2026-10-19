@@ -60,13 +60,15 @@
 <script src="/admin/js/erp.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
 <script src="/admin/js/clientes-erp.js"></script>
+<script src="/admin/js/productos-erp.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('erp');
 const USR = Sesion.usuario();
 document.getElementById('topbar').innerHTML = adminHeader(
     'Dashboard ERP', 'Planificación de recursos empresariales: vista integrada del negocio.',
-    `<button class="btn btn-outline" onclick="ClientesERP.abrir()">${icon('user', 16)} Clientes</button>` +
+    `<button class="btn btn-outline" onclick="ClientesERP.abrir()">${icon('user', 16)} Clientes</button> ` +
+    `<button class="btn btn-outline" onclick="ProductosERP.abrir()">${icon('package', 16)} Productos</button>` +
     (puedeVer(USR && USR.rol, 'orden-nueva') ? ` <a class="btn btn-primary" href="/admin/orden-nueva.html">${icon('plus', 16)} Nueva orden</a>` : '')
 );
 window.onCambioClientesERP = () => cargar();
@@ -79,7 +81,7 @@ async function cargar() {
         <div class="stat-card" style="cursor:pointer" onclick="ClientesERP.abrir()" title="Consultar clientes"><span class="kpi-ico">${icon('user', 18)}</span><div class="stat-label">Clientes activos</div><div class="stat-value">${k.clientes_activos}</div><div class="stat-sub">de ${k.clientes_total} en el CRM · <span style="color:var(--accent)">Ver clientes</span></div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('clipboard', 18)}</span><div class="stat-label">Órdenes de clientes</div><div class="stat-value">${k.ordenes_clientes}</div><div class="stat-sub">${k.ordenes_erp} capturadas en ERP</div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('wallet', 18)}</span><div class="stat-label">Ventas totales</div><div class="stat-value" style="font-size:1.5rem">${formatoMoneda(k.ventas_totales)}</div><div class="stat-sub">${k.pagos_pendientes} con pago pendiente</div></div>
-        <div class="stat-card"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades</div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="ProductosERP.abrir()" title="Consultar productos"><span class="kpi-ico">${icon('package', 18)}</span><div class="stat-label">Productos vendidos</div><div class="stat-value">${k.productos_vendidos}</div><div class="stat-sub">unidades · <span style="color:var(--accent)">Ver productos</span></div></div>
         <div class="stat-card"><span class="kpi-ico">${icon('alert', 18)}</span><div class="stat-label">Stock crítico</div><div class="stat-value" style="color:var(--danger)">${k.stock_critico}</div><div class="stat-sub">${k.ordenes_compra_abiertas} pedidos de reposición abiertos</div></div>
     `;
 

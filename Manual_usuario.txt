@@ -737,6 +737,8 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Boton "Nueva orden" (solo roles que pueden capturar).
       - Boton "Clientes" (y clic en la tarjeta "Clientes activos"): abre
         la CONSULTA DE CLIENTES sin salir del ERP (ver 4.14b).
+      - Boton "Productos" (y clic en la tarjeta "Productos vendidos"):
+        abre la CONSULTA DE PRODUCTOS sin salir del ERP (ver 4.14b).
 
    4.14b ORDENES DE CLIENTES  (admin/ordenes-erp.html)
       - Listado de TODAS las ordenes de clientes: las capturadas en el ERP
@@ -762,8 +764,21 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         cobrar y ultima orden de cada cliente. Al abrir uno se ve su
         ficha (datos, compras, valor total, puntos, lo que mas compra) y
         todas sus ordenes de los dos canales; clic en una orden la abre
-        en el gestor de pedidos. "Nueva orden" lo lleva al asistente ya
-        con ese cliente (roles que pueden capturar).
+        en el gestor de pedidos. "Ver sus ordenes" filtra el listado por
+        ese cliente. "Nueva orden" lo lleva al asistente ya con ese
+        cliente (roles que pueden capturar).
+      - Filtros por CLIENTE y por PRODUCTO con listas para elegir (sin
+        escribir): cada opcion muestra entre parentesis cuantas ordenes
+        tiene. Tambien por URL: ?cliente=<id> y ?producto=<id>.
+      - "Productos": consulta del inventario del SCM dentro del ERP.
+        Listado con busqueda, filtro por categoria y por estado del stock
+        (Normal / Stock bajo / Agotado), con precio, stock, minimo,
+        unidades vendidas y ordenes de cada producto. Su ficha muestra
+        precio, stock, vendidos e ingresos, proveedor, tiempo de entrega,
+        estrategia push/pull, reposicion en curso, especificaciones, las
+        ordenes de clientes que lo incluyen (clic abre la orden) y sus
+        ultimos movimientos de inventario. "Ver sus ordenes" filtra el
+        listado por ese producto.
       - Enlace directo:  /admin/ordenes-erp.html?open=<id>
 
    4.14c NUEVA ORDEN  (admin/orden-nueva.html)  -- asistente de 3 pasos
@@ -1180,6 +1195,8 @@ Endpoints utiles
                                           estado, origen)
    GET  /api/admin/erp/clientes           clientes del CRM para el paso 1
    GET  /api/admin/erp/clientes-consulta[/:id]  consulta de clientes en el ERP
+   GET  /api/admin/erp/productos-consulta[/:id] consulta de productos en el ERP
+   GET  /api/admin/erp/ordenes?cliente_id=&producto_id=  filtros de ordenes
    POST /api/admin/erp/clientes           alta rapida de cliente (admin/ventas)
    GET  /api/admin/erp/productos          productos del SCM para el paso 2
    POST /api/admin/erp/ordenes            crear orden ERP (admin/ventas)
