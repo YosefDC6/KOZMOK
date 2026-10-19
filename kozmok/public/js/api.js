@@ -24,10 +24,19 @@ async function api(path, options = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
-        if (res.status === 401 && location.pathname.startsWith('/admin/') && !location.pathname.endsWith('login.html')) {
+        if (res.status === 401 && esPanel && !location.pathname.endsWith('login.html')) {
             localStorage.removeItem('kz_usuario');
             localStorage.removeItem('kz_admin_token');
             location.href = '/admin/login.html';
+        }
+        // Sesión de cliente vencida (el servidor lo marca con sesion: 'invalida'):
+        // se cierra en el navegador y se pide iniciar sesión otra vez.
+        if (res.status === 401 && !esPanel && token && data.sesion === 'invalida') {
+            localStorage.removeItem('kz_cliente');
+            localStorage.removeItem('kz_token');
+            if (!location.pathname.endsWith('login.html') && !location.pathname.endsWith('registro.html')) {
+                irALogin(data.message);
+            }
         }
         throw new Error(data.message || data.error || 'Error en la solicitud');
     }

@@ -174,7 +174,7 @@ async function cargarCarrito() {
                     <div class="field"><label>CVV</label><input id="tn-cvv" inputmode="numeric" maxlength="4" placeholder="123" /></div>
                 </div>
                 <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tn-guardar" style="width:auto" checked /> Guardar esta tarjeta para la próxima vez</label>
-                <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Demo: no se procesa ningún cargo real. Solo se guardan marca y últimos 4 dígitos.</p>
+                <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">No se realiza ningún cargo en línea. Solo se guardan la marca y los últimos 4 dígitos; el CVV nunca se guarda.</p>
             </div>
             <button class="btn btn-primary btn-lg" style="width:100%" id="btn-comprar" onclick="confirmarCompra()">Confirmar pedido</button>
         </div>

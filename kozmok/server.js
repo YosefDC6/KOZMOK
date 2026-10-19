@@ -1,12 +1,14 @@
 // =========================================================
 //  Kozmok CRM - Backend (Express + PostgreSQL)
 // =========================================================
+require('./env.js');  // variables del archivo .env (antes que todo)
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const path = require('path');
 const { Pool } = require('pg');
 const dbConfig = require('./db.config.js');
+const Sesion = require('./sesion.js');
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
@@ -29,27 +31,29 @@ const asyncRoute = (fn) => (req, res) => fn(req, res).catch((err) => {
 
 // =========================================================
 // MIDDLEWARE DE AUTENTICACIÓN (equipo interno)
-// El token es el Base64 "usuario:<id>:<timestamp>" que emite
+// Token firmado y con vencimiento (sesion.js) que emite
 // /api/auth/login-usuario. Se envía en el header Authorization.
+// Las respuestas 401 llevan sesion: 'invalida' para que el front
+// sepa que debe volver a pedir el inicio de sesión.
 // =========================================================
+const SIN_SESION = (res, message) => res.status(401).json({ message, sesion: 'invalida' });
+
 async function requireUsuario(req, res, next) {
     try {
-        const header = req.headers.authorization || '';
-        const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-        if (!token) return res.status(401).json({ message: 'Sesión no encontrada. Inicia sesión de nuevo.' });
+        const token = Sesion.tokenDe(req);
+        if (!token) return SIN_SESION(res, 'Sesión no encontrada. Inicia sesión de nuevo.');
+        const datos = Sesion.leerToken(token, 'usuario');
+        if (!datos) return SIN_SESION(res, 'Tu sesión expiró o no es válida. Inicia sesión de nuevo.');
 
-        const decoded = Buffer.from(token, 'base64').toString('utf8'); // "usuario:<id>:<ts>"
-        const [tipo, id] = decoded.split(':');
-        if (tipo !== 'usuario' || !id) return res.status(401).json({ message: 'Token inválido' });
-
-        const result = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [id]);
-        if (result.rows.length === 0 || !result.rows[0].activo) {
-            return res.status(403).json({ message: 'Cuenta inactiva o inexistente' });
-        }
-        req.usuario = result.rows[0];
+        const result = await pool.query('SELECT id, nombre, email, rol, activo, password_hash FROM usuarios WHERE id = $1', [datos.id]);
+        const u = result.rows[0];
+        if (!u || !u.activo) return SIN_SESION(res, 'Cuenta inactiva o inexistente');
+        if (!Sesion.coincidePassword(datos, u.password_hash)) return SIN_SESION(res, 'La contraseña cambió. Inicia sesión de nuevo.');
+        delete u.password_hash;
+        req.usuario = u;
         next();
     } catch (e) {
-        return res.status(401).json({ message: 'No autenticado' });
+        return SIN_SESION(res, 'No autenticado');
     }
 }
 
@@ -80,29 +84,28 @@ function requirePermiso(...claves) {
 
 // =========================================================
 // MIDDLEWARE DE AUTENTICACIÓN (cliente / tienda)
-// Token Base64 "cliente:<id>:<timestamp>" que emiten
+// Token firmado y con vencimiento (sesion.js) que emiten
 // login-cliente y registro-cliente. Obliga a iniciar sesión
 // para el carrito, los pedidos y el perfil.
 // =========================================================
 async function requireCliente(req, res, next) {
     try {
-        const header = req.headers.authorization || '';
-        const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-        if (!token) return res.status(401).json({ message: 'Inicia sesión para continuar' });
-
-        const decoded = Buffer.from(token, 'base64').toString('utf8'); // "cliente:<id>:<ts>"
-        const [tipo, id] = decoded.split(':');
-        if (tipo !== 'cliente' || !id) return res.status(401).json({ message: 'Sesión no válida' });
+        const token = Sesion.tokenDe(req);
+        if (!token) return SIN_SESION(res, 'Inicia sesión para continuar');
+        const datos = Sesion.leerToken(token, 'cliente');
+        if (!datos) return SIN_SESION(res, 'Tu sesión expiró. Inicia sesión de nuevo.');
 
         const r = await pool.query(
-            "SELECT id, nombre, correo FROM clientes WHERE id = $1 AND estado_cliente = 'activo'",
-            [id]
+            "SELECT id, nombre, correo, password FROM clientes WHERE id = $1 AND estado_cliente = 'activo'",
+            [datos.id]
         );
-        if (r.rows.length === 0) return res.status(401).json({ message: 'Sesión no válida' });
-        req.cliente = r.rows[0];
+        const c = r.rows[0];
+        if (!c || !Sesion.coincidePassword(datos, c.password)) return SIN_SESION(res, 'Tu sesión ya no es válida. Inicia sesión de nuevo.');
+        delete c.password;
+        req.cliente = c;
         next();
     } catch (e) {
-        return res.status(401).json({ message: 'Inicia sesión para continuar' });
+        return SIN_SESION(res, 'Inicia sesión para continuar');
     }
 }
 
@@ -204,8 +207,8 @@ app.post('/api/auth/login-cliente', asyncRoute(async (req, res) => {
     if (!valido) return res.status(401).json({ message: 'Correo o contraseña incorrectos' });
 
     await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
+    const token = Sesion.crearToken('cliente', cliente.id, cliente.password);
     delete cliente.password;
-    const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
     res.json({ success: true, cliente, token });
 }));
 
@@ -237,7 +240,7 @@ app.post('/api/auth/registro-cliente', asyncRoute(async (req, res) => {
     const cliente = result.rows[0];
     await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1)', [cliente.id]);
 
-    const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
+    const token = Sesion.crearToken('cliente', cliente.id, hash);
     res.status(201).json({ success: true, cliente, token });
 }));
 
@@ -258,8 +261,8 @@ const loginUsuario = asyncRoute(async (req, res) => {
     if (!valido) return res.status(401).json({ message: 'Credenciales incorrectas' });
 
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
+    const token = Sesion.crearToken('usuario', usuario.id, usuario.password_hash);
     delete usuario.password_hash;
-    const token = Buffer.from(`usuario:${usuario.id}:${Date.now()}`).toString('base64');
     res.json({ success: true, usuario, token, permisos: PERMISOS[usuario.rol] || [] });
 });
 app.post('/api/auth/login-usuario', loginUsuario);
@@ -882,17 +885,16 @@ app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
 // Recibo / comprobante de un pedido. Lo puede ver el cliente dueño o
 // cualquier usuario interno (admin / vendedor / soporte / almacén).
 app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = Sesion.tokenDe(req);
     let quien = null;
-    try {
-        const [tipo, tid] = Buffer.from(token || '', 'base64').toString('utf8').split(':');
-        if (tipo === 'cliente' && tid) quien = { tipo: 'cliente', id: Number(tid) };
-        else if (tipo === 'usuario' && tid) {
-            const u = await pool.query('SELECT id, activo FROM usuarios WHERE id = $1', [tid]);
-            if (u.rows[0] && u.rows[0].activo) quien = { tipo: 'usuario', id: Number(tid) };
-        }
-    } catch (e) { /* token inválido */ }
+    const datos = Sesion.leerToken(token);
+    if (datos && datos.t === 'cliente') {
+        const c = await pool.query("SELECT password FROM clientes WHERE id = $1 AND estado_cliente = 'activo'", [datos.id]);
+        if (c.rows[0] && Sesion.coincidePassword(datos, c.rows[0].password)) quien = { tipo: 'cliente', id: datos.id };
+    } else if (datos && datos.t === 'usuario') {
+        const u = await pool.query('SELECT activo, password_hash FROM usuarios WHERE id = $1', [datos.id]);
+        if (u.rows[0] && u.rows[0].activo && Sesion.coincidePassword(datos, u.rows[0].password_hash)) quien = { tipo: 'usuario', id: datos.id };
+    }
     if (!quien) return res.status(401).json({ message: 'Inicia sesión para ver el comprobante' });
 
     const pr = await pool.query(
@@ -1012,11 +1014,13 @@ app.put('/api/clientes/:id/password', asyncRoute(async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
 
     const valido = await bcrypt.compare(actual, result.rows[0].password).catch(() => false);
-    if (!valido) return res.status(401).json({ message: 'La contraseña actual no es correcta' });
+    if (!valido) return res.status(400).json({ message: 'La contraseña actual no es correcta' });
 
     const hash = await bcrypt.hash(nueva, 10);
     await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [hash, req.params.id]);
-    res.json({ message: 'Contraseña actualizada' });
+    // Las demás sesiones se cierran (su huella de contraseña ya no
+    // coincide); esta recibe un token nuevo para seguir dentro.
+    res.json({ message: 'Contraseña actualizada', token: Sesion.crearToken('cliente', Number(req.params.id), hash) });
 }));
 
 // Preferencias de la cuenta (notificaciones, boletín, etc.)
@@ -3833,6 +3837,10 @@ async function migrarEsquema() {
 
 app.listen(PORT, async () => {
     console.log(`Kozmok escuchando en http://localhost:${PORT}`);
+    // Configuración faltante en .env (ver .env.example)
+    if (!require('./env.js').hayArchivoEnv) console.warn('Aviso: no hay archivo .env. Copia .env.example como .env y pon tus valores.');
+    if (!process.env.DB_PASSWORD) console.warn('Aviso: falta DB_PASSWORD en .env (contraseña de PostgreSQL).');
+    if (Sesion.secretoTemporal) console.warn('Aviso: falta SESSION_SECRET en .env (mín. 32 caracteres). Se usa una clave temporal: las sesiones se cerrarán al reiniciar el servidor.');
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
