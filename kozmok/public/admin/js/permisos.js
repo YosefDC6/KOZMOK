@@ -8,6 +8,8 @@
 // Claves que NO son pantallas del menú (son permisos de acción):
 //   'orden-nueva'       capturar órdenes de clientes en el ERP
 //   'productos-editar'  dar de alta, editar o borrar productos del catálogo
+//   'reposicion'        generar pedidos de reposición al proveedor desde
+//                       Inventario, el Dashboard SCM o la Nueva orden
 //
 // Para un rol nuevo: agrégalo aquí, en ROLES_INTERNOS (server.js) y en
 // el CHECK de la tabla usuarios (db/database.sql).
@@ -16,23 +18,22 @@
         // Administrador: acceso total, incluidas cuentas, Nivel ERP y Panel por rol.
         admin: '*',
 
-        // Ventas: relación con el cliente (CRM), consulta del catálogo y
-        // captura de órdenes de clientes (ERP).
+        // Los menús de Ventas y Logística son los de la lámina "Panel por rol
+        // (Menú dinámico)": solo esas secciones aparecen y se pueden abrir.
+
+        // Ventas: Inicio, Clientes (CRM), Productos (SCM, solo consulta),
+        // Órdenes (ERP, con captura), Reportes y Mi actividad.
         ventas: [
-            'dashboard', 'clientes', 'interacciones', 'evaluaciones', 'soporte', 'garantias',
-            'pedidos', 'chatbot', 'reportes',
-            'productos',
-            'erp', 'ordenes-erp', 'orden-nueva', 'reportes-erp',
-            'mi-actividad', 'configuracion',
+            'dashboard', 'clientes', 'productos',
+            'ordenes-erp', 'orden-nueva', 'reportes-erp',
+            'mi-actividad',
         ],
 
-        // Logística: cadena de suministro completa (SCM) y surtido/envío de
-        // las órdenes de clientes (ERP, sin capturarlas).
+        // Logística: Inicio, Productos (SCM), Inventario (SCM), Órdenes (ERP,
+        // surte y envía, sin capturar) y Reportes.
         logistica: [
-            'scm', 'productos', 'productos-editar', 'proveedores', 'inventario', 'movimientos',
-            'ordenes-compra', 'logistica', 'nivel-scm', 'reportes-scm', 'chatbot',
-            'erp', 'ordenes-erp', 'reportes-erp',
-            'mi-actividad', 'configuracion',
+            'scm', 'productos', 'productos-editar', 'inventario', 'reposicion',
+            'ordenes-erp', 'reportes-erp',
         ],
     };
 

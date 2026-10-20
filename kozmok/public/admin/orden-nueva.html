@@ -290,7 +290,7 @@ function reposicion(p) {
         const llega = fecha ? new Date(fecha.slice(0, 10) + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '';
         return `<div style="font-family:var(--font-body);font-size:.7rem;color:var(--info);white-space:nowrap">${folio}${llega ? ' · llega ' + llega : ''}</div>`;
     }
-    if (!puedeVer(USR && USR.rol, 'ordenes-compra')) return '';
+    if (!puedeVer(USR && USR.rol, 'reposicion')) return '';
     return `<div><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 0;font-size:.72rem" onclick="pedirProveedor(${p.id})">Pedir al proveedor</button></div>`;
 }
 function pedirProveedor(id) {

@@ -54,16 +54,16 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 
 ## Roles
 
-| Rol | Acceso |
-|---|---|
 Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**.
 
 | Rol | Entra a | Acceso |
 |---|---|---|
 | **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP y Panel por rol |
-| **Ventas** | Dashboard CRM | Clientes e interacciones (CRM), consulta de productos, captura y seguimiento de órdenes de clientes (ERP), reportes y Mi actividad |
-| **Logística** | Dashboard SCM | Productos, inventario, proveedores, movimientos y reposición (SCM); surte y envía las órdenes de clientes (ERP, sin capturarlas) y reportes |
+| **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes y Mi actividad |
+| **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, surte y envía sin capturar) y Reportes |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
+
+Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)*, que la pantalla **Panel por rol** muestra en una columna por rol.
 
 Los permisos viven en un solo archivo, `public/admin/js/permisos.js`, que usan **el menú** (menú dinámico según el usuario) **y el servidor** (control de acceso por módulo en cada llamada a `/api/admin/...`), así que nunca se contradicen. Si alguien abre por URL una sección que no le corresponde, el panel lo regresa a su inicio y la API responde 403. El administrador cambia el rol de cualquier persona desde *Cuentas y equipo* (`PUT /api/admin/usuarios/:id/rol`); `GET /api/usuarios/rol` devuelve el rol y los permisos de la sesión, y `POST /api/auth/login` responde también con ellos.
 

@@ -65,8 +65,8 @@ function requireAdmin(req, res, next) {
 // la tabla usuarios (db/database.sql) y en PERMISOS (public/admin/js/permisos.js).
 const ROLES_INTERNOS = {
     admin:     { nombre: 'Administrador', descripcion: 'Acceso total: CRM, SCM y ERP, cuentas, Nivel ERP y Panel por rol.' },
-    ventas:    { nombre: 'Ventas',        descripcion: 'Clientes (CRM), consulta de productos y captura de órdenes de clientes (ERP).' },
-    logistica: { nombre: 'Logística',     descripcion: 'Productos, inventario, proveedores y reposición (SCM); surte y envía las órdenes (ERP).' },
+    ventas:    { nombre: 'Ventas',        descripcion: 'Clientes (CRM), consulta de productos (SCM), captura de órdenes de clientes (ERP), reportes y su actividad.' },
+    logistica: { nombre: 'Logística',     descripcion: 'Productos e inventario con su reposición (SCM), surtido y envío de las órdenes de clientes (ERP) y reportes.' },
 };
 
 // Middleware: el rol del usuario debe tener AL MENOS UNO de estos permisos

@@ -53,7 +53,7 @@ renderAdminSidebar('inventario');
 document.getElementById('topbar').innerHTML = adminHeader(
     'Inventario', 'Existencias y estado de stock de cada producto activo.',
     '<button class="btn btn-outline" onclick="movimiento()">Registrar movimiento</button>' +
-    (puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra') ? ' <button class="btn btn-primary" onclick="generarPedido()">Generar pedido</button>' : '')
+    (puedeVer((Sesion.usuario() || {}).rol, 'reposicion') ? ' <button class="btn btn-primary" onclick="generarPedido()">Generar pedido</button>' : '')
 );
 
 let INVENTARIO = [];
@@ -129,7 +129,7 @@ function renderAlerta(criticos) {
 }
 
 function accionOC(p) {
-    if (!puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra')) return '';
+    if (!puedeVer((Sesion.usuario() || {}).rol, 'reposicion')) return '';
     return p.orden_abierta_folio
         ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio} en curso</span>`
         : `<button class="btn btn-ghost btn-sm" onclick="generarPedido(${p.id})">Generar pedido</button>`;
@@ -187,7 +187,7 @@ async function verDetalle(id) {
             <button class="btn btn-primary" onclick="restock(${p.id})">Restock</button>
             <button class="btn btn-outline" onclick="movimiento(${p.id})">Registrar movimiento</button>
             ${puedeVer(rol, 'productos') ? `<button class="btn btn-outline" onclick="ScmAcciones.abasto({ productoId: ${p.id}, onListo: alTerminar })">Mínimo, proveedor y push/pull</button>` : ''}
-            ${!CRITICOS[id] && puedeVer(rol, 'ordenes-compra') ? `<button class="btn btn-ghost" onclick="generarPedido(${p.id})">Generar pedido</button>` : ''}
+            ${!CRITICOS[id] && puedeVer(rol, 'reposicion') ? `<button class="btn btn-ghost" onclick="generarPedido(${p.id})">Generar pedido</button>` : ''}
         </div>`;
     document.getElementById('modal-detalle').classList.add('open');
     try {

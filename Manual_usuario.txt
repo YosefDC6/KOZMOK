@@ -69,17 +69,14 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
    - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
                      Nivel ERP y Panel por rol. Entra al
                      Dashboard CRM.
-   - VENTAS        : Clientes, Interacciones, Evaluaciones, Soporte,
-                     Garantias, Pedidos y Reportes (CRM); consulta de
-                     Productos (SCM); Dashboard, Ordenes de clientes
-                     (CAPTURA ordenes) y Reportes del ERP; Mi actividad.
-                     Entra al Dashboard CRM.
-   - LOGISTICA     : todo el SCM (Productos con alta y edicion,
-                     Proveedores, Inventario, Movimientos, Pedidos de
-                     reposicion, Logistica push/pull, Nivel de madurez,
-                     Reportes); Dashboard, Ordenes de clientes (surte, envia
-                     y registra pagos, pero NO captura ordenes) y Reportes
-                     del ERP; Mi actividad. Entra al Dashboard SCM.
+   - VENTAS        : Inicio (Dashboard CRM), Clientes (CRM), Productos
+                     (SCM, solo consulta), Ordenes de clientes (ERP, SI
+                     CAPTURA ordenes), Reportes (ERP) y Mi actividad.
+   - LOGISTICA     : Inicio (Dashboard SCM), Productos (SCM, con alta y
+                     edicion), Inventario (SCM, con movimientos y pedidos de
+                     reposicion en ventana), Ordenes de clientes (ERP: surte,
+                     envia y registra pagos, NO captura) y Reportes (ERP).
+   Son exactamente los menus de la lamina "Panel por rol (Menu dinamico)".
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda a su inicio.
    Ademas el SERVIDOR valida cada llamada: aunque alguien llame a la API a
@@ -914,38 +911,36 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 
 VENTAS
-   Ve: Dashboard, Clientes, Interacciones, Evaluaciones, Soporte, Garantias,
-   Pedidos, Analitica chatbot y Reportes (CRM); Productos (SCM, solo
-   consulta); Dashboard, Ordenes de clientes y Reportes del ERP, y SI puede
-   capturar ordenes nuevas; Mi actividad y Configuracion.
-   No ve Inventario, Proveedores ni el resto del SCM, Nivel ERP,
-   Panel por rol ni Cuentas.
+   Ve: Inicio (Dashboard CRM), Clientes (CRM), Productos (SCM, solo
+   consulta), Ordenes de clientes (ERP, y SI puede capturar ordenes
+   nuevas), Reportes (ERP) y Mi actividad. No ve nada mas.
    Flujo tipico:
-   1. Dashboard: clientes en riesgo y tickets activos.
-   2. Clientes: buscar al cliente y abrir su ficha.
-   3. Registrar la interaccion (llamada/correo/reunion) con lo acordado.
-   4. Atender tickets en Soporte si hay una queja formal.
-   5. Capturar en ERP -> "Nueva orden" las ventas por telefono o mostrador.
-   6. Dar seguimiento en Ordenes de clientes (pago, estado).
+   1. Inicio: clientes en riesgo y productos mas vendidos.
+   2. Clientes: buscar al cliente, abrir su ficha y registrar ahi la
+      interaccion (llamada/correo/reunion) con lo acordado.
+   3. Consultar precio y stock en Productos.
+   4. Capturar en Ordenes de clientes -> "Nueva orden" las ventas por
+      telefono o mostrador y darles seguimiento (pago, estado).
+   5. Revisar ventas en Reportes.
 
 LOGISTICA
-   Ve: todo el bloque SCM (Dashboard, Productos con alta y edicion,
-   Proveedores, Inventario, Movimientos, Pedidos de reposicion, Logistica,
-   Nivel de madurez, Reportes), Analitica chatbot, y en el ERP: Dashboard,
-   Ordenes de clientes y Reportes (NO captura ordenes); Mi actividad y
-   Configuracion. No ve Clientes, Interacciones, Soporte, Nivel ERP,
-   Panel por rol ni Cuentas.
+   Ve: Inicio (Dashboard SCM), Productos (alta y edicion), Inventario,
+   Ordenes de clientes (NO captura) y Reportes (ERP). No ve nada mas.
+   Desde Inventario y el Dashboard SCM registra movimientos y genera pedidos
+   de reposicion en ventanas (permiso de accion "reposicion"), sin necesitar
+   las pantallas Movimientos ni Pedidos del SCM.
    Flujo tipico: surtir ordenes de clientes (confirmado -> procesando ->
-   enviado -> entregado), vigilar el stock critico, generar un pedido de
-   reposicion al proveedor cuando haga falta, marcarlo "Surtir" cuando
-   llegue (el stock sube solo) y revisar el Dashboard de SCM.
+   enviado -> entregado), vigilar el stock critico en Inventario, generar
+   un pedido de reposicion cuando haga falta (el reabasto automatico lo
+   surte al llegar su fecha) y revisar Reportes.
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
    "Nivel ERP" (y fijarlo a mano) y "Panel por rol".
 
 El permiso para capturar ordenes en el ERP se llama "orden-nueva" y el de
-editar el catalogo "productos-editar", ambos en PERMISOS
+editar el catalogo "productos-editar" y el de generar pedidos de
+reposicion desde Inventario "reposicion", todos en PERMISOS
 (admin/js/permisos.js). Hoy capturan ordenes Administrador y Ventas.
 
 

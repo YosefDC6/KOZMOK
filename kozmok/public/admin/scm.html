@@ -69,7 +69,7 @@ const ROL = (Sesion.usuario() || {}).rol;
 document.getElementById('topbar').innerHTML = adminHeader(
     'Dashboard SCM', 'Cadena de suministro: productos, inventario, proveedores y logística.',
     '<button class="btn btn-outline" onclick="ScmAcciones.nuevoMovimiento({ onListo: cargar })">Registrar movimiento</button>' +
-    (puedeVer((Sesion.usuario() || {}).rol, 'ordenes-compra') ? ' <button class="btn btn-primary" onclick="ScmAcciones.pedidoReposicion({ onListo: cargar })">Generar pedido</button>' : '')
+    (puedeVer((Sesion.usuario() || {}).rol, 'reposicion') ? ' <button class="btn btn-primary" onclick="ScmAcciones.pedidoReposicion({ onListo: cargar })">Generar pedido</button>' : '')
 );
 renderModuloTiles('modulo-tiles', 'SCM', 'scm');
 
@@ -116,7 +116,7 @@ async function cargar() {
             <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
             <td>${p.orden_abierta_folio ? `<span class="tag" style="color:var(--info);border-color:var(--info)">${p.orden_abierta_folio}</span>` : '—'}</td>
             <td style="white-space:nowrap;text-align:right">
-                ${!p.orden_abierta_folio && puedeVer(ROL, 'ordenes-compra') ? `<button class="btn btn-outline btn-sm" onclick="ScmAcciones.pedidoReposicion({ productoId: ${p.id}, onListo: cargar })">Generar pedido</button>` : ''}
+                ${!p.orden_abierta_folio && puedeVer(ROL, 'reposicion') ? `<button class="btn btn-outline btn-sm" onclick="ScmAcciones.pedidoReposicion({ productoId: ${p.id}, onListo: cargar })">Generar pedido</button>` : ''}
                 <button class="btn btn-ghost btn-sm" onclick="ScmAcciones.nuevoMovimiento({ productoId: ${p.id}, onListo: cargar })">Movimiento</button>
             </td>
         </tr>`).join('') : `<tr><td colspan="6" style="color:var(--text-muted)">Ningún producto está en su stock mínimo.</td></tr>`;
