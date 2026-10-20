@@ -120,17 +120,6 @@
 }
 .pr-paso code { font-size: .78rem; }
 .pr-paso p { margin: 4px 0 0; font-size: .8rem; color: var(--text-muted); line-height: 1.45; }
-
-/* Menú dinámico: una columna por rol, como la lámina */
-.pr-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 14px; align-items: start; }
-.pr-colrol { --c: var(--accent); border: 1px solid color-mix(in srgb, var(--c) 35%, var(--line)); border-radius: var(--radius); overflow: hidden; background: var(--bg-elev); }
-.pr-colrol-head { display: flex; gap: 10px; align-items: center; padding: 12px 14px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, var(--bg-elev)); border-bottom: 1px solid color-mix(in srgb, var(--c) 30%, var(--line)); }
-.pr-colrol-head strong { font-size: 1rem; color: var(--text); }
-.pr-colrol-head small { margin-left: auto; font-family: var(--font-mono); font-size: .72rem; color: var(--text-muted); }
-.pr-colrol ul { list-style: none; margin: 0; padding: 10px 14px 14px; display: grid; gap: 7px; }
-.pr-colrol li { display: flex; gap: 9px; align-items: center; font-size: .86rem; }
-.pr-colrol li .ic { color: var(--success, #22a06b); flex-shrink: 0; }
-.pr-colrol li em { font-style: normal; color: var(--text-muted); font-size: .78rem; }
 </style>
 </head>
 <body>
@@ -138,12 +127,6 @@
     <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
     <main class="admin-main">
         <div id="topbar"></div>
-
-        <div class="card">
-            <h3 style="margin:0">Menú dinámico</h3>
-            <p style="color:var(--text-muted);font-size:.84rem;margin:4px 0 0">Vistas y accesos según el rol de usuario: cada columna es el menú lateral que ve ese rol.</p>
-            <div class="pr-cols" id="pr-cols"></div>
-        </div>
 
         <div class="pr-roles" id="pr-roles" role="group" aria-label="Elegir rol"></div>
 
@@ -215,10 +198,6 @@ const iconoDe = (rol) => ICONO[rol] || 'user';
 const MODULOS = ADMIN_SECCIONES.map((s) => {
     const links = [...s.links];
     if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes', ic: 'plus', accion: true });
-    if (s.titulo === 'SCM') {
-        links.splice(2, 0, { key: 'productos-editar', label: 'Editar catálogo', ic: 'clipboard', accion: true });
-        links.push({ key: 'reposicion', label: 'Generar pedidos de reposición', ic: 'plus', accion: true });
-    }
     return { titulo: s.titulo, links };
 });
 const TOTAL = MODULOS.reduce((n, m) => n + m.links.length, 0);
@@ -324,23 +303,6 @@ function elegir(rol) {
     ROL = rol;
     pintarRoles(); pintarMenu(); pintarModulos(); pintarMatriz();
 }
-
-// Menú dinámico: una columna por rol con sus secciones (como la lámina).
-function pintarColumnas() {
-    document.getElementById('pr-cols').innerHTML = ROLES.map((rol) => {
-        const home = homeDe(rol);
-        const items = [];
-        ADMIN_SECCIONES.forEach((s) => s.links.filter((l) => puedeVer(rol, l.key)).forEach((l) => {
-            if (l.href === home) items.unshift({ label: 'Inicio', mod: '' });
-            else items.push({ label: l.label, mod: s.home ? s.titulo : '' });
-        }));
-        return `<div class="pr-colrol" style="--c:${colorDe(rol)}">
-            <div class="pr-colrol-head">${icon(iconoDe(rol), 20)} <strong>${esc(ROL_LABEL[rol] || rol)}</strong><small>${items.length}</small></div>
-            <ul>${items.map((i) => `<li>${icon('check', 15)} <span>${esc(i.label)}${i.mod ? ` <em>(${i.mod})</em>` : ''}</span></li>`).join('')}</ul>
-        </div>`;
-    }).join('');
-}
-pintarColumnas();
 
 elegir(ROL);
 

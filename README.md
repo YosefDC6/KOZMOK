@@ -63,7 +63,7 @@ Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**
 | **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, surte y envía sin capturar) y Reportes |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
 
-Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)*, que la pantalla **Panel por rol** muestra en una columna por rol.
+Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)*; la pantalla **Panel por rol** los muestra con su vista previa del menú y la matriz de permisos.
 
 Los permisos viven en un solo archivo, `public/admin/js/permisos.js`, que usan **el menú** (menú dinámico según el usuario) **y el servidor** (control de acceso por módulo en cada llamada a `/api/admin/...`), así que nunca se contradicen. Si alguien abre por URL una sección que no le corresponde, el panel lo regresa a su inicio y la API responde 403. El administrador cambia el rol de cualquier persona desde *Cuentas y equipo* (`PUT /api/admin/usuarios/:id/rol`); `GET /api/usuarios/rol` devuelve el rol y los permisos de la sesión, y `POST /api/auth/login` responde también con ellos.
 
