@@ -66,7 +66,7 @@ function requireAdmin(req, res, next) {
 const ROLES_INTERNOS = {
     admin:     { nombre: 'Administrador', descripcion: 'Acceso total: CRM, SCM y ERP, cuentas, Nivel ERP y Panel por rol.' },
     ventas:    { nombre: 'Ventas',        descripcion: 'Clientes (CRM), consulta de productos (SCM), captura de órdenes de clientes (ERP), reportes y su actividad.' },
-    logistica: { nombre: 'Logística',     descripcion: 'Productos e inventario con su reposición (SCM), surtido y envío de las órdenes de clientes (ERP) y reportes.' },
+    logistica: { nombre: 'Logística',     descripcion: 'Productos e inventario con su reposición (SCM), captura, surtido y envío de las órdenes de clientes (ERP) y reportes.' },
 };
 
 // Middleware: el rol del usuario debe tener AL MENOS UNO de estos permisos

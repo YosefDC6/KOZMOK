@@ -60,7 +60,7 @@ Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**
 |---|---|---|
 | **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP y Panel por rol |
 | **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes y Mi actividad |
-| **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, surte y envía sin capturar) y Reportes |
+| **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, captura, surte y envía) y Reportes |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
 
 Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)*; la pantalla **Panel por rol** los muestra con su vista previa del menú y la matriz de permisos.

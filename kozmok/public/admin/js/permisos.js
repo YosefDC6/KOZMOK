@@ -29,11 +29,11 @@
             'mi-actividad',
         ],
 
-        // Logística: Inicio, Productos (SCM), Inventario (SCM), Órdenes (ERP,
-        // surte y envía, sin capturar) y Reportes.
+        // Logística: Inicio, Productos (SCM), Inventario (SCM), Órdenes (ERP:
+        // captura órdenes nuevas, las surte y las envía) y Reportes.
         logistica: [
             'scm', 'productos', 'productos-editar', 'inventario', 'reposicion',
-            'ordenes-erp', 'reportes-erp',
+            'ordenes-erp', 'orden-nueva', 'reportes-erp',
         ],
     };
 

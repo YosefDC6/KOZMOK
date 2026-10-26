@@ -74,8 +74,9 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
                      CAPTURA ordenes), Reportes (ERP) y Mi actividad.
    - LOGISTICA     : Inicio (Dashboard SCM), Productos (SCM, con alta y
                      edicion), Inventario (SCM, con movimientos y pedidos de
-                     reposicion en ventana), Ordenes de clientes (ERP: surte,
-                     envia y registra pagos, NO captura) y Reportes (ERP).
+                     reposicion en ventana), Ordenes de clientes (ERP: SI
+                     CAPTURA ordenes, las surte, envia y registra pagos) y
+                     Reportes (ERP).
    Son exactamente los menus de la lamina "Panel por rol (Menu dinamico)".
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda a su inicio.
@@ -101,7 +102,7 @@ Cuentas de prueba (tras cargar db/database.sql)
    +----------+------------------------------+-----------------+----------------------------------+
    | Admin    | admin@kozmok.mx          | Admin#KZ2026    | acceso total al panel            |
    | Ventas   | laura.ventas@kozmok.mx   | Ventas#KZ2026   | CRM y captura de ordenes ERP     |
-   | Logistica| paola.logistica@kozmok.mx| Logistica#KZ2026| SCM y surtido de ordenes ERP     |
+   | Logistica| paola.logistica@kozmok.mx| Logistica#KZ2026| SCM, captura y surtido ERP       |
    | Cliente  | mariana@correo.com           | Demo#KZ2026     | nivel Oro, con pedidos y puntos  |
    | Cliente  | diego@correo.com             | Demo#KZ2026     | nivel Oro                        |
    | Cliente  | sofia@correo.com             | Demo#KZ2026     | prospecto, sin compras           |
@@ -925,11 +926,12 @@ VENTAS
 
 LOGISTICA
    Ve: Inicio (Dashboard SCM), Productos (alta y edicion), Inventario,
-   Ordenes de clientes (NO captura) y Reportes (ERP). No ve nada mas.
+   Ordenes de clientes (SI captura con "Nueva orden") y Reportes (ERP).
+   No ve nada mas.
    Desde Inventario y el Dashboard SCM registra movimientos y genera pedidos
    de reposicion en ventanas (permiso de accion "reposicion"), sin necesitar
    las pantallas Movimientos ni Pedidos del SCM.
-   Flujo tipico: surtir ordenes de clientes (confirmado -> procesando ->
+   Flujo tipico: capturar ordenes nuevas cuando haga falta, surtir ordenes de clientes (confirmado -> procesando ->
    enviado -> entregado), vigilar el stock critico en Inventario, generar
    un pedido de reposicion cuando haga falta (el reabasto automatico lo
    surte al llegar su fecha) y revisar Reportes.
@@ -941,7 +943,7 @@ ADMINISTRADOR
 El permiso para capturar ordenes en el ERP se llama "orden-nueva" y el de
 editar el catalogo "productos-editar" y el de generar pedidos de
 reposicion desde Inventario "reposicion", todos en PERMISOS
-(admin/js/permisos.js). Hoy capturan ordenes Administrador y Ventas.
+(admin/js/permisos.js). Hoy capturan ordenes los tres roles: Administrador, Ventas y Logistica.
 
 
 ===============================================================================
