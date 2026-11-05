@@ -81,7 +81,7 @@ async function cargar() {
     INVENTARIO = productos.filter((p) => p.activo);
     CRITICOS = Object.fromEntries(metricas.inventario_critico.map((c) => [c.id, c]));
     document.getElementById('f-categoria').innerHTML = '<option value="">Todas las categorías</option>' +
-        categorias.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('');
+        categorias.map((c) => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('');
 
     const unidades = INVENTARIO.reduce((a, p) => a + p.stock, 0);
     const valor = INVENTARIO.reduce((a, p) => a + p.stock * Number(p.precio), 0);
@@ -113,7 +113,7 @@ function renderAlerta(criticos) {
                 ${criticos.map((p) => `
                     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;background:var(--bg-panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px">
                         <div>
-                            <div>${p.nombre} <span style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</span></div>
+                            <div>${esc(p.nombre)} <span style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</span></div>
                             <div style="font-size:.78rem;color:var(--text-muted)">
                                 Proveedor: ${p.proveedor_nombre || 'sin asignar'}${p.tiempo_entrega_dias ? ` (entrega en ${p.tiempo_entrega_dias} días)` : ''} · Reabastecimiento ${p.restock === 'pull' ? 'pull' : 'push'}
                             </div>
@@ -140,14 +140,14 @@ function renderTabla() {
     const cat = document.getElementById('f-categoria').value;
     const est = document.getElementById('f-estado').value;
     const lista = INVENTARIO.filter((p) =>
-        (!q || `${p.nombre} ${p.marca || ''}`.toLowerCase().includes(q)) &&
+        (!q || `${esc(p.nombre)} ${p.marca || ''}`.toLowerCase().includes(q)) &&
         (!cat || String(p.categoria_id) === cat) &&
         (!est || estadoDe(p) === est));
     document.getElementById('tabla-inventario').innerHTML = lista.length ? lista.map((p) => {
         const e = estadoDe(p);
         return `
         <tr style="cursor:pointer" onclick="verDetalle(${p.id})">
-            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+            <td>${esc(p.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
             <td>${p.categoria_nombre || '—'}</td>
             <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
             <td class="mono ${e === 'agotado' ? 'stock-out' : e === 'bajo' ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
@@ -170,7 +170,7 @@ async function verDetalle(id) {
     const body = document.getElementById('modal-detalle-body');
     body.innerHTML = `
         <button class="modal-close" onclick="cerrarDetalle()">${icon('x', 18)}</button>
-        <h3 style="margin-bottom:4px">${p.nombre}</h3>
+        <h3 style="margin-bottom:4px">${esc(p.nombre)}</h3>
         <p style="color:var(--text-muted);margin:0 0 14px;font-size:.85rem">${p.marca || ''} · ${p.categoria_nombre || 'Sin categoría'}</p>
         <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
             <div class="stat-card"><div class="stat-label">Stock actual</div><div class="stat-value">${p.stock}</div></div>

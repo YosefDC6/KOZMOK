@@ -53,7 +53,7 @@ function tarjetaSocio(P, rec) {
                 <div class="socio-chip" aria-hidden="true"></div>
                 <div class="socio-num">${numero}</div>
                 <div class="socio-grid">
-                    <div><span>Titular</span><strong>${P.nombre}</strong></div>
+                    <div><span>Titular</span><strong>${esc(P.nombre)}</strong></div>
                     <div><span>Socio desde</span><strong>${desde}</strong></div>
                     <div><span>Puntos</span><strong>${Number(rec.puntos).toLocaleString('es-MX')}</strong></div>
                     <div><span>Compras</span><strong>${formatoMoneda(rec.gasto_total)}</strong></div>
@@ -63,16 +63,17 @@ function tarjetaSocio(P, rec) {
             <div class="socio-qr">
                 <div class="sq-code">${qrSVG(urlSocio)}</div>
                 <span class="sq-label">Escanéala en tienda</span>
-                <span class="sq-id mono">${codigo}</span>
+                <span class="sq-id mono">${esc(codigo)}</span>
             </div>` : ''}
         </div>`;
 }
 
 montarCuenta('perfil', async (panel, P) => {
-    const [pedidos, favs, rec] = await Promise.all([
+    const [pedidos, favs, rec, mon] = await Promise.all([
         api(`/pedidos/cliente/${P.id}`),
         api(`/clientes/${P.id}/favoritos`),
         api(`/clientes/${P.id}/recompensas`),
+        api('/monedero').catch(() => ({ saldo: 0 })),
     ]);
     const gastado = rec.gasto_total || pedidos.filter((x) => x.estado !== 'cancelado').reduce((a, x) => a + Number(x.total), 0);
     const numCompras = rec.compras_total || pedidos.length;
@@ -80,7 +81,7 @@ montarCuenta('perfil', async (panel, P) => {
 
     panel.innerHTML = `
         <div class="cuenta-head">
-            <h1>Hola, ${P.nombre.split(' ')[0]}</h1>
+            <h1>Hola, ${esc(P.nombre.split(' ')[0])}</h1>
             <p>Resumen de tu cuenta.</p>
         </div>
 
@@ -88,6 +89,7 @@ montarCuenta('perfil', async (panel, P) => {
 
         <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
             <div class="stat-card"><div class="stat-label">Nivel del Club</div><div class="stat-value" style="font-size:1.05rem;display:flex;align-items:center;gap:6px">${nivelBadge(rec.nivel.clave, 20)} ${rec.nivel.nombre}</div><div class="stat-sub">${Number(rec.puntos).toLocaleString('es-MX')} pts · vale ${formatoMoneda(rec.valor_en_dinero)}</div></div>
+            <a class="stat-card" href="/monedero.html" style="color:inherit;text-decoration:none"><div class="stat-label">${icon('wallet', 13)} Mi monedero</div><div class="stat-value" style="font-size:1.25rem;color:var(--success)">${formatoMoneda(mon.saldo, 2)}</div><div class="stat-sub">Recargar o ver movimientos</div></a>
             <div class="stat-card"><div class="stat-label">Compras</div><div class="stat-value">${numCompras}</div></div>
             <div class="stat-card"><div class="stat-label">Total gastado</div><div class="stat-value" style="font-size:1.25rem">${formatoMoneda(gastado)}</div></div>
             <div class="stat-card"><div class="stat-label">Favoritos</div><div class="stat-value">${favs.length}</div></div>
@@ -97,6 +99,8 @@ montarCuenta('perfil', async (panel, P) => {
             <a class="btn btn-outline btn-sm" href="/index.html?ver=todo">Seguir comprando</a>
             <a class="btn btn-outline btn-sm" href="/pedidos.html">Ver mis pedidos</a>
             <a class="btn btn-outline btn-sm" href="/direcciones.html">Administrar direcciones</a>
+            <a class="btn btn-outline btn-sm" href="/datos.html">Editar datos</a>
+            <a class="btn btn-outline btn-sm" href="/soporte.html">Atención a clientes</a>
         </div>
 
         <div class="card">
@@ -105,7 +109,7 @@ montarCuenta('perfil', async (panel, P) => {
                 ? '<p style="margin:0">Aún no tienes pedidos. <a href="/index.html?ver=todo">Ir al catálogo</a></p>'
                 : ultimos.map((p) => `
                     <div class="mini-order">
-                        <div><span class="mono">${p.numero_orden}</span><span class="mo-sub">${formatoFecha(p.fecha_pedido)} · ${p.productos || ''}</span></div>
+                        <div><span class="mono">${esc(p.numero_orden)}</span><span class="mo-sub">${formatoFecha(p.fecha_pedido)} · ${esc(p.productos || '')}</span></div>
                         <div class="mo-right"><span class="mono">${formatoMoneda(p.total)}</span><span class="tag">${ESTADO_LABEL[p.estado] || p.estado}</span></div>
                     </div>
                 `).join('')}

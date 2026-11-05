@@ -110,7 +110,7 @@ async function cargar() {
 
     document.getElementById('tabla-critico').innerHTML = mp.inventario_critico.length ? mp.inventario_critico.map((p) => `
         <tr>
-            <td>${p.nombre}</td>
+            <td>${esc(p.nombre)}</td>
             <td class="mono ${p.stock === 0 ? 'stock-out' : 'stock-low'}">${p.stock}</td>
             <td class="mono">${p.stock_minimo}</td>
             <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>

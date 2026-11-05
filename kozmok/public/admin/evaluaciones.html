@@ -63,7 +63,7 @@ async function cargar() {
             <tr>
                 <td>${formatoFecha(r.fecha)}</td>
                 <td>${r.producto_nombre}</td>
-                <td><a href="/admin/cliente.html?id=${r.cliente_id}&tab=evaluaciones">${r.cliente_nombre}</a></td>
+                <td><a href="/admin/cliente.html?id=${r.cliente_id}&tab=evaluaciones">${esc(r.cliente_nombre)}</a></td>
                 <td style="color:var(--warning);letter-spacing:2px">${estrellas(r.calificacion)}</td>
                 <td>${r.comentario || '—'}</td>
             </tr>`).join('');

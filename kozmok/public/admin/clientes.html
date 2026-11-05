@@ -74,7 +74,7 @@ async function cargar() {
         ? '<tr><td colspan="7">Sin resultados.</td></tr>'
         : ROWS.map((c) => `
             <tr onclick="location.href='/admin/cliente.html?id=${c.id}'" style="cursor:pointer">
-                <td class="mono">${c.id}</td><td><span class="cel-persona">${avatarIni(c.nombre)}<strong>${c.nombre}</strong></span></td><td>${c.correo}</td><td>${c.empresa || '—'}</td>
+                <td class="mono">${c.id}</td><td><span class="cel-persona">${avatarIni(c.nombre)}<strong>${esc(c.nombre)}</strong></span></td><td>${esc(c.correo)}</td><td>${c.empresa || '—'}</td>
                 <td><span class="tag tag-etapa-${c.etapa_crm}">${c.etapa_crm}</span></td>
                 <td style="text-transform:capitalize">${c.estado_cliente}</td>
                 <td style="white-space:nowrap"><a class="btn btn-outline btn-sm" href="/admin/cliente.html?id=${c.id}">Ver ficha</a>
@@ -87,7 +87,7 @@ async function eliminar(id) {
     const c = ROWS.find((x) => x.id === id);
     const inactivo = c && c.estado_cliente === 'inactivo';
     const msg = inactivo
-        ? `¿Eliminar por completo a ${c.nombre}? Se borran sus datos, puntos, direcciones, tarjetas, reseñas, tickets, garantías e interacciones. Sus pedidos se conservan como "Cliente eliminado" para no alterar ventas ni inventario. No se puede deshacer.`
+        ? `¿Eliminar por completo a ${esc(c.nombre)}? Se borran sus datos, puntos, direcciones, tarjetas, reseñas, tickets, garantías e interacciones. Sus pedidos se conservan como "Cliente eliminado" para no alterar ventas ni inventario. No se puede deshacer.`
         : `¿Eliminar a ${c ? c.nombre : 'este cliente'}? Si ya tiene pedidos, primero se marca como inactivo; eliminándolo otra vez se borra por completo.`;
     if (!await confirmar(msg, { okText: inactivo ? 'Eliminar por completo' : 'Eliminar', peligro: true })) return;
     try {
@@ -104,7 +104,7 @@ function formNuevo() {
         <div class="field"><label>Nombre completo</label><input id="n-nombre" /></div>
         <div class="field"><label>Correo</label><input type="email" id="n-correo" /></div>
         <div class="field-row">
-            <div class="field"><label>Contraseña (mín. 6)</label><input type="password" id="n-pass" minlength="6" value="temporal123" /></div>
+            <div class="field"><label>Contraseña temporal (8+, mayúscula, minúscula, número y símbolo)</label><input type="password" id="n-pass" minlength="8" maxlength="72" autocomplete="new-password" placeholder="Ej. Temporal#2026" /></div>
             <div class="field"><label>Teléfono</label><input id="n-tel" /></div>
         </div>
         <div class="field"><label>Empresa</label><input id="n-empresa" /></div>

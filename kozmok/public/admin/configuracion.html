@@ -73,7 +73,7 @@ function pintarTemas() {
     const actual = Tema.actual();
     cont.innerHTML = Tema.lista.map((t) => `
         <button class="tema-swatch ${t.clave === actual ? 'sel' : ''}" data-tema="${t.clave}">
-            <span class="ts-color" data-c="${t.clave}"></span>${t.nombre}
+            <span class="ts-color" data-c="${t.clave}"></span>${esc(t.nombre)}
         </button>`).join('');
     cont.querySelectorAll('.tema-swatch').forEach((b) =>
         b.addEventListener('click', () => { Tema.aplicar(b.dataset.tema); pintarTemas(); toast('Tema aplicado', 'ok'); }));

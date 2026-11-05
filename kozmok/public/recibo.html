@@ -26,14 +26,15 @@ const doc = document.getElementById('doc');
 
 (async () => {
     if (!id) { doc.innerHTML = '<div class="empty-state">Falta el número de pedido.</div>'; return; }
-    const token = localStorage.getItem('kz_token');
+    if (!/^\d+$/.test(id)) { doc.innerHTML = '<div class="empty-state">Número de pedido no válido.</div>'; return; }
     try {
-        const res = await fetch('/api/pedidos/' + id + '/recibo', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        // La sesión viaja en la cookie HttpOnly (no hay token en el navegador).
+        const res = await fetch('/api/pedidos/' + id + '/recibo', { credentials: 'same-origin' });
         const d = await res.json();
         if (!res.ok) throw new Error(d.message || 'No se pudo cargar el comprobante');
         doc.innerHTML = renderRecibo(d);
     } catch (e) {
-        doc.innerHTML = `<div class="empty-state">${e.message}<br><a href="/pedidos.html">Ir a mis pedidos</a></div>`;
+        doc.innerHTML = `<div class="empty-state">${esc(e.message)}<br><a href="/pedidos.html">Ir a mis pedidos</a></div>`;
     }
 })();
 </script>

@@ -186,7 +186,7 @@ async function cargarOptimizar() {
         h += `<p style="font-size:.8rem;color:var(--text-muted);margin:0 0 6px">Se genera un pedido cuando un producto con proveedor llega a su stock mínimo. Ajusta el mínimo de uno de estos hasta su stock actual o más, con estrategia <strong>push</strong>, y el pedido se genera al guardar:</p>
         <div class="table-wrap"><table style="font-size:.82rem"><thead><tr><th>Producto</th><th style="white-space:nowrap">Stock / mín.</th><th></th></tr></thead><tbody>
         ${o.reabasto.candidatos.map((p) => `<tr>
-            <td>${p.nombre}<div style="font-size:.72rem;color:var(--text-muted)">${p.proveedor} · ${p.restock}</div></td>
+            <td>${esc(p.nombre)}<div style="font-size:.72rem;color:var(--text-muted)">${p.proveedor} · ${p.restock}</div></td>
             <td class="mono ${p.stock <= p.stock_minimo ? 'stock-low' : ''}" style="white-space:nowrap">${p.stock} / ${p.stock_minimo}</td>
             <td style="text-align:right">${p.pedido_abierto ? '<span style="font-size:.74rem;color:var(--text-muted)">pedido abierto</span>'
                 : `<button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="ajustarAbasto(${p.id})">Ajustar</button>`}</td>
@@ -200,7 +200,7 @@ async function cargarOptimizar() {
     e += pe.length ? `<p style="font-size:.8rem;color:var(--text-muted);margin:6px 0">Abre una orden, registra su pago si falta y muévela hasta <strong>Entregado</strong>:</p>
         <div class="table-wrap"><table style="font-size:.82rem"><thead><tr><th>Orden</th><th>Estado</th><th></th></tr></thead><tbody>
         ${pe.map((x) => `<tr>
-            <td><span class="mono" style="white-space:nowrap">${x.numero_orden}</span> · ${formatoMoneda(x.total)}<div style="font-size:.74rem;color:var(--text-muted)">${x.cliente_nombre}</div></td>
+            <td><span class="mono" style="white-space:nowrap">${x.numero_orden}</span> · ${formatoMoneda(x.total)}<div style="font-size:.74rem;color:var(--text-muted)">${esc(x.cliente_nombre)}</div></td>
             <td>${ESTADO_PILL(x.estado)}${x.pago_estado === 'pendiente' ? '<div style="font-size:.7rem;color:var(--warning)">pago pendiente</div>' : ''}</td>
             <td style="text-align:right"><button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="gestionar(${x.id})">Gestionar</button></td>
         </tr>`).join('')}</tbody></table></div>`
@@ -257,7 +257,7 @@ async function asignarProveedores() {
         <p style="margin:0 0 12px;font-size:.85rem;color:var(--text-muted)">${sin.length ? `${sin.length} producto${sin.length === 1 ? '' : 's'} sin proveedor.` : 'Todos los productos activos tienen proveedor.'} Asigna proveedor, mínimo y estrategia desde aquí.</p>
         <div class="table-wrap"><table style="font-size:.84rem"><thead><tr><th>Producto</th><th>Proveedor</th><th style="white-space:nowrap">Stock / mín.</th><th></th></tr></thead><tbody>
         ${lista.map((p) => `<tr>
-            <td>${p.nombre}</td>
+            <td>${esc(p.nombre)}</td>
             <td>${p.proveedor_nombre || '<span style="color:var(--danger)">Sin asignar</span>'}</td>
             <td class="mono" style="white-space:nowrap">${p.stock} / ${p.stock_minimo}</td>
             <td style="text-align:right"><button class="btn btn-outline btn-sm" style="white-space:nowrap" onclick="editarAbasto(${p.id})">${p.proveedor_id ? 'Editar' : 'Asignar'}</button></td>

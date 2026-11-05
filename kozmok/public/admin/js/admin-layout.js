@@ -1,12 +1,19 @@
 // public/admin/js/admin-layout.js
 
+// La sesión del equipo vive en la cookie HttpOnly "kz_admin"; aquí solo
+// se valida contra el servidor (whoami) y se guarda nombre y rol para
+// pintar el menú.
 function requireAuthAdmin() {
     const usuario = Sesion.usuario();
-    const token = localStorage.getItem('kz_admin_token');
-    if (!usuario || !token) { window.location.href = '/admin/login.html'; return null; }
+    if (!usuario) { window.location.href = '/admin/login.html'; return null; }
     api('/admin/whoami')
-        .then((u) => { if (u && u.rol) Sesion.guardarUsuario(u, token); })
-        .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = '/admin/login.html'; });
+        .then((u) => {
+            if (!u || !u.rol) return;
+            const cambioRol = u.rol !== usuario.rol;
+            Sesion.guardarUsuario(u);
+            if (cambioRol) location.reload();
+        })
+        .catch((e) => { if (e.status === 401 || e.status === 403) { localStorage.removeItem('kz_usuario'); window.location.href = '/admin/login.html'; } });
     return usuario;
 }
 
@@ -40,9 +47,19 @@ const ADMIN_SECCIONES = [
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
         { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'id',      label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },
+    { titulo: 'Tienda', home: '/admin/tienda.html', links: [
+        { href: '/admin/tienda.html',       key: 'tienda',       ic: 'home',    label: 'Resumen',             desc: 'Ventas en línea, carritos y pagos' },
+        { href: '/admin/promociones.html',  key: 'promociones',  ic: 'medal',   label: 'Promociones',         desc: 'Descuentos por porcentaje o monto' },
+        { href: '/admin/impuestos.html',    key: 'impuestos',    ic: 'clipboard', label: 'Impuestos',         desc: 'IVA y desglose en el checkout' },
+        { href: '/admin/monedero.html',     key: 'monedero',     ic: 'wallet',  label: 'Monedero',            desc: 'Saldos, recargas y ajustes' },
+        { href: '/admin/pagos.html',        key: 'pagos',        ic: 'card',    label: 'Pagos',               desc: 'Pagos por método y estado' },
+        { href: '/admin/soporte.html?origen=tienda', key: 'atencion', ic: 'help', label: 'Atención a clientes', desc: 'Tickets de la tienda (CRM)' },
+        { href: '/admin/correos.html',      key: 'correos',      ic: 'mail',    label: 'Correos enviados',    desc: 'Confirmaciones y avisos' },
+    ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
-        { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'lock',     label: 'Cuentas y equipo' },
+        { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'user',     label: 'Cuentas y equipo' },
+        { href: '/admin/seguridad.html',     key: 'seguridad',     ic: 'lock',     label: 'Seguridad' },
         { href: '/admin/configuracion.html', key: 'configuracion', ic: 'settings', label: 'Configuración' },
     ] },
 ];
@@ -62,7 +79,7 @@ function avatarIni(nombre) {
 }
 window.avatarIni = avatarIni;
 
-const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Cuenta: 'settings' };
+const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Tienda: 'cart', Cuenta: 'settings' };
 
 function menuCorto() {
     try { return localStorage.getItem('kz_menu_corto') === '1'; } catch { return false; }
@@ -170,7 +187,7 @@ function renderAdminSidebar(activo) {
             <div class="au-fila">
                 <span class="au-avatar">${inicialesUsuario(usuario ? usuario.nombre : '')}</span>
                 <div style="min-width:0">
-                    <div class="au-name">${usuario ? usuario.nombre : ''}</div>
+                    <div class="au-name">${usuario ? esc(usuario.nombre) : ''}</div>
                     <div class="au-rol">${ROL_LABEL[rol] || rol}</div>
                 </div>
             </div>
@@ -189,8 +206,8 @@ function renderAdminSidebar(activo) {
     });
 }
 
-function cerrarSesionAdmin() {
-    Sesion.cerrarSesionUsuario();
+async function cerrarSesionAdmin() {
+    await Sesion.cerrarSesionUsuario();   // revoca la sesión en el servidor
     window.location.href = '/admin/login.html';
 }
 

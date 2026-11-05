@@ -16,6 +16,13 @@ autenticación con roles.
 > viven en `server.js` bajo `/api/admin/erp/*` y sus pantallas en
 > `public/admin/erp.html`, `ordenes-erp.html`, `orden-nueva.html`,
 > `nivel-erp.html` y `reportes-erp.html` (utilidades en `admin/js/erp.js`).
+> Etapa 4 = negocio electrónico: catálogo (`/api/catalogo`), carrito
+> (`/api/carrito/*`), pagos (`/api/pagos/*`), monedero (`/api/monedero`),
+> promociones e impuestos (`/api/promociones`, `/api/impuestos`), atención a
+> clientes (`/api/atencion/*`) y autenticación (`/api/auth/*`); pantallas
+> `carrito.html`, `checkout.html`, `gracias.html`, `monedero.html`,
+> `soporte.html` y el menú *Tienda* del panel. Etapa 5 = seguridad:
+> `seguridad.js`, `pruebas-seguridad/` y [`../SEGURIDAD.md`](../SEGURIDAD.md).
 
 ## Estructura
 
@@ -63,7 +70,9 @@ npm install
    ```sql
    CREATE DATABASE kozmok;
    ```
-2. Edita `db.config.js` con tu usuario/contraseña de PostgreSQL.
+2. Copia `.env.example` como `.env` y pon tu usuario/contraseña de
+   PostgreSQL (`db.config.js` los lee de ahí; sin `.env` usa
+   `postgres` / `12345678`).
 3. Carga **todo** con un solo archivo (esquema + triggers + datos +
    contraseñas hasheadas con bcrypt vía `pgcrypto`):
    ```bash
@@ -111,13 +120,16 @@ npm start
 - **Indicadores**: `/admin/dashboard.html` muestra total de clientes,
   activos/inactivos, interacciones del mes, clientes en riesgo
   (30+ días sin contacto) y gráficas de etapa/tipo de interacción.
-- **Roles y autenticación**: login separado para clientes
-  (`/api/auth/login-cliente`) y para equipo interno
-  (`/api/auth/login-usuario` o `/api/auth/login`, roles `admin` /
-  `ventas` / `logistica`, ver `public/admin/js/permisos.js`), con
-  contraseñas hasheadas con bcrypt. Todas las rutas `/api/admin/*`
-  exigen el token del equipo interno (header `Authorization: Bearer
-  <token>`, que el front manda automáticamente); crear usuarios
+- **Roles y autenticación**: `POST /api/auth/login` con
+  `{ "tipo": "cliente", "correo", "password" }` o
+  `{ "tipo": "usuario", "email", "password" }` (también
+  `/api/auth/login-cliente` y `/api/auth/login-usuario`), roles `admin` /
+  `ventas` / `logistica` (ver `public/admin/js/permisos.js`) y contraseñas
+  con bcrypt. La sesión va en una cookie HttpOnly (`kz_sesion` en la
+  tienda, `kz_admin` en el panel) que el navegador manda solo; para
+  Postman o scripts se puede pedir el token con `"modo": "token"` y
+  mandarlo como `Authorization: Bearer <token>`. Todas las rutas
+  `/api/admin/*` exigen la sesión del equipo interno; crear usuarios
   internos requiere además rol `admin`.
 - **"Mi actividad"**: `/api/usuarios/:id/actividad` devuelve las
   interacciones registradas por ese usuario interno (visible en
@@ -182,12 +194,16 @@ texto libre.
 
 ## Notas para producción
 
-- Cambia `db.config.js` y usa variables de entorno reales.
-- El token de sesión es simplificado (Base64) y sin expiración,
-  pensado para el alcance del proyecto escolar. Ya hay un middleware
-  (`requireUsuario` / `requireAdmin` en `server.js`) que verifica el
-  token contra la tabla `usuarios` en cada ruta `/api/admin/*`. Para
-  producción real conviene cambiarlo por JWT firmado con expiración.
+- Pon la contraseña real de la base en `.env` (no se sube a GitHub).
+- Sirve la tienda por HTTPS y pon `COOKIE_SEGURA=1` para que la cookie
+  de sesión viaje solo cifrada (también activa HSTS).
+- Las sesiones ya son tokens aleatorios con vencimiento, revocación y
+  atadas al navegador (`seguridad.js`); el límite de intentos por minuto
+  vive en memoria, así que con varios servidores convendría moverlo a
+  Redis o a la base.
+- Conviene conectarse a PostgreSQL con un usuario sin permisos de
+  `DROP`/`ALTER` (solo `SELECT, INSERT, UPDATE, DELETE`) una vez cargado el
+  esquema.
 - Las imágenes de producto son URLs externas de ejemplo; para un
   entorno real conviene subirlas a almacenamiento propio (S3, Cloud
   Storage, etc.).

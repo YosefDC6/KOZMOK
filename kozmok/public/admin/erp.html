@@ -92,7 +92,7 @@ async function cargar() {
     document.getElementById('tabla-ultimas').innerHTML = r.ultimas_ordenes.map((o) => `
         <tr onclick="GestionPedido.abrir(${o.id}, { onCambio: cargar })" style="cursor:pointer">
             <td class="mono">${o.numero_orden}</td>
-            <td>${o.cliente_nombre}</td>
+            <td>${esc(o.cliente_nombre)}</td>
             <td>${formatoFecha(o.fecha_pedido)}</td>
             <td>${origenPill(o.origen)}</td>
             <td class="mono">${formatoMoneda(o.total)}</td>

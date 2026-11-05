@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Promociones · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
+        <div class="filters-bar">
+            <select id="f-vigencia">
+                <option value="">Todas</option><option value="vigente">Vigentes</option><option value="programada">Programadas</option>
+                <option value="terminada">Terminadas</option><option value="inactiva">Inactivas</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Promoción</th><th>Descuento</th><th>Aplica a</th><th>Vigencia</th><th>Uso</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-promo"><div class="modal" style="max-width:600px" id="modal-promo-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('promociones');
+document.getElementById('topbar').innerHTML = adminHeader('Promociones', 'Descuentos por porcentaje o monto, con vigencia y productos a los que aplican. Se reflejan solos en el catálogo, el carrito, el checkout y las órdenes del ERP.',
+    '<button class="btn btn-primary" onclick="abrir()">Nueva promoción</button>');
+
+const VIG = { vigente: ['Vigente', 'ok'], programada: ['Programada', 'aviso'], terminada: ['Terminada', ''], inactiva: ['Inactiva', 'mal'] };
+const ALC = { todos: 'Todo el catálogo', categoria: 'Categoría', productos: 'Productos elegidos' };
+let PROMOS = [], CATS = [], PRODS = [];
+
+async function cargar() {
+    [PROMOS, CATS, PRODS] = await Promise.all([api('/admin/promociones'), CATS.length ? CATS : api('/categorias'), PRODS.length ? PRODS : api('/admin/productos')]);
+    const vig = PROMOS.filter((p) => p.vigencia === 'vigente');
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Vigentes hoy</div><div class="stat-value" style="color:var(--success)">${vig.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Programadas</div><div class="stat-value">${PROMOS.filter((p) => p.vigencia === 'programada').length}</div></div>
+        <div class="stat-card"><div class="stat-label">Pedidos con promoción</div><div class="stat-value">${PROMOS.reduce((a, p) => a + p.pedidos, 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Ahorro otorgado</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(PROMOS.reduce((a, p) => a + p.ahorro_otorgado, 0), 2)}</div></div>`;
+    pintar();
+}
+
+function pintar() {
+    const f = document.getElementById('f-vigencia').value;
+    const lista = PROMOS.filter((p) => !f || p.vigencia === f);
+    const fecha = (d) => formatoFecha(String(d).slice(0, 10) + 'T12:00:00');
+    document.getElementById('tabla').innerHTML = lista.length ? lista.map((p) => `
+        <tr>
+            <td><strong>${esc(p.nombre)}</strong>${p.banner ? ' <span class="tag" title="Se muestra en el banner de la tienda">banner</span>' : ''}<div style="color:var(--text-muted);font-size:.78rem">${esc(p.descripcion || '')}</div></td>
+            <td><span class="tag tag-promo">${esc(p.etiqueta)}</span><div style="font-size:.74rem;color:var(--text-muted)">${p.tipo_descuento === 'porcentaje' ? 'porcentaje' : 'monto por pieza'}</div></td>
+            <td>${ALC[p.alcance]}${p.alcance === 'categoria' ? `: ${esc(p.categoria_nombre || '—')}` : p.alcance === 'productos' ? ` (${p.productos.length})` : ''}</td>
+            <td style="white-space:nowrap">${fecha(p.fecha_inicio)} – ${fecha(p.fecha_fin)}</td>
+            <td class="mono">${p.pedidos} pedido(s)<div style="font-size:.74rem;color:var(--text-muted)">${formatoMoneda(p.ahorro_otorgado, 2)} de ahorro</div></td>
+            <td><span class="tag ${VIG[p.vigencia][1]}">${VIG[p.vigencia][0]}</span></td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-outline btn-sm" onclick="abrir(${p.id})">Editar</button>
+                <button class="btn btn-ghost btn-sm" onclick="eliminar(${p.id})">Eliminar</button>
+            </td>
+        </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-muted)">No hay promociones con ese filtro.</td></tr>';
+}
+document.getElementById('f-vigencia').addEventListener('change', pintar);
+
+function abrir(id) {
+    const p = PROMOS.find((x) => x.id === id) || { tipo_descuento: 'porcentaje', alcance: 'todos', estado: 'activa', banner: true, productos: [],
+        fecha_inicio: new Date().toISOString().slice(0, 10), fecha_fin: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10) };
+    const sel = new Set((p.productos || []).map(Number));
+    document.getElementById('modal-promo-body').innerHTML = `
+        <button class="modal-close" onclick="cerrar()" aria-label="Cerrar">${icon('x', 20)}</button>
+        <h3>${id ? 'Editar promoción' : 'Nueva promoción'}</h3>
+        <div class="field"><label>Nombre</label><input id="pr-nombre" maxlength="120" value="${esc(p.nombre || '')}" placeholder="Ej. Semana del gamer" /></div>
+        <div class="field"><label>Descripción (se ve en el banner)</label><input id="pr-desc" maxlength="300" value="${esc(p.descripcion || '')}" /></div>
+        <div class="field-row">
+            <div class="field"><label>Tipo de descuento</label><select id="pr-tipo">
+                <option value="porcentaje" ${p.tipo_descuento === 'porcentaje' ? 'selected' : ''}>Porcentaje (%)</option>
+                <option value="monto" ${p.tipo_descuento === 'monto' ? 'selected' : ''}>Monto por pieza ($)</option></select></div>
+            <div class="field"><label>Valor</label><input id="pr-valor" type="number" min="1" step="0.01" value="${p.valor ?? 10}" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field"><label>Inicio</label><input id="pr-ini" type="date" value="${String(p.fecha_inicio).slice(0, 10)}" /></div>
+            <div class="field"><label>Fin</label><input id="pr-fin" type="date" value="${String(p.fecha_fin).slice(0, 10)}" /></div>
+        </div>
+        <div class="field"><label>Aplica a</label><select id="pr-alcance">
+            ${Object.entries(ALC).map(([k, v]) => `<option value="${k}" ${p.alcance === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="field" id="pr-cat-box"><label>Categoría</label><select id="pr-cat">${CATS.map((c) => `<option value="${c.id}" ${Number(p.categoria_id) === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select></div>
+        <div class="field" id="pr-prod-box"><label>Productos (${sel.size} elegidos)</label>
+            <input id="pr-buscar" placeholder="Filtrar productos…" style="margin-bottom:6px" />
+            <div id="pr-prods" style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px">
+                ${PRODS.filter((x) => x.activo).map((x) => `<label class="pr-prod" style="display:flex;gap:8px;align-items:center;font-size:.85rem;padding:3px 0">
+                    <input type="checkbox" value="${x.id}" ${sel.has(x.id) ? 'checked' : ''} style="width:auto" /> ${esc(x.nombre)} <span class="mono" style="margin-left:auto;color:var(--text-muted)">${formatoMoneda(x.precio)}</span></label>`).join('')}
+            </div></div>
+        <div class="field-row">
+            <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="pr-activa" style="width:auto" ${p.estado !== 'inactiva' ? 'checked' : ''} /> Activa</label>
+            <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="pr-banner" style="width:auto" ${p.banner ? 'checked' : ''} /> Mostrar en el banner de la tienda</label>
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardar(${id || 0})">Guardar promoción</button>`;
+    const alc = document.getElementById('pr-alcance');
+    const vis = () => { document.getElementById('pr-cat-box').hidden = alc.value !== 'categoria'; document.getElementById('pr-prod-box').hidden = alc.value !== 'productos'; };
+    alc.addEventListener('change', vis); vis();
+    document.getElementById('pr-buscar').addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('.pr-prod').forEach((l) => { l.style.display = l.textContent.toLowerCase().includes(q) ? 'flex' : 'none'; });
+    });
+    document.getElementById('modal-promo').classList.add('open');
+}
+function cerrar() { document.getElementById('modal-promo').classList.remove('open'); }
+
+async function guardar(id) {
+    const body = {
+        nombre: document.getElementById('pr-nombre').value.trim(), descripcion: document.getElementById('pr-desc').value.trim(),
+        tipo_descuento: document.getElementById('pr-tipo').value, valor: Number(document.getElementById('pr-valor').value),
+        fecha_inicio: document.getElementById('pr-ini').value, fecha_fin: document.getElementById('pr-fin').value,
+        alcance: document.getElementById('pr-alcance').value, categoria_id: Number(document.getElementById('pr-cat').value),
+        productos: [...document.querySelectorAll('#pr-prods input:checked')].map((i) => Number(i.value)),
+        estado: document.getElementById('pr-activa').checked ? 'activa' : 'inactiva', banner: document.getElementById('pr-banner').checked,
+    };
+    try {
+        const r = await api(id ? `/admin/promociones/${id}` : '/admin/promociones', { method: id ? 'PUT' : 'POST', body });
+        toast(r.message, 'ok'); cerrar(); cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function eliminar(id) {
+    if (!(await confirmar('¿Eliminar esta promoción? Si ya se usó en pedidos solo se desactiva.', { okText: 'Eliminar', peligro: true }))) return;
+    try { const r = await api(`/admin/promociones/${id}`, { method: 'DELETE' }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+cargar();
+</script>
+</body>
+</html>

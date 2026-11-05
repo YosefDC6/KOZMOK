@@ -1,7 +1,9 @@
 ===============================================================================
  KOZMOK CRM  -  MANUAL DE USUARIO
- Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP y chatbot.
- Ultima actualizacion: octubre 2026
+ Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP,
+ negocio electronico (carrito, pagos, monedero, promociones, impuestos,
+ atencion a clientes), seguridad y chatbot.
+ Ultima actualizacion: noviembre 2026
 ===============================================================================
 
 Este documento explica, seccion por seccion, que hace cada parte del sistema
@@ -25,10 +27,18 @@ Requisitos
    - PostgreSQL 16 o superior (se probo con 18).
 
 Configuracion de la base
-   - El archivo  kozmok/db.config.js  tiene usuario, host, base, password
-     y puerto. Ajustalo a tu instalacion local. Por defecto:
+   - Copia  kozmok/.env.example  como  kozmok/.env  y pon ahi tu usuario y
+     contrasena de PostgreSQL (DB_USER, DB_PASSWORD...). El archivo .env NO
+     se sube a GitHub. db.config.js lo lee; si no hay .env usa:
         user: postgres   host: localhost   database: kozmok
         password: 12345678   port: 5432
+     y al arrancar avisa que se estan usando los valores por defecto.
+   - En el mismo .env se ajustan los parametros de seguridad (intentos antes
+     del bloqueo, minutos de bloqueo, duracion de la sesion, filtro SQL).
+     Ver seccion 12.
+   - Si tu base es de una version anterior, el servidor la actualiza solo al
+     arrancar (consola: "Base actualizada a la Etapa 4: ..."). Si prefieres
+     los datos de ejemplo nuevos, vuelve a cargar db/database.sql.
 
 Crear y cargar la base (todo en un solo archivo, se puede repetir)
    1. Crear la base:              CREATE DATABASE kozmok;
@@ -231,59 +241,106 @@ Seguridad de sesion
      mostrando cuanto presupuesto te va quedando.
    - Al terminar todas las piezas, resume el total y te lleva al carrito.
 
-3.5  CARRITO Y COMPRA  (carrito.html)
+3.5  FLUJO DE COMPRA  (Etapa 4)
+   Inicio -> Catalogo -> Detalle -> Carrito -> Checkout y pago ->
+   (Pago con Monedero) -> Confirmacion. Arriba de cada paso se ven los
+   pasos "Carrito -> Datos y pago -> Confirmacion".
+
+   Catalogo y promociones (index.html)
+   - Portada con BANNER de promociones vigentes (etiqueta -10% / -$200,
+     cuantos productos aplican y cuantos dias faltan), accesos a Novedades,
+     Promociones y Mas vendidos, y las secciones Destacados, En promocion y
+     Novedades. "Destacados" son los que el equipo marca en el catalogo.
+   - Cada producto en promocion muestra el precio nuevo, el precio de lista
+     tachado y la etiqueta roja; la ficha dice el nombre de la promocion, el
+     ahorro y hasta cuando vale. Tambien se ve "En stock (N piezas)".
+   - El orden del catalogo incluye "Mas vendidos" y "Mayor descuento".
+
+   Carrito (carrito.html)  -  paso 4 "Mi carrito"
    - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
      PC, asesor, comparador): se guarda en el navegador, sin pasarse del
-     stock, y el contador de arriba lo muestra. El carrito muestra los
-     productos, la garantia y un total estimado.
-   - Para pagar hay que iniciar sesion o crear cuenta ("Iniciar sesion y
-     pagar" / "Crear cuenta"): el carrito guardado pasa solo a la cuenta y
-     regresas al carrito listo para confirmar. Si algo ya no tiene stock,
-     se avisa.
-   - Lista de productos con [-] cantidad [+], "Quitar" y "Vaciar carrito".
-   - Barra de progreso de envio gratis (gratis desde $10,000; si no, $199).
-   - Resumen: Subtotal, IVA 16%, Envio, Descuento por puntos, Total.
-   - Usar puntos del Club: campo para canjear puntos en multiplos de 100
-     (100 puntos = $10 de descuento). El total se recalcula al instante.
-   - Direccion de envio: escribir una nueva o elegir una guardada.
+     stock. Para pagar hay que iniciar sesion o crear cuenta; el carrito
+     guardado pasa solo a la cuenta.
+   - Con sesion el carrito vive en el servidor (tablas carrito y
+     carrito_detalle): se conserva entre dispositivos.
+   - Lista de productos con [-] cantidad [+], garantia extendida, "Quitar"
+     y "Vaciar carrito". Si un precio cambio (empezo o termino una
+     promocion) se actualiza solo. Si algo ya no tiene stock suficiente se
+     marca en rojo y no deja continuar.
+   - Resumen: productos, garantias, ahorro por promociones, subtotal,
+     impuestos (los que el administrador tenga activos, p. ej. IVA 16%),
+     envio ($199, gratis desde $10,000) y total. Boton "Continuar compra".
+
+   Checkout y metodo de pago (checkout.html)  -  paso 5
+   - Datos de entrega: nombre completo y direccion (una guardada o una
+     nueva), notas opcionales.
    - Metodo de pago:
-        * una de tus tarjetas guardadas,
-        * "Usar otra tarjeta..." (pide numero, titular, MM/AA y CVV; puedes
-          marcar "guardar esta tarjeta"),
-        * Transferencia bancaria (SPEI),
-        * Pago en tienda.
-     Nota: es una demo, no se cobra nada real. Del numero de tarjeta solo se
-     guardan la marca y los ultimos 4 digitos; el CVV nunca se guarda.
-   - Al confirmar SIEMPRE se genera un COMPROBANTE (recibo.html), se guarda
-     en la cuenta y lo puede ver el equipo. Segun el metodo:
-        * Tarjeta  -> el pedido queda "Confirmado" y "Pagado"; los puntos se
-                      acreditan al instante. El comprobante es el recibo de
-                      compra con todos los datos.
-        * SPEI     -> el pedido queda "Pago pendiente". El comprobante es una
-                      FICHA DE PAGO con banco, beneficiario, CLABE, concepto/
-                      referencia, monto exacto y fecha limite.
-        * En tienda-> el pedido queda "Pago pendiente". La ficha de pago trae
-                      un CODIGO y un QR para presentar en caja, mas el monto
-                      y la fecha limite.
-     En SPEI y tienda el stock se reserva, pero los puntos GANADOS solo se
-     acreditan cuando el equipo registra el pago. Si se cancela el pedido
-     (desde la tienda o desde el panel) se devuelven el stock y los puntos
-     canjeados, se retiran los puntos que se hubieran ganado con el y se
-     resta de las compras del cliente.
-   - Boton "Ya realice el pago": el cliente avisa al equipo (no confirma el
-     pago por si solo).
-   - Plazo de pago: SPEI 3 dias, pago en tienda 5 dias (transferencia de una
-     orden ERP, 3 dias). Si vence sin pago, el sistema cancela el pedido solo
-     y libera el stock apartado (revisa cada minuto); queda la nota
-     "Cancelado automaticamente: vencio el plazo de pago".
-   - El carrito no deja apartar mas piezas de las que hay en inventario.
+        * Tarjeta de credito / debito: una guardada o una nueva (numero,
+          titular, mes, ano y CVV). El numero se valida (algoritmo de
+          Luhn). Una tarjeta que termina en 0002 simula que el banco la
+          rechaza. Se puede guardar (solo marca y ultimos 4).
+        * PayPal: correo de la cuenta PayPal (simulado, se aprueba al
+          instante).
+        * Transferencia bancaria (SPEI): genera una referencia; el pedido
+          queda "Pendiente de pago" 3 dias con el stock apartado.
+        * Monedero (Saldo: $X): si el saldo no alcanza lo avisa y ofrece
+          "Recargar".
+   - Puntos del Club: canje en multiplos de 100 (100 puntos = $10).
+   - Resumen de pago calculado por el servidor y boton "Pagar".
+
+   Pago con Monedero  -  paso 6
+   - Antes de cobrar muestra Saldo disponible, Total a pagar y Saldo
+     despues del pago, con "Confirmar pago" o "Cambiar metodo de pago".
+
+   Confirmacion (gracias.html)  -  paso 7
+   - "Compra realizada con exito" con Orden, Pago, Total, Saldo actual del
+     monedero (si pago con monedero), autorizacion o referencia SPEI y
+     "Hemos enviado el detalle de tu compra al correo: ...". Botones "Ver
+     mi pedido", "Seguir comprando" y "Comprobante".
+
+   Que pasa al pagar (todo en una sola transaccion: si algo falla no se
+   guarda nada)
+     1. Se valida el stock de cada producto (con bloqueo de fila).
+     2. Se crea el pedido (ERP) con sus partidas (pedido_detalle), con el
+        precio de lista y la promocion aplicada.
+     3. Se registra el pago (tabla pagos: un pago por pedido).
+     4. Se descuenta el inventario y se registra el movimiento (SCM); si
+        algo queda en stock critico se genera el pedido de reposicion.
+     5. Se descuenta el saldo del monedero (si aplica).
+     6. Puntos del Club y metricas del cliente (CRM).
+     7. El carrito queda "convertido" y se guarda la bitacora del ERP.
+     8. Se manda el correo de confirmacion (Tienda -> Correos enviados).
+   - Cancelar un pedido regresa el stock, los puntos y, si se pago con
+     monedero, el dinero al saldo (movimiento "Reembolso").
+   - Plazo de pago de transferencias: 3 dias; si vence, el sistema cancela
+     solo y libera el stock. Boton "Ya realice el pago" en Mis pedidos.
+
+3.5b MI MONEDERO  (monedero.html)
+   - Saldo actual (maximo $50,000) y, si hay, recargas por confirmar.
+   - Recargar: montos rapidos $100, $200, $500, $1,000 u "Otro monto"
+     (de $50 a $10,000) con tarjeta o PayPal (se acredita al instante) o
+     transferencia (queda "Por confirmar" hasta que el equipo confirma el
+     deposito en Tienda -> Monedero).
+   - Historial: fecha, concepto (Recarga, Compra ORD-..., Reembolso,
+     Ajuste), monto (+/-) y saldo despues de cada movimiento.
+
+3.5c ATENCION A CLIENTES  (soporte.html)
+   - Nuevo ticket: asunto (Duda sobre mi pedido, Cambio de producto,
+     Facturacion, Garantia, Pagos y monedero, Mi cuenta, Otro), pedido
+     relacionado opcional y mensaje. "Enviar ticket".
+   - Mis tickets: folio TK-xxxx, asunto y estado (Abierto, En proceso,
+     Respondido, Resuelto, Cerrado). Al abrir uno se ve la respuesta del
+     equipo y toda la conversacion; se puede seguir escribiendo.
+   - Cada ticket y cada respuesta quedan como interaccion en el CRM y se
+     avisan por correo.
 
 3.6  MI CUENTA  (menu arriba a la derecha -> "Perfil")
    Cada seccion es su propia pagina:
 
-   Resumen (perfil.html)
+   Mi cuenta (perfil.html)
       - Saludo, tarjeta virtual de socio (ver 7), nivel del Club con su
-        insignia, numero de compras, total gastado, favoritos.
+        insignia, saldo del monedero, numero de compras, total gastado,
+        favoritos y accesos a Editar datos y Atencion a clientes.
       - Ultimos 3 pedidos y accesos rapidos.
 
    Mis pedidos (pedidos.html)
@@ -329,25 +386,50 @@ Seguridad de sesion
       - "Agregar tarjeta", "Hacer predeterminada", "Eliminar".
       - Recordatorio de que no se guarda el numero completo ni el CVV.
 
-   Soporte (soporte.html)  -> ver seccion 9.
+   Mi monedero (monedero.html)  -> ver 3.5b.
+
+   Atencion a clientes (soporte.html)  -> ver 3.5c y seccion 9.
 
    Mis datos (datos.html)
-      - Nombre, telefono, empresa, ciudad, estado. Se guardan en la base.
+      - Nombre, telefono, empresa, direccion, ciudad, estado y codigo
+        postal (GET/PUT /api/auth/perfil). El correo no se edita.
 
    Seguridad (seguridad.html)
-      - Cambio de contrasena (pide la actual).
+      - Cambio de contrasena (pide la actual y cumple la politica: 8+
+        caracteres, mayusculas y minusculas, numero y simbolo). Al cambiarla
+        se cierran tus otras sesiones.
+      - Sesiones abiertas: navegador, IP, cuando inicio y su ultimo uso;
+        "Cerrar" una o "Cerrar las demas sesiones".
+      - Actividad de inicio de sesion: ultimos accesos correctos y fallidos,
+        con aviso si hubo intentos fallidos recientes.
 
    Preferencias (preferencias.html)
       - Notificaciones por correo (boletin, ofertas, estado de pedidos,
         stock de favoritos).
       - Apariencia: elegir el tema de color (ver 10).
 
-3.7  REGISTRO DE CUENTA  (registro.html)
-   - Pide nombre, correo, contrasena y CONFIRMAR contrasena (deben coincidir).
-   - Muestra un medidor de seguridad de la contrasena:
-        Muy debil / Debil (rojo) -> Regular (naranja) -> Buena -> Fuerte (verde).
-     Se calcula por longitud y por mezcla de mayusculas, minusculas, numeros y
-     simbolos. El minimo para registrarse son 6 caracteres.
+3.7  REGISTRO, INICIO DE SESION Y RECUPERACION
+   Registro (registro.html)
+   - Pide nombre, correo, contrasena y CONFIRMAR contrasena (deben coincidir),
+     y opcionalmente telefono, direccion, empresa, ciudad y estado.
+   - La contrasena debe tener 8+ caracteres, mayusculas y minusculas, un
+     numero y un simbolo; no puede ser de las mas comunes ni contener tu
+     correo o tu nombre. Una lista marca cada regla en verde al cumplirse y
+     hay un medidor (Muy debil -> Fuerte).
+   - El correo es unico (si ya existe lo avisa). La cuenta nace con sesion
+     iniciada y con su monedero.
+   Inicio de sesion (login.html)
+   - Tras un fallo dice cuantos intentos quedan; con 5 contrasenas
+     equivocadas seguidas la cuenta se bloquea 15 minutos (ver 12).
+   - La sesion se guarda en una cookie protegida: si vuelves a la tienda
+     sigues dentro hasta que cierres sesion o pasen 7 dias.
+   Recuperar contrasena (recuperar.html -> restablecer.html)
+   - "Olvidaste tu contrasena?" pide el correo y SIEMPRE responde lo mismo
+     (no revela si el correo existe). Si existe, se envia un enlace que
+     vence en 30 minutos y sirve una sola vez. Sin servidor de correo, el
+     enlace se ve en el panel: Tienda -> Correos enviados.
+   - Al guardar la nueva contrasena se cierran todas las sesiones y se
+     levanta el bloqueo de la cuenta si lo tenia.
    - Al crear la cuenta se genera automaticamente el codigo de socio para la
      tarjeta virtual (ver 7).
 
@@ -905,6 +987,57 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         que siempre coincide con lo que de verdad ve cada quien.
 
 
+4.15 MODULO TIENDA EN LINEA  (Etapa 4)  [TIENDA]  -- solo ADMIN
+   Resumen (admin/tienda.html)
+      - Ventas en linea del mes, impuestos cobrados, ahorro por promociones,
+        carritos activos (y cuantos llevan 24 h sin moverse), conversion de
+        carritos y pagos pendientes.
+      - Ventas por dia (14 dias), pagos por metodo, promociones mas usadas,
+        tickets por estado y el recuadro "Que se actualiza al comprar"
+        (ERP, SCM, CRM, Pagos, Monedero, Reportes).
+   Promociones (admin/promociones.html)
+      - Lista con descuento, a que aplica, vigencia (Vigente, Programada,
+        Terminada, Inactiva), pedidos que la usaron y ahorro otorgado.
+      - "Nueva promocion": nombre, descripcion, tipo (porcentaje hasta 90% o
+        monto por pieza), valor, fechas, alcance (todo el catalogo, una
+        categoria o productos elegidos), activa y "mostrar en el banner".
+      - Si un producto tiene varias promociones gana la que deja el precio
+        mas bajo. Se aplican igual en la tienda y en las ordenes del ERP.
+      - Eliminar: si ya se uso en pedidos solo se desactiva.
+   Impuestos (admin/impuestos.html)
+      - Impuestos con porcentaje y estado; la suma de los ACTIVOS es la tasa
+        del checkout (por defecto IVA 16%). Muestra lo recaudado y una
+        calculadora (subtotal 1000 -> IVA 160 -> total 1160).
+   Monedero (admin/monedero.html)
+      - Saldo total en monederos, recargas y consumos del mes, compras
+        pagadas con monedero y grafica de los ultimos 6 meses.
+      - Recargas por transferencia por confirmar: "Confirmar deposito"
+        (suma al saldo) o "Rechazar". El cliente recibe correo.
+      - Por cliente: historial y "Ajuste manual" (abono o cargo, con motivo
+        obligatorio; nunca deja el saldo negativo) y bloquear/activar.
+   Pagos (admin/pagos.html)
+      - Cada pago con pedido, canal (tienda o ERP), metodo, referencia,
+        monto y estado (Aprobado, Pendiente, Reembolsado, Cancelado).
+        Filtros y exportacion a CSV. Clic abre el comprobante.
+   Atencion a clientes -> admin/soporte.html (seccion 9).
+   Correos enviados (admin/correos.html)
+      - Bandeja de los correos que manda el sistema: confirmacion de
+        compra, tickets, recargas, bienvenida, avisos de seguridad y
+        recuperacion de contrasena (con boton para abrir el enlace).
+
+4.16 SEGURIDAD  (admin/seguridad.html)  [CUENTA]  -- solo ADMIN
+   - Tarjetas: logins fallidos y exitosos (24 h), bloqueos activos,
+     intentos de inyeccion SQL y XSS (7 dias), sesiones rechazadas y
+     sesiones activas; y un resumen de las defensas con sus parametros.
+   - Pestanas:
+        Eventos de seguridad: fecha, tipo (Inyeccion SQL, XSS, Fuerza
+          bruta, Sesion robada, Token falso, CSRF, Acceso a datos ajenos,
+          ...), severidad, IP, ruta y detalle.
+        Intentos de inicio de sesion: todos los intentos de tienda y panel
+          e IPs con mas fallos.
+        Bloqueos: cuentas e IPs bloqueadas, hasta cuando, y "Desbloquear".
+        Sesiones activas: de quien, navegador, IP y "Cerrar".
+
 ===============================================================================
  5. ROLES INTERNOS  -  QUE VE Y HACE CADA UNO
 ===============================================================================
@@ -938,7 +1071,8 @@ LOGISTICA
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
-   "Nivel ERP" (y fijarlo a mano) y "Panel por rol".
+   "Nivel ERP" (y fijarlo a mano), "Panel por rol", el modulo "Tienda"
+   (promociones, impuestos, monedero, pagos, correos) y "Seguridad".
 
 El permiso para capturar ordenes en el ERP se llama "orden-nueva" y el de
 editar el catalogo "productos-editar" y el de generar pedidos de
@@ -1127,7 +1261,55 @@ R: Vuelve a ejecutar  psql -U postgres -d kozmok -f db/database.sql .
 
 
 ===============================================================================
- 12. NOTAS TECNICAS (referencia rapida)
+ 12. SEGURIDAD  (Etapa 5: ataques y defensas)
+===============================================================================
+
+La guia completa para la defensa esta en SEGURIDAD.md (raiz del repo).
+
+Fuerza bruta
+   - 5 contrasenas equivocadas seguidas -> la cuenta se bloquea 15 min,
+     aunque despues se escriba la correcta.
+   - 20 fallos desde una misma IP en 15 min -> la IP se bloquea 30 min
+     (relleno de credenciales contra muchas cuentas).
+   - Maximo 15 intentos por minuto por conexion en login, registro y
+     recuperacion; cada fallo tarda un poco mas en responder.
+   - Mismo mensaje y mismo tiempo exista o no el correo.
+   - Se desbloquea desde Cuenta -> Seguridad -> Bloqueos, con "Olvidaste tu
+     contrasena?" o con  npm run desbloquear.
+
+Robo de credenciales / sesion
+   - Contrasenas con bcrypt; politica de contrasena fuerte.
+   - Sesion = token aleatorio en cookie HttpOnly y SameSite=Strict (el
+     JavaScript de la pagina no la puede leer). En la base solo su hash.
+   - La sesion vence (7 dias tienda, 8 h panel; 2 h sin uso en el panel),
+     se revoca al cerrar sesion o cambiar la contrasena y se rechaza si se
+     usa desde otro navegador (se asume robada y se cierra).
+   - Contra XSS: se limpia el HTML de todo lo que entra, las pantallas
+     escapan lo que muestran y la cabecera CSP no deja mandar datos a otro
+     servidor. Contra CSRF: se revisa el origen de cada peticion.
+   - Cada cliente solo puede ver sus propios datos (perfil, carrito,
+     pedidos, tickets); intentar otro id queda registrado.
+
+Inyeccion SQL
+   - Todas las consultas son parametrizadas ($1, $2...).
+   - Un filtro detecta patrones de ataque (' OR '1'='1, UNION SELECT,
+     ; DROP TABLE, pg_sleep...), bloquea la peticion y la registra.
+     Con FILTRO_SQLI=registrar en .env solo registra (para demostrar que
+     las consultas parametrizadas resisten solas).
+   - Los ids de la URL deben ser numeros y los errores de la base nunca se
+     muestran.
+
+Pruebas (con el servidor encendido, dentro de kozmok/)
+   npm run prueba:seguridad      las tres pruebas y limpieza final
+   npm run prueba:fuerza-bruta   (agrega -- --ip para la rafaga de cuentas)
+   npm run prueba:sqli
+   npm run prueba:sesion
+   npm run desbloquear           levanta bloqueos (-- --todo limpia la bitacora)
+   Cada linea dice DEFENDIDO o VULNERABLE.
+
+
+===============================================================================
+ 13. NOTAS TECNICAS (referencia rapida)
 ===============================================================================
 
 Estructura
@@ -1226,8 +1408,35 @@ Endpoints utiles
    GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
    POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
 
+Endpoints de la Etapa 4 (negocio electronico)
+   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&novedades=1&orden=]
+   GET  /api/catalogo/:id                 ficha con promocion y garantias
+   POST /api/carrito/agregar              {producto_id, cantidad, garantia}
+   GET  /api/carrito/:cliente_id          items + resumen (solo el propio)
+   PUT  /api/carrito/item/:id             {cantidad} o {garantia}
+   DELETE /api/carrito/item/:id   DELETE /api/carrito/vaciar/:cliente_id
+   POST /api/pagos/cotizar                resumen del checkout {puntos_canjear}
+   POST /api/pagos/procesar               {metodo, direccion_envio, ...}
+   GET  /api/pagos/:id                    pago propio
+   GET  /api/monedero   POST /api/monedero/recargar {monto, metodo}
+   GET  /api/promociones (vigentes)  POST/PUT /api/promociones[/:id] (admin)
+   GET  /api/impuestos (activos)     POST/PUT /api/impuestos[/:id] (admin)
+   POST /api/atencion/ticket   GET /api/atencion/tickets
+   GET  /api/atencion/ticket/:id   PUT /api/atencion/ticket/:id/respuesta (equipo)
+   POST /api/auth/registro   POST /api/auth/login {tipo, correo|email, password}
+   POST /api/auth/logout     GET/PUT /api/auth/perfil   GET /api/auth/estado
+   POST /api/auth/recuperar  POST /api/auth/restablecer
+   GET  /api/auth/sesiones   DELETE /api/auth/sesiones/:id   GET /api/auth/actividad
+   Panel: /api/admin/tienda/resumen, /promociones, /impuestos, /monederos,
+          /monedero/movimientos/:id, /pagos, /correos, /seguridad/resumen,
+          /seguridad/bloqueos/:id/levantar, /seguridad/sesiones/:id/revocar
+
 Reglas de negocio embebidas
-   - IVA 16%. Envio $199, gratis desde $10,000 de subtotal.
+   - Impuestos configurables (IVA 16% por defecto) sobre el subtotal.
+     Envio $199, gratis desde $10,000 de subtotal.
+   - Promocion: porcentaje (hasta 90%) o monto por pieza; nunca deja el
+     precio por debajo del 10% del de lista.
+   - Monedero: recarga de $50 a $10,000, saldo maximo $50,000.
    - Club: 100 puntos = $10; ganar = floor(subtotal/20 * multiplicador).
    - Etapa "Activo" automatica al confirmarse la primera compra.
    - Folio de ticket: TK-(1000 + id).

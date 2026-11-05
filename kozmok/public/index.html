@@ -20,10 +20,19 @@
     </div>
 </header>
 
+<section class="section container home-sec" id="promo-banner" hidden>
+    <div class="promo-banner" id="promo-banner-lista"></div>
+</section>
+
 <section class="section container home-sec" id="explorar">
     <div class="section-head">
         <h2 class="home-h2" style="margin:0">Explora por categoría</h2>
         <a href="/index.html?ver=todo">Ver todo el catálogo</a>
+    </div>
+    <div class="atajos-tienda">
+        <a class="atajo" href="/index.html?vista=novedades"><span class="atajo-ico" data-ic="star" data-ic-size="22"></span><span>Novedades</span></a>
+        <a class="atajo promo" href="/index.html?vista=promociones"><span class="atajo-ico" data-ic="medal" data-ic-size="22"></span><span>Promociones</span></a>
+        <a class="atajo" href="/index.html?vista=mas-vendidos"><span class="atajo-ico" data-ic="layers" data-ic-size="22"></span><span>Más vendidos</span></a>
     </div>
     <div class="cat-tiles" id="cat-tiles"></div>
 
@@ -46,6 +55,22 @@
         <a href="/index.html?ver=todo">Ver todos</a>
     </div>
     <div class="grid-products" id="grid-destacados"></div>
+</section>
+
+<section class="section container home-sec" id="en-promocion" hidden>
+    <div class="section-head">
+        <h2 class="home-h2" style="margin:0">En promoción</h2>
+        <a href="/index.html?vista=promociones">Ver todas las ofertas</a>
+    </div>
+    <div class="grid-products" id="grid-promocion"></div>
+</section>
+
+<section class="section container home-sec" id="novedades" hidden>
+    <div class="section-head">
+        <h2 class="home-h2" style="margin:0">Novedades</h2>
+        <a href="/index.html?vista=novedades">Ver novedades</a>
+    </div>
+    <div class="grid-products" id="grid-novedades"></div>
 </section>
 
 <section class="section container home-sec" id="promos">
@@ -122,6 +147,8 @@
             <option value="nombre">Ordenar: nombre (A-Z)</option>
             <option value="precio-asc">Precio: menor a mayor</option>
             <option value="precio-desc">Precio: mayor a menor</option>
+            <option value="vendidos">Más vendidos</option>
+            <option value="descuento">Mayor descuento</option>
         </select>
     </div>
 
@@ -148,6 +175,8 @@
 <script>
 let TODOS_LOS_PRODUCTOS = [];
 let BUSQUEDA = '';   // el buscador vive en la navbar; aquí solo guardamos el término
+// Vista especial del catálogo: promociones | novedades | mas-vendidos
+let VISTA = ['promociones', 'novedades', 'mas-vendidos'].includes(new URLSearchParams(location.search).get('vista')) ? new URLSearchParams(location.search).get('vista') : '';
 
 async function cargarCategorias() {
     const categorias = await api('/categorias');
@@ -163,7 +192,7 @@ async function cargarCategorias() {
         tiles.innerHTML = categorias.map((c) => `
             <a class="cat-tile" href="/index.html?categoria=${encodeURIComponent(c.nombre)}">
                 <span class="cat-tile-ico">${iconCategoria(c.nombre, 24)}</span>
-                <span class="cat-tile-name">${c.nombre}</span>
+                <span class="cat-tile-name">${esc(c.nombre)}</span>
             </a>
         `).join('');
     }
@@ -174,28 +203,53 @@ async function cargarCategorias() {
 // a "modo catálogo": se ve solo la lista con sus filtros.
 function modoResultados() {
     const q = new URLSearchParams(location.search);
-    const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max'));
+    const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max') || q.get('vista'));
     document.getElementById('catalogo').hidden = !enCatalogo;
     // hero + explorar: solo en la portada
     ['hero', 'explorar', 'promos', 'como'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
-    // destacados + recientes: siempre ocultos aquí; sus render() los muestran si hay contenido
-    ['destacados', 'recientes'].forEach((id) => document.getElementById(id).hidden = true);
+    // destacados, promos, novedades y recientes: ocultos aquí; sus render() los muestran si hay contenido
+    ['destacados', 'en-promocion', 'novedades', 'recientes', 'promo-banner'].forEach((id) => document.getElementById(id).hidden = true);
     return enCatalogo;
 }
 
-// Portada: rejilla corta de "Destacados"
+// Portada: "Destacados" (los que el equipo marcó como destacados en el
+// catálogo; si no hay, uno de cada categoría), "En promoción" y "Novedades".
 function renderDestacados() {
     const cont = document.getElementById('grid-destacados');
     if (!cont) return;
-    // Uno de cada categoría por vuelta, para que la portada sea variada.
-    const porCat = {};
-    TODOS_LOS_PRODUCTOS.filter((p) => p.stock > 0).forEach((p) => { (porCat[p.categoria_nombre || ''] ||= []).push(p); });
-    const grupos = Object.values(porCat);
-    const lista = [];
-    for (let i = 0; lista.length < 8 && grupos.some((g) => g[i]); i++) grupos.forEach((g) => { if (g[i] && lista.length < 8) lista.push(g[i]); });
-    if (lista.length === 0) { document.getElementById('destacados').hidden = true; return; }
-    document.getElementById('destacados').hidden = false;
-    cont.innerHTML = tarjetasProducto(lista);
+    let lista = TODOS_LOS_PRODUCTOS.filter((p) => p.destacado && p.stock > 0).slice(0, 8);
+    if (lista.length < 4) {
+        const porCat = {};
+        TODOS_LOS_PRODUCTOS.filter((p) => p.stock > 0).forEach((p) => { (porCat[p.categoria_nombre || ''] ||= []).push(p); });
+        const grupos = Object.values(porCat);
+        lista = [];
+        for (let i = 0; lista.length < 8 && grupos.some((g) => g[i]); i++) grupos.forEach((g) => { if (g[i] && lista.length < 8) lista.push(g[i]); });
+    }
+    if (lista.length > 0) { document.getElementById('destacados').hidden = false; cont.innerHTML = tarjetasProducto(lista); }
+
+    const enPromo = TODOS_LOS_PRODUCTOS.filter((p) => p.promocion && p.stock > 0).sort((a, b) => b.ahorro - a.ahorro).slice(0, 4);
+    if (enPromo.length) { document.getElementById('en-promocion').hidden = false; document.getElementById('grid-promocion').innerHTML = tarjetasProducto(enPromo); }
+
+    const nuevos = TODOS_LOS_PRODUCTOS.filter((p) => p.nuevo).sort((a, b) => new Date(b.fecha_creacion) - new Date(a.fecha_creacion)).slice(0, 4);
+    if (nuevos.length) { document.getElementById('novedades').hidden = false; document.getElementById('grid-novedades').innerHTML = tarjetasProducto(nuevos); }
+}
+
+// Banner con las promociones vigentes (comercialización).
+async function renderBannerPromos() {
+    let promos = [];
+    try { promos = (await api('/promociones')).filter((p) => p.banner && p.productos > 0); } catch { return; }
+    if (!promos.length) return;
+    const dias = (f) => Math.max(0, Math.ceil((new Date(String(f).slice(0, 10) + 'T23:59:59') - Date.now()) / 86400000));
+    document.getElementById('promo-banner').hidden = false;
+    document.getElementById('promo-banner-lista').innerHTML = promos.map((p) => `
+        <a class="pb-item" href="/index.html?vista=promociones&promo=${p.id}">
+            <span class="pb-etiqueta">${esc(p.etiqueta)}</span>
+            <span class="pb-txt"><strong>${esc(p.nombre)}</strong><span>${esc(p.descripcion || '')}</span>
+                <small>${p.productos} producto${p.productos === 1 ? '' : 's'} · ${dias(p.fecha_fin) === 0 ? 'termina hoy' : `termina en ${dias(p.fecha_fin)} día${dias(p.fecha_fin) === 1 ? '' : 's'}`}</small></span>
+            <span class="pb-ver">Ver ofertas ${icon('arrow', 14)}</span>
+        </a>`).join('');
+    const tb = document.getElementById('topbar-promo');
+    if (tb) tb.textContent = `${promos[0].nombre}: ${promos[0].etiqueta} · Envío gratis desde $10,000`;
 }
 
 // ---- Vistos recientemente (localStorage) ----
@@ -214,9 +268,9 @@ function renderRecientes() {
     document.getElementById('recientes').hidden = false;
     document.getElementById('recent-strip').innerHTML = prods.map((p) => `
         <div class="recent-card" onclick="location.href='/index.html#producto-${p.id}'">
-            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" alt="${p.nombre}" />
+            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" alt="${esc(p.nombre)}" />
             <div class="rc-body">
-                <span class="rc-name">${p.nombre}</span>
+                <span class="rc-name">${esc(p.nombre)}</span>
                 <span class="rc-price">${formatoMoneda(p.precio)}</span>
             </div>
         </div>
@@ -230,7 +284,7 @@ function specsLinea(p) {
     if (p.almacenamiento) partes.push(p.almacenamiento);
     if (p.tarjeta_grafica) partes.push(p.tarjeta_grafica);
     if (p.pantalla) partes.push(p.pantalla);
-    return partes.join(' · ') || (p.categoria_nombre || '');
+    return esc(partes.join(' · ') || (p.categoria_nombre || ''));
 }
 
 // Especificaciones como tabla (solo las que tiene el producto).
@@ -241,7 +295,7 @@ function specsTabla(p) {
         ['Ideal para', (p.uso_recomendado || []).join(', ')],
     ].filter(([, v]) => v);
     if (!filas.length) return '';
-    return `<dl class="pm-specs">${filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
+    return `<dl class="pm-specs">${filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
 }
 
 function stockTexto(p) {
@@ -256,22 +310,23 @@ function tarjetasProducto(lista) {
         const pocas = !agotado && p.stock <= p.stock_minimo;
         return `
         <div class="product-card" id="producto-${p.id}">
-            <div class="pc-media" onclick="verProducto(${p.id})" role="button" tabindex="0" aria-label="Ver ${p.nombre}"
+            <div class="pc-media" onclick="verProducto(${p.id})" role="button" tabindex="0" aria-label="Ver ${esc(p.nombre)}"
                  onkeydown="if (event.key === 'Enter') verProducto(${p.id})">
-                <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" loading="lazy" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
+                <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${esc(p.nombre)}" loading="lazy" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
                 ${agotado ? '<span class="pc-badge out">Agotado</span>' : pocas ? `<span class="pc-badge low">Últimas ${p.stock}</span>` : ''}
+                ${!agotado ? etiquetaPromo(p) : ''}${p.nuevo && !p.promocion ? '<span class="pc-badge nuevo">Nuevo</span>' : ''}
             </div>
             <div class="pc-flot">
                 <button class="fav-btn ${Favoritos.tiene(p.id) ? 'on' : ''}" title="Guardar en favoritos" aria-label="Favorito" onclick="toggleFav(event, ${p.id})">${icon('heart', 16)}</button>
                 <button class="cmp-toggle cmp-ico ${Comparar.tiene(p.id) ? 'on' : ''}" data-cmp="${p.id}" aria-pressed="${Comparar.tiene(p.id)}" title="Comparar" aria-label="Comparar" onclick="alternarComparar(event, ${p.id})">${icon('grid', 15)}</button>
             </div>
             <div class="product-body">
-                <span class="product-brand">${p.marca || p.categoria_nombre || ''}</span>
-                <span class="product-name" onclick="verProducto(${p.id})">${p.nombre}</span>
+                <span class="product-brand">${esc(p.marca || p.categoria_nombre || '')}</span>
+                <span class="product-name" onclick="verProducto(${p.id})">${esc(p.nombre)}</span>
                 <span class="product-specs">${specsLinea(p)}</span>
                 <div class="pc-pie">
                     <div>
-                        <span class="product-price">${formatoMoneda(p.precio)}</span>
+                        ${precioHTML(p)}
                         ${stockTexto(p)}
                     </div>
                     <button class="btn btn-primary btn-sm pc-agregar" ${agotado ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})" title="${agotado ? 'Sin stock' : 'Agregar al carrito'}" aria-label="Agregar al carrito">
@@ -298,6 +353,8 @@ function ordenar(lista) {
     const l = [...lista];
     if (modo === 'precio-asc') l.sort((a, b) => a.precio - b.precio);
     else if (modo === 'precio-desc') l.sort((a, b) => b.precio - a.precio);
+    else if (modo === 'vendidos') l.sort((a, b) => (b.vendidos || 0) - (a.vendidos || 0));
+    else if (modo === 'descuento') l.sort((a, b) => (b.ahorro || 0) - (a.ahorro || 0));
     else l.sort((a, b) => a.nombre.localeCompare(b.nombre));
     return l;
 }
@@ -314,22 +371,31 @@ async function cargarProductos() {
     if (precio) params.set('precio_max', precio);
     const marca = document.getElementById('f-marca').value;
     if (marca) params.set('marca', marca);
+    if (VISTA) params.set('vista', VISTA);
     if (![...params].length) params.set('ver', 'todo');
 
     // Refleja el estado en la URL (para compartir / volver atrás)
     history.replaceState(null, '', '/index.html?' + params.toString());
     actualizarEncabezado(categoria, busqueda, uso);
+    if (VISTA === 'mas-vendidos') document.getElementById('f-orden').value = 'vendidos';
 
     const grid = document.getElementById('grid-productos');
     grid.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     renderFilterChips(busqueda, categoria, uso, precio, marca);
     try {
-        const consulta = new URLSearchParams(params); consulta.delete('marca');
-        const productos = await api('/productos?' + consulta.toString());
+        // GET /catalogo con los filtros (buscar, categoría, promociones, novedades, más vendidos).
+        const consulta = new URLSearchParams(params); consulta.delete('marca'); consulta.delete('vista'); consulta.delete('ver');
+        if (consulta.has('busqueda')) { consulta.set('buscar', consulta.get('busqueda')); consulta.delete('busqueda'); }
+        if (VISTA === 'promociones') consulta.set('promocion', '1');
+        if (VISTA === 'novedades') consulta.set('novedades', '1');
+        if (VISTA === 'mas-vendidos') consulta.set('orden', 'mas_vendidos');
+        let productos = await api('/catalogo?' + consulta.toString());
+        const promoId = Number(new URLSearchParams(location.search).get('promo')) || 0;
+        if (promoId) productos = productos.filter((p) => p.promocion && p.promocion.id === promoId);
         // Marcas disponibles con los demás filtros; la marca se filtra aquí.
         const sel = document.getElementById('f-marca');
         const marcas = [...new Set(productos.map((p) => p.marca).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-        sel.innerHTML = '<option value="">Todas las marcas</option>' + marcas.map((m) => `<option ${m === marca ? 'selected' : ''}>${m}</option>`).join('');
+        sel.innerHTML = '<option value="">Todas las marcas</option>' + marcas.map((m) => `<option value="${esc(m)}" ${m === marca ? 'selected' : ''}>${esc(m)}</option>`).join('');
         const lista = marca ? productos.filter((p) => p.marca === marca) : productos;
         TODOS_LOS_PRODUCTOS = lista;
         renderProductos(ordenar(lista));
@@ -343,6 +409,9 @@ const USO_LABEL = { gaming: 'Gaming', oficina: 'Oficina', diseno: 'Diseño', pro
 function renderFilterChips(busqueda, categoria, uso, precio, marca) {
     const cont = document.getElementById('active-filters');
     const chips = [];
+    // Todo lo que viene de la URL se escapa: un enlace como
+    // ?busqueda=<img onerror=...> ya no ejecuta código (XSS reflejado).
+    if (VISTA) chips.push(['vista', { promociones: 'En promoción', novedades: 'Novedades', 'mas-vendidos': 'Más vendidos' }[VISTA] || VISTA]);
     if (busqueda) chips.push(['busqueda', `“${busqueda}”`]);
     if (categoria) chips.push(['f-categoria', categoria]);
     if (uso) chips.push(['f-uso', USO_LABEL[uso] || uso]);
@@ -350,13 +419,14 @@ function renderFilterChips(busqueda, categoria, uso, precio, marca) {
     if (marca) chips.push(['f-marca', marca]);
     cont.innerHTML = chips.length === 0 ? '' : (
         chips.map(([campo, txt]) =>
-            `<span class="filter-chip">${txt} <button onclick="quitarFiltro('${campo}')" aria-label="Quitar">${icon('x', 12)}</button></span>`
+            `<span class="filter-chip">${esc(txt)} <button onclick="quitarFiltro('${campo}')" aria-label="Quitar">${icon('x', 12)}</button></span>`
         ).join('') +
         (chips.length > 1 ? `<button class="btn btn-ghost btn-sm" onclick="limpiarFiltros()">Limpiar todo</button>` : '')
     );
 }
 function quitarFiltro(campo) {
     if (campo === 'busqueda') BUSQUEDA = '';
+    else if (campo === 'vista') { VISTA = ''; history.replaceState(null, '', '/index.html?ver=todo'); }
     else document.getElementById(campo).value = '';
     cargarProductos();
 }
@@ -364,12 +434,16 @@ function quitarFiltro(campo) {
 function actualizarEncabezado(categoria, busqueda, uso) {
     const bc = document.getElementById('breadcrumbs');
     const title = document.getElementById('cat-title');
-    if (busqueda) {
+    const TITULO_VISTA = { promociones: 'Promociones', novedades: 'Novedades', 'mas-vendidos': 'Más vendidos' };
+    if (VISTA && !busqueda && !categoria) {
+        title.textContent = TITULO_VISTA[VISTA] || 'Catálogo';
+        bc.innerHTML = `<a href="/index.html">Inicio</a> / <a href="/index.html?ver=todo">Catálogo</a> / ${esc(TITULO_VISTA[VISTA] || '')}`;
+    } else if (busqueda) {
         title.textContent = `Resultados para "${busqueda}"`;
         bc.innerHTML = `<a href="/index.html">Inicio</a> / Búsqueda`;
     } else if (categoria) {
         title.textContent = categoria;
-        bc.innerHTML = `<a href="/index.html">Inicio</a> / <a href="/index.html">Catálogo</a> / ${categoria}`;
+        bc.innerHTML = `<a href="/index.html">Inicio</a> / <a href="/index.html">Catálogo</a> / ${esc(categoria)}`;
     } else if (uso) {
         title.textContent = `Equipos para ${uso}`;
         bc.innerHTML = `<a href="/index.html">Inicio</a> / Catálogo`;
@@ -381,6 +455,7 @@ function actualizarEncabezado(categoria, busqueda, uso) {
 
 function limpiarFiltros() {
     BUSQUEDA = '';
+    VISTA = '';
     ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].forEach((id) => document.getElementById(id).value = '');
     cargarProductos();
 }
@@ -396,17 +471,19 @@ function verProducto(id) {
         <button class="modal-close" onclick="document.getElementById('modal-producto').classList.remove('open')">${icon('x', 20)}</button>
         <div class="pm-grid">
         <div class="pm-media">
-            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
+            <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${esc(p.nombre)}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
             ${specsTabla(p)}
         </div>
         <div class="pm-info">
-        <span class="product-brand">${[p.marca, p.categoria_nombre].filter(Boolean).join(' · ')}</span>
-        <h3 class="pm-nombre">${p.nombre}</h3>
-        <p class="pm-desc">${p.descripcion || ''}</p>
+        <span class="product-brand">${esc([p.marca, p.categoria_nombre].filter(Boolean).join(' · '))}</span>
+        <h3 class="pm-nombre">${esc(p.nombre)}</h3>
+        <p class="pm-desc">${esc(p.descripcion || '')}</p>
         <div class="pm-precio">
-            <span class="product-price">${formatoMoneda(p.precio)}</span>
+            ${precioHTML(p)}
             ${stockTexto(p)}
         </div>
+        ${p.promocion ? `<div class="pm-promo">${icon('medal', 14)} <strong>${esc(p.promocion.nombre)}</strong> · ahorras ${formatoMoneda(p.ahorro)} · válida hasta ${formatoFecha(String(p.promocion.fecha_fin).slice(0, 10) + 'T12:00:00')}</div>` : ''}
+        <div class="pm-stock-num">${p.stock > 0 ? `${icon('check', 13)} En stock (${p.stock} pieza${p.stock === 1 ? '' : 's'})` : ''}</div>
         ${urgencia}
         ${p.stock > 0 ? `
         <div class="modal-qty-row">
@@ -470,8 +547,8 @@ async function cargarResenas(pid) {
         ${data.resenas.slice(0, 4).map((r) => `
             <div class="mr-item">
                 ${estrellasHTML(r.calificacion, false)}
-                <div class="mr-meta">${r.cliente_nombre} · ${formatoFecha(r.fecha)}</div>
-                ${r.comentario ? `<div>${r.comentario.replace(/</g, '&lt;')}</div>` : ''}
+                <div class="mr-meta">${esc(r.cliente_nombre)} · ${formatoFecha(r.fecha)}</div>
+                ${r.comentario ? `<div>${esc(r.comentario)}</div>` : ''}
             </div>`).join('')}
         ${cli && !data.puede_resenar && !mia
             ? '<p style="font-size:.82rem;color:var(--text-muted);margin-top:10px">Podrás reseñar este producto cuando recibas tu compra.</p>'
@@ -479,7 +556,7 @@ async function cargarResenas(pid) {
             <div style="margin-top:12px">
                 <div style="font-size:.85rem;margin-bottom:4px">${mia ? 'Editar tu reseña' : 'Escribir reseña'}</div>
                 ${estrellasHTML(RESENA_VAL, true)}
-                <textarea id="mr-com" rows="2" placeholder="¿Qué te pareció? (opcional)" style="margin-top:8px">${mia && mia.comentario ? mia.comentario : ''}</textarea>
+                <textarea id="mr-com" rows="2" placeholder="¿Qué te pareció? (opcional)" style="margin-top:8px">${mia && mia.comentario ? esc(mia.comentario) : ''}</textarea>
                 <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="enviarResena(${pid})">${mia ? 'Actualizar' : 'Publicar'}</button>
             </div>`
             : '<p style="font-size:.82rem;color:var(--text-muted);margin-top:10px"><a href="/login.html">Inicia sesión</a> para dejar una reseña.</p>'}
@@ -564,7 +641,7 @@ function aplicarFiltrosDeURL() {
     if (q.get('categoria')) document.getElementById('f-categoria').value = q.get('categoria');
     if (q.get('uso')) document.getElementById('f-uso').value = q.get('uso');
     if (q.get('precio_max')) document.getElementById('f-precio').value = q.get('precio_max');
-    if (q.get('marca')) document.getElementById('f-marca').innerHTML = `<option value="${q.get('marca').replace(/"/g, '')}" selected>${q.get('marca').replace(/</g, '')}</option>`;
+    if (q.get('marca')) document.getElementById('f-marca').innerHTML = `<option value="${esc(q.get('marca'))}" selected>${esc(q.get('marca'))}</option>`;
 }
 
 (async () => {
@@ -574,13 +651,14 @@ function aplicarFiltrosDeURL() {
     const enCatalogo = modoResultados();
     await cargarCategorias();
     await Favoritos.cargar();
-    const todos = await api('/productos').catch(() => []);
+    const todos = await api('/catalogo').catch(() => []);
     TODOS_LOS_PRODUCTOS = todos;
 
     if (enCatalogo) {
         aplicarFiltrosDeURL();
         await cargarProductos();
     } else {
+        renderBannerPromos();
         renderDestacados();
         renderRecientes();
         abrirDesdeHash();

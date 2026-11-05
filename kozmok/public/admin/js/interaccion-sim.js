@@ -46,7 +46,7 @@
         const selCliente = (cfg.clientes && !cfg.cliente)
             ? `<div class="field"><label>Cliente</label>
                  <select id="sim-cli" onchange="__simSetCliente(this.value)">
-                   ${cfg.clientes.map((c) => `<option value="${c.id}" ${cliente && c.id === cliente.id ? 'selected' : ''}>${c.nombre} — ${c.correo || ''}</option>`).join('')}
+                   ${cfg.clientes.map((c) => `<option value="${c.id}" ${cliente && c.id === cliente.id ? 'selected' : ''}>${esc(c.nombre)} — ${c.correo || ''}</option>`).join('')}
                  </select>
                </div>`
             : `<p class="sim-cli-fijo">${ic('user', 14)} ${cliente ? cliente.nombre : ''}</p>`;

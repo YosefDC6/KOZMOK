@@ -184,7 +184,6 @@ requireAuthAdmin();
 renderAdminSidebar('panel-roles');
 document.getElementById('topbar').innerHTML = adminHeader('Panel por rol', 'Menú dinámico: vistas y accesos según el rol de cada usuario.');
 
-const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ROLES = Object.keys(PERMISOS);
 // Color e ícono de cada rol (un rol nuevo toma el siguiente color de la lista).
 // Ventas usa un violeta fijo para no confundirse con el color de acento de

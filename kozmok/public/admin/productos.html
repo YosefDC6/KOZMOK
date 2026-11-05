@@ -61,7 +61,7 @@ let FILTRO_RESTOCK = 'todos';
 async function cargarCategorias() {
     CATEGORIAS = await api('/categorias');
     document.getElementById('f-categoria').innerHTML = '<option value="">Todas las categorías</option>' +
-        CATEGORIAS.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('');
+        CATEGORIAS.map((c) => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('');
 }
 
 async function cargarProveedores() {
@@ -99,12 +99,12 @@ function renderTablaProductos() {
         (FILTRO_RESTOCK === 'todos' || (p.restock || 'push') === FILTRO_RESTOCK) &&
         (!cat || String(p.categoria_id) === cat) &&
         (act === '' || String(p.activo ? 1 : 0) === act) &&
-        (!q || `${p.nombre} ${p.marca || ''}`.toLowerCase().includes(q)));
+        (!q || `${esc(p.nombre)} ${p.marca || ''}`.toLowerCase().includes(q)));
     document.getElementById('conteo').textContent = `${lista.length} de ${PRODUCTOS_CACHE.length} productos`;
     document.getElementById('tabla-productos').innerHTML = lista.length ? lista.map((p) => `
         <tr>
             <td class="mono">${p.id}</td>
-            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+            <td>${esc(p.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
             <td>${p.categoria_nombre || '—'}</td>
             <td>${p.proveedor_nombre || '<span style="color:var(--text-muted)">sin asignar</span>'}</td>
             <td class="mono">${formatoMoneda(p.precio)}</td>
@@ -121,7 +121,7 @@ function renderTablaProductos() {
 }
 
 function formularioProducto(p = {}) {
-    const opcionesCat = CATEGORIAS.map((c) => `<option value="${c.id}" ${p.categoria_id === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('');
+    const opcionesCat = CATEGORIAS.map((c) => `<option value="${c.id}" ${p.categoria_id === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
     const opcionesProveedor = `<option value="">Sin asignar</option>` + PROVEEDORES.map((pv) => `<option value="${pv.id}" ${p.proveedor_id === pv.id ? 'selected' : ''}>${pv.nombre}</option>`).join('');
     const usos = ['gaming', 'oficina', 'diseno', 'programacion', 'estudiante', 'streaming', 'servidor'];
     const usosActuales = p.uso_recomendado || [];
@@ -171,6 +171,7 @@ function formularioProducto(p = {}) {
             </div>
         </div>
         <div class="field"><label><input type="checkbox" id="p-activo" style="width:auto;display:inline-block" ${p.activo !== false ? 'checked' : ''}/> Activo en catálogo</label></div>
+        <div class="field"><label><input type="checkbox" id="p-destacado" style="width:auto;display:inline-block" ${p.destacado ? 'checked' : ''}/> Destacado en la portada de la tienda</label></div>
     `;
 }
 
@@ -220,6 +221,7 @@ function leerFormularioProducto() {
         pantalla: document.getElementById('p-pantalla').value,
         uso_recomendado: usoRecomendado,
         activo: document.getElementById('p-activo').checked,
+        destacado: document.getElementById('p-destacado') ? document.getElementById('p-destacado').checked : undefined,
     };
 }
 

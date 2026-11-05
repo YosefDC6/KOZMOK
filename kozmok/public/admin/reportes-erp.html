@@ -135,7 +135,6 @@ function nueva(id, cfg) {
 }
 
 let METRICAS = null;
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const periodoDe = (desde, hasta) => (desde || hasta ? `${desde ? String(desde).slice(0, 10) : 'inicio'} a ${hasta ? String(hasta).slice(0, 10) : 'hoy'}` : 'Todo el histórico');
 
 async function cargar() {

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pagos · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"></div>
+        <div class="filters-bar">
+            <select id="f-metodo"><option value="">Todos los métodos</option><option value="tarjeta">Tarjeta</option><option value="paypal">PayPal</option>
+                <option value="transferencia">Transferencia</option><option value="monedero">Monedero</option><option value="efectivo">Efectivo (ERP)</option></select>
+            <select id="f-estado"><option value="">Todos los estados</option><option value="aprobado">Aprobado</option><option value="pendiente">Pendiente</option>
+                <option value="reembolsado">Reembolsado</option><option value="cancelado">Cancelado</option></select>
+            <button class="btn btn-outline btn-sm" onclick="exportar()">Exportar CSV</button>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Pago</th><th>Pedido</th><th>Cliente</th><th>Método</th><th>Monto</th><th>Estado</th><th>Fecha</th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('pagos');
+document.getElementById('topbar').innerHTML = adminHeader('Pagos', 'Un pedido tiene un pago: método, referencia y estado de cada cobro (tienda en línea y ERP).');
+const MET = { tarjeta: 'Tarjeta', paypal: 'PayPal', transferencia: 'Transferencia', monedero: 'Monedero', efectivo: 'Efectivo', tienda: 'Pago en tienda' };
+const EST = { aprobado: ['Aprobado', 'ok'], pendiente: ['Pendiente', 'aviso'], rechazado: ['Rechazado', 'mal'], reembolsado: ['Reembolsado', ''], cancelado: ['Cancelado', 'mal'] };
+let DATOS = [];
+async function cargar() {
+    const q = new URLSearchParams();
+    if (document.getElementById('f-metodo').value) q.set('metodo', document.getElementById('f-metodo').value);
+    if (document.getElementById('f-estado').value) q.set('estado', document.getElementById('f-estado').value);
+    const d = await api('/admin/pagos?' + q.toString());
+    DATOS = d.pagos;
+    document.getElementById('kpis').innerHTML = d.por_metodo.map((m) => `
+        <div class="stat-card"><div class="stat-label">${MET[m.metodo_pago] || esc(m.metodo_pago)}</div><div class="stat-value" style="font-size:1.25rem">${formatoMoneda(m.cobrado, 2)}</div>
+        <div class="stat-sub">${m.pagos} pago(s)${m.pendientes ? ` · ${m.pendientes} pendiente(s)` : ''}</div></div>`).join('');
+    document.getElementById('tabla').innerHTML = DATOS.map((p) => `
+        <tr onclick="window.open('/admin/recibo.html?id=${Number(p.pedido_id)}','_blank')" style="cursor:pointer">
+            <td class="mono">#${p.id}<div style="font-size:.74rem;color:var(--text-muted)">${esc(p.referencia || '')}</div></td>
+            <td class="mono">${esc(p.numero_orden)}<div style="font-size:.74rem;color:var(--text-muted)">${p.origen === 'erp' ? 'ERP' : 'Tienda en línea'}</div></td>
+            <td>${esc(p.cliente_nombre)}</td>
+            <td>${MET[p.metodo_pago] || esc(p.metodo_pago)}<div style="font-size:.74rem;color:var(--text-muted)">${esc(p.detalle || '')}</div></td>
+            <td class="mono">${formatoMoneda(p.monto, 2)}</td>
+            <td><span class="tag ${(EST[p.estado] || ['', ''])[1]}">${(EST[p.estado] || [p.estado])[0]}</span></td>
+            <td style="white-space:nowrap">${formatoFechaHora(p.fecha)}</td>
+        </tr>`).join('') || '<tr><td colspan="7">Sin pagos con ese filtro.</td></tr>';
+}
+['f-metodo', 'f-estado'].forEach((id) => document.getElementById(id).addEventListener('change', cargar));
+function exportar() {
+    descargarCSV('pagos-kozmok', DATOS.map((p) => ({ pago: p.id, pedido: p.numero_orden, canal: p.origen, cliente: p.cliente_nombre, metodo: p.metodo_pago,
+        detalle: p.detalle, referencia: p.referencia, monto: p.monto, estado: p.estado, fecha: p.fecha })));
+}
+cargar();
+</script>
+</body>
+</html>

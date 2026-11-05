@@ -145,7 +145,14 @@ document.querySelector('#paso-1 .btn-primary').innerHTML = `${icon('plus', 15)} 
 document.querySelector('.proc-gear').innerHTML = icon('gear', 56);
 document.getElementById('mc-x').innerHTML = icon('x', 18);
 
-const IVA = 0.16, ENVIO = 199, ENVIO_GRATIS = 10000;
+// Impuestos: los activos en Tienda → Impuestos (GET /impuestos); IVA 16 % por defecto.
+let IVA = 0.16, IVA_TXT = 'IVA 16%';
+const ENVIO = 199, ENVIO_GRATIS = 10000;
+api('/impuestos').then((l) => {
+    if (!Array.isArray(l)) return;
+    IVA = l.reduce((a, i) => a + Number(i.porcentaje), 0) / 100;
+    IVA_TXT = l.length ? l.map((i) => `${esc(i.nombre)} ${Number(i.porcentaje)}%`).join(' + ') : 'Sin impuestos';
+}).catch(() => {});
 const PASOS = ['Cliente', 'Productos', 'Confirmar'];
 let paso = 1;
 let CLIENTES = [];
@@ -187,8 +194,8 @@ async function buscarClientes() {
         <button type="button" class="cli-opt ${CLIENTE && CLIENTE.id === c.id ? 'sel' : ''}" onclick="elegirCliente(${c.id})">
             <span class="cli-avatar">${iniciales(c.nombre)}</span>
             <span style="flex:1;min-width:0">
-                <strong>${c.nombre}</strong>
-                <span style="display:block;font-size:.78rem;color:var(--text-muted)">${c.correo}${c.empresa ? ' · ' + c.empresa : ''}</span>
+                <strong>${esc(c.nombre)}</strong>
+                <span style="display:block;font-size:.78rem;color:var(--text-muted)">${esc(c.correo)}${c.empresa ? ' · ' + c.empresa : ''}</span>
             </span>
             <span class="origen-pill">${c.etapa_crm}</span>
         </button>`).join('') || '<p style="color:var(--text-muted)">No hay clientes con esa búsqueda. Puedes darlo de alta con “Nuevo cliente (CRM)”.</p>';
@@ -210,10 +217,10 @@ function pintarClienteSel() {
         <div class="cli-sel-card">
             <span class="cli-avatar">${iniciales(c.nombre)}</span>
             <div style="flex:1">
-                <strong style="font-size:1.05rem">${c.nombre}</strong>
+                <strong style="font-size:1.05rem">${esc(c.nombre)}</strong>
                 <dl>
-                    ${c.empresa ? `<dt>Empresa</dt><dd>${c.empresa}</dd>` : ''}
-                    <dt>Correo</dt><dd>${c.correo}</dd>
+                    ${c.empresa ? `<dt>Empresa</dt><dd>${esc(c.empresa)}</dd>` : ''}
+                    <dt>Correo</dt><dd>${esc(c.correo)}</dd>
                     ${c.telefono ? `<dt>Teléfono</dt><dd>${c.telefono}</dd>` : ''}
                     <dt>Etapa CRM</dt><dd>${c.etapa_crm} · ${c.total_compras} compra${Number(c.total_compras) === 1 ? '' : 's'}</dd>
                 </dl>
@@ -259,16 +266,16 @@ function setCant(id, n) {
 
 function pintarProductos() {
     const q = document.getElementById('b-producto').value.trim().toLowerCase();
-    const lista = PRODUCTOS.filter((p) => !q || `${p.nombre} ${p.marca || ''} ${p.categoria || ''}`.toLowerCase().includes(q));
+    const lista = PRODUCTOS.filter((p) => !q || `${esc(p.nombre)} ${p.marca || ''} ${p.categoria || ''}`.toLowerCase().includes(q));
     document.getElementById('tabla-productos').innerHTML = lista.map((p) => {
         const c = cant(p.id);
         const agotado = Number(p.stock) === 0;
         const bajo = Number(p.stock) <= Number(p.stock_minimo);
         return `
         <tr class="${c > 0 ? 'en-orden' : ''}">
-            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.76rem">${p.categoria || ''}${p.marca ? ' · ' + p.marca : ''}</div></td>
+            <td>${esc(p.nombre)}<div style="color:var(--text-muted);font-size:.76rem">${p.categoria || ''}${p.marca ? ' · ' + p.marca : ''}</div></td>
             <td class="mono ${agotado ? 'stock-out' : bajo ? 'stock-low' : 'stock-ok'}">${p.stock}${bajo ? reposicion(p) : ''}</td>
-            <td class="mono">${formatoMoneda(p.precio)}</td>
+            <td class="mono">${formatoMoneda(p.precio, 2)}${p.promocion ? `<div style="font-size:.72rem;color:var(--danger)">${esc(p.promocion.etiqueta)} · antes ${formatoMoneda(p.precio_lista)}</div>` : ''}</td>
             <td>
                 ${agotado ? '<span style="color:var(--text-muted);font-size:.8rem">Agotado</span>' : `
                 <span class="qty">
@@ -333,11 +340,11 @@ function pintarResumen() {
         <tr><td>${l.nombre}</td><td class="mono">${l.cantidad}</td><td class="mono">${formatoMoneda(l.precio)}</td><td class="mono">${formatoMoneda(l.subtotal)}</td></tr>`).join('');
     document.getElementById('totales').innerHTML = `
         <div class="om-row" style="display:flex;justify-content:space-between"><span>Subtotal</span><span class="mono">${formatoMoneda(t.subtotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>IVA 16%</span><span class="mono">${formatoMoneda(t.iva)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>${esc(IVA_TXT)}</span><span class="mono">${formatoMoneda(t.iva, 2)}</span></div>
         <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>Envío</span><span class="mono">${t.envio === 0 ? 'Gratis' : formatoMoneda(t.envio)}</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Total</span><span class="mono">${formatoMoneda(t.total)}</span></div>`;
     const c = CLIENTE;
-    document.getElementById('res-cliente').innerHTML = `<strong>${c.nombre}</strong><div style="color:var(--text-muted)">${c.correo}${c.telefono ? ' · ' + c.telefono : ''}</div>`;
+    document.getElementById('res-cliente').innerHTML = `<strong>${esc(c.nombre)}</strong><div style="color:var(--text-muted)">${esc(c.correo)}${c.telefono ? ' · ' + c.telefono : ''}</div>`;
     const dir = document.getElementById('direccion');
     if (!dir.value) dir.value = c.direccion || '';
     notaMetodo();
@@ -431,7 +438,7 @@ function mostrarExito(r) {
         <p style="color:var(--text-muted);margin:0">${p.pago_estado === 'pagado' ? 'Confirmada y pagada.' : 'Registrada con pago pendiente (ref. ' + p.pago_referencia + ').'}</p>
         <dl>
             <dt>Folio:</dt><dd class="mono">${p.numero_orden}</dd>
-            <dt>Cliente:</dt><dd>${p.cliente_nombre}</dd>
+            <dt>Cliente:</dt><dd>${esc(p.cliente_nombre)}</dd>
             <dt>Total:</dt><dd class="mono">${formatoMoneda(p.total)}</dd>
             <dt>Fecha:</dt><dd>${fecha.toLocaleDateString('es-MX')} ${fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</dd>
         </dl>

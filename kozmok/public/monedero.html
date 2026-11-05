@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mi monedero · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="cuenta-shell">
+    <nav class="cuenta-nav" id="cuenta-nav"></nav>
+    <main class="cuenta-panel" id="cuenta-panel"><div class="empty-state">Cargando tu monedero…</div></main>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script src="/js/cuenta.js"></script>
+<script>
+const MONTOS = [100, 200, 500, 1000];
+const TIPO = { recarga: 'Recarga', compra: 'Compra', reembolso: 'Reembolso', ajuste: 'Ajuste' };
+const MARCA = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', otra: 'Tarjeta' };
+let MONTO = 500, TARJETAS = [], M = null, PERFIL_M = null;
+
+montarCuenta('monedero', async (panel, P) => {
+    PERFIL_M = P;
+    [M, TARJETAS] = await Promise.all([api('/monedero'), api(`/clientes/${P.id}/metodos-pago`).catch(() => [])]);
+    pintar(panel);
+});
+
+function pintar(panel) {
+    const tarjetas = TARJETAS.filter((t) => t.tipo === 'tarjeta');
+    panel.innerHTML = `
+        <div class="cuenta-head"><h1>Mi monedero</h1><p>Saldo prepagado para comprar en Kozmok: recárgalo y úsalo como método de pago.</p></div>
+        <div class="monedero-grid">
+            <div class="card monedero-saldo">
+                <span class="ms-label">${icon('wallet', 16)} Saldo actual</span>
+                <span class="ms-valor">${formatoMoneda(M.saldo, 2)}</span>
+                ${M.pendientes > 0 ? `<span class="tag mov-pendiente" style="align-self:center">${formatoMoneda(M.pendientes, 2)} por confirmar</span>` : ''}
+                ${M.estado !== 'activo' ? '<span class="tag mal" style="align-self:center">Monedero bloqueado</span>' : ''}
+                <span style="font-size:.78rem;color:var(--text-muted)">Saldo máximo ${formatoMoneda(M.saldo_maximo)} · úsalo en el checkout</span>
+                <a class="btn btn-outline btn-sm" href="#historial" style="align-self:center">${icon('clock', 14)} Historial de movimientos</a>
+            </div>
+            <div class="card">
+                <h3 style="margin:0 0 12px">Recargar monedero</h3>
+                <label style="font-size:.84rem;color:var(--text-muted)">Monto de recarga</label>
+                <div class="montos-rapidos" id="montos">
+                    ${MONTOS.map((m) => `<button type="button" data-m="${m}" class="${m === MONTO ? 'sel' : ''}">${formatoMoneda(m)}</button>`).join('')}
+                </div>
+                <div class="field"><label for="otro">Otro monto</label><input id="otro" type="number" min="${M.recarga_min}" max="${M.recarga_max}" step="1" placeholder="$ entre ${M.recarga_min} y ${M.recarga_max.toLocaleString('es-MX')}" /></div>
+                <label style="font-size:.84rem;color:var(--text-muted)">Método de pago</label>
+                <div class="metodos-pago" style="margin:6px 0 12px">
+                    <label class="metodo-opcion"><input type="radio" name="rmet" value="tarjeta" ${tarjetas.length ? 'checked' : ''} /><span class="mo-txt"><strong>Tarjeta de crédito / débito</strong></span></label>
+                    <label class="metodo-opcion"><input type="radio" name="rmet" value="paypal" ${tarjetas.length ? '' : 'checked'} /><span class="mo-txt"><strong>PayPal</strong></span></label>
+                    <label class="metodo-opcion"><input type="radio" name="rmet" value="transferencia" /><span class="mo-txt"><strong>Transferencia bancaria</strong><small>Se acredita al confirmar el depósito</small></span></label>
+                </div>
+                <div id="r-tarjeta" hidden>
+                    <div class="field"><select id="r-tj">
+                        ${tarjetas.map((t) => `<option value="${t.id}">${MARCA[t.marca] || 'Tarjeta'} ****${esc(t.ultimos4)}</option>`).join('')}
+                        <option value="nueva">＋ Otra tarjeta</option></select></div>
+                    <div id="r-tj-nueva" hidden>
+                        <div class="field"><input id="r-num" inputmode="numeric" maxlength="23" placeholder="Número de tarjeta" autocomplete="cc-number" /></div>
+                        <div class="field-row">
+                            <div class="field"><input id="r-titular" placeholder="Titular" autocomplete="cc-name" /></div>
+                            <div class="field"><input id="r-exp" placeholder="MM/AAAA" maxlength="7" autocomplete="cc-exp" /></div>
+                            <div class="field"><input id="r-cvv" type="password" inputmode="numeric" maxlength="4" placeholder="CVV" autocomplete="cc-csc" /></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="r-paypal" hidden><div class="field"><input id="r-pp" type="email" value="${esc(PERFIL_M.correo)}" placeholder="Correo de PayPal" /></div></div>
+                <button class="btn btn-primary" style="width:100%" id="btn-recargar" ${M.estado !== 'activo' ? 'disabled' : ''}>${icon('plus', 15)} Recargar ${formatoMoneda(MONTO)}</button>
+            </div>
+        </div>
+
+        <div class="card" id="historial">
+            <h3 style="margin:0 0 12px">Historial del monedero</h3>
+            ${M.movimientos.length === 0 ? '<p style="margin:0;color:var(--text-muted)">Todavía no tienes movimientos. Recarga tu monedero para empezar.</p>' : `
+            <div class="table-wrap"><table>
+                <thead><tr><th>Fecha</th><th>Concepto</th><th style="text-align:right">Monto</th><th style="text-align:right">Saldo</th></tr></thead>
+                <tbody>${M.movimientos.map((x) => `
+                    <tr>
+                        <td style="white-space:nowrap">${formatoFecha(x.fecha)}</td>
+                        <td>${esc(x.concepto)}${x.numero_orden ? ` · <a href="/pedidos.html?pedido=${Number(x.pedido_id)}">${esc(x.numero_orden)}</a>` : ''}
+                            ${x.estado !== 'aplicado' ? `<span class="tag mov-${x.estado}">${x.estado === 'pendiente' ? 'Por confirmar' : 'Rechazada'}</span>` : ''}
+                            ${x.referencia ? `<div style="font-size:.74rem;color:var(--text-muted)" class="mono">${esc(x.referencia)}</div>` : ''}</td>
+                        <td class="mono mov-monto ${x.monto > 0 ? 'pos' : 'neg'}" style="text-align:right;white-space:nowrap">${x.monto > 0 ? '+' : '−'}${formatoMoneda(Math.abs(x.monto), 2)}</td>
+                        <td class="mono" style="text-align:right">${x.saldo_nuevo == null ? '—' : formatoMoneda(x.saldo_nuevo, 2)}</td>
+                    </tr>`).join('')}</tbody>
+            </table></div>`}
+        </div>`;
+
+    const botones = document.querySelectorAll('#montos button');
+    const actualizarBoton = () => { document.getElementById('btn-recargar').innerHTML = `${icon('plus', 15)} Recargar ${formatoMoneda(MONTO)}`; };
+    botones.forEach((b) => b.addEventListener('click', () => {
+        MONTO = Number(b.dataset.m); document.getElementById('otro').value = '';
+        botones.forEach((x) => x.classList.toggle('sel', x === b)); actualizarBoton();
+    }));
+    document.getElementById('otro').addEventListener('input', (e) => {
+        const v = Math.round(Number(e.target.value) || 0);
+        if (v) { MONTO = v; botones.forEach((x) => x.classList.remove('sel')); actualizarBoton(); }
+    });
+    const metodo = () => document.querySelector('input[name="rmet"]:checked').value;
+    const mostrar = () => {
+        document.getElementById('r-tarjeta').hidden = metodo() !== 'tarjeta';
+        document.getElementById('r-paypal').hidden = metodo() !== 'paypal';
+        document.getElementById('r-tj-nueva').hidden = document.getElementById('r-tj').value !== 'nueva';
+        document.querySelectorAll('.metodo-opcion').forEach((el) => el.classList.toggle('sel', el.querySelector('input').checked));
+    };
+    document.querySelectorAll('input[name="rmet"]').forEach((r) => r.addEventListener('change', mostrar));
+    document.getElementById('r-tj').addEventListener('change', mostrar);
+    mostrar();
+    document.getElementById('btn-recargar').addEventListener('click', () => recargar(metodo()));
+}
+
+async function recargar(metodo) {
+    if (!(MONTO >= M.recarga_min && MONTO <= M.recarga_max)) { toast(`El monto debe estar entre ${formatoMoneda(M.recarga_min)} y ${formatoMoneda(M.recarga_max)}`, 'warn'); return; }
+    const body = { monto: MONTO, metodo };
+    if (metodo === 'tarjeta') {
+        const sel = document.getElementById('r-tj').value;
+        if (sel !== 'nueva') body.metodo_pago_id = Number(sel);
+        else {
+            const [mes, anio] = document.getElementById('r-exp').value.split('/').map(Number);
+            body.tarjeta = { numero: document.getElementById('r-num').value.replace(/\D/g, ''), titular: document.getElementById('r-titular').value.trim(),
+                expira_mes: mes, expira_anio: anio, cvv: document.getElementById('r-cvv').value.trim() };
+        }
+    }
+    if (metodo === 'paypal') body.paypal_correo = document.getElementById('r-pp').value.trim();
+    if (!(await confirmar(`¿Recargar ${formatoMoneda(MONTO)} a tu monedero con ${metodo === 'tarjeta' ? 'tarjeta' : metodo === 'paypal' ? 'PayPal' : 'transferencia'}?`, { okText: 'Recargar' }))) return;
+    const btn = document.getElementById('btn-recargar');
+    btn.disabled = true; btn.textContent = 'Procesando…';
+    try {
+        const r = await api('/monedero/recargar', { method: 'POST', body });
+        toast(r.message, 'ok', 5000);
+        M = await api('/monedero');
+        pintar(document.getElementById('cuenta-panel'));
+    } catch (e) {
+        toast(e.message, 'error');
+        btn.disabled = false; btn.innerHTML = `${icon('plus', 15)} Recargar ${formatoMoneda(MONTO)}`;
+    }
+}
+</script>
+</body>
+</html>

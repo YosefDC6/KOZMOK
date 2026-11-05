@@ -5,11 +5,15 @@
 async function renderNavbar() {
     const el = document.getElementById('navbar-placeholder');
     if (!el) return;
+    // La sesión real está en la cookie del servidor: se consulta para
+    // mostrar (o recuperar) la sesión correcta en la barra.
+    const [, cats] = await Promise.all([
+        window.Sesion ? Sesion.sincronizar() : null,
+        api('/categorias').catch(() => []),   // backend abajo: navbar sin categorías
+    ]);
     const cliente = window.Sesion ? Sesion.cliente() : null;
-    const nombreCorto = cliente ? cliente.nombre.split(' ')[0] : '';
-
-    let categorias = [];
-    try { categorias = await api('/categorias'); } catch { /* backend abajo: navbar sin categorías */ }
+    const nombreCorto = cliente ? esc(cliente.nombre.split(' ')[0]) : '';
+    const categorias = (cats || []).map((c) => ({ ...c, nombre: esc(c.nombre) }));
 
     const params = new URLSearchParams(location.search);
     const catActual = params.get('categoria') || '';
@@ -44,17 +48,19 @@ async function renderNavbar() {
             </button>
             <div class="menu-panel" role="menu">
                 <div class="menu-head">
-                    <strong>${cliente.nombre}</strong>
-                    <span>${cliente.correo}</span>
+                    <strong>${esc(cliente.nombre)}</strong>
+                    <span>${esc(cliente.correo)}</span>
                 </div>
-                ${M('home', 'Resumen', '/perfil.html')}
+                ${M('home', 'Mi cuenta', '/perfil.html')}
                 ${M('package', 'Mis pedidos', '/pedidos.html')}
+                ${M('wallet', 'Mi monedero', '/monedero.html')}
                 ${M('star', 'Club de puntos', '/recompensas.html')}
                 ${M('heart', 'Favoritos', '/favoritos.html')}
                 ${M('pin', 'Direcciones', '/direcciones.html')}
                 ${M('card', 'Métodos de pago', '/pagos.html')}
                 ${M('shield', 'Mis garantías', '/garantias.html')}
-                ${M('help', 'Soporte', '/soporte.html')}
+                ${M('help', 'Atención a clientes', '/soporte.html')}
+                ${M('lock', 'Seguridad', '/seguridad.html')}
                 ${M('settings', 'Preferencias', '/preferencias.html')}
                 <div class="menu-sep"></div>
                 <button class="menu-logout" id="btn-logout" role="menuitem">${icon('logout')} Cerrar sesión</button>
@@ -66,7 +72,7 @@ async function renderNavbar() {
     `;
 
     el.innerHTML = `
-        <div class="topbar">Envío gratis en compras mayores a $10,000 · Garantía directa con la tienda</div>
+        <div class="topbar" id="topbar-promo">Envío gratis en compras mayores a $10,000 · Paga con tarjeta, PayPal, transferencia o tu Monedero Kozmok</div>
         <nav class="navbar">
             <div class="navbar-inner">
                 <button class="hamburger" id="hamburger" aria-label="Menú">${icon('menu', 22)}</button>
@@ -116,15 +122,16 @@ async function renderNavbar() {
             <div class="drawer-section">
                 <span class="drawer-label">${cliente ? 'Mi cuenta' : 'Cuenta'}</span>
                 ${cliente ? `
-                    <a href="/perfil.html">Resumen</a>
+                    <a href="/perfil.html">Mi cuenta</a>
                     <a href="/pedidos.html">Mis pedidos</a>
+                    <a href="/monedero.html">Mi monedero</a>
                     <a href="/recompensas.html">Club de puntos</a>
                     <a href="/favoritos.html">Favoritos</a>
                     <a href="/resenas.html">Mis reseñas</a>
                     <a href="/garantias.html">Mis garantías</a>
                     <a href="/direcciones.html">Direcciones</a>
                     <a href="/pagos.html">Métodos de pago</a>
-                    <a href="/soporte.html">Soporte</a>
+                    <a href="/soporte.html">Atención a clientes</a>
                     <a href="/datos.html">Mis datos</a>
                     <a href="/seguridad.html">Seguridad</a>
                     <a href="/preferencias.html">Preferencias</a>
@@ -171,8 +178,8 @@ async function renderNavbar() {
     });
     document.addEventListener('click', () => dropdowns.forEach((dd) => dd.classList.remove('open')));
     document.querySelectorAll('#btn-logout, #btn-logout-drawer').forEach((b) =>
-        b.addEventListener('click', () => {
-            Sesion.cerrarSesionCliente();
+        b.addEventListener('click', async () => {
+            await Sesion.cerrarSesionCliente();
             if (window.toast) toast('Sesión cerrada', 'ok');
             setTimeout(() => location.href = '/index.html', 400);
         })
@@ -206,9 +213,9 @@ async function renderNavbar() {
         if (activo) a.classList.add('active');
     });
     const bnLogout = document.getElementById('bn-logout');
-    if (bnLogout) bnLogout.addEventListener('click', (e) => {
+    if (bnLogout) bnLogout.addEventListener('click', async (e) => {
         e.preventDefault();
-        Sesion.cerrarSesionCliente();
+        await Sesion.cerrarSesionCliente();
         if (window.toast) toast('Sesión cerrada', 'ok');
         setTimeout(() => location.href = '/index.html', 400);
     });

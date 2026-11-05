@@ -20,13 +20,32 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+-- Etapa 4 (negocio electrónico) y seguridad
+DROP TABLE IF EXISTS correos_salida          CASCADE;
+DROP TABLE IF EXISTS recuperaciones          CASCADE;
+DROP TABLE IF EXISTS eventos_seguridad       CASCADE;
+DROP TABLE IF EXISTS bloqueos                CASCADE;
+DROP TABLE IF EXISTS intentos_login          CASCADE;
+DROP TABLE IF EXISTS sesiones                CASCADE;
+DROP TABLE IF EXISTS movimientos_monedero    CASCADE;
+DROP TABLE IF EXISTS monederos               CASCADE;
+DROP TABLE IF EXISTS pagos                   CASCADE;
+DROP TABLE IF EXISTS promocion_productos     CASCADE;
+DROP TABLE IF EXISTS promociones             CASCADE;
+DROP TABLE IF EXISTS impuestos               CASCADE;
+DROP TABLE IF EXISTS carrito_detalle         CASCADE;
+DROP TABLE IF EXISTS carrito                 CASCADE;
+-- nombres de versiones anteriores (antes de la Etapa 4)
+DROP TABLE IF EXISTS tickets                 CASCADE;
+DROP TABLE IF EXISTS pedido_items            CASCADE;
+
 DROP TABLE IF EXISTS recursos_erp            CASCADE;
 DROP TABLE IF EXISTS reportes_erp            CASCADE;
 DROP TABLE IF EXISTS procesos_erp            CASCADE;
 DROP TABLE IF EXISTS estado_erp              CASCADE;
 DROP TABLE IF EXISTS garantias               CASCADE;
 DROP TABLE IF EXISTS ticket_mensajes         CASCADE;
-DROP TABLE IF EXISTS tickets                 CASCADE;
+DROP TABLE IF EXISTS tickets_atencion                 CASCADE;
 DROP TABLE IF EXISTS resenas                 CASCADE;
 DROP TABLE IF EXISTS movimientos_puntos      CASCADE;
 DROP TABLE IF EXISTS favoritos               CASCADE;
@@ -36,7 +55,7 @@ DROP TABLE IF EXISTS chatbot_consultas       CASCADE;
 DROP TABLE IF EXISTS config_scm              CASCADE;
 DROP TABLE IF EXISTS ordenes_compra          CASCADE;
 DROP TABLE IF EXISTS movimientos_inventario  CASCADE;
-DROP TABLE IF EXISTS pedido_items            CASCADE;
+DROP TABLE IF EXISTS pedido_detalle            CASCADE;
 DROP TABLE IF EXISTS pedidos                 CASCADE;
 DROP TABLE IF EXISTS carrito_items           CASCADE;
 DROP TABLE IF EXISTS metricas_clientes       CASCADE;
@@ -131,6 +150,9 @@ CREATE TABLE productos (
     restock             VARCHAR(10) DEFAULT 'push' CHECK (restock IN ('push','pull')),
     -- lo que cuesta comprarlo al proveedor (para valorar los pedidos de reposición)
     costo_unitario      NUMERIC(10,2) CHECK (costo_unitario >= 0),
+    -- Etapa 4 (catálogo): producto destacado en la portada de la tienda.
+    -- El "estado" comercial es la columna activo (true = se vende).
+    destacado           BOOLEAN NOT NULL DEFAULT FALSE,
     -- compatibilidad para el Armador de PC (solo aplica a categoría "Componentes")
     tipo_componente     VARCHAR(20) CHECK (tipo_componente IS NULL OR tipo_componente IN
                          ('cpu','placa_base','ram','gpu','almacenamiento','fuente','gabinete')),
@@ -203,21 +225,97 @@ CREATE TABLE metricas_clientes (
     dias_sin_contacto      INTEGER DEFAULT 0
 );
 
+-- =========================================================
+-- ETAPA 4 · NEGOCIO ELECTRÓNICO
+-- Relaciones principales:
+--   cliente 1 ── 1 carrito activo ── N carrito_detalle ── 1 producto
+--   cliente 1 ── N pedidos 1 ── N pedido_detalle ── 1 producto
+--   pedido  1 ── 1 pago
+--   producto N ── 1 categoría
+--   promoción N ── N productos (promocion_productos) o 1 categoría
+--   cliente 1 ── 1 monedero 1 ── N movimientos_monedero
+--   cliente 1 ── N tickets_atencion 1 ── N ticket_mensajes
+-- =========================================================
+
 -- ---------------------------------------------------------
--- CARRITO (persistente por cliente, simple)
+-- PROMOCIONES (comercialización)
+--   tipo_descuento: porcentaje (10 = 10 %) o monto (pesos por pieza)
+--   alcance: todos los productos, una categoría o productos elegidos
+--   Solo aplica si estado = 'activa' y hoy está entre las fechas.
 -- ---------------------------------------------------------
-CREATE TABLE carrito_items (
+CREATE TABLE promociones (
     id              SERIAL PRIMARY KEY,
-    cliente_id      INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
-    producto_id     INTEGER REFERENCES productos(id) ON DELETE CASCADE,
-    cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
+    nombre          VARCHAR(120) NOT NULL,
+    descripcion     VARCHAR(300),
+    tipo_descuento  VARCHAR(12) NOT NULL CHECK (tipo_descuento IN ('porcentaje','monto')),
+    valor           NUMERIC(10,2) NOT NULL CHECK (valor > 0),
+    alcance         VARCHAR(12) NOT NULL DEFAULT 'todos' CHECK (alcance IN ('todos','categoria','productos')),
+    categoria_id    INTEGER REFERENCES categorias(id) ON DELETE SET NULL,
+    fecha_inicio    DATE NOT NULL,
+    fecha_fin       DATE NOT NULL,
+    estado          VARCHAR(10) NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
+    -- se muestra en el banner de la portada
+    banner          BOOLEAN NOT NULL DEFAULT TRUE,
+    usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha_creacion  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT promociones_fechas_check CHECK (fecha_fin >= fecha_inicio),
+    CONSTRAINT promociones_pct_check CHECK (tipo_descuento <> 'porcentaje' OR valor <= 90),
+    CONSTRAINT promociones_categoria_check CHECK (alcance <> 'categoria' OR categoria_id IS NOT NULL)
+);
+CREATE INDEX idx_promociones_vigencia ON promociones(estado, fecha_inicio, fecha_fin);
+
+CREATE TABLE promocion_productos (
+    promocion_id  INTEGER NOT NULL REFERENCES promociones(id) ON DELETE CASCADE,
+    producto_id   INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+    PRIMARY KEY (promocion_id, producto_id)
+);
+
+-- ---------------------------------------------------------
+-- IMPUESTOS (configurador del cálculo de impuestos)
+--   El total de impuestos de una compra es la suma de los que estén
+--   activos: subtotal × porcentaje / 100.
+-- ---------------------------------------------------------
+CREATE TABLE impuestos (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(60) UNIQUE NOT NULL,
+    descripcion     VARCHAR(200),
+    porcentaje      NUMERIC(5,2) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
+    estado          VARCHAR(10) NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo','inactivo')),
+    fecha_creacion  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------
+-- CARRITO DE COMPRAS (gestión temporal de lo que elige el cliente)
+--   Un cliente tiene a lo más UN carrito activo (índice único parcial).
+--   Al pagar, el carrito pasa a 'convertido' y queda ligado al pedido.
+-- ---------------------------------------------------------
+CREATE TABLE carrito (
+    id                  SERIAL PRIMARY KEY,
+    cliente_id          INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    estado              VARCHAR(12) NOT NULL DEFAULT 'activo'
+                         CHECK (estado IN ('activo','convertido','abandonado')),
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX uq_carrito_activo ON carrito(cliente_id) WHERE estado = 'activo';
+
+CREATE TABLE carrito_detalle (
+    id              SERIAL PRIMARY KEY,
+    carrito_id      INTEGER NOT NULL REFERENCES carrito(id) ON DELETE CASCADE,
+    producto_id     INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+    cantidad        INTEGER NOT NULL CHECK (cantidad > 0 AND cantidad <= 99),
+    -- precio vigente (con promoción) al agregarlo; se recalcula al pagar
+    precio_unitario NUMERIC(10,2) NOT NULL CHECK (precio_unitario >= 0),
     -- garantía extendida opcional para esta línea del carrito
     garantia_clave  VARCHAR(10) NOT NULL DEFAULT 'none',
     garantia_plan   VARCHAR(40),
     garantia_meses  INTEGER NOT NULL DEFAULT 0,
     garantia_costo  NUMERIC(10,2) NOT NULL DEFAULT 0,
-    fecha_agregado  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    fecha_agregado  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (carrito_id, producto_id)
 );
+CREATE INDEX idx_carrito_detalle_carrito ON carrito_detalle(carrito_id);
 
 -- ---------------------------------------------------------
 -- PEDIDOS
@@ -227,16 +325,23 @@ CREATE TABLE pedidos (
     numero_orden          VARCHAR(40) UNIQUE NOT NULL,
     cliente_id            INTEGER REFERENCES clientes(id),
     vendedor_id           INTEGER REFERENCES usuarios(id),
+    -- carrito del que salió (compras de la tienda en línea)
+    carrito_id            INTEGER REFERENCES carrito(id) ON DELETE SET NULL,
     -- ERP: de dónde viene la orden. 'en_linea' = la hizo el cliente en la
     -- tienda; 'erp' = la registró el equipo desde el panel (Órdenes ERP).
     -- En las órdenes ERP, vendedor_id es el usuario interno que la capturó.
     origen                VARCHAR(10) NOT NULL DEFAULT 'en_linea'
                            CHECK (origen IN ('en_linea','erp')),
-    subtotal              NUMERIC(12,2) NOT NULL DEFAULT 0,
-    impuestos             NUMERIC(12,2) NOT NULL DEFAULT 0,
-    envio                 NUMERIC(12,2) NOT NULL DEFAULT 0,
-    descuento             NUMERIC(12,2) NOT NULL DEFAULT 0,
-    total                 NUMERIC(12,2) NOT NULL DEFAULT 0,
+    subtotal              NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
+    impuestos             NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (impuestos >= 0),
+    -- desglose de impuestos aplicados: [{"nombre":"IVA","porcentaje":16,"monto":96}]
+    impuestos_detalle     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    envio                 NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (envio >= 0),
+    -- descuento por canje de puntos del Club
+    descuento             NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (descuento >= 0),
+    -- ahorro por promociones (ya incluido en los precios de las partidas)
+    descuento_promociones NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (descuento_promociones >= 0),
+    total                 NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
     estado                VARCHAR(20) DEFAULT 'pendiente'
                            CHECK (estado IN ('pendiente','confirmado','procesando','enviado','entregado','cancelado')),
     metodo_pago           VARCHAR(60),
@@ -258,22 +363,82 @@ CREATE TABLE pedidos (
     fecha_entrega         TIMESTAMP,
     fecha_actualizacion   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
 
 -- Folio consecutivo de las órdenes de clientes del ERP: OR-001, OR-002, ...
 CREATE SEQUENCE folio_erp_seq START 1;
 
-CREATE TABLE pedido_items (
+-- Detalle del pedido (antes pedido_items): un pedido tiene muchas partidas.
+CREATE TABLE pedido_detalle (
     id                SERIAL PRIMARY KEY,
     pedido_id         INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
     producto_id       INTEGER REFERENCES productos(id),
     cantidad          INTEGER NOT NULL CHECK (cantidad > 0),
-    precio_unitario   NUMERIC(10,2) NOT NULL,
-    subtotal          NUMERIC(12,2) NOT NULL,
+    precio_unitario   NUMERIC(10,2) NOT NULL CHECK (precio_unitario >= 0),
+    -- precio de lista antes de la promoción (NULL = sin promoción)
+    precio_lista      NUMERIC(10,2),
+    promocion_id      INTEGER REFERENCES promociones(id) ON DELETE SET NULL,
+    subtotal          NUMERIC(12,2) NOT NULL CHECK (subtotal >= 0),
     -- garantía extendida contratada para esta línea (0 = sin garantía)
     garantia_plan     VARCHAR(40),
     garantia_meses    INTEGER NOT NULL DEFAULT 0,
     garantia_costo    NUMERIC(10,2) NOT NULL DEFAULT 0
 );
+CREATE INDEX idx_pedido_detalle_pedido ON pedido_detalle(pedido_id);
+
+-- ---------------------------------------------------------
+-- PAGOS (un pedido tiene un pago)
+--   metodo_pago: tarjeta, paypal, transferencia o monedero (tienda en
+--   línea); efectivo o tarjeta en mostrador (órdenes del ERP).
+--   Nunca se guarda el número completo de tarjeta ni el CVV.
+-- ---------------------------------------------------------
+CREATE TABLE pagos (
+    id                  SERIAL PRIMARY KEY,
+    pedido_id           INTEGER NOT NULL UNIQUE REFERENCES pedidos(id) ON DELETE CASCADE,
+    monto               NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+    metodo_pago         VARCHAR(15) NOT NULL
+                         CHECK (metodo_pago IN ('tarjeta','paypal','transferencia','monedero','efectivo','tienda')),
+    detalle             VARCHAR(120),     -- "Visa ****4821", "PayPal juan@correo.com"
+    referencia          VARCHAR(40),      -- folio de autorización o referencia SPEI
+    estado              VARCHAR(12) NOT NULL DEFAULT 'pendiente'
+                         CHECK (estado IN ('pendiente','aprobado','rechazado','reembolsado','cancelado')),
+    fecha               TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_confirmacion  TIMESTAMP
+);
+CREATE INDEX idx_pagos_metodo ON pagos(metodo_pago, estado);
+
+-- ---------------------------------------------------------
+-- MONEDERO ELECTRÓNICO del cliente (saldo prepagado)
+--   Se recarga con tarjeta, PayPal o transferencia y se usa como
+--   método de pago. El saldo nunca puede quedar negativo.
+-- ---------------------------------------------------------
+CREATE TABLE monederos (
+    id                  SERIAL PRIMARY KEY,
+    cliente_id          INTEGER NOT NULL UNIQUE REFERENCES clientes(id) ON DELETE CASCADE,
+    saldo               NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (saldo >= 0 AND saldo <= 50000),
+    estado              VARCHAR(10) NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo','bloqueado')),
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Cada cargo o abono. monto: + entra, - sale. Una recarga por
+-- transferencia queda 'pendiente' hasta que el equipo la confirma.
+CREATE TABLE movimientos_monedero (
+    id              SERIAL PRIMARY KEY,
+    monedero_id     INTEGER NOT NULL REFERENCES monederos(id) ON DELETE CASCADE,
+    tipo            VARCHAR(10) NOT NULL CHECK (tipo IN ('recarga','compra','reembolso','ajuste')),
+    monto           NUMERIC(12,2) NOT NULL CHECK (monto <> 0),
+    saldo_anterior  NUMERIC(12,2),
+    saldo_nuevo     NUMERIC(12,2),
+    concepto        VARCHAR(160) NOT NULL,
+    metodo_pago     VARCHAR(15),
+    referencia      VARCHAR(40),
+    estado          VARCHAR(10) NOT NULL DEFAULT 'aplicado' CHECK (estado IN ('aplicado','pendiente','rechazado')),
+    pedido_id       INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_movmonedero_monedero ON movimientos_monedero(monedero_id, fecha DESC);
 
 -- ---------------------------------------------------------
 -- GARANTÍAS EXTENDIDAS
@@ -285,7 +450,7 @@ CREATE TABLE garantias (
     folio              VARCHAR(20) UNIQUE NOT NULL,     -- GAR-100001
     codigo             VARCHAR(24) UNIQUE NOT NULL,     -- para validar
     pedido_id          INTEGER REFERENCES pedidos(id) ON DELETE CASCADE,
-    pedido_item_id     INTEGER REFERENCES pedido_items(id) ON DELETE CASCADE,
+    pedido_item_id     INTEGER REFERENCES pedido_detalle(id) ON DELETE CASCADE,
     cliente_id         INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
     producto_id        INTEGER REFERENCES productos(id) ON DELETE SET NULL,
     plan               VARCHAR(40) NOT NULL,
@@ -521,34 +686,142 @@ CREATE INDEX idx_resenas_producto ON resenas(producto_id);
 CREATE INDEX idx_resenas_cliente  ON resenas(cliente_id);
 
 -- ---------------------------------------------------------
--- TICKETS DE SOPORTE (cliente <-> equipo, con hilo de mensajes)
+-- ATENCIÓN A CLIENTES: tickets (TicketAtencion) con hilo de mensajes.
+--   mensaje   = lo que escribió el cliente al abrirlo
+--   respuesta = la última respuesta del equipo (también va al hilo)
+--   Cada ticket y cada respuesta quedan como interacción en el CRM.
 -- ---------------------------------------------------------
-CREATE TABLE tickets (
+CREATE TABLE tickets_atencion (
     id                  SERIAL PRIMARY KEY,
     folio               VARCHAR(20) UNIQUE NOT NULL,
     cliente_id          INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
     asunto              VARCHAR(160) NOT NULL,
+    mensaje             TEXT,
     categoria           VARCHAR(40) NOT NULL DEFAULT 'general',
     prioridad           VARCHAR(10) NOT NULL DEFAULT 'media' CHECK (prioridad IN ('baja','media','alta')),
     estado              VARCHAR(15) NOT NULL DEFAULT 'abierto'
-                         CHECK (estado IN ('abierto','en_proceso','resuelto','cerrado')),
+                         CHECK (estado IN ('abierto','en_proceso','respondido','resuelto','cerrado')),
+    respuesta           TEXT,
+    fecha_respuesta     TIMESTAMP,
+    respondido_por      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
     pedido_id           INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     asignado_a          INTEGER REFERENCES usuarios(id),
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX idx_tickets_cliente ON tickets(cliente_id);
-CREATE INDEX idx_tickets_estado  ON tickets(estado);
+CREATE INDEX idx_tickets_cliente ON tickets_atencion(cliente_id);
+CREATE INDEX idx_tickets_estado  ON tickets_atencion(estado);
 
 CREATE TABLE ticket_mensajes (
     id          SERIAL PRIMARY KEY,
-    ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    ticket_id   INTEGER NOT NULL REFERENCES tickets_atencion(id) ON DELETE CASCADE,
     autor       VARCHAR(10) NOT NULL CHECK (autor IN ('cliente','equipo')),
     usuario_id  INTEGER REFERENCES usuarios(id),
     mensaje     TEXT NOT NULL,
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ticketmsg_ticket ON ticket_mensajes(ticket_id);
+
+-- =========================================================
+-- SEGURIDAD
+-- =========================================================
+
+-- Sesiones abiertas (tienda y equipo interno). En la cookie solo viaja
+-- un token aleatorio de 256 bits; aquí se guarda su hash SHA-256, así
+-- que ni con una copia de la base se pueden usar las sesiones. Cada
+-- sesión vence, se puede revocar (logout, cambio de contraseña, robo)
+-- y queda atada a la huella del navegador que la abrió.
+CREATE TABLE sesiones (
+    id                SERIAL PRIMARY KEY,
+    token_hash        CHAR(64) UNIQUE NOT NULL,
+    tipo              VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    cliente_id        INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+    usuario_id        INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    ip                VARCHAR(64),
+    user_agent        VARCHAR(300),
+    huella            CHAR(64),
+    creada            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ultimo_uso        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expira            TIMESTAMP NOT NULL,
+    revocada          TIMESTAMP,
+    motivo_revocacion VARCHAR(80),
+    CONSTRAINT sesiones_dueno_check CHECK (
+        (tipo = 'cliente' AND cliente_id IS NOT NULL AND usuario_id IS NULL) OR
+        (tipo = 'usuario' AND usuario_id IS NOT NULL AND cliente_id IS NULL))
+);
+CREATE INDEX idx_sesiones_cliente ON sesiones(cliente_id);
+CREATE INDEX idx_sesiones_usuario ON sesiones(usuario_id);
+
+-- Cada intento de inicio de sesión (bueno o malo): base para detectar
+-- fuerza bruta y relleno de credenciales.
+CREATE TABLE intentos_login (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    correo      VARCHAR(150),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    exito       BOOLEAN NOT NULL,
+    motivo      VARCHAR(60),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_intentos_correo ON intentos_login(tipo, correo, fecha DESC);
+CREATE INDEX idx_intentos_ip     ON intentos_login(ip, fecha DESC);
+
+-- Bloqueos temporales: de una IP (demasiados intentos fallidos desde ahí)
+-- o de una cuenta (demasiadas contraseñas equivocadas seguidas).
+CREATE TABLE bloqueos (
+    id             SERIAL PRIMARY KEY,
+    tipo           VARCHAR(10) NOT NULL CHECK (tipo IN ('ip','cuenta')),
+    valor          VARCHAR(170) NOT NULL,      -- la IP, o "cliente:correo" / "usuario:correo"
+    motivo         VARCHAR(200),
+    hasta          TIMESTAMP NOT NULL,
+    creado         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    levantado      TIMESTAMP,
+    levantado_por  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_bloqueos_valor ON bloqueos(tipo, valor, hasta);
+
+-- Bitácora de seguridad: ataques detectados y acciones sensibles.
+CREATE TABLE eventos_seguridad (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(30) NOT NULL,          -- inyeccion_sql, xss, fuerza_bruta, sesion_robada, ...
+    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('baja','media','alta')),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    metodo      VARCHAR(8),
+    ruta        VARCHAR(200),
+    detalle     VARCHAR(500),
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    usuario_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_eventos_fecha ON eventos_seguridad(fecha DESC);
+
+-- Recuperación de contraseña: enlace de un solo uso que vence en 30 min.
+-- Igual que en las sesiones, solo se guarda el hash del token.
+CREATE TABLE recuperaciones (
+    id          SERIAL PRIMARY KEY,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    token_hash  CHAR(64) UNIQUE NOT NULL,
+    expira      TIMESTAMP NOT NULL,
+    usado       TIMESTAMP,
+    ip          VARCHAR(64),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Correos que envía el sistema (confirmación de compra, respuesta a un
+-- ticket, recuperación de contraseña, recargas...). Sin servidor SMTP se
+-- guardan aquí y se ven en el panel (Tienda → Correos enviados).
+CREATE TABLE correos_salida (
+    id          SERIAL PRIMARY KEY,
+    para        VARCHAR(150) NOT NULL,
+    asunto      VARCHAR(200) NOT NULL,
+    cuerpo      TEXT NOT NULL,
+    tipo        VARCHAR(20) NOT NULL DEFAULT 'general',
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =========================================================
 -- TRIGGER: actualizar fecha_actualizacion automáticamente
@@ -568,7 +841,13 @@ CREATE TRIGGER trg_pedidos_fecha BEFORE UPDATE ON pedidos
     FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
 CREATE TRIGGER trg_usuarios_fecha BEFORE UPDATE ON usuarios
     FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
-CREATE TRIGGER trg_tickets_fecha BEFORE UPDATE ON tickets
+CREATE TRIGGER trg_tickets_fecha BEFORE UPDATE ON tickets_atencion
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_carrito_fecha BEFORE UPDATE ON carrito
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_impuestos_fecha BEFORE UPDATE ON impuestos
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_monederos_fecha BEFORE UPDATE ON monederos
     FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
 
 -- =========================================================
@@ -1001,6 +1280,14 @@ VALUES
 
 UPDATE productos SET costo_unitario = ROUND(precio * 0.7, 2);
 
+-- Etapa 4: productos destacados de la portada y fechas de alta (los
+-- últimos 12 productos son "Novedades": se dieron de alta este mes).
+UPDATE productos SET destacado = true WHERE nombre IN (
+  'Laptop Gamer Legion 5', 'MacBook Air M2', 'PC Gamer RTX 4070', 'Tarjeta Gráfica RTX 4060 Ti',
+  'Monitor Gamer 27" 165Hz', 'Laptop ASUS ROG Strix G16', 'Mouse Logitech MX Master 3S', 'Procesador AMD Ryzen 7 7800X3D');
+UPDATE productos SET fecha_creacion = CURRENT_TIMESTAMP - INTERVAL '150 days' + (id * INTERVAL '1 day');
+UPDATE productos SET fecha_creacion = CURRENT_TIMESTAMP - ((73 - id) * INTERVAL '2 days') WHERE id > 61;
+
 INSERT INTO config_scm (clave, valor) VALUES ('reabasto_automatico', 'si'), ('entrega', 'fecha');
 
 -- ---------------------------------------------------------
@@ -1061,7 +1348,7 @@ INSERT INTO pedidos
  ('ORD-24225', 4,  9999.00, 1599.84, 199.00,   0.00, 11797.84, 'entregado', 'Tarjeta de crédito', 'Zona Centro, Querétaro',
    'TT242250164', 'Fedex', CURRENT_TIMESTAMP - INTERVAL '20 days', CURRENT_TIMESTAMP - INTERVAL '20 days', CURRENT_TIMESTAMP - INTERVAL '19 days', CURRENT_TIMESTAMP - INTERVAL '17 days');
 
-INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
+INSERT INTO pedido_detalle (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
  ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'), 8, 1, 54999.00, 54999.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24188'), 3, 1, 27999.00, 27999.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), 15, 1, 5999.00, 5999.00),
@@ -1092,7 +1379,7 @@ INSERT INTO pedidos
 -- una orden nueva): si vence sin pago, el sistema la cancela y libera el stock.
 UPDATE pedidos SET pago_vence = fecha_pedido + INTERVAL '3 days' WHERE pago_estado = 'pendiente' AND pago_vence IS NULL;
 
-INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
+INSERT INTO pedido_detalle (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 15, 1, 5999.00,  5999.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 18, 2,  599.00,  1198.00),
  ((SELECT id FROM pedidos WHERE numero_orden = 'OR-002'),  1, 1, 14999.00, 14999.00),
@@ -1118,28 +1405,28 @@ WHERE p.origen = 'erp';
 INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence, estado, reclamo_fecha, reclamo_desc) VALUES
  ('GAR-100001', 'M9K2-7QTP-4XW8-2LRA',
   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051') AND producto_id = 8),
+  (SELECT id FROM pedido_detalle WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051') AND producto_id = 8),
   1, 8, 'Extendida · 24 meses', 24, 6600.00,
   (CURRENT_DATE - INTERVAL '58 days')::date, (CURRENT_DATE - INTERVAL '58 days' + INTERVAL '24 months')::date,
   'activa', NULL, NULL),
  ('GAR-100002', 'T4P8-1CN5-9WQ2-KX7M',
   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120') AND producto_id = 2),
+  (SELECT id FROM pedido_detalle WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120') AND producto_id = 2),
   2, 2, 'Total · 36 meses', 36, 5040.00,
   (CURRENT_DATE - INTERVAL '15 days')::date, (CURRENT_DATE - INTERVAL '15 days' + INTERVAL '36 months')::date,
   'activa', (CURRENT_TIMESTAMP - INTERVAL '2 days'), 'La laptop se apaga sola bajo carga. Ya probé con otro cargador.'),
  ('GAR-100003', 'B2L9-6RH0-3PT4-8XKW',
   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225') AND producto_id = 4),
+  (SELECT id FROM pedido_detalle WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225') AND producto_id = 4),
   4, 4, 'Básica · 12 meses', 12, 600.00,
   (CURRENT_DATE - INTERVAL '400 days')::date, (CURRENT_DATE - INTERVAL '400 days' + INTERVAL '12 months')::date,
   'vencida', NULL, NULL);
 
-UPDATE pedido_items SET garantia_plan = 'Extendida · 24 meses', garantia_meses = 24, garantia_costo = 6600.00
+UPDATE pedido_detalle SET garantia_plan = 'Extendida · 24 meses', garantia_meses = 24, garantia_costo = 6600.00
  WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051') AND producto_id = 8;
-UPDATE pedido_items SET garantia_plan = 'Total · 36 meses', garantia_meses = 36, garantia_costo = 5040.00
+UPDATE pedido_detalle SET garantia_plan = 'Total · 36 meses', garantia_meses = 36, garantia_costo = 5040.00
  WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120') AND producto_id = 2;
-UPDATE pedido_items SET garantia_plan = 'Básica · 12 meses', garantia_meses = 12, garantia_costo = 600.00
+UPDATE pedido_detalle SET garantia_plan = 'Básica · 12 meses', garantia_meses = 12, garantia_costo = 600.00
  WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225') AND producto_id = 4;
 
 -- ---------------------------------------------------------
@@ -1180,11 +1467,81 @@ INSERT INTO resenas (cliente_id, producto_id, calificacion, comentario, fecha) V
  (2, 2, 5, 'Corre todo a tope, llegó bien empacada.',              CURRENT_TIMESTAMP - INTERVAL '12 days');
 
 -- Ticket de soporte de ejemplo
-INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, estado) VALUES
- ('TK-1001', 1, 'Falta un cable en el pedido', 'pedido', 'media', 'en_proceso');
+INSERT INTO tickets_atencion (folio, cliente_id, asunto, mensaje, categoria, prioridad, estado, respuesta, fecha_respuesta, respondido_por, fecha_creacion) VALUES
+ ('TK-1001', 1, 'Falta un cable en el pedido', 'Recibí la laptop pero el cargador no venía en la caja.',
+   'pedido', 'media', 'en_proceso', NULL, NULL, NULL, CURRENT_TIMESTAMP - INTERVAL '3 days'),
+ ('TK-1002', 1, 'Cambio de producto', 'Quisiera cambiar el teclado mecánico por uno con switches cafés.',
+   'devolucion', 'media', 'respondido', 'Claro, puedes cambiarlo dentro de los 30 días. Te enviamos la guía de devolución a tu correo.',
+   CURRENT_TIMESTAMP - INTERVAL '6 days', 2, CURRENT_TIMESTAMP - INTERVAL '7 days'),
+ ('TK-1003', 1, 'Facturación', '¿Me pueden facturar el pedido ORD-24188 a nombre de mi empresa?',
+   'facturacion', 'baja', 'cerrado', 'Listo, la factura se envió a tu correo con los datos de Estudio Creativo MT.',
+   CURRENT_TIMESTAMP - INTERVAL '20 days', 1, CURRENT_TIMESTAMP - INTERVAL '22 days');
 INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUES
  (1, 'cliente', NULL, 'Recibí la laptop pero el cargador no venía en la caja.', CURRENT_TIMESTAMP - INTERVAL '3 days'),
- (1, 'equipo',  1,    'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.', CURRENT_TIMESTAMP - INTERVAL '2 days');
+ (1, 'equipo',  1,    'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.', CURRENT_TIMESTAMP - INTERVAL '2 days'),
+ (2, 'cliente', NULL, 'Quisiera cambiar el teclado mecánico por uno con switches cafés.', CURRENT_TIMESTAMP - INTERVAL '7 days'),
+ (2, 'equipo',  2,    'Claro, puedes cambiarlo dentro de los 30 días. Te enviamos la guía de devolución a tu correo.', CURRENT_TIMESTAMP - INTERVAL '6 days'),
+ (3, 'cliente', NULL, '¿Me pueden facturar el pedido ORD-24188 a nombre de mi empresa?', CURRENT_TIMESTAMP - INTERVAL '22 days'),
+ (3, 'equipo',  1,    'Listo, la factura se envió a tu correo con los datos de Estudio Creativo MT.', CURRENT_TIMESTAMP - INTERVAL '20 days');
+
+-- =========================================================
+-- ETAPA 4: datos de ejemplo del negocio electrónico
+-- =========================================================
+
+-- Impuestos: IVA 16 % activo; IEPS queda registrado pero inactivo.
+INSERT INTO impuestos (nombre, descripcion, porcentaje, estado) VALUES
+ ('IVA',  'Impuesto al Valor Agregado', 16.00, 'activo'),
+ ('IEPS', 'Impuesto especial sobre producción y servicios (no aplica a cómputo; ejemplo)', 8.00, 'inactivo');
+
+-- Promociones: tres vigentes, una que ya terminó y una programada.
+INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, fecha_inicio, fecha_fin, estado, banner, usuario_id) VALUES
+ ('Temporada de laptops', '10 % de descuento en todas las laptops.', 'porcentaje', 10, 'categoria',
+   (SELECT id FROM categorias WHERE nombre = 'Laptops'), CURRENT_DATE - 5, CURRENT_DATE + 20, 'activa', true, 1),
+ ('Semana del gamer', '$200 menos en teclados, mouse y audífonos gamer seleccionados.', 'monto', 200, 'productos',
+   NULL, CURRENT_DATE - 2, CURRENT_DATE + 7, 'activa', true, 1),
+ ('Monitores al 15 %', '15 % de descuento en monitores.', 'porcentaje', 15, 'categoria',
+   (SELECT id FROM categorias WHERE nombre = 'Monitores'), CURRENT_DATE, CURRENT_DATE + 14, 'activa', true, 1),
+ ('Regreso a clases', '8 % en todo el catálogo (ya terminó).', 'porcentaje', 8, 'todos',
+   NULL, CURRENT_DATE - 60, CURRENT_DATE - 30, 'activa', true, 1),
+ ('Hot Sale', '12 % en componentes (programada).', 'porcentaje', 12, 'categoria',
+   (SELECT id FROM categorias WHERE nombre = 'Componentes'), CURRENT_DATE + 30, CURRENT_DATE + 36, 'activa', true, 1);
+INSERT INTO promocion_productos (promocion_id, producto_id)
+SELECT (SELECT id FROM promociones WHERE nombre = 'Semana del gamer'), id FROM productos
+ WHERE nombre IN ('Teclado Mecánico RGB', 'Mouse Logitech G502 Hero', 'Audífonos Gamer 7.1 Surround',
+                  'Teclado Razer BlackWidow V4', 'Audífonos Razer BlackShark V2 X');
+
+-- Desglose de impuestos de los pedidos históricos (todos con IVA 16 %).
+UPDATE pedidos SET impuestos_detalle = jsonb_build_array(
+    jsonb_build_object('nombre', 'IVA', 'porcentaje', 16, 'monto', impuestos));
+
+-- Pagos de los pedidos históricos (un pedido tiene un pago).
+INSERT INTO pagos (pedido_id, monto, metodo_pago, detalle, referencia, estado, fecha, fecha_confirmacion)
+SELECT id, total,
+       CASE WHEN metodo_pago ILIKE '%efectivo%' THEN 'efectivo'
+            WHEN metodo_pago ILIKE '%transfer%' OR metodo_pago ILIKE '%spei%' THEN 'transferencia'
+            ELSE 'tarjeta' END,
+       metodo_pago, pago_referencia,
+       CASE WHEN estado = 'cancelado' THEN 'cancelado' WHEN pago_estado = 'pagado' THEN 'aprobado' ELSE 'pendiente' END,
+       fecha_pedido, CASE WHEN pago_estado = 'pagado' THEN COALESCE(fecha_confirmacion, fecha_pedido) END
+FROM pedidos;
+
+-- Monederos: uno por cliente. Mariana y Diego ya recargaron; Diego tiene
+-- además una recarga por transferencia esperando confirmación del equipo.
+INSERT INTO monederos (cliente_id, saldo) SELECT id, 0 FROM clientes;
+UPDATE monederos SET saldo = 1200 WHERE cliente_id = 1;
+UPDATE monederos SET saldo = 650  WHERE cliente_id = 2;
+INSERT INTO movimientos_monedero (monedero_id, tipo, monto, saldo_anterior, saldo_nuevo, concepto, metodo_pago, referencia, estado, fecha) VALUES
+ ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga', 1000, 0,    1000, 'Recarga con tarjeta Visa ****4821', 'tarjeta', 'AUT-581204', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '20 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga',  200, 1000, 1200, 'Recarga con PayPal',                'paypal',  'PP-7Q2M9K',  'aplicado', CURRENT_TIMESTAMP - INTERVAL '6 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  500, 0,     500, 'Recarga con tarjeta Visa ****5540', 'tarjeta', 'AUT-330918', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '15 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  150, 500,   650, 'Recarga con PayPal',                'paypal',  'PP-4X8T1C',  'aplicado', CURRENT_TIMESTAMP - INTERVAL '9 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  300, NULL, NULL, 'Recarga por transferencia (por confirmar)', 'transferencia', 'SPEI-REC-20418', 'pendiente', CURRENT_TIMESTAMP - INTERVAL '1 days');
+
+-- Un carrito activo (Sofía dejó dos productos sin pagar).
+INSERT INTO carrito (cliente_id, estado, fecha_creacion) VALUES (3, 'activo', CURRENT_TIMESTAMP - INTERVAL '2 days');
+INSERT INTO carrito_detalle (carrito_id, producto_id, cantidad, precio_unitario)
+SELECT (SELECT id FROM carrito WHERE cliente_id = 3), id, 1, precio FROM productos
+ WHERE nombre IN ('Monitor Oficina 24" IPS', 'Mouse Inalámbrico Ergonómico');
 
 -- =========================================================
 --  Listo. Credenciales de prueba:

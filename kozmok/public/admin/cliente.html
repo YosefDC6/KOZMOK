@@ -120,7 +120,7 @@ async function detPedido(id, btn) {
     const d = await api(`/pedidos/${id}/detalle`);
     row.firstElementChild.innerHTML = `
         <div style="padding:10px 4px">
-            ${d.items.map((i) => `<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0"><span>${i.cantidad}× ${i.nombre}</span><span class="mono">${formatoMoneda(i.subtotal)}</span></div>`).join('')}
+            ${d.items.map((i) => `<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0"><span>${i.cantidad}× ${esc(i.nombre)}</span><span class="mono">${formatoMoneda(i.subtotal)}</span></div>`).join('')}
             <div style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px;font-size:.82rem;color:var(--text-muted)">
                 Subtotal ${formatoMoneda(d.subtotal)} · IVA ${formatoMoneda(d.impuestos)} · Envío ${Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio)}${Number(d.descuento) > 0 ? ' · Descuento -' + formatoMoneda(d.descuento) : ''} · Pago: ${d.metodo_pago || '—'}
             </div>
@@ -158,7 +158,7 @@ async function tabInteracciones() {
                         <div class="crm-tl-ico">${icon(TIPO_ICO[i.tipo] || 'chat', 16)}</div>
                         <div style="flex:1">
                             <div class="tl-tipo">${i.tipo}</div>
-                            <div>${i.descripcion}</div>
+                            <div>${esc(i.descripcion)}</div>
                             <div class="tl-meta">${formatoFecha(i.fecha)}${i.usuario_nombre ? ' · ' + i.usuario_nombre : ''}</div>
                         </div>
                     </div>`).join('')}

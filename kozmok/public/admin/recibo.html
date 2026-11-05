@@ -40,7 +40,7 @@ const doc = document.getElementById('doc');
         const d = await api('/pedidos/' + id + '/recibo');
         doc.innerHTML = renderRecibo(d);
     } catch (e) {
-        doc.innerHTML = `<div class="empty-state">${e.message}<br><a href="#" onclick="volver();return false">Volver</a></div>`;
+        doc.innerHTML = `<div class="empty-state">${esc(e.message)}<br><a href="#" onclick="volver();return false">Volver</a></div>`;
     }
 })();
 </script>

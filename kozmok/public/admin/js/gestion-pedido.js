@@ -102,7 +102,7 @@
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
                 <div>
                     <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">Cliente (CRM)</div>
-                    <strong>${d.cliente_nombre}</strong>
+                    <strong>${esc(d.cliente_nombre)}</strong>
                     <div style="font-size:.8rem;color:var(--text-muted)">${[d.cliente_empresa, d.cliente_correo, d.cliente_telefono].filter(Boolean).join(' · ')}</div>
                 </div>
                 <div style="text-align:right;font-size:.8rem">
@@ -138,7 +138,7 @@
             <ol style="list-style:none;margin:8px 0 0;padding:0">${d.procesos.map((p) => `
                 <li style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.82rem">
                     <span style="color:${p.automatico ? 'var(--success)' : 'var(--accent)'}" title="${p.automatico ? 'Automático' : 'Manual'}">${ic(p.automatico ? 'check' : 'user', 14)}</span>
-                    <span style="flex:1">${p.descripcion}
+                    <span style="flex:1">${esc(p.descripcion)}
                         <span style="display:block;font-size:.74rem;color:var(--text-muted)">${formatoFecha(p.fecha)} · ${p.automatico ? 'automático' : 'manual'}${p.usuario_nombre ? ' · ' + p.usuario_nombre : ''}</span>
                     </span>
                 </li>`).join('')}</ol>
@@ -163,7 +163,7 @@
                     <thead><tr><th>Producto</th><th>Cant.</th><th>P. unit.</th><th>Subtotal</th><th title="Stock actual en el inventario (SCM)">Stock</th></tr></thead>
                     <tbody>${d.items.map((i) => `
                         <tr>
-                            <td>${i.nombre}${i.garantia_plan ? `<div style="font-size:.74rem;color:var(--text-muted)">${i.garantia_plan}</div>` : ''}</td>
+                            <td>${esc(i.nombre)}${i.garantia_plan ? `<div style="font-size:.74rem;color:var(--text-muted)">${i.garantia_plan}</div>` : ''}</td>
                             <td class="mono">${i.cantidad}</td>
                             <td class="mono">${formatoMoneda(i.precio_unitario)}</td>
                             <td class="mono">${formatoMoneda(i.subtotal)}</td>

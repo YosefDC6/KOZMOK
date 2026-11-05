@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tienda en línea · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<style>
+    .flujo-integ { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    .flujo-integ div { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-elev); font-size: .86rem; }
+    .flujo-integ strong { display: block; margin-bottom: 2px; }
+    .flujo-integ .mod { font-size: .7rem; font-weight: 700; letter-spacing: .06em; color: var(--accent-light); }
+    .barras-dia { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; align-items: end; height: 140px; }
+    .barras-dia span { display: block; border-radius: 5px 5px 0 0; background: var(--accent); min-height: 2px; }
+</style>
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="modulo-tiles" id="tiles" style="margin-bottom:18px"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+        <div class="grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px">
+            <div class="card"><h3 style="margin-top:0">Ventas en línea (14 días)</h3><div id="ventas"></div></div>
+            <div class="card"><h3 style="margin-top:0">Pagos por método</h3><div id="metodos"></div></div>
+            <div class="card"><h3 style="margin-top:0">Promociones más usadas</h3><div id="promos"></div></div>
+            <div class="card"><h3 style="margin-top:0">Atención a clientes</h3><div id="tickets"></div></div>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">¿Qué se actualiza al comprar? (integración CRM · SCM · ERP)</h3>
+            <div class="flujo-integ">
+                <div><span class="mod">ERP</span><strong>Se crea la orden</strong>La compra en línea es una orden de cliente del ERP, con su bitácora de procesos.</div>
+                <div><span class="mod">SCM</span><strong>Se descuenta el stock</strong>Movimiento de salida por producto y reabasto automático si cae al mínimo.</div>
+                <div><span class="mod">CRM</span><strong>Se asocia al cliente</strong>Métricas, etapa (Prospecto → Activo), puntos del Club e historial.</div>
+                <div><span class="mod">Pagos</span><strong>Se registra el pago</strong>Tarjeta, PayPal, transferencia o Monedero, con su referencia.</div>
+                <div><span class="mod">Monedero</span><strong>Se actualiza el saldo</strong>Cargo con movimiento ligado al pedido; si se cancela, se reembolsa.</div>
+                <div><span class="mod">Reportes</span><strong>Queda en los reportes</strong>Ventas, impuestos, promociones y métodos de pago en ERP y aquí.</div>
+            </div>
+        </div>
+    </main>
+</div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('tienda');
+document.getElementById('topbar').innerHTML = adminHeader('Tienda en línea', 'Negocio electrónico: ventas del mes, carritos, pagos, promociones y atención a clientes.');
+renderModuloTiles('tiles', 'Tienda', 'tienda');
+const MET = { tarjeta: 'Tarjeta', paypal: 'PayPal', transferencia: 'Transferencia', monedero: 'Monedero', efectivo: 'Efectivo', tienda: 'Pago en tienda' };
+const EST = { abierto: 'Abiertos', en_proceso: 'En proceso', respondido: 'Respondidos', resuelto: 'Resueltos', cerrado: 'Cerrados' };
+
+(async () => {
+    const d = await api('/admin/tienda/resumen');
+    const m = d.mes, c = d.carritos;
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Ventas en línea del mes</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(m.ventas, 2)}</div><div class="stat-sub">${m.pedidos} pedido(s) · ticket ${formatoMoneda(m.ticket_promedio)}</div></div>
+        <div class="stat-card"><div class="stat-label">Impuestos cobrados (mes)</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(d.impuestos_mes, 2)}</div></div>
+        <div class="stat-card"><div class="stat-label">Ahorro por promociones</div><div class="stat-value" style="font-size:1.35rem;color:var(--danger)">${formatoMoneda(m.ahorro_promociones, 2)}</div><div class="stat-sub">${m.pedidos_con_promocion} pedido(s) · ${d.promociones_vigentes} promo(s) vigentes</div></div>
+        <div class="stat-card"><div class="stat-label">Carritos activos</div><div class="stat-value">${c.activos}</div><div class="stat-sub">${formatoMoneda(c.valor_activos)} sin pagar · ${c.sin_movimiento} sin moverse 24 h</div></div>
+        <div class="stat-card"><div class="stat-label">Conversión de carritos</div><div class="stat-value">${c.tasa_conversion}%</div><div class="stat-sub">${c.convertidos} carrito(s) pagados</div></div>
+        <div class="stat-card"><div class="stat-label">Pagos pendientes</div><div class="stat-value" style="color:var(--warning)">${m.pagos_pendientes}</div><div class="stat-sub">transferencias por confirmar</div></div>`;
+    const max = Math.max(1, ...d.ventas_por_dia.map((x) => x.ventas));
+    document.getElementById('ventas').innerHTML = `<div class="barras-dia">${d.ventas_por_dia.map((x) => `<span title="${x.dia}: ${formatoMoneda(x.ventas)} (${x.pedidos} pedido(s))" style="height:${Math.max(2, Math.round(x.ventas / max * 100))}%"></span>`).join('')}</div>
+        <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--text-muted);margin-top:4px"><span>${d.ventas_por_dia[0].dia.slice(5)}</span><span>hoy</span></div>`;
+    const totalMet = d.por_metodo.reduce((a, x) => a + x.monto, 0) || 1;
+    document.getElementById('metodos').innerHTML = d.por_metodo.length ? d.por_metodo.map((x) => `
+        <div style="margin-bottom:10px"><div class="resumen-linea" style="margin-bottom:3px"><span>${MET[x.metodo_pago] || esc(x.metodo_pago)} · ${x.pagos} pago(s)</span><span class="mono">${formatoMoneda(x.monto, 2)}</span></div>
+        <div class="ship-bar"><span style="width:${Math.round(x.monto / totalMet * 100)}%"></span></div></div>`).join('') : '<p style="color:var(--text-muted)">Sin pagos aún.</p>';
+    document.getElementById('promos').innerHTML = d.top_promociones.length ? d.top_promociones.map((p) => `
+        <div class="resumen-linea"><span>${esc(p.nombre)} · ${p.pedidos} pedido(s)</span><span class="mono" style="color:var(--danger)">-${formatoMoneda(p.ahorro, 2)}</span></div>`).join('')
+        : '<p style="color:var(--text-muted);margin:0">Todavía no hay pedidos con promociones. <a href="/admin/promociones.html">Ver promociones</a></p>';
+    document.getElementById('tickets').innerHTML = d.tickets.length ? d.tickets.map((t) => `
+        <div class="resumen-linea"><span><span class="tag estado-${esc(t.estado)}">${EST[t.estado] || esc(t.estado)}</span></span><span class="mono">${t.total}</span></div>`).join('') + '<a class="btn btn-outline btn-sm" href="/admin/soporte.html" style="margin-top:6px">Ir a los tickets</a>'
+        : '<p style="color:var(--text-muted)">Sin tickets.</p>';
+})();
+</script>
+</body>
+</html>

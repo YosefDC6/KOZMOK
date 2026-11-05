@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Correos enviados · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="filters-bar">
+            <select id="f-tipo">
+                <option value="">Todos</option><option value="compra">Confirmación de compra</option><option value="ticket">Atención a clientes</option>
+                <option value="monedero">Monedero</option><option value="recuperacion">Recuperación de contraseña</option>
+                <option value="seguridad">Avisos de seguridad</option><option value="registro">Bienvenida</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Fecha</th><th>Para</th><th>Asunto</th><th>Tipo</th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="4">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+<div class="modal-overlay" id="modal-correo"><div class="modal" style="max-width:600px" id="modal-correo-body"></div></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('correos');
+document.getElementById('topbar').innerHTML = adminHeader('Correos enviados', 'Sin servidor de correo, los avisos que manda la tienda (confirmación de compra, respuestas a tickets, recargas, recuperación de contraseña) quedan aquí.');
+async function cargar() {
+    const tipo = document.getElementById('f-tipo').value;
+    const lista = await api('/admin/correos' + (tipo ? '?tipo=' + encodeURIComponent(tipo) : ''));
+    document.getElementById('tabla').innerHTML = lista.map((c) => `
+        <tr onclick="ver(${c.id})" style="cursor:pointer">
+            <td style="white-space:nowrap">${formatoFechaHora(c.fecha)}</td>
+            <td>${esc(c.para)}</td>
+            <td><strong>${esc(c.asunto)}</strong><div style="font-size:.76rem;color:var(--text-muted)">${esc(c.vista)}…</div></td>
+            <td><span class="tag">${esc(c.tipo)}</span></td>
+        </tr>`).join('') || '<tr><td colspan="4">No hay correos todavía.</td></tr>';
+}
+async function ver(id) {
+    const c = await api(`/admin/correos/${id}`);
+    // El cuerpo se muestra como texto; los enlaces se pintan aparte para poder abrirlos.
+    const enlaces = (c.cuerpo.match(/https?:\/\/[^\s]+/g) || []).filter((u) => u.startsWith(location.origin));
+    document.getElementById('modal-correo-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-correo').classList.remove('open')" aria-label="Cerrar">${icon('x', 20)}</button>
+        <h3 style="margin-bottom:4px">${esc(c.asunto)}</h3>
+        <p style="margin:0 0 12px;font-size:.84rem;color:var(--text-muted)">Para ${esc(c.para)} · ${formatoFechaHora(c.fecha)}</p>
+        <pre style="white-space:pre-wrap;font-family:var(--font-body);font-size:.9rem;background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:14px;margin:0">${esc(c.cuerpo)}</pre>
+        ${enlaces.map((u) => `<a class="btn btn-outline btn-sm" style="margin-top:10px" href="${esc(u)}" target="_blank" rel="noopener">Abrir enlace del correo</a>`).join('')}`;
+    document.getElementById('modal-correo').classList.add('open');
+}
+document.getElementById('f-tipo').addEventListener('change', cargar);
+cargar();
+</script>
+</body>
+</html>

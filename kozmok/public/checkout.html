@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Checkout y pago · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="container" style="padding-top:36px;padding-bottom:60px;max-width:1160px">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="card" data-ic-size="28"></div>
+        <h1 id="co-titulo">Checkout y método de pago</h1>
+        <p id="co-sub">Datos de entrega, impuestos y forma de pago.</p>
+    </div>
+    <div id="pasos"></div>
+    <div id="checkout"><div class="empty-state">Cargando tu compra…</div></div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/compra.js"></script>
+<script>
+document.getElementById('pasos').innerHTML = pasosCompra('checkout');
+const MARCA = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', otra: 'Tarjeta' };
+let CLI = null, COT = null, DIRS = [], TARJETAS = [], PUNTOS = 0, PROCESANDO = false;
+
+function metodoSel() { const r = document.querySelector('input[name="metodo"]:checked'); return r ? r.value : null; }
+
+async function iniciar() {
+    CLI = Sesion.cliente() || await Sesion.sincronizar();
+    if (!CLI) { irALogin('Inicia sesión para pagar tu carrito'); return; }
+    try {
+        [COT, DIRS, TARJETAS] = await Promise.all([
+            api('/pagos/cotizar', { method: 'POST', body: { puntos_canjear: 0 } }),
+            api(`/clientes/${CLI.id}/direcciones`).catch(() => []),
+            api(`/clientes/${CLI.id}/metodos-pago`).catch(() => []),
+        ]);
+    } catch (e) {
+        if (e.status === 401) { irALogin('Tu sesión terminó. Inicia sesión de nuevo.'); return; }
+        document.getElementById('checkout').innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return;
+    }
+    if (!COT.items.length) { location.replace('/carrito.html'); return; }
+    if (COT.items.some((i) => !i.disponible)) { toast('Hay productos sin stock suficiente en tu carrito', 'warn'); location.replace('/carrito.html'); return; }
+    pintar();
+}
+
+function pintar() {
+    const m = COT.monedero;
+    const tarjetasVig = TARJETAS.filter((t) => t.tipo === 'tarjeta');
+    const maxPuntos = Math.min(COT.puntos_disponibles - (COT.puntos_disponibles % 100), Math.floor(COT.resumen.subtotal / COT.valor_punto / 100) * 100);
+    document.getElementById('checkout').innerHTML = `
+    <form class="checkout-grid" id="form-checkout" novalidate>
+        <div>
+            <div class="card checkout-sec">
+                <h3>${icon('user', 18)} Datos de entrega</h3>
+                <div class="field"><label for="ce-nombre">Nombre completo *</label><input id="ce-nombre" required maxlength="150" autocomplete="name" value="${esc(CLI.nombre)}" /></div>
+                ${DIRS.length ? `<div class="field"><label for="ce-dir-guardada">Dirección guardada</label>
+                    <select id="ce-dir-guardada">
+                        ${DIRS.map((d) => `<option value="${d.id}" ${d.predeterminada ? 'selected' : ''}>${esc(d.alias || 'Dirección')} · ${esc(d.calle)}</option>`).join('')}
+                        <option value="">— Escribir otra dirección —</option>
+                    </select></div>` : ''}
+                <div class="field"><label for="ce-direccion">Dirección *</label><input id="ce-direccion" required maxlength="160" autocomplete="street-address" placeholder="Calle, número, colonia, ciudad y C.P." /></div>
+                <div class="field" style="margin-bottom:0"><label for="ce-notas">Notas para la entrega (opcional)</label><input id="ce-notas" maxlength="200" placeholder="Entre calles, horario, referencias…" /></div>
+            </div>
+
+            <div class="card checkout-sec">
+                <h3>${icon('card', 18)} Método de pago</h3>
+                <div class="metodos-pago">
+                    <label class="metodo-opcion"><input type="radio" name="metodo" value="tarjeta" />
+                        <span class="mo-ico">${icon('card', 18)}</span><span class="mo-txt"><strong>Tarjeta de crédito / débito</strong><small>Visa, Mastercard o American Express · se cobra al instante</small></span></label>
+                    <div class="metodo-detalle" data-para="tarjeta" hidden>
+                        <div class="field"><label for="tj-sel">Tarjeta</label>
+                            <select id="tj-sel">
+                                ${tarjetasVig.map((t) => `<option value="${t.id}" ${t.predeterminada ? 'selected' : ''}>${MARCA[t.marca] || 'Tarjeta'} ****${esc(t.ultimos4)} · vence ${String(t.expira_mes).padStart(2, '0')}/${t.expira_anio}</option>`).join('')}
+                                <option value="nueva">＋ Usar otra tarjeta</option>
+                            </select></div>
+                        <div id="tj-nueva" hidden>
+                            <div class="field"><label for="tj-num">Número de tarjeta</label><input id="tj-num" inputmode="numeric" maxlength="23" autocomplete="cc-number" placeholder="0000 0000 0000 0000" /></div>
+                            <div class="field"><label for="tj-titular">Titular</label><input id="tj-titular" autocomplete="cc-name" placeholder="Nombre como aparece en la tarjeta" /></div>
+                            <div class="field-row">
+                                <div class="field"><label for="tj-mes">Mes</label><select id="tj-mes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select></div>
+                                <div class="field"><label for="tj-anio">Año</label><select id="tj-anio">${Array.from({ length: 12 }, (_, i) => { const a = new Date().getFullYear() + i; return `<option value="${a}">${a}</option>`; }).join('')}</select></div>
+                                <div class="field"><label for="tj-cvv">CVV</label><input id="tj-cvv" type="password" inputmode="numeric" maxlength="4" autocomplete="cc-csc" placeholder="123" /></div>
+                            </div>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tj-guardar" style="width:auto" /> Guardar esta tarjeta (solo marca y últimos 4 dígitos)</label>
+                        </div>
+                        <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Pago simulado: no hay cargo real. El número completo y el CVV nunca se guardan. Para probar un rechazo usa una tarjeta que termine en 0002.</p>
+                    </div>
+
+                    <label class="metodo-opcion"><input type="radio" name="metodo" value="paypal" />
+                        <span class="mo-ico">${icon('mail', 18)}</span><span class="mo-txt"><strong>PayPal</strong><small>Paga con el saldo o las tarjetas de tu cuenta PayPal</small></span></label>
+                    <div class="metodo-detalle" data-para="paypal" hidden>
+                        <div class="field" style="margin:0"><label for="pp-correo">Correo de tu cuenta PayPal</label><input id="pp-correo" type="email" value="${esc(CLI.correo)}" /></div>
+                    </div>
+
+                    <label class="metodo-opcion"><input type="radio" name="metodo" value="transferencia" />
+                        <span class="mo-ico">${icon('layers', 18)}</span><span class="mo-txt"><strong>Transferencia bancaria</strong><small>SPEI · te damos una referencia; se confirma al recibir el pago</small></span></label>
+                    <div class="metodo-detalle" data-para="transferencia" hidden>
+                        <p style="font-size:.84rem;color:var(--text-muted);margin:0">Tienes 3 días para transferir. Apartamos tu stock mientras tanto; si no llega el pago, el pedido se cancela solo.</p>
+                    </div>
+
+                    <label class="metodo-opcion ${m.estado !== 'activo' ? 'deshabilitado' : ''}"><input type="radio" name="metodo" value="monedero" ${m.estado !== 'activo' ? 'disabled' : ''} />
+                        <span class="mo-ico" style="color:var(--success);background:color-mix(in srgb,var(--success) 14%,transparent)">${icon('wallet', 18)}</span>
+                        <span class="mo-txt"><strong>Monedero (Saldo: <span class="mono" id="mo-saldo">${formatoMoneda(m.saldo, 2)}</span>)</strong>
+                        <small id="mo-nota">${m.estado !== 'activo' ? 'Tu monedero está bloqueado' : m.alcanza ? 'Te alcanza para esta compra' : 'Saldo insuficiente para esta compra'} · <a href="/monedero.html">Recargar</a></small></span></label>
+                </div>
+            </div>
+
+            ${maxPuntos >= 100 ? `
+            <div class="card checkout-sec">
+                <h3>${icon('star', 18)} Puntos del Club</h3>
+                <div class="field" style="margin:0">
+                    <label for="co-puntos">Tienes ${COT.puntos_disponibles.toLocaleString('es-MX')} puntos (100 puntos = ${formatoMoneda(100 * COT.valor_punto)})</label>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <input type="number" id="co-puntos" min="0" max="${maxPuntos}" step="100" value="${PUNTOS}" style="width:130px" />
+                        <span style="font-size:.84rem;color:var(--text-muted)">máximo ${maxPuntos.toLocaleString('es-MX')} en esta compra</span>
+                    </div>
+                </div>
+            </div>` : ''}
+        </div>
+
+        <div class="card cart-resumen">
+            <h3 class="cart-resumen-tit">Resumen de pago</h3>
+            <div style="margin-bottom:12px">
+                ${COT.items.map((i) => `<div class="resumen-linea muted"><span>${esc(i.nombre)} × ${i.cantidad}</span><span class="mono">${formatoMoneda(i.subtotal + Number(i.garantia_costo || 0), 2)}</span></div>`).join('')}
+            </div>
+            <div id="co-resumen">${resumenHTML(COT.resumen)}</div>
+            <button type="submit" class="btn btn-primary btn-lg" style="width:100%" id="btn-pagar">${icon('lock', 16)} Pagar</button>
+            <a class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" href="/carrito.html">← Regresar al carrito</a>
+        </div>
+    </form>`;
+
+    // Dirección guardada → campo de dirección
+    const sel = document.getElementById('ce-dir-guardada');
+    const usarDir = () => {
+        const inp = document.getElementById('ce-direccion');
+        const d = sel && DIRS.find((x) => String(x.id) === sel.value);
+        if (d) { inp.value = [d.calle, d.ciudad, d.estado, d.codigo_postal].filter(Boolean).join(', '); inp.readOnly = true; }
+        else { inp.readOnly = false; if (sel) inp.value = ''; }
+    };
+    if (sel) { sel.addEventListener('change', usarDir); usarDir(); }
+
+    document.querySelectorAll('input[name="metodo"]').forEach((r) => r.addEventListener('change', cambioMetodo));
+    const tjSel = document.getElementById('tj-sel');
+    tjSel.addEventListener('change', () => { document.getElementById('tj-nueva').hidden = tjSel.value !== 'nueva'; });
+    document.getElementById('tj-nueva').hidden = tjSel.value !== 'nueva';
+    document.getElementById('tj-num').addEventListener('input', (e) => {
+        const d = e.target.value.replace(/\D/g, '').slice(0, 19);
+        e.target.value = d.replace(/(.{4})/g, '$1 ').trim();
+    });
+    const pts = document.getElementById('co-puntos');
+    if (pts) pts.addEventListener('change', recotizar);
+    document.getElementById('form-checkout').addEventListener('submit', (e) => { e.preventDefault(); pagar(); });
+    const inicial = m.alcanza ? 'monedero' : (tarjetasVig.length ? 'tarjeta' : null);
+    if (inicial) { document.querySelector(`input[name="metodo"][value="${inicial}"]`).checked = true; cambioMetodo(); }
+}
+
+function cambioMetodo() {
+    const m = metodoSel();
+    document.querySelectorAll('.metodo-opcion').forEach((el) => el.classList.toggle('sel', el.querySelector('input').checked));
+    document.querySelectorAll('.metodo-detalle').forEach((el) => { el.hidden = el.dataset.para !== m; });
+    const btn = document.getElementById('btn-pagar');
+    btn.innerHTML = `${icon(m === 'monedero' ? 'wallet' : 'lock', 16)} ${m === 'monedero' ? 'Pagar con Monedero' : m === 'transferencia' ? 'Generar referencia de pago' : 'Pagar'} · ${formatoMoneda(COT.resumen.total, 2)}`;
+}
+
+async function recotizar() {
+    const el = document.getElementById('co-puntos');
+    PUNTOS = el ? Math.max(0, Number(el.value) || 0) : 0;
+    try {
+        COT = await api('/pagos/cotizar', { method: 'POST', body: { puntos_canjear: PUNTOS } });
+        if (el) el.value = COT.puntos_canjear;
+        document.getElementById('co-resumen').innerHTML = resumenHTML(COT.resumen);
+        const m = COT.monedero;
+        document.getElementById('mo-nota').innerHTML = `${m.alcanza ? 'Te alcanza para esta compra' : 'Saldo insuficiente para esta compra'} · <a href="/monedero.html">Recargar</a>`;
+        cambioMetodo();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+// Datos del método elegido (se validan aquí y otra vez en el servidor).
+function datosPago() {
+    const metodo = metodoSel();
+    if (!metodo) { toast('Elige un método de pago', 'warn'); return null; }
+    const nombre = document.getElementById('ce-nombre').value.trim();
+    const dir = document.getElementById('ce-direccion').value.trim();
+    if (nombre.length < 3) { toast('Escribe el nombre de quien recibe', 'warn'); return null; }
+    if (dir.length < 8) { toast('Escribe la dirección de entrega completa', 'warn'); return null; }
+    const body = { metodo, nombre_entrega: nombre, direccion_envio: dir, notas: document.getElementById('ce-notas').value.trim(), puntos_canjear: PUNTOS };
+    if (metodo === 'tarjeta') {
+        const sel = document.getElementById('tj-sel').value;
+        if (sel !== 'nueva') body.metodo_pago_id = Number(sel);
+        else {
+            body.tarjeta = {
+                numero: document.getElementById('tj-num').value.replace(/\s/g, ''),
+                titular: document.getElementById('tj-titular').value.trim(),
+                expira_mes: Number(document.getElementById('tj-mes').value),
+                expira_anio: Number(document.getElementById('tj-anio').value),
+                cvv: document.getElementById('tj-cvv').value.trim(),
+                guardar: document.getElementById('tj-guardar').checked,
+            };
+            if (body.tarjeta.numero.length < 13) { toast('Revisa el número de tarjeta', 'warn'); return null; }
+            if (!/^\d{3,4}$/.test(body.tarjeta.cvv)) { toast('El CVV debe tener 3 o 4 dígitos', 'warn'); return null; }
+        }
+    }
+    if (metodo === 'paypal') body.paypal_correo = document.getElementById('pp-correo').value.trim();
+    if (metodo === 'monedero' && !COT.monedero.alcanza) { toast('Tu saldo no alcanza. Recarga tu monedero o elige otro método.', 'warn'); return null; }
+    return body;
+}
+
+function pagar() {
+    const body = datosPago();
+    if (!body) return;
+    if (body.metodo === 'monedero') return pasoMonedero(body);
+    return procesar(body);
+}
+
+// Paso 6: Pago con Monedero (validación y confirmación del saldo).
+function pasoMonedero(body) {
+    const m = COT.monedero, total = COT.resumen.total;
+    document.getElementById('co-titulo').textContent = 'Pago con Monedero';
+    document.getElementById('co-sub').textContent = 'Revisa tu saldo antes de confirmar.';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.getElementById('checkout').innerHTML = `
+        <div class="card monedero-pago">
+            <span class="mp-ico">${icon('wallet', 30)}</span>
+            <h3 style="margin:0">Pago con Monedero</h3>
+            <div class="mp-tabla">
+                <div><span>Saldo disponible</span><span class="mono">${formatoMoneda(m.saldo, 2)}</span></div>
+                <div><span>Total a pagar</span><span class="mono">${formatoMoneda(total, 2)}</span></div>
+                <div><span>Saldo después del pago</span><span class="mono despues">${formatoMoneda(m.saldo - total, 2)}</span></div>
+            </div>
+            <button class="btn btn-primary btn-lg" style="width:100%" id="btn-confirmar">${icon('check', 16)} Confirmar pago</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" id="btn-regresar">← Cambiar método de pago</button>
+        </div>`;
+    document.getElementById('btn-regresar').addEventListener('click', () => {
+        document.getElementById('co-titulo').textContent = 'Checkout y método de pago';
+        document.getElementById('co-sub').textContent = 'Datos de entrega, impuestos y forma de pago.';
+        pintar();
+    });
+    document.getElementById('btn-confirmar').addEventListener('click', () => procesar(body));
+}
+
+async function procesar(body) {
+    if (PROCESANDO) return;
+    PROCESANDO = true;
+    const btn = document.getElementById('btn-confirmar') || document.getElementById('btn-pagar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Procesando pago…'; }
+    try {
+        const r = await api('/pagos/procesar', { method: 'POST', body });
+        actualizarBadgeCarrito();
+        location.href = `/gracias.html?id=${r.id}`;
+    } catch (e) {
+        PROCESANDO = false;
+        toast(e.message, 'error');
+        if (e.status === 409) { setTimeout(() => location.replace('/carrito.html'), 1200); return; }
+        if (btn) { btn.disabled = false; }
+        if (body.metodo === 'monedero') { COT = await api('/pagos/cotizar', { method: 'POST', body: { puntos_canjear: PUNTOS } }).catch(() => COT); pintar(); }
+        else cambioMetodo();
+    }
+}
+
+iniciar();
+</script>
+</body>
+</html>

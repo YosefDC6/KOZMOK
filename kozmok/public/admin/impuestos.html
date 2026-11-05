@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Impuestos · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+        <div class="table-wrap" style="margin-bottom:16px">
+            <table>
+                <thead><tr><th>Impuesto</th><th>Porcentaje</th><th>Estado</th><th>Recaudado (pedidos cobrados)</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="5">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+        <div class="card" style="max-width:520px">
+            <h3 style="margin-top:0">Calculadora del checkout</h3>
+            <p style="font-size:.86rem;color:var(--text-muted)">Así se desglosa una compra con los impuestos activos (subtotal × porcentaje).</p>
+            <div class="field"><label for="calc">Subtotal</label><input id="calc" type="number" min="0" value="1000" /></div>
+            <div id="calc-res"></div>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-imp"><div class="modal" style="max-width:440px" id="modal-imp-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('impuestos');
+document.getElementById('topbar').innerHTML = adminHeader('Impuestos', 'Configuración de impuestos: se aplican solos en el checkout de la tienda y en las órdenes del ERP.',
+    '<button class="btn btn-primary" onclick="abrir()">Nuevo impuesto</button>');
+let IMP = [];
+
+async function cargar() {
+    IMP = await api('/admin/impuestos');
+    const activos = IMP.filter((i) => i.estado === 'activo');
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Tasa aplicada en el checkout</div><div class="stat-value">${activos.reduce((a, i) => a + i.porcentaje, 0)}%</div><div class="stat-sub">${activos.map((i) => esc(i.nombre)).join(' + ') || 'Sin impuestos activos'}</div></div>
+        <div class="stat-card"><div class="stat-label">Impuestos registrados</div><div class="stat-value">${IMP.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Recaudado total</div><div class="stat-value" style="font-size:1.35rem">${formatoMoneda(IMP.reduce((a, i) => a + i.recaudado, 0), 2)}</div></div>`;
+    document.getElementById('tabla').innerHTML = IMP.map((i) => `
+        <tr>
+            <td><strong>${esc(i.nombre)}</strong><div style="color:var(--text-muted);font-size:.78rem">${esc(i.descripcion || '')}</div></td>
+            <td class="mono">${i.porcentaje}%</td>
+            <td><span class="tag ${i.estado === 'activo' ? 'ok' : ''}">${i.estado === 'activo' ? 'Activo' : 'Inactivo'}</span></td>
+            <td class="mono">${formatoMoneda(i.recaudado, 2)}</td>
+            <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="abrir(${i.id})">Editar</button>
+                <button class="btn btn-ghost btn-sm" onclick="alternar(${i.id})">${i.estado === 'activo' ? 'Desactivar' : 'Activar'}</button></td>
+        </tr>`).join('');
+    calcular();
+}
+
+function calcular() {
+    const sub = Number(document.getElementById('calc').value) || 0;
+    const activos = IMP.filter((i) => i.estado === 'activo');
+    const lineas = activos.map((i) => ({ n: i.nombre, p: i.porcentaje, m: Math.round(sub * i.porcentaje) / 100 }));
+    const total = sub + lineas.reduce((a, l) => a + l.m, 0);
+    document.getElementById('calc-res').innerHTML = `
+        <div class="resumen-linea"><span>Subtotal</span><span class="mono">${formatoMoneda(sub, 2)}</span></div>
+        ${lineas.map((l) => `<div class="resumen-linea muted"><span>${esc(l.n)} (${l.p}%)</span><span class="mono">${formatoMoneda(l.m, 2)}</span></div>`).join('')}
+        <div class="resumen-linea total" style="margin-bottom:0"><span>Total</span><span class="mono">${formatoMoneda(total, 2)}</span></div>`;
+}
+document.getElementById('calc').addEventListener('input', calcular);
+
+function abrir(id) {
+    const i = IMP.find((x) => x.id === id) || { estado: 'activo', porcentaje: 16 };
+    document.getElementById('modal-imp-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-imp').classList.remove('open')" aria-label="Cerrar">${icon('x', 20)}</button>
+        <h3>${id ? 'Editar impuesto' : 'Nuevo impuesto'}</h3>
+        <div class="field"><label>Nombre</label><input id="im-nombre" maxlength="60" value="${esc(i.nombre || '')}" placeholder="IVA" /></div>
+        <div class="field"><label>Descripción</label><input id="im-desc" maxlength="200" value="${esc(i.descripcion || '')}" /></div>
+        <div class="field"><label>Porcentaje</label><input id="im-pct" type="number" min="0" max="100" step="0.01" value="${i.porcentaje}" /></div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="im-activo" style="width:auto" ${i.estado === 'activo' ? 'checked' : ''} /> Activo (se cobra en el checkout)</label>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px" onclick="guardar(${id || 0})">Guardar</button>`;
+    document.getElementById('modal-imp').classList.add('open');
+}
+async function guardar(id) {
+    const body = { nombre: document.getElementById('im-nombre').value.trim(), descripcion: document.getElementById('im-desc').value.trim(),
+        porcentaje: Number(document.getElementById('im-pct').value), estado: document.getElementById('im-activo').checked ? 'activo' : 'inactivo' };
+    try {
+        const r = await api(id ? `/impuestos/${id}` : '/impuestos', { method: id ? 'PUT' : 'POST', body });
+        toast(`${r.message}. Tasa en el checkout: ${r.tasa_total}%`, 'ok');
+        document.getElementById('modal-imp').classList.remove('open'); cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+async function alternar(id) {
+    const i = IMP.find((x) => x.id === id);
+    try { await api(`/impuestos/${id}`, { method: 'PUT', body: { ...i, estado: i.estado === 'activo' ? 'inactivo' : 'activo' } }); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+cargar();
+</script>
+</body>
+</html>

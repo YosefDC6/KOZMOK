@@ -120,7 +120,7 @@ function renderTablaComparativa() {
     );
     document.getElementById('tabla-comparativa').innerHTML = lista.length ? lista.map((p) => `
         <tr>
-            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+            <td>${esc(p.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
             <td>${p.categoria_nombre || '—'}</td>
             <td class="mono ${p.stock === 0 ? 'stock-out' : p.stock <= p.stock_minimo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
             <td class="mono">${p.stock_minimo}</td>
@@ -134,7 +134,7 @@ async function cargarProductos() {
 
     const actual = document.getElementById('lg-producto').value;
     document.getElementById('lg-producto').innerHTML = PRODUCTOS_LG.map((p) =>
-        `<option value="${p.id}">${p.nombre} — ${p.restock === 'pull' ? 'Pull' : 'Push'}</option>`
+        `<option value="${p.id}">${esc(p.nombre)} — ${p.restock === 'pull' ? 'Pull' : 'Push'}</option>`
     ).join('');
     if (actual) document.getElementById('lg-producto').value = actual;
 

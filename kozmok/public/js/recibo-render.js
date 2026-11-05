@@ -48,7 +48,7 @@
             bloquePago = `
                 <div class="rec-pago pagado">
                     <h3>${ic('check', 16)} Pago confirmado</h3>
-                    <p>Método: ${d.metodo_pago || '—'} · ${fechaHora(d.fecha_confirmacion || d.fecha_pedido)}</p>
+                    <p>Método: ${esc(d.metodo_pago || '—')}${d.pago && d.pago.referencia ? ` · Ref. ${esc(d.pago.referencia)}` : ''} · ${fechaHora(d.fecha_confirmacion || d.fecha_pedido)}</p>
                 </div>`;
         }
 
@@ -88,15 +88,15 @@
                 </div>
 
                 <div class="rec-partes">
-                    <div><h4>Cliente</h4><p>${d.cliente_nombre}<br>${d.cliente_correo}</p></div>
-                    <div><h4>Envío a</h4><p>${d.direccion_envio || '—'}</p></div>
+                    <div><h4>Cliente</h4><p>${esc(d.cliente_nombre)}<br>${esc(d.cliente_correo || '')}</p></div>
+                    <div><h4>Envío a</h4><p>${esc(d.direccion_envio || '—')}</p></div>
                 </div>
 
                 <table class="rec-items">
                     <thead><tr><th>Producto</th><th>Cant.</th><th>P. unit.</th><th>Importe</th></tr></thead>
                     <tbody>
                         ${d.items.map((i) => `<tr>
-                            <td>${i.nombre}</td>
+                            <td>${esc(i.nombre)}</td>
                             <td class="mono">${i.cantidad}</td>
                             <td class="mono">${money(i.precio_unitario)}</td>
                             <td class="mono">${money(i.subtotal)}</td>
@@ -106,7 +106,8 @@
 
                 <div class="rec-tot">
                     <div><span>Subtotal</span><span class="mono">${money(d.subtotal)}</span></div>
-                    <div><span>IVA (16%)</span><span class="mono">${money(d.impuestos)}</span></div>
+                    ${(d.impuestos_detalle && d.impuestos_detalle.length ? d.impuestos_detalle : [{ nombre: 'IVA', porcentaje: 16, monto: d.impuestos }])
+                        .map((t) => `<div><span>${esc(t.nombre)} (${Number(t.porcentaje)}%)</span><span class="mono">${money(t.monto)}</span></div>`).join('')}
                     <div><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : money(d.envio)}</span></div>
                     ${Number(d.descuento) > 0 ? `<div class="rec-desc"><span>Descuento Club de puntos</span><span class="mono">−${money(d.descuento)}</span></div>` : ''}
                     <div class="rec-total"><span>Total</span><span class="mono">${money(d.total)}</span></div>

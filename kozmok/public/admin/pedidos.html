@@ -62,7 +62,7 @@ async function cargarPedidos() {
     document.getElementById('tabla-pedidos').innerHTML = pedidos.map((p) => `
         <tr onclick="verDetalle(${p.id})" style="cursor:pointer">
             <td class="mono">${p.numero_orden}</td>
-            <td>${p.cliente_nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.cliente_correo}</div></td>
+            <td>${esc(p.cliente_nombre)}<div style="color:var(--text-muted);font-size:.78rem">${esc(p.cliente_correo)}</div></td>
             <td>${formatoFecha(p.fecha_pedido)}</td>
             <td class="mono">${formatoMoneda(p.total)}</td>
             <td><span class="estado-pill e-${p.estado}">${p.estado}</span></td>

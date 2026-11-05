@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Monedero · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
+        <div id="pendientes"></div>
+        <div class="card" style="margin-bottom:16px">
+            <h3 style="margin-top:0">Uso del monedero (últimos 6 meses)</h3>
+            <div id="mensual"></div>
+        </div>
+        <div class="filters-bar"><input id="f-buscar" placeholder="Buscar cliente o correo…" /></div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Cliente</th><th>Saldo</th><th>Recargado</th><th>Consumido</th><th>Último movimiento</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-mon"><div class="modal" style="max-width:640px" id="modal-mon-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('monedero');
+document.getElementById('topbar').innerHTML = adminHeader('Monedero', 'Consulta de saldos y recargas, ajustes manuales (con motivo) y reportes de uso del monedero electrónico.');
+let T = null;
+
+async function cargar() {
+    const q = document.getElementById('f-buscar').value.trim();
+    const d = await api('/admin/monederos' + (q ? '?busqueda=' + encodeURIComponent(q) : ''));
+    const k = d.kpis;
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Saldo total en monederos</div><div class="stat-value" style="font-size:1.4rem;color:var(--success)">${formatoMoneda(k.saldo_total, 2)}</div><div class="stat-sub">${k.con_saldo} cliente(s) con saldo</div></div>
+        <div class="stat-card"><div class="stat-label">Recargas del mes</div><div class="stat-value" style="font-size:1.4rem">${formatoMoneda(k.recargas_mes, 2)}</div></div>
+        <div class="stat-card"><div class="stat-label">Consumos del mes</div><div class="stat-value" style="font-size:1.4rem">${formatoMoneda(k.consumos_mes, 2)}</div></div>
+        <div class="stat-card"><div class="stat-label">Compras pagadas con monedero</div><div class="stat-value">${k.compras_con_monedero}</div></div>`;
+    document.getElementById('pendientes').innerHTML = d.pendientes.length ? `
+        <div class="card" style="margin-bottom:16px;border-color:var(--warning)">
+            <h3 style="margin-top:0">${icon('clock', 16)} Recargas por transferencia por confirmar (${d.pendientes.length})</h3>
+            ${d.pendientes.map((p) => `
+                <div class="sesion-fila"><div><strong>${esc(p.cliente_nombre)}</strong> · <span class="mono">${formatoMoneda(p.monto, 2)}</span>
+                    <small>Referencia <span class="mono">${esc(p.referencia)}</span> · ${formatoFechaHora(p.fecha)}</small></div>
+                    <div style="display:flex;gap:6px"><button class="btn btn-primary btn-sm" onclick="movimiento(${p.id}, 'confirmar')">Confirmar depósito</button>
+                    <button class="btn btn-ghost btn-sm" onclick="movimiento(${p.id}, 'rechazar')">Rechazar</button></div></div>`).join('')}
+        </div>` : '';
+    const max = Math.max(1, ...d.mensual.map((m) => Math.max(m.recargas, m.consumos)));
+    document.getElementById('mensual').innerHTML = `<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:end;height:150px">
+        ${d.mensual.map((m) => `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end">
+            <div style="display:flex;gap:3px;align-items:flex-end;height:110px">
+                <span title="Recargas ${formatoMoneda(m.recargas)}" style="width:14px;border-radius:4px 4px 0 0;background:var(--success);height:${Math.round(m.recargas / max * 100)}%"></span>
+                <span title="Consumos ${formatoMoneda(m.consumos)}" style="width:14px;border-radius:4px 4px 0 0;background:var(--accent);height:${Math.round(m.consumos / max * 100)}%"></span>
+            </div><span style="font-size:.72rem;color:var(--text-muted)">${m.mes.slice(5)}/${m.mes.slice(2, 4)}</span></div>`).join('')}</div>
+        <p style="font-size:.78rem;color:var(--text-muted);margin:8px 0 0"><span style="color:var(--success)">■</span> Recargas &nbsp; <span style="color:var(--accent)">■</span> Consumos en compras</p>`;
+    document.getElementById('tabla').innerHTML = d.monederos.map((m) => `
+        <tr>
+            <td><strong>${esc(m.cliente_nombre)}</strong><div style="color:var(--text-muted);font-size:.78rem">${esc(m.cliente_correo)}</div></td>
+            <td class="mono" style="color:${m.saldo > 0 ? 'var(--success)' : 'inherit'}">${formatoMoneda(m.saldo, 2)}</td>
+            <td class="mono">${formatoMoneda(m.recargado, 2)}</td>
+            <td class="mono">${formatoMoneda(m.consumido, 2)}</td>
+            <td>${m.ultimo_movimiento ? formatoFecha(m.ultimo_movimiento) : '—'}</td>
+            <td><span class="tag ${m.estado === 'activo' ? 'ok' : 'mal'}">${m.estado === 'activo' ? 'Activo' : 'Bloqueado'}</span></td>
+            <td><button class="btn btn-outline btn-sm" onclick="detalle(${m.cliente_id})">Ver / ajustar</button></td>
+        </tr>`).join('') || '<tr><td colspan="7">Sin resultados.</td></tr>';
+}
+let tBuscar;
+document.getElementById('f-buscar').addEventListener('input', () => { clearTimeout(tBuscar); tBuscar = setTimeout(cargar, 300); });
+
+async function detalle(cid) {
+    const d = await api(`/admin/monederos/${cid}`);
+    document.getElementById('modal-mon-body').innerHTML = `
+        <button class="modal-close" onclick="cerrar()" aria-label="Cerrar">${icon('x', 20)}</button>
+        <h3 style="margin-bottom:2px">${esc(d.cliente.nombre)}</h3>
+        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${esc(d.cliente.correo)} · saldo <strong class="mono" style="color:var(--success)">${formatoMoneda(d.monedero.saldo, 2)}</strong></p>
+        <div class="card" style="padding:14px;margin-bottom:14px">
+            <strong style="font-size:.9rem">Ajuste manual</strong>
+            <div class="field-row" style="margin-top:8px">
+                <div class="field"><label>Monto (+ abono / − cargo)</label><input id="aj-monto" type="number" step="0.01" placeholder="Ej. 150 o -150" /></div>
+                <div class="field"><label>Motivo</label><input id="aj-motivo" maxlength="140" placeholder="Bonificación por retraso…" /></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-primary btn-sm" onclick="ajustar(${cid})">Aplicar ajuste</button>
+                <button class="btn btn-ghost btn-sm" onclick="estado(${cid}, '${d.monedero.estado === 'activo' ? 'bloqueado' : 'activo'}')">${d.monedero.estado === 'activo' ? 'Bloquear monedero' : 'Activar monedero'}</button>
+            </div>
+        </div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Saldo</th></tr></thead>
+            <tbody>${d.movimientos.map((x) => `<tr><td style="white-space:nowrap">${formatoFecha(x.fecha)}</td>
+                <td>${esc(x.concepto)}${x.estado !== 'aplicado' ? ` <span class="tag mov-${x.estado}">${x.estado}</span>` : ''}${x.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">por ${esc(x.usuario_nombre)}</div>` : ''}</td>
+                <td class="mono mov-monto ${x.monto > 0 ? 'pos' : 'neg'}">${x.monto > 0 ? '+' : '−'}${formatoMoneda(Math.abs(x.monto), 2)}</td>
+                <td class="mono">${x.saldo_nuevo == null ? '—' : formatoMoneda(x.saldo_nuevo, 2)}</td></tr>`).join('') || '<tr><td colspan="4">Sin movimientos.</td></tr>'}</tbody>
+        </table></div>`;
+    document.getElementById('modal-mon').classList.add('open');
+}
+function cerrar() { document.getElementById('modal-mon').classList.remove('open'); }
+async function ajustar(cid) {
+    const body = { monto: Number(document.getElementById('aj-monto').value), motivo: document.getElementById('aj-motivo').value.trim() };
+    try { const r = await api(`/admin/monederos/${cid}/ajuste`, { method: 'POST', body }); toast(r.message, 'ok'); detalle(cid); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function estado(cid, est) {
+    try { const r = await api(`/admin/monederos/${cid}/estado`, { method: 'PUT', body: { estado: est } }); toast(r.message, 'ok'); detalle(cid); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function movimiento(id, accion) {
+    if (!(await confirmar(accion === 'confirmar' ? '¿Confirmas que el depósito llegó? El saldo se suma al monedero del cliente.' : '¿Rechazar esta recarga?', { okText: accion === 'confirmar' ? 'Confirmar' : 'Rechazar', peligro: accion !== 'confirmar' }))) return;
+    try { const r = await api(`/admin/monedero/movimientos/${id}`, { method: 'PUT', body: { accion } }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+cargar();
+</script>
+</body>
+</html>

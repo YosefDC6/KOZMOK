@@ -99,7 +99,7 @@ async function cargarDashboard() {
         ? '<tr><td colspan="3">No hay clientes en riesgo por ahora.</td></tr>'
         : d.clientes_sin_interaccion.map((c) => `
             <tr>
-                <td><span class="cel-persona">${avatarIni(c.nombre)}<span>${c.nombre}<div style="color:var(--text-muted);font-size:.78rem">${c.correo}</div></span></span></td>
+                <td><span class="cel-persona">${avatarIni(c.nombre)}<span>${esc(c.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${esc(c.correo)}</div></span></span></td>
                 <td class="mono">${c.dias_sin_contacto}</td>
                 <td><a href="/admin/cliente.html?id=${c.id}">Ver</a></td>
             </tr>
@@ -111,7 +111,7 @@ async function cargarDashboard() {
         ? '<tr><td colspan="3">Todavía no hay ventas registradas.</td></tr>'
         : vendidos.map((p) => `
             <tr>
-                <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
+                <td>${esc(p.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
                 <td class="mono">${p.unidades_vendidas}</td>
                 <td class="mono ${p.stock === 0 ? 'stock-out' : p.stock <= 5 ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
             </tr>

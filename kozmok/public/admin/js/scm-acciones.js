@@ -64,7 +64,7 @@
             <div class="field"><label>Producto</label>
                 <select id="msa-producto" onchange="ScmAcciones._alCambiarProducto()" ${pedido ? 'disabled' : ''}>
                     <option value="">Selecciona un producto</option>
-                    ${PRODUCTOS.filter((x) => x.activo).map((x) => `<option value="${x.id}" ${Number(pid) === x.id ? 'selected' : ''}>${x.nombre} (stock ${x.stock}/${x.stock_minimo})</option>`).join('')}
+                    ${PRODUCTOS.filter((x) => x.activo).map((x) => `<option value="${x.id}" ${Number(pid) === x.id ? 'selected' : ''}>${esc(x.nombre)} (stock ${x.stock}/${x.stock_minimo})</option>`).join('')}
                 </select>
             </div>
             <div class="field-row">
@@ -134,7 +134,7 @@
         abrirModal(`
             <h3>Nuevo movimiento</h3>
             <div class="field"><label>Producto</label>
-                <select id="msa-producto">${PRODUCTOS.map((p) => `<option value="${p.id}" ${Number(productoId) === p.id ? 'selected' : ''}>${p.nombre} (stock ${p.stock})</option>`).join('')}</select>
+                <select id="msa-producto">${PRODUCTOS.map((p) => `<option value="${p.id}" ${Number(productoId) === p.id ? 'selected' : ''}>${esc(p.nombre)} (stock ${p.stock})</option>`).join('')}</select>
             </div>
             <div class="field"><label>Tipo</label><div style="display:flex;gap:18px;align-items:center;padding:6px 0">${radio('entrada', 'Entrada')}${radio('salida', 'Salida')}</div></div>
             <div class="field-row">
@@ -186,7 +186,7 @@
             </label>`;
         abrirModal(`
             <h3 style="margin-bottom:2px">Abastecimiento</h3>
-            <p style="margin:0 0 14px;color:var(--text-muted);font-size:.85rem">${p.nombre} · stock actual ${p.stock}</p>
+            <p style="margin:0 0 14px;color:var(--text-muted);font-size:.85rem">${esc(p.nombre)} · stock actual ${p.stock}</p>
             <div class="field-row">
                 <div class="field"><label>Stock mínimo</label><input type="number" min="0" id="msa-minimo" value="${p.stock_minimo}" /></div>
                 <div class="field"><label>Costo unitario (proveedor)</label><input type="number" min="0" step="0.01" id="msa-costo-u" value="${p.costo_unitario ?? ''}" /></div>

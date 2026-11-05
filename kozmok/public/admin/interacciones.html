@@ -65,9 +65,9 @@ async function cargar() {
         : rows.map((i) => `
             <tr>
                 <td>${formatoFecha(i.fecha)}</td>
-                <td><a href="/admin/cliente.html?id=${i.cliente_id}&tab=interacciones">${i.cliente_nombre}</a></td>
+                <td><a href="/admin/cliente.html?id=${i.cliente_id}&tab=interacciones">${esc(i.cliente_nombre)}</a></td>
                 <td style="text-transform:capitalize">${i.tipo}</td>
-                <td>${i.descripcion}</td>
+                <td>${esc(i.descripcion)}</td>
                 <td>${i.usuario_nombre || '—'}</td>
             </tr>`).join('');
 }

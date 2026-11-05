@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Seguridad · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<style>
+    .seg-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .seg-tabs button { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-panel); color: var(--text-muted); cursor: pointer; }
+    .seg-tabs button.on { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel)); }
+    .sev-alta { color: var(--danger); border-color: var(--danger); }
+    .sev-media { color: var(--warning); border-color: var(--warning); }
+    .sev-baja { color: var(--text-muted); }
+    .defensas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .defensas .card h4 { margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
+    .defensas ul { margin: 0; padding-left: 18px; font-size: .84rem; color: var(--text-muted); line-height: 1.6; }
+    td.det { max-width: 420px; word-break: break-word; font-size: .82rem; }
+</style>
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"></div>
+        <div class="defensas" id="defensas"></div>
+        <div class="seg-tabs" id="tabs">
+            <button data-t="eventos" class="on">Eventos de seguridad</button>
+            <button data-t="intentos">Intentos de inicio de sesión</button>
+            <button data-t="bloqueos">Bloqueos</button>
+            <button data-t="sesiones">Sesiones activas</button>
+        </div>
+        <div id="contenido"></div>
+    </main>
+</div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('seguridad');
+document.getElementById('topbar').innerHTML = adminHeader('Seguridad', 'Ataques detectados y defensas activas: fuerza bruta, robo de credenciales o de sesión, inyección SQL y XSS.',
+    '<button class="btn btn-outline" onclick="cargar()">Actualizar</button>');
+const TIPO = {
+    inyeccion_sql: 'Inyección SQL', xss: 'XSS (código en un formulario)', fuerza_bruta: 'Fuerza bruta', sesion_robada: 'Sesión robada (otro navegador)',
+    token_invalido: 'Token falso o alterado', sesion_revocada: 'Reuso de sesión cerrada', csrf: 'CSRF (petición de otro sitio)', limite_peticiones: 'Exceso de peticiones',
+    acceso_ajeno: 'Acceso a datos ajenos', cambio_password: 'Cambio de contraseña', recuperacion: 'Recuperación de contraseña', pago_rechazado: 'Pago rechazado',
+    desbloqueo: 'Desbloqueo manual', ajuste_monedero: 'Ajuste de monedero', sesion_revocada_admin: 'Sesión cerrada por admin',
+};
+let D = null, TAB = 'eventos';
+
+async function cargar() {
+    D = await api('/admin/seguridad/resumen');
+    const k = D.kpis, c = D.config;
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Logins fallidos (24 h)</div><div class="stat-value" style="color:var(--danger)">${k.fallidos_24h}</div><div class="stat-sub">${k.exitosos_24h} exitosos</div></div>
+        <div class="stat-card"><div class="stat-label">Bloqueos activos</div><div class="stat-value" style="color:var(--warning)">${k.bloqueos_activos}</div><div class="stat-sub">cuentas o IPs</div></div>
+        <div class="stat-card"><div class="stat-label">Inyección SQL (7 días)</div><div class="stat-value">${k.sqli_7d}</div><div class="stat-sub">intentos ${c.filtro_sql === 'bloquear' ? 'bloqueados' : 'registrados'}</div></div>
+        <div class="stat-card"><div class="stat-label">XSS neutralizados (7 días)</div><div class="stat-value">${k.xss_7d}</div></div>
+        <div class="stat-card"><div class="stat-label">Sesiones rechazadas (7 días)</div><div class="stat-value">${k.sesiones_7d}</div><div class="stat-sub">falsas, robadas o cerradas</div></div>
+        <div class="stat-card"><div class="stat-label">Sesiones activas</div><div class="stat-value">${k.sesiones_activas}</div></div>`;
+    document.getElementById('defensas').innerHTML = `
+        <div class="card"><h4>${icon('lock', 16)} Fuerza bruta</h4><ul>
+            <li>Cuenta bloqueada ${c.bloqueo_cuenta_min} min tras ${c.max_fallos_cuenta} contraseñas equivocadas seguidas.</li>
+            <li>IP bloqueada ${c.bloqueo_ip_min} min tras ${c.max_fallos_ip} fallos en ${c.ventana_min} min (varias cuentas).</li>
+            <li>Máximo 15 intentos por minuto por conexión y retraso progresivo.</li>
+            <li>bcrypt costo ${c.costo_bcrypt} y mismo mensaje exista o no el correo.</li></ul></div>
+        <div class="card"><h4>${icon('shield', 16)} Robo de credenciales y sesión</h4><ul>
+            <li>Cookie HttpOnly + SameSite=Strict: JavaScript no puede leerla.</li>
+            <li>Token aleatorio de 256 bits; en la base solo su hash SHA-256.</li>
+            <li>Vence (${c.horas_sesion_cliente} h tienda, ${c.horas_sesion_equipo} h panel, ${c.inactividad_min_equipo} min sin uso) y se revoca al salir o cambiar contraseña.</li>
+            <li>Atada al navegador: copiada a otro, se rechaza y se revoca.</li></ul></div>
+        <div class="card"><h4>${icon('layers', 16)} Inyección SQL y XSS</h4><ul>
+            <li>Todas las consultas parametrizadas ($1, $2…): el dato nunca se concatena.</li>
+            <li>Filtro de patrones (OR 1=1, UNION SELECT, ; DROP…) en modo <strong>${esc(c.filtro_sql)}</strong>.</li>
+            <li>Ids numéricos validados; la base nunca muestra su error al usuario.</li>
+            <li>HTML eliminado de toda entrada + CSP + escape al mostrar.</li></ul></div>`;
+    pintar();
+}
+
+function pintar() {
+    document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === TAB));
+    const el = document.getElementById('contenido');
+    if (TAB === 'eventos') {
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle</th></tr></thead>
+            <tbody>${D.eventos.map((e) => `<tr>
+                <td style="white-space:nowrap">${formatoFechaHora(e.fecha)}</td>
+                <td><strong>${esc(TIPO[e.tipo] || e.tipo)}</strong>${e.cliente_nombre || e.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${esc(e.cliente_nombre || e.usuario_nombre)}</div>` : ''}</td>
+                <td><span class="tag sev-${esc(e.severidad)}">${esc(e.severidad)}</span></td>
+                <td class="mono" style="font-size:.78rem">${esc(e.ip || '—')}<div style="color:var(--text-muted)">${esc(e.metodo || '')} ${esc(e.ruta || '')}</div><div style="color:var(--text-muted)">${esc(navegadorDe(e.user_agent))}</div></td>
+                <td class="det">${esc(e.detalle)}</td></tr>`).join('') || '<tr><td colspan="5">Sin eventos registrados.</td></tr>'}</tbody></table></div>`;
+    } else if (TAB === 'intentos') {
+        el.innerHTML = `${D.top_ips.length ? `<div class="card" style="margin-bottom:12px"><strong>IPs con más fallos (24 h)</strong>${D.top_ips.map((x) => `<div class="resumen-linea" style="margin-top:6px"><span class="mono">${esc(x.ip)}</span><span>${x.fallos} fallos · ${x.cuentas} cuenta(s)</span></div>`).join('')}</div>` : ''}
+            <div class="table-wrap"><table>
+            <thead><tr><th>Fecha</th><th>Acceso</th><th>Correo</th><th>IP / navegador</th><th>Resultado</th></tr></thead>
+            <tbody>${D.intentos.map((i) => `<tr>
+                <td style="white-space:nowrap">${formatoFechaHora(i.fecha)}</td><td>${i.tipo === 'usuario' ? 'Panel' : 'Tienda'}</td><td>${esc(i.correo)}</td>
+                <td class="mono" style="font-size:.78rem">${esc(i.ip)}<div style="color:var(--text-muted)">${esc(navegadorDe(i.user_agent))}</div></td>
+                <td><span class="tag ${i.exito ? 'ok' : 'mal'}">${i.exito ? 'Correcto' : esc(i.motivo || 'Fallido')}</span></td></tr>`).join('') || '<tr><td colspan="5">Sin intentos.</td></tr>'}</tbody></table></div>`;
+    } else if (TAB === 'bloqueos') {
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr><th>Tipo</th><th>Bloqueado</th><th>Motivo</th><th>Desde</th><th>Hasta</th><th></th></tr></thead>
+            <tbody>${D.bloqueos.map((b) => `<tr>
+                <td>${b.tipo === 'ip' ? 'IP' : 'Cuenta'}</td><td class="mono" style="font-size:.82rem">${esc(b.valor)}</td><td>${esc(b.motivo)}</td>
+                <td style="white-space:nowrap">${formatoFechaHora(b.creado)}</td><td style="white-space:nowrap">${formatoFechaHora(b.hasta)}</td>
+                <td>${b.activo ? `<button class="btn btn-outline btn-sm" onclick="levantar(${b.id})">Desbloquear</button>` : `<span class="tag">${b.levantado ? 'Levantado' + (b.levantado_por_nombre ? ' por ' + esc(b.levantado_por_nombre) : '') : 'Vencido'}</span>`}</td></tr>`).join('') || '<tr><td colspan="6">Sin bloqueos.</td></tr>'}</tbody></table></div>`;
+    } else {
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr><th>Tipo</th><th>Dueño</th><th>IP / navegador</th><th>Inició</th><th>Último uso</th><th></th></tr></thead>
+            <tbody>${D.sesiones.map((s) => `<tr>
+                <td>${s.tipo === 'usuario' ? 'Panel' : 'Tienda'}</td><td>${esc(s.dueno)}<div style="font-size:.74rem;color:var(--text-muted)">${esc(s.correo)}</div></td>
+                <td class="mono" style="font-size:.78rem">${esc(s.ip)}<div style="color:var(--text-muted)">${esc(navegadorDe(s.user_agent))}</div></td>
+                <td style="white-space:nowrap">${formatoFechaHora(s.creada)}</td><td style="white-space:nowrap">${formatoFechaHora(s.ultimo_uso)}</td>
+                <td>${s.actual ? '<span class="tag ok">Tu sesión</span>' : `<button class="btn btn-ghost btn-sm" onclick="revocar(${s.id})">Cerrar</button>`}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+}
+document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => { TAB = b.dataset.t; pintar(); }));
+
+async function levantar(id) {
+    try { const r = await api(`/admin/seguridad/bloqueos/${id}/levantar`, { method: 'POST' }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function revocar(id) {
+    if (!(await confirmar('¿Cerrar esta sesión? La persona tendrá que volver a iniciar sesión.', { okText: 'Cerrar sesión', peligro: true }))) return;
+    try { const r = await api(`/admin/seguridad/sesiones/${id}/revocar`, { method: 'POST' }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+cargar();
+</script>
+</body>
+</html>

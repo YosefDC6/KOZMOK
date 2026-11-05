@@ -18,7 +18,9 @@
         el.className = `toast toast-${tipo}`;
         const nombre = { ok: 'check', error: 'x', info: 'info', warn: 'alert' }[tipo] || 'info';
         const svg = window.icon ? icon(nombre, 16) : '';
-        el.innerHTML = `<span class="toast-ico">${svg}</span><span>${mensaje}</span>`;
+        el.innerHTML = `<span class="toast-ico">${svg}</span><span class="toast-msg"></span>`;
+        // El mensaje va como texto (nunca como HTML): puede traer datos del usuario.
+        el.querySelector('.toast-msg').textContent = String(mensaje == null ? '' : mensaje);
         contenedor().appendChild(el);
         requestAnimationFrame(() => el.classList.add('show'));
         setTimeout(() => {

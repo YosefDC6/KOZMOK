@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="referrer" content="no-referrer" />
+<title>Nueva contraseña · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="auth-wrap">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="lock" data-ic-size="28"></div>
+        <h1>Crea una nueva contraseña</h1>
+        <p>Al guardarla se cierran todas tus sesiones abiertas.</p>
+    </div>
+
+    <div class="card" id="form-card">
+        <form id="form-restablecer">
+            <div class="field">
+                <label for="nueva">Nueva contraseña</label>
+                <input type="password" id="nueva" minlength="8" maxlength="72" required autocomplete="new-password" />
+                <ul class="pass-reglas" id="pass-reglas">
+                    <li data-r="len">8 caracteres o más</li>
+                    <li data-r="may">Mayúsculas y minúsculas</li>
+                    <li data-r="num">Al menos un número</li>
+                    <li data-r="sim">Al menos un símbolo (# ! $ % …)</li>
+                </ul>
+            </div>
+            <div class="field">
+                <label for="repetir">Confirmar contraseña</label>
+                <input type="password" id="repetir" required autocomplete="new-password" />
+            </div>
+            <div id="res-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="btn-guardar">Guardar contraseña</button>
+        </form>
+    </div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+// El token se toma de la URL y se quita de inmediato de la barra de
+// direcciones (no queda en el historial ni se comparte por error).
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+history.replaceState(null, '', '/restablecer.html');
+const err = document.getElementById('res-error');
+if (!/^[A-Za-z0-9_-]{30,60}$/.test(TOKEN)) {
+    err.textContent = 'El enlace no es válido. Pide uno nuevo desde "¿Olvidaste tu contraseña?".';
+    err.hidden = false;
+    document.getElementById('btn-guardar').disabled = true;
+}
+const REGLAS = {
+    len: (pw) => pw.length >= 8, may: (pw) => /[a-z]/.test(pw) && /[A-Z]/.test(pw),
+    num: (pw) => /\d/.test(pw), sim: (pw) => /[^A-Za-z0-9]/.test(pw),
+};
+document.getElementById('nueva').addEventListener('input', (e) => {
+    document.querySelectorAll('#pass-reglas li').forEach((li) => li.classList.toggle('ok', REGLAS[li.dataset.r](e.target.value)));
+});
+document.getElementById('form-restablecer').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nueva = document.getElementById('nueva').value;
+    err.hidden = true;
+    if (Object.values(REGLAS).some((f) => !f(nueva))) { err.textContent = 'La contraseña no cumple todos los requisitos.'; err.hidden = false; return; }
+    if (nueva !== document.getElementById('repetir').value) { err.textContent = 'Las contraseñas no coinciden.'; err.hidden = false; return; }
+    const btn = document.getElementById('btn-guardar');
+    btn.disabled = true;
+    try {
+        const r = await api('/auth/restablecer', { method: 'POST', body: { token: TOKEN, nueva } });
+        localStorage.removeItem('kz_cliente');
+        toast(r.message, 'ok');
+        setTimeout(() => { location.href = '/login.html'; }, 1200);
+    } catch (ex) {
+        err.textContent = ex.message; err.hidden = false; btn.disabled = false;
+    }
+});
+</script>
+</body>
+</html>
