@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mi monedero · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="cuenta-shell">
+    <nav class="cuenta-nav" id="cuenta-nav"></nav>
+    <main class="cuenta-panel" id="cuenta-panel"><div class="empty-state">Cargando…</div></main>
+</div>
+
+<div id="footer-placeholder"></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script src="/js/cuenta.js"></script>
+<script>
+// Mi monedero: saldo en pesos para pagar en la tienda. Se recarga con
+// tarjeta o PayPal (al instante) o por transferencia (se acredita cuando
+// el equipo la confirma). Cada movimiento queda con el saldo que dejó.
+const MONTOS = [100, 200, 500, 1000];
+const TIPO_MOV = {
+    recarga:   { txt: 'Recarga',   ic: 'plus' },
+    compra:    { txt: 'Compra',    ic: 'cart' },
+    reembolso: { txt: 'Reembolso', ic: 'undo' },
+    ajuste:    { txt: 'Ajuste',    ic: 'settings' },
+};
+const METODO_TXT = { tarjeta: 'Tarjeta de crédito / débito', paypal: 'PayPal', transferencia: 'Transferencia bancaria' };
+let MON = null;
+let MONTO = 200;
+let METODO = 'tarjeta';
+
+montarCuenta('monedero', async (panel) => {
+    panel.innerHTML = `
+        <div class="cuenta-head">
+            <h1>Mi monedero</h1>
+            <p>Recarga saldo y úsalo para pagar tus compras en un clic. El saldo no vence.</p>
+        </div>
+        <div class="monedero-grid">
+            <div class="card monedero-saldo" id="mon-saldo"></div>
+            <div class="card monedero-recarga" id="mon-recarga"></div>
+        </div>
+        <h3 style="margin:26px 0 12px">Historial de movimientos</h3>
+        <div class="table-wrap" id="mon-historial"></div>`;
+    await cargarMonedero();
+});
+
+async function cargarMonedero() {
+    MON = await api('/monedero');
+    pintarSaldo();
+    pintarRecarga();
+    pintarHistorial();
+}
+
+function pintarSaldo() {
+    const bloqueado = MON.estado !== 'activo';
+    document.getElementById('mon-saldo').innerHTML = `
+        <div class="ms-ico">${icon('wallet', 26)}</div>
+        <span class="ms-label">Saldo disponible</span>
+        <strong class="ms-valor">${formatoMoneda2(MON.saldo)}</strong>
+        ${MON.saldo_pendiente > 0 ? `<span class="ms-pend">${icon('clock', 13)} ${formatoMoneda2(MON.saldo_pendiente)} por acreditar (transferencia)</span>` : ''}
+        ${bloqueado ? `<span class="ms-pend" style="color:var(--danger)">${icon('lock', 13)} Monedero bloqueado. Escríbenos en Soporte.</span>` : ''}
+        <div class="ms-acciones">
+            <a class="btn btn-outline btn-sm" href="/carrito.html">${icon('cart', 15)} Pagar con monedero</a>
+            <a class="btn btn-ghost btn-sm" href="#mon-historial">Ver historial</a>
+        </div>`;
+}
+
+function pintarRecarga() {
+    const cont = document.getElementById('mon-recarga');
+    if (MON.estado !== 'activo') { cont.innerHTML = '<h3>Recargar monedero</h3><p>Tu monedero está bloqueado, no se puede recargar.</p>'; return; }
+    cont.innerHTML = `
+        <h3>Recargar monedero</h3>
+        <label>Monto de recarga</label>
+        <div class="mon-montos">
+            ${MONTOS.map((m) => `<button type="button" class="mon-monto ${m === MONTO ? 'on' : ''}" onclick="elegirMonto(${m})">${formatoMoneda(m)}</button>`).join('')}
+        </div>
+        <div class="field">
+            <label for="mon-otro">Otro monto (${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(MON.recarga_max)})</label>
+            <input id="mon-otro" type="number" min="${MON.recarga_min}" max="${MON.recarga_max}" step="50" placeholder="$" oninput="otroMonto(this.value)" />
+        </div>
+        <label>Método de pago</label>
+        <div class="mon-metodos">
+            ${Object.entries(METODO_TXT).map(([k, t]) => `
+                <label class="mon-metodo ${k === METODO ? 'on' : ''}">
+                    <input type="radio" name="mon-metodo" value="${k}" ${k === METODO ? 'checked' : ''} onchange="elegirMetodo('${k}')" />
+                    ${icon(k === 'paypal' ? 'wallet' : k === 'tarjeta' ? 'card' : 'download', 16)} ${t}
+                </label>`).join('')}
+        </div>
+        <p class="mon-nota" id="mon-nota"></p>
+        <button class="btn btn-primary btn-block" id="mon-btn" onclick="recargar()">${icon('wallet', 16)} Recargar ${formatoMoneda(MONTO)}</button>
+        <p class="mon-nota">Demo: no se hace ningún cargo real.</p>`;
+    notaMetodo();
+}
+
+function elegirMonto(m) {
+    MONTO = m;
+    document.getElementById('mon-otro').value = '';
+    document.querySelectorAll('.mon-monto').forEach((b) => b.classList.toggle('on', b.textContent.trim() === formatoMoneda(m)));
+    actualizarBoton();
+}
+function otroMonto(v) {
+    MONTO = Number(v) || 0;
+    document.querySelectorAll('.mon-monto').forEach((b) => b.classList.remove('on'));
+    actualizarBoton();
+}
+function elegirMetodo(k) {
+    METODO = k;
+    document.querySelectorAll('.mon-metodo').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === k));
+    notaMetodo();
+}
+function notaMetodo() {
+    const n = document.getElementById('mon-nota');
+    if (!n) return;
+    n.textContent = METODO === 'transferencia'
+        ? 'Te damos una referencia para transferir. El saldo se acredita cuando el equipo confirma el depósito.'
+        : METODO === 'paypal' ? 'Se simula el cobro en PayPal y el saldo queda disponible al momento.'
+        : 'Se usa tu tarjeta predeterminada y el saldo queda disponible al momento.';
+}
+function actualizarBoton() {
+    const b = document.getElementById('mon-btn');
+    if (b) b.innerHTML = `${icon('wallet', 16)} Recargar ${MONTO > 0 ? formatoMoneda(MONTO) : ''}`;
+}
+
+async function recargar() {
+    if (!(MONTO >= MON.recarga_min && MONTO <= MON.recarga_max)) {
+        toast(`La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(MON.recarga_max)}`, 'warn');
+        return;
+    }
+    const b = document.getElementById('mon-btn');
+    b.disabled = true; b.textContent = 'Procesando…';
+    try {
+        let tarjeta = null;
+        if (METODO === 'tarjeta') {
+            const tarjetas = await api(`/clientes/${Sesion.cliente().id}/metodos-pago`).catch(() => []);
+            const t = tarjetas.find((x) => x.predeterminada) || tarjetas[0];
+            if (t) tarjeta = `****${t.ultimos4}`;
+        }
+        const r = await api('/monedero/recargar', { method: 'POST', body: { monto: MONTO, metodo: METODO, tarjeta } });
+        if (r.pendiente && r.datos_transferencia) {
+            const d = r.datos_transferencia;
+            await confirmar(`Transfiere ${formatoMoneda2(MONTO)} a ${d.beneficiario} (${d.banco}), CLABE ${d.clabe}, con la referencia ${d.referencia}. El saldo se acredita al confirmarse.`, { okText: 'Entendido', cancelText: 'Cerrar' });
+        } else {
+            toast(r.message, 'ok');
+        }
+        await cargarMonedero();
+    } catch (e) {
+        toast(e.message, 'error');
+        b.disabled = false; actualizarBoton();
+    }
+}
+
+function pintarHistorial() {
+    const movs = MON.movimientos || [];
+    document.getElementById('mon-historial').innerHTML = `
+        <table>
+            <thead><tr><th>Fecha</th><th>Concepto</th><th>Método</th><th style="text-align:right">Monto</th><th style="text-align:right">Saldo</th></tr></thead>
+            <tbody>
+                ${movs.length === 0 ? '<tr><td colspan="5">Aún no tienes movimientos. Haz tu primera recarga.</td></tr>' : movs.map((m) => {
+                    const monto = Number(m.monto);
+                    const t = TIPO_MOV[m.tipo] || { txt: m.tipo, ic: 'info' };
+                    const est = m.estado === 'pendiente' ? ' <span class="tag" style="color:var(--warning);border-color:var(--warning)">Por acreditar</span>'
+                              : m.estado === 'cancelado' ? ' <span class="tag">Rechazada</span>' : '';
+                    return `<tr class="${m.estado !== 'aplicado' ? 'mov-off' : ''}">
+                        <td>${formatoFecha(m.fecha)}</td>
+                        <td><span class="mov-tipo" title="${t.txt}">${icon(t.ic, 14)}</span> ${m.concepto || t.txt}${m.numero_orden ? ` · <a href="/pedidos.html">${m.numero_orden}</a>` : ''}${est}</td>
+                        <td>${m.metodo ? METODO_TXT[m.metodo] || m.metodo : '—'}</td>
+                        <td class="mono" style="text-align:right;color:${monto >= 0 ? 'var(--success)' : 'var(--danger)'}">${monto >= 0 ? '+' : '-'}${formatoMoneda2(Math.abs(monto))}</td>
+                        <td class="mono" style="text-align:right">${m.saldo_resultante !== null ? formatoMoneda2(m.saldo_resultante) : '—'}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+}
+
+function formatoMoneda2(v) {
+    return Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+}
+</script>
+</body>
+</html>

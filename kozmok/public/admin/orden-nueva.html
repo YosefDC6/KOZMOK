@@ -331,11 +331,19 @@ function pintarResumen() {
     const t = calcular();
     document.getElementById('tabla-resumen').innerHTML = t.lineas.map((l) => `
         <tr><td>${l.nombre}</td><td class="mono">${l.cantidad}</td><td class="mono">${formatoMoneda(l.precio)}</td><td class="mono">${formatoMoneda(l.subtotal)}</td></tr>`).join('');
-    document.getElementById('totales').innerHTML = `
-        <div class="om-row" style="display:flex;justify-content:space-between"><span>Subtotal</span><span class="mono">${formatoMoneda(t.subtotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>IVA 16%</span><span class="mono">${formatoMoneda(t.iva)}</span></div>
-        <div style="display:flex;justify-content:space-between;color:var(--text-muted)"><span>Envío</span><span class="mono">${t.envio === 0 ? 'Gratis' : formatoMoneda(t.envio)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Total</span><span class="mono">${formatoMoneda(t.total)}</span></div>`;
+    // Total con las mismas promociones e impuestos que aplica el servidor (Etapa 4)
+    const tot = document.getElementById('totales');
+    const pintarTot = (c) => {
+        const fila = (a, b, st = 'color:var(--text-muted)') => `<div style="display:flex;justify-content:space-between;${st}"><span>${a}</span><span class="mono">${b}</span></div>`;
+        tot.innerHTML = fila('Subtotal', formatoMoneda(c.subtotal), '')
+            + c.promociones.map((p) => fila(p.nombre, '-' + formatoMoneda(p.monto), 'color:var(--success)')).join('')
+            + c.impuestos.map((i) => fila(`${i.nombre} ${Number(i.porcentaje)}%`, formatoMoneda(i.monto))).join('')
+            + fila('Envío', c.envio === 0 ? 'Gratis' : formatoMoneda(c.envio))
+            + `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Total</span><span class="mono">${formatoMoneda(c.total)}</span></div>`;
+    };
+    pintarTot({ subtotal: t.subtotal, promociones: [], impuestos: [{ nombre: 'IVA', porcentaje: 16, monto: t.iva }], envio: t.envio, total: t.total });
+    api('/checkout/cotizar', { method: 'POST', body: { items: t.lineas.map((l) => ({ producto_id: l.id, cantidad: l.cantidad })) } })
+        .then(pintarTot).catch(() => {});
     const c = CLIENTE;
     document.getElementById('res-cliente').innerHTML = `<strong>${c.nombre}</strong><div style="color:var(--text-muted)">${c.correo}${c.telefono ? ' · ' + c.telefono : ''}</div>`;
     const dir = document.getElementById('direccion');

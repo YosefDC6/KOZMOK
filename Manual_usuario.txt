@@ -1,7 +1,8 @@
 ===============================================================================
  KOZMOK CRM  -  MANUAL DE USUARIO
- Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP y chatbot.
- Ultima actualizacion: octubre 2026
+ Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP, carrito
+ con pagos, monedero, promociones e impuestos (Etapa 4) y chatbot.
+ Ultima actualizacion: noviembre 2026
 ===============================================================================
 
 Este documento explica, seccion por seccion, que hace cada parte del sistema
@@ -136,9 +137,21 @@ Seguridad de sesion
      que invita a preguntarle al asesor (chatbot) si no sabes que comprar.
    - "Como funciona": 3 pasos (explora / pregunta al asesor / compra y gana
      puntos).
-   - "Destacados" y "Vistos recientemente".
-   - Cuando la URL lleva un filtro (busqueda, categoria, uso, precio, marca) la
-     portada se convierte en CATALOGO: solo la lista de productos con filtros.
+   - BANNER DE PROMOCIONES (arriba, despues del titulo): hasta 3 promociones
+     vigentes con su descuento, descripcion y dias que le quedan. Clic lleva
+     a los productos de esa promocion.
+   - "Destacados": los productos que el equipo marco como destacados en
+     Productos (4.9). "Novedades": los 4 productos mas nuevos del catalogo.
+     Y "Vistos recientemente".
+   - Cuando la URL lleva un filtro (busqueda, categoria, uso, precio, marca,
+     promocion=1 u orden=novedades) la portada se convierte en CATALOGO: solo
+     la lista de productos con filtros.
+   - Filtro "Solo en promocion" y orden "Mas recientes" / "Mayor descuento".
+     En "Categorias" (arriba) tambien hay accesos a Promociones y Novedades.
+   - PRECIO CON PROMOCION: si un producto tiene una promocion vigente se ve
+     el precio final en verde, el precio de lista tachado y una etiqueta
+     (-10% o -$500), ademas de una cinta con el nombre de la promocion. Es el
+     mismo precio que se cobra en el carrito.
    - Filtro por MARCA: muestra solo las marcas que hay con los demas filtros
      (por ejemplo, en Monitores: AOC, ASUS, BenQ, Dell, LG, Samsung).
    - Si un producto no tiene foto se muestra una ilustracion segun su tipo
@@ -148,7 +161,8 @@ Seguridad de sesion
    - Campo de busqueda + selector de alcance ("Todo" o una categoria) +
      boton Buscar.
    - "Categorias" desplegable.
-   - Iconos: favoritos, carrito (con contador) y el menu de la cuenta.
+   - Iconos: favoritos, carrito (con contador) y el menu de la cuenta
+     (incluye "Mi monedero").
    - PANEL LATERAL: al dar clic en el corazon o en el carrito NO se cambia
      de pantalla; se abre un panel a la derecha con dos pestanas:
         * Carrito  : productos con [-] cantidad [+], "Quitar", subtotal,
@@ -255,7 +269,10 @@ Seguridad de sesion
      se avisa.
    - Lista de productos con [-] cantidad [+], "Quitar" y "Vaciar carrito".
    - Barra de progreso de envio gratis (gratis desde $10,000; si no, $199).
-   - Resumen: Subtotal, IVA 16%, Envio, Descuento por puntos, Total.
+   - Resumen (lo calcula el servidor, el mismo que se guarda en el pedido):
+     Productos, Garantias, cada Promocion aplicada (en verde), Subtotal, cada
+     impuesto activo (p. ej. IVA 16%, ver 4.15b), Envio, Descuento por puntos
+     y Total. Cada producto muestra tambien su promocion.
    - Usar puntos del Club: campo para canjear puntos en multiplos de 100
      (100 puntos = $10 de descuento). El total se recalcula al instante.
    - Direccion de envio: escribir una nueva o elegir una guardada.
@@ -263,13 +280,20 @@ Seguridad de sesion
         * una de tus tarjetas guardadas,
         * "Usar otra tarjeta..." (pide numero, titular, MM/AA y CVV; puedes
           marcar "guardar esta tarjeta"),
+        * PayPal (simulado: se cobra al instante),
         * Transferencia bancaria (SPEI),
-        * Pago en tienda.
+        * Pago en tienda,
+        * Monedero Kozmok (muestra el saldo; ver 3.6 "Mi monedero"). Al
+          elegirlo aparece "Pago con monedero": saldo disponible, total a
+          pagar y saldo despues del pago (o cuanto falta, con el boton
+          "Recargar monedero"). Al confirmar pide una ultima confirmacion
+          con esos datos y el saldo se descuenta en ese momento.
      Nota: es una demo, no se cobra nada real. Del numero de tarjeta solo se
      guardan la marca y los ultimos 4 digitos; el CVV nunca se guarda.
    - Al confirmar SIEMPRE se genera un COMPROBANTE (recibo.html), se guarda
      en la cuenta y lo puede ver el equipo. Segun el metodo:
-        * Tarjeta  -> el pedido queda "Confirmado" y "Pagado"; los puntos se
+        * Tarjeta, PayPal o Monedero
+                   -> el pedido queda "Confirmado" y "Pagado"; los puntos se
                       acreditan al instante. El comprobante es el recibo de
                       compra con todos los datos.
         * SPEI     -> el pedido queda "Pago pendiente". El comprobante es una
@@ -298,6 +322,18 @@ Seguridad de sesion
       - Saludo, tarjeta virtual de socio (ver 7), nivel del Club con su
         insignia, numero de compras, total gastado, favoritos.
       - Ultimos 3 pedidos y accesos rapidos.
+      - Tarjeta "Mi monedero" con el saldo (lleva a la pagina del monedero).
+
+   Mi monedero (monedero.html)
+      - Saldo disponible en pesos (y lo que esta por acreditar).
+      - Recargar: montos rapidos ($100, $200, $500, $1,000) u otro monto
+        ($50 a $20,000) y metodo: tarjeta o PayPal (el saldo queda al
+        instante) o transferencia (te da banco, CLABE y referencia; el saldo
+        sube cuando el equipo confirma el deposito, ver 4.15c).
+      - Historial: fecha, concepto (recarga, compra con su pedido, reembolso o
+        ajuste del equipo), metodo, monto y saldo que dejo cada movimiento.
+      - Si cancelas un pedido pagado con monedero, el total regresa solo al
+        monedero (movimiento "Reembolso").
 
    Mis pedidos (pedidos.html)
       - Cada pedido muestra un RASTREO VISUAL de 4 etapas con iconos y fecha:
@@ -373,13 +409,15 @@ Seguridad de sesion
  4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/admin/login.html)
 ===============================================================================
 
-La barra lateral esta agrupada en cuatro bloques: CRM, SCM, ERP y CUENTA.
-El bloque CRM cubre clientes, ventas y relacion con el cliente; el bloque
-SCM cubre la cadena de suministro (inventario, proveedores, logistica); el
-bloque ERP une a los dos: ordenes de clientes capturadas por el equipo,
-nivel de implementacion y reportes empresariales (ver 4.14).
+La barra lateral esta agrupada en cinco bloques: CRM, SCM, ERP, TIENDA y
+CUENTA. El bloque CRM cubre clientes, ventas y relacion con el cliente; el
+bloque SCM cubre la cadena de suministro (inventario, proveedores,
+logistica); el bloque ERP une a los dos: ordenes de clientes capturadas por
+el equipo, nivel de implementacion y reportes empresariales (ver 4.14); el
+bloque TIENDA (Etapa 4) administra promociones, impuestos, monederos y
+pagos de la tienda en linea (ver 4.15).
 
-CRM, SCM y ERP son desplegables: el titulo del bloque es un enlace directo a
+CRM, SCM, ERP y TIENDA son desplegables: el titulo del bloque es un enlace directo a
 su pantalla principal y la flechita junto al titulo solo muestra u oculta
 sus opciones sin salir de donde estas. El bloque del modulo en el que
 estas se abre solo; el otro queda cerrado, para que la lista no se sienta
@@ -531,6 +569,8 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      actual, stock minimo, imagen (URL opcional; si se deja vacia se usa
      la generica), proveedor y estrategia logistica (push = pedido
      automatico al llegar al minimo; pull = pedido solo bajo demanda).
+   - "Destacado en la portada de la tienda": los marcados aparecen en
+     "Destacados" de la portada (3.1).
    - Enlace directo:  /admin/productos.html?editar=<id>  abre su formulario.
 
 4.9a INVENTARIO  (admin/inventario.html)  [SCM]
@@ -830,8 +870,10 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
            a Pedidos del SCM).
          - A la derecha, la mini-orden con el subtotal en vivo.
       Paso 3 - Confirmar
-         - Resumen: producto, cantidad, precio unitario, subtotal, IVA 16%,
-           envio ($199, gratis desde $10,000) y total.
+         - Resumen: producto, cantidad, precio unitario, subtotal, las
+           promociones vigentes que aplican, los impuestos activos (4.15b),
+           envio ($199, gratis desde $10,000) y total. Es el mismo calculo
+           que la tienda en linea.
          - Forma de pago:
              * Efectivo / Tarjeta en mostrador -> la orden queda Confirmada
                y Pagada; el cliente gana sus puntos al instante.
@@ -910,12 +952,79 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
       - Menu dinamico: una columna por rol (Administrador, Ventas,
         Logistica) con la pantalla a la que entra y las secciones que ve,
-        agrupadas por modulo (CRM, SCM, ERP, Cuenta), incluido el permiso
+        agrupadas por modulo (CRM, SCM, ERP, Tienda, Cuenta), incluido el permiso
         de "Capturar ordenes".
       - Matriz de permisos: cada seccion contra cada rol.
       - Recordatorio de los 3 lugares a tocar para agregar un rol nuevo.
       - Se genera de los mismos permisos que arman el menu lateral, asi
         que siempre coincide con lo que de verdad ve cada quien.
+
+4.15 MODULO TIENDA  (Etapa 4: carrito y sus agregados)  [TIENDA]
+   Administra lo que la tienda en linea necesita para vender: promociones,
+   impuestos, monederos y pagos. Todo se conecta con lo que ya existe:
+   CRM (cliente e historial), SCM (producto e inventario) y ERP (ordenes).
+
+   Que pasa al comprar (tienda o Nueva orden del ERP), en UNA transaccion:
+     se valida el stock -> se aplican promociones e impuestos -> se crea la
+     orden -> se registra el pago (tabla pagos) -> se descuenta el stock con
+     su movimiento (y reabasto si toca) -> se asocia al cliente (CRM, puntos)
+     -> si fue con monedero, se descuenta el saldo. Queda disponible para
+     los reportes. Si algo falla no se guarda nada.
+
+   4.15a PROMOCIONES  (admin/promociones.html)
+      - Indicadores: vigentes (y cuantas van en el banner), programadas,
+        pedidos con promocion y descuento otorgado.
+      - Tabla con busqueda y filtro por situacion: Vigente, Programada (aun
+        no empieza), Vencida, Inactiva. Muestra descuento, a que aplica,
+        vigencia y cuantos pedidos la usaron.
+      - "Nueva promocion" / "Editar": nombre, descripcion (sale en el
+        banner), tipo de descuento (porcentaje o monto fijo por pieza),
+        valor, productos aplicables (todo el catalogo, una categoria o un
+        producto), fecha de inicio y fin (dia incluido), activa y "mostrar
+        en el banner". Abajo dice a cuantos productos aplica y un precio de
+        ejemplo con el descuento.
+      - Reglas: el porcentaje no pasa de 90%; un descuento nunca deja un
+        producto en negativo; si a un producto le tocan varias promociones
+        se usa la que mas descuenta.
+      - "Desactivar" la quita de la tienda al instante. "Eliminar": si ya se
+        uso en pedidos solo se desactiva (para no perder el historial).
+
+   4.15b IMPUESTOS  (admin/impuestos.html)  -- solo ADMIN
+      - Lista de impuestos con porcentaje y estado (Activo / Inactivo).
+      - Se aplican TODOS los activos sobre el subtotal ya con promociones;
+        el envio no paga impuesto. Viene con IVA 16% activo y "IVA region
+        fronteriza 8%" inactivo de ejemplo.
+      - "Asi se calcula": escribe un subtotal y ve el desglose (1000 + IVA
+        16% = 1160).
+      - Cada pedido guarda su propio desglose de impuestos: cambiar o
+        desactivar uno no cambia los pedidos anteriores.
+
+   4.15c MONEDERO  (admin/monedero.html)
+      - Indicadores: saldo total en monederos, recargas del mes, consumos
+        del mes (y reembolsos) y recargas por confirmar.
+      - "Recargas por transferencia pendientes": "Confirmar deposito" sube
+        el saldo del cliente; "Rechazar" la cancela sin tocar el saldo.
+      - Grafica de recargas contra consumos de los ultimos 6 meses.
+      - Tabla de clientes con saldo, recargado, consumido, ultimo
+        movimiento y estado; busqueda y "Exportar CSV".
+      - "Ver": ficha del monedero del cliente con todo su historial,
+        "Ajuste manual" (monto positivo abona, negativo descuenta; pide
+        motivo y queda a nombre de quien lo hizo; nunca deja saldo negativo)
+        y "Bloquear / Desbloquear monedero" (bloqueado no puede recargar ni
+        pagar con el).
+      - Cada cliente nuevo nace con su monedero en $0.
+
+   4.15d PAGOS  (admin/pagos.html)
+      - Un pago por pedido (de la tienda y del ERP): folio PAG-00001,
+        pedido, cliente, metodo (tarjeta, PayPal, monedero, SPEI, pago en
+        tienda, efectivo o transferencia), monto, estado y fecha de cobro (o
+        de vencimiento si esta pendiente).
+      - El pago cambia solo con el pedido: Pagado al cobrarse, Reembolsado
+        si se cancela un pedido ya pagado, Cancelado si se cancela sin pago.
+      - Indicadores: cobrado, por cobrar, reembolsado y metodo mas usado.
+      - Filtros por estado, metodo y busqueda; "Exportar CSV".
+      - "Gestionar" abre el gestor del pedido (4.8) para registrar el cobro,
+        moverlo de estado o cancelarlo.
 
 
 ===============================================================================
@@ -927,7 +1036,8 @@ Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
 VENTAS
    Ve: Inicio (Dashboard CRM), Clientes (CRM), Productos (SCM, solo
    consulta), Ordenes de clientes (ERP, y SI puede capturar ordenes
-   nuevas), Reportes (ERP) y Mi actividad. No ve nada mas.
+   nuevas), Reportes (ERP), Promociones, Monedero y Pagos (TIENDA) y Mi
+   actividad. No ve nada mas (Impuestos es solo del administrador).
    Flujo tipico:
    1. Inicio: clientes en riesgo y productos mas vendidos.
    2. Clientes: buscar al cliente, abrir su ficha y registrar ahi la
@@ -1023,6 +1133,9 @@ Uso en tienda fisica
 
 Donde
    - Cuenta -> "Metodos de pago" (pagos.html) para administrarlos.
+   - Al pagar se puede usar: tarjeta guardada o nueva, PayPal (simulado),
+     Monedero Kozmok (3.6), transferencia SPEI o pago en tienda. Cada pedido
+     tiene su registro en la tabla pagos (4.15d).
    - Tambien se puede agregar una tarjeta durante la compra, en el carrito.
 
 Que se guarda
@@ -1037,7 +1150,8 @@ Marca automatica
 
 En el pedido
    - El pedido guarda un texto legible del metodo, por ejemplo
-     "Tarjeta Visa ****4821", "Transferencia SPEI" o "Pago en tienda".
+     "Tarjeta Visa ****4821", "PayPal", "Monedero Kozmok", "Transferencia
+     SPEI" o "Pago en tienda".
 
 Aviso
    - Es una demo educativa: no hay pasarela de pago ni cargos reales.
@@ -1177,7 +1291,7 @@ Estructura
 
 Tablas principales
    usuarios, proveedores, categorias, productos, clientes, interacciones,
-   metricas_clientes, carrito_items, pedidos (columna origen: 'en_linea' o
+   metricas_clientes, carrito + carrito_detalle, pedidos (columna origen: 'en_linea' o
    'erp'; en las ERP vendedor_id es quien la capturo), pedido_items,
    movimientos_inventario, ordenes_compra, chatbot_consultas, direcciones,
    metodos_pago, favoritos, movimientos_puntos, resenas, tickets,
@@ -1186,6 +1300,14 @@ Tablas principales
    (procesos internos de cada orden), recursos_erp (recursos de la
    empresa: equipo, vehiculos, instalaciones y presupuestos; solo API,
    sin pantalla) y reportes_erp (reportes guardados).
+   Etapa 4: carrito (uno por cliente) y carrito_detalle (sus productos con
+   precio_unitario), pagos (uno por pedido; lo mantiene el trigger
+   trg_pedido_pago), promociones, impuestos, monederos (lo crea el trigger
+   trg_cliente_monedero) y movimientos_monedero. pedidos guarda ademas
+   metodo_tipo, descuento_promocion e impuestos_detalle; pedido_items guarda
+   promocion_id y descuento. tickets guarda mensaje y respuesta.
+   Si se actualiza desde una version anterior hay que volver a cargar
+   db/database.sql (la consola avisa al arrancar si faltan tablas).
 
 Autenticacion
    - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
@@ -1238,9 +1360,33 @@ Endpoints utiles
    GET/POST/DELETE /api/admin/erp/reportes/guardados[/:id]  reportes guardados
    GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
    POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
+   -- Etapa 4 (nombres del documento) --
+   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&orden=novedades]
+   GET  /api/catalogo/:id                 producto con su promocion vigente
+   POST /api/checkout/cotizar             desglose de una compra (promos,
+                                          impuestos, envio, puntos)
+   POST /api/pagos/procesar               compra completa (igual que POST /api/pedidos)
+   GET  /api/pagos/:id                    pago + pedido (dueno o equipo)
+   GET  /api/admin/pagos                  listado y totales de pagos
+   POST /api/carrito/agregar   GET /api/carrito/:cliente_id
+   PUT  /api/carrito/item/:id  DELETE /api/carrito/item/:id
+   DELETE /api/carrito/vaciar/:cliente_id
+   GET  /api/promociones  POST /api/promociones  PUT /api/promociones/:id
+   GET  /api/impuestos    POST /api/impuestos    PUT /api/impuestos/:id
+   GET  /api/monedero     POST /api/monedero/recargar
+   GET  /api/admin/monederos[/:clienteId]  POST .../:clienteId/ajuste
+   PUT  /api/admin/monederos/:clienteId/estado
+   PUT  /api/admin/monederos/movimientos/:id   {accion: confirmar|rechazar}
+   POST /api/atencion/ticket   GET /api/atencion/tickets
+   GET  /api/atencion/ticket/:id   PUT /api/atencion/ticket/:id/respuesta
+   POST /api/auth/registro  POST /api/auth/login (correo = cliente; email = equipo)
+   POST /api/auth/logout    GET/PUT /api/auth/perfil
 
 Reglas de negocio embebidas
-   - IVA 16%. Envio $199, gratis desde $10,000 de subtotal.
+   - Impuestos configurables (4.15b; por defecto IVA 16%) sobre el subtotal
+     ya con promociones. Envio $199, gratis desde $10,000 de subtotal.
+   - Promociones: la que mas descuenta por producto; porcentaje <= 90%.
+   - Monedero: recarga de $50 a $20,000; el saldo nunca queda negativo.
    - Club: 100 puntos = $10; ganar = floor(subtotal/20 * multiplicador).
    - Etapa "Activo" automatica al confirmarse la primera compra.
    - Folio de ticket: TK-(1000 + id).

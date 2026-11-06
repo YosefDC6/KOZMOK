@@ -40,15 +40,21 @@ let METODOS = [];
 let RECOMP = { puntos: 0, valor_punto: 0.10 };
 let SUBTOTAL = 0;
 let GAR_TOTAL = 0;
+let ITEMS = [];          // líneas del carrito (para cotizar)
+let COT = null;          // última cotización del servidor (promociones + impuestos + envío + puntos)
+let MONEDERO = { saldo: 0, estado: 'activo' };
 const MARCA_LABEL = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', otra: 'Tarjeta' };
 
 async function cargarCarrito() {
-    const [items, dirs, rec, metodos] = await Promise.all([
+    const [items, dirs, rec, metodos, mon] = await Promise.all([
         api(`/carrito/${cliente.id}`),
         api(`/clientes/${cliente.id}/direcciones`).catch(() => []),
         api(`/clientes/${cliente.id}/recompensas`).catch(() => ({ puntos: 0, valor_punto: 0.10 })),
         api(`/clientes/${cliente.id}/metodos-pago`).catch(() => []),
+        api('/monedero').catch(() => ({ saldo: 0, estado: 'activo' })),
     ]);
+    MONEDERO = { saldo: Number(mon.saldo) || 0, estado: mon.estado };
+    ITEMS = items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, garantia: i.garantia_clave || 'none' }));
     DIRECCIONES = dirs;
     METODOS = metodos;
     RECOMP = rec;
@@ -72,7 +78,7 @@ async function cargarCarrito() {
     let subtotal = 0;
     let garTotal = 0;
     const filas = items.map((i) => {
-        const linea = i.precio * i.cantidad;
+        const linea = Number(i.precio_final ?? i.precio) * i.cantidad;
         const gCosto = Number(i.garantia_costo || 0);
         subtotal += Number(linea);
         garTotal += gCosto;
@@ -83,7 +89,8 @@ async function cargarCarrito() {
                  onclick="location.href='/index.html#producto-${i.producto_id}'" alt="${i.nombre}" />
             <div class="cart-info">
                 <div class="nm">${i.nombre}</div>
-                <div class="mono" style="color:var(--text-muted);font-size:.82rem">${formatoMoneda(i.precio)} c/u</div>
+                <div class="mono" style="color:var(--text-muted);font-size:.82rem">${precioHTML(i)} c/u</div>
+                ${i.promocion ? `<div class="cart-promo">${icon('star', 12)} ${i.promocion.nombre}</div>` : ''}
                 <div class="qty-stepper" style="margin-top:8px">
                     <button onclick="cambiarCantidad(${i.id}, ${i.cantidad - 1}, ${i.stock})" ${i.cantidad <= 1 ? 'disabled' : ''}>−</button>
                     <span class="qty-val">${i.cantidad}</span>
@@ -110,16 +117,18 @@ async function cargarCarrito() {
     subtotal += garTotal;
     GAR_TOTAL = garTotal;
     SUBTOTAL = subtotal;
-    const impuestos = subtotal * 0.16;
-    const envio = subtotal >= ENVIO_GRATIS_DESDE ? 0 : COSTO_ENVIO;
-    const falta = Math.max(ENVIO_GRATIS_DESDE - subtotal, 0);
-    const pct = Math.min(100, Math.round(subtotal / ENVIO_GRATIS_DESDE * 100));
+    // El servidor calcula el desglose con las promociones e impuestos configurados
+    COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS } });
+    const base = COT.base_impuestos;
+    const envio = COT.envio;
+    const falta = Math.max(ENVIO_GRATIS_DESDE - base, 0);
+    const pct = Math.min(100, Math.round(base / ENVIO_GRATIS_DESDE * 100));
 
     // Máximo de puntos canjeables: múltiplos de 100, sin pasar del subtotal
-    const maxCanje = Math.min(
+    const maxCanje = Math.max(0, Math.min(
         RECOMP.puntos - (RECOMP.puntos % 100),
-        Math.floor(subtotal / RECOMP.valor_punto / 100) * 100
-    );
+        Math.floor(base / RECOMP.valor_punto / 100) * 100
+    ));
     const bloquePuntos = maxCanje >= 100
         ? `<div class="field">
              <label>Usar puntos del Club (tienes ${RECOMP.puntos.toLocaleString('es-MX')} · valen ${formatoMoneda(RECOMP.puntos * RECOMP.valor_punto)})</label>
@@ -151,13 +160,7 @@ async function cargarCarrito() {
         <div class="card cart-resumen">
             <h3 class="cart-resumen-tit">Resumen del pedido</h3>
             ${shipHint}
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Productos</span><span class="mono">${formatoMoneda(subtotal - garTotal)}</span></div>
-            ${garTotal > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Garantías extendidas</span><span class="mono">${formatoMoneda(garTotal)}</span></div>` : ''}
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Subtotal</span><span class="mono">${formatoMoneda(subtotal)}</span></div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>IVA (16%)</span><span class="mono">${formatoMoneda(impuestos)}</span></div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Envío</span><span class="mono">${envio === 0 ? 'Gratis' : formatoMoneda(envio)}</span></div>
-            <div id="linea-desc" style="display:none;justify-content:space-between;margin-bottom:6px;color:var(--success)"><span>Descuento por puntos</span><span class="mono" id="desc-mxn">-$0</span></div>
-            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin-bottom:16px"><span>Total</span><span class="mono" id="total-txt">${formatoMoneda(subtotal + impuestos + envio)}</span></div>
+            <div id="resumen-totales">${desgloseHTML(COT)}</div>
             ${bloquePuntos}
             ${opcionesDir}
             <div class="field"><label>Dirección de envío</label><input type="text" id="direccion" placeholder="Calle, número, colonia, ciudad" /></div>
@@ -165,9 +168,16 @@ async function cargarCarrito() {
                 <select id="metodo-pago" onchange="cambioMetodo()">
                     ${METODOS.map((m) => `<option value="mp:${m.id}" ${m.predeterminada ? 'selected' : ''}>${MARCA_LABEL[m.marca] || 'Tarjeta'} ****${m.ultimos4}${m.predeterminada ? ' (predeterminada)' : ''}</option>`).join('')}
                     <option value="nueva">＋ Usar otra tarjeta…</option>
+                    <option value="paypal">PayPal</option>
                     <option value="spei">Transferencia bancaria (SPEI)</option>
                     <option value="tienda">Pago en tienda</option>
+                    <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
                 </select>
+            </div>
+            <div id="box-monedero" class="pago-box" hidden></div>
+            <div id="box-paypal" class="pago-box" hidden>
+                <h4>${icon('wallet', 15)} PayPal</h4>
+                <div class="pb-sub" style="margin:0">Al confirmar se simula el cobro en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
             </div>
             <div id="tarjeta-nueva" class="card-nueva" hidden>
                 <div class="field"><label>Número de tarjeta</label>
@@ -186,7 +196,6 @@ async function cargarCarrito() {
         </div>
         </div>
     `;
-    ENVIO_ACTUAL = envio; IVA_ACTUAL = impuestos;
     recalcular();
     usarDireccionGuardada();
     cambioMetodo();
@@ -201,9 +210,42 @@ function cambioMetodo() {
     const box = document.getElementById('tarjeta-nueva');
     if (!sel || !box) return;
     box.hidden = sel.value !== 'nueva';
+    document.getElementById('box-paypal').hidden = sel.value !== 'paypal';
+    document.getElementById('box-monedero').hidden = sel.value !== 'monedero';
+    pintarBoxMonedero();
 }
 
-let ENVIO_ACTUAL = 0, IVA_ACTUAL = 0;
+// Pago con monedero: saldo disponible, total y saldo después del pago.
+function pintarBoxMonedero() {
+    const box = document.getElementById('box-monedero');
+    if (!box || box.hidden || !COT) return;
+    const despues = MONEDERO.saldo - COT.total;
+    box.innerHTML = `
+        <h4>${icon('wallet', 15)} Pago con monedero</h4>
+        <div class="mon-calc"><span>Saldo disponible</span><strong class="mono">${formatoMoneda2(MONEDERO.saldo)}</strong></div>
+        <div class="mon-calc"><span>Total a pagar</span><strong class="mono">${formatoMoneda2(COT.total)}</strong></div>
+        <div class="mon-calc ${despues < 0 ? 'falta' : 'ok'}"><span>${despues < 0 ? 'Te faltan' : 'Saldo después del pago'}</span><strong class="mono">${formatoMoneda2(Math.abs(despues))}</strong></div>
+        ${despues < 0 ? `<a class="btn btn-outline btn-sm" href="/monedero.html" style="margin-top:8px">${icon('plus', 14)} Recargar monedero</a>` : ''}`;
+}
+
+function formatoMoneda2(v) { return Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }); }
+
+// Desglose de la compra tal como lo calcula el servidor.
+function desgloseHTML(c) {
+    const fila = (txt, val, estilo = 'color:var(--text-muted)') =>
+        `<div style="display:flex;justify-content:space-between;margin-bottom:6px;${estilo}"><span>${txt}</span><span class="mono">${val}</span></div>`;
+    return [
+        fila('Productos', formatoMoneda2(c.productos)),
+        c.garantias > 0 ? fila('Garantías extendidas', formatoMoneda2(c.garantias)) : '',
+        ...c.promociones.map((p) => fila(`${icon('star', 12)} ${p.nombre}`, '-' + formatoMoneda2(p.monto), 'color:var(--success)')),
+        fila('Subtotal', formatoMoneda2(c.base_impuestos), ''),
+        ...c.impuestos.map((t) => fila(`${t.nombre} (${Number(t.porcentaje)}%)`, formatoMoneda2(t.monto))),
+        fila('Envío', c.envio === 0 ? 'Gratis' : formatoMoneda2(c.envio)),
+        c.descuento_puntos > 0 ? fila('Descuento por puntos', '-' + formatoMoneda2(c.descuento_puntos), 'color:var(--success)') : '',
+        `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin:10px 0 16px"><span>Total</span><span class="mono" id="total-txt">${formatoMoneda2(c.total)}</span></div>`,
+    ].join('');
+}
+
 function puntosCanje() {
     const el = document.getElementById('canje');
     if (!el) return 0;
@@ -211,15 +253,17 @@ function puntosCanje() {
     v = v - (v % 100);
     return v;
 }
+let _cotTimer = null;
 function recalcular() {
     const pts = puntosCanje();
-    const desc = pts * RECOMP.valor_punto;
-    const total = SUBTOTAL + IVA_ACTUAL + ENVIO_ACTUAL - desc;
-    const cm = document.getElementById('canje-mxn'); if (cm) cm.textContent = formatoMoneda(desc);
-    const ld = document.getElementById('linea-desc');
-    if (ld) { ld.style.display = desc > 0 ? 'flex' : 'none'; document.getElementById('desc-mxn').textContent = '-' + formatoMoneda(desc); }
-    const tt = document.getElementById('total-txt'); if (tt) tt.textContent = formatoMoneda(total);
-    const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = 'Confirmar pedido · ' + formatoMoneda(total);
+    const cm = document.getElementById('canje-mxn'); if (cm) cm.textContent = formatoMoneda(pts * RECOMP.valor_punto);
+    clearTimeout(_cotTimer);
+    _cotTimer = setTimeout(async () => {
+        try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts } }); } catch { return; }
+        const r = document.getElementById('resumen-totales'); if (r) r.innerHTML = desgloseHTML(COT);
+        const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = 'Confirmar pedido · ' + formatoMoneda2(COT.total);
+        pintarBoxMonedero();
+    }, pts ? 250 : 0);
 }
 
 function usarDireccionGuardada() {
@@ -267,6 +311,8 @@ document.getElementById('btn-vaciar').addEventListener('click', async () => {
 async function resolverMetodoPago() {
     const v = document.getElementById('metodo-pago').value;
     if (v === 'spei') return { texto: 'Transferencia SPEI', tipo: 'spei' };
+    if (v === 'paypal') return { texto: 'PayPal', tipo: 'paypal' };
+    if (v === 'monedero') return { texto: 'Monedero Kozmok', tipo: 'monedero' };
     if (v === 'tienda') return { texto: 'Pago en tienda', tipo: 'tienda' };
     if (v.startsWith('mp:')) {
         const m = METODOS.find((x) => String(x.id) === v.slice(3));
@@ -301,6 +347,12 @@ async function confirmarCompra() {
 
     const mp = await resolverMetodoPago();
     if (!mp) return;
+    // Pago con monedero: validación y confirmación (saldo antes y después)
+    if (mp.tipo === 'monedero') {
+        if (MONEDERO.saldo < COT.total) { toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza para el total de ${formatoMoneda2(COT.total)}. Recarga tu monedero o elige otro método.`, 'warn'); return; }
+        const ok = await confirmar(`Se descontarán ${formatoMoneda2(COT.total)} de tu monedero. Saldo disponible: ${formatoMoneda2(MONEDERO.saldo)} · saldo después del pago: ${formatoMoneda2(MONEDERO.saldo - COT.total)}.`, { okText: 'Confirmar pago' });
+        if (!ok) return;
+    }
 
     const btn = document.getElementById('btn-comprar');
     btn.disabled = true; btn.textContent = 'Procesando…';
@@ -317,7 +369,7 @@ async function confirmarCompra() {
         location.href = `/gracias.html?id=${pedido.id}`;
     } catch (e) {
         toast(e.message, 'error');
-        btn.disabled = false; btn.textContent = 'Confirmar pedido';
+        btn.disabled = false; btn.textContent = 'Confirmar pedido' + (COT ? ' · ' + formatoMoneda2(COT.total) : '');
     }
 }
 
@@ -346,14 +398,15 @@ async function cargarCarritoInvitado() {
     let subtotal = 0;
     const filas = items.map((i) => {
         const gCosto = costoGarantia(i.p.precio, i.garantia) * i.cantidad;
-        const linea = Number(i.p.precio) * i.cantidad + gCosto;
+        const linea = Number(i.p.precio_final ?? i.p.precio) * i.cantidad + gCosto;
         subtotal += linea;
         return `
         <div class="card cart-line">
             <img class="cart-thumb" src="${imagenProducto(i.p)}" alt="${i.p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(i.p)}'" />
             <div class="cart-info">
                 <div class="nm">${i.p.nombre}</div>
-                <div class="mono" style="color:var(--text-muted);font-size:.82rem">${formatoMoneda(i.p.precio)} c/u</div>
+                <div class="mono" style="color:var(--text-muted);font-size:.82rem">${precioHTML(i.p)} c/u</div>
+                ${i.p.promocion ? `<div class="cart-promo">${icon('star', 12)} ${i.p.promocion.nombre}</div>` : ''}
                 <div class="qty-stepper" style="margin-top:8px">
                     <button type="button" onclick="cantidadInvitado(${i.producto_id}, ${i.cantidad - 1}, ${i.p.stock})" ${i.cantidad <= 1 ? 'disabled' : ''}>−</button>
                     <span class="qty-val">${i.cantidad}</span>
@@ -372,18 +425,14 @@ async function cargarCarritoInvitado() {
             </div>
         </div>`;
     }).join('');
-    const iva = subtotal * 0.16;
-    const envio = subtotal >= ENVIO_GRATIS_DESDE ? 0 : COSTO_ENVIO;
+    const cot = await api('/checkout/cotizar', { method: 'POST', body: { items: items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, garantia: i.garantia })) } });
     const next = encodeURIComponent('/carrito.html');
     cont.innerHTML = `
         <div class="cart-layout">
         <div class="cart-items">${filas}</div>
         <div class="card cart-resumen">
             <h3 class="cart-resumen-tit">Resumen del pedido</h3>
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Subtotal</span><span class="mono">${formatoMoneda(subtotal)}</span></div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>IVA (16%)</span><span class="mono">${formatoMoneda(iva)}</span></div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--text-muted)"><span>Envío</span><span class="mono">${envio === 0 ? 'Gratis' : formatoMoneda(envio)}</span></div>
-            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin:10px 0 16px"><span>Total estimado</span><span class="mono">${formatoMoneda(subtotal + iva + envio)}</span></div>
+            ${desgloseHTML(cot).replace('>Total<', '>Total estimado<')}
             <div class="pago-box" style="margin-bottom:14px">
                 <h4>${icon('lock', 15)} Inicia sesión para pagar</h4>
                 <div class="pb-sub" style="margin:0">Tu carrito se guarda: al entrar o crear tu cuenta lo encuentras aquí mismo, listo para confirmar. Además ganas puntos del Club con esta compra.</div>

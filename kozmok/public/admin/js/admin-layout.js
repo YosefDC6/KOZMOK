@@ -40,6 +40,12 @@ const ADMIN_SECCIONES = [
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
         { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'id',      label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },
+    { titulo: 'Tienda', home: '/admin/promociones.html', links: [
+        { href: '/admin/promociones.html', key: 'promociones', ic: 'star',    label: 'Promociones', desc: 'Descuentos, vigencia y banner' },
+        { href: '/admin/impuestos.html',   key: 'impuestos',   ic: 'layers',  label: 'Impuestos',   desc: 'Configuración del cálculo' },
+        { href: '/admin/monedero.html',    key: 'monedero',    ic: 'wallet',  label: 'Monedero',    desc: 'Saldos, recargas y ajustes' },
+        { href: '/admin/pagos.html',       key: 'pagos',       ic: 'card',    label: 'Pagos',       desc: 'Pago de cada pedido' },
+    ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
         { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'lock',     label: 'Cuentas y equipo' },
@@ -62,7 +68,7 @@ function avatarIni(nombre) {
 }
 window.avatarIni = avatarIni;
 
-const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Cuenta: 'settings' };
+const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Tienda: 'cart', Cuenta: 'settings' };
 
 function menuCorto() {
     try { return localStorage.getItem('kz_menu_corto') === '1'; } catch { return false; }

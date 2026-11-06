@@ -189,7 +189,7 @@ async function estadoRecompensas(clienteId) {
 // =========================================================
 
 // Login de cliente (tienda)
-app.post('/api/auth/login-cliente', asyncRoute(async (req, res) => {
+const loginCliente = asyncRoute(async (req, res) => {
     const { correo, password } = req.body;
     if (!correo || !password) return res.status(400).json({ message: 'Correo y contraseña son requeridos' });
 
@@ -207,10 +207,11 @@ app.post('/api/auth/login-cliente', asyncRoute(async (req, res) => {
     delete cliente.password;
     const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
     res.json({ success: true, cliente, token });
-}));
+});
+app.post('/api/auth/login-cliente', loginCliente);
 
-// Registro de cliente
-app.post('/api/auth/registro-cliente', asyncRoute(async (req, res) => {
+// Registro de cliente (también POST /api/auth/registro, nombre del documento)
+const registrarCliente = asyncRoute(async (req, res) => {
     const { nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal } = req.body;
     if (!nombre || !correo || !password) return res.status(400).json({ message: 'Nombre, correo y contraseña son obligatorios' });
     if (password.length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres' });
@@ -239,7 +240,9 @@ app.post('/api/auth/registro-cliente', asyncRoute(async (req, res) => {
 
     const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
     res.status(201).json({ success: true, cliente, token });
-}));
+});
+app.post('/api/auth/registro-cliente', registrarCliente);
+app.post('/api/auth/registro', registrarCliente);
 
 // Login de usuario interno (admin / ventas / logística). Responde también
 // con los permisos del rol para armar el menú dinámico.
@@ -263,7 +266,9 @@ const loginUsuario = asyncRoute(async (req, res) => {
     res.json({ success: true, usuario, token, permisos: PERMISOS[usuario.rol] || [] });
 });
 app.post('/api/auth/login-usuario', loginUsuario);
-app.post('/api/auth/login', loginUsuario);
+// POST /api/auth/login sirve a los dos: con "correo" entra un cliente de la
+// tienda (Etapa 4); con "email" entra un usuario del equipo (ERP).
+app.post('/api/auth/login', (req, res) => ((req.body && req.body.correo && !req.body.email) ? loginCliente : loginUsuario)(req, res));
 
 // =========================================================
 // CATEGORÍAS Y PRODUCTOS (catálogo público)
@@ -274,51 +279,197 @@ app.get('/api/categorias', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
-// Catálogo con filtros: categoria, uso, precio_min, precio_max, busqueda
-app.get('/api/productos', asyncRoute(async (req, res) => {
-    // Atajo para el comparador: ?ids=1,2,3 (máximo 4)
-    if (req.query.ids) {
-        const ids = String(req.query.ids).split(',').map(Number).filter((n) => n > 0).slice(0, 4);
-        if (ids.length === 0) return res.json([]);
+// =========================================================
+// PROMOCIONES E IMPUESTOS (Etapa 4) — helpers compartidos
+//   Los usan el catálogo (precio con descuento), el carrito, el
+//   checkout de la tienda y las órdenes del ERP, para que el
+//   precio que ve el cliente sea el mismo que se cobra.
+// =========================================================
+const redondear = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+// Promociones activas y dentro de su vigencia en este momento.
+async function promocionesVigentes(db = pool) {
+    const r = await db.query(
+        `SELECT pr.*, c.nombre AS categoria_nombre, p.nombre AS producto_nombre
+         FROM promociones pr
+         LEFT JOIN categorias c ON c.id = pr.categoria_id
+         LEFT JOIN productos p ON p.id = pr.producto_id
+         WHERE pr.estado = 'activa' AND pr.fecha_inicio <= CURRENT_TIMESTAMP AND pr.fecha_fin >= CURRENT_TIMESTAMP
+         ORDER BY pr.fecha_fin ASC`);
+    return r.rows.map((x) => ({ ...x, valor: Number(x.valor) }));
+}
+
+// Descuento por pieza que da una promoción a un producto (nunca más que su precio).
+function descuentoPromo(promo, precio) {
+    const d = promo.tipo_descuento === 'porcentaje' ? Number(precio) * promo.valor / 100 : promo.valor;
+    return redondear(Math.min(Number(precio), d));
+}
+
+// La promoción que más descuenta a un producto (o null).
+function mejorPromocion(producto, promos) {
+    let mejor = null;
+    for (const pr of promos) {
+        const aplica = pr.alcance === 'todos'
+            || (pr.alcance === 'categoria' && Number(pr.categoria_id) === Number(producto.categoria_id))
+            || (pr.alcance === 'producto' && Number(pr.producto_id) === Number(producto.id ?? producto.producto_id));
+        if (!aplica) continue;
+        const d = descuentoPromo(pr, producto.precio);
+        if (d > 0 && (!mejor || d > mejor.descuento_unitario)) mejor = { promo: pr, descuento_unitario: d };
+    }
+    return mejor;
+}
+
+// Agrega a cada producto: promocion {id, nombre, tipo_descuento, valor, fecha_fin},
+// descuento_unitario y precio_final (precio con la promoción aplicada).
+function decorarPrecios(rows, promos) {
+    return rows.map((p) => {
+        const m = mejorPromocion(p, promos);
+        return {
+            ...p,
+            promocion: m ? { id: m.promo.id, nombre: m.promo.nombre, tipo_descuento: m.promo.tipo_descuento, valor: m.promo.valor, fecha_fin: m.promo.fecha_fin } : null,
+            descuento_unitario: m ? m.descuento_unitario : 0,
+            precio_final: redondear(Number(p.precio) - (m ? m.descuento_unitario : 0)),
+        };
+    });
+}
+
+async function impuestosActivos(db = pool) {
+    const r = await db.query(`SELECT id, nombre, porcentaje FROM impuestos WHERE estado = 'activo' ORDER BY id`);
+    return r.rows.map((x) => ({ ...x, porcentaje: Number(x.porcentaje) }));
+}
+
+const ENVIO_COSTO = 199;
+const ENVIO_GRATIS_DESDE = 10000;
+
+// Calcula el total de una compra. `lineas`: [{producto_id, categoria_id,
+// precio, cantidad, garantia_costo}]. Devuelve el desglose completo y, por
+// línea, la promoción aplicada y su descuento.
+//   subtotal          = productos + garantías (precio de lista)
+//   descuento_promo   = suma de promociones
+//   base_impuestos    = subtotal - descuento_promo
+//   impuestos         = base x cada impuesto activo
+//   envío             = $199, gratis desde $10,000 de base
+//   total             = base + impuestos + envío - descuento_puntos
+function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) {
+    let productos = 0, garantias = 0, descuentoPromo = 0;
+    const promosAplicadas = {};
+    const detalle = lineas.map((l) => {
+        const m = mejorPromocion({ id: l.producto_id, categoria_id: l.categoria_id, precio: l.precio }, promos);
+        const descuento = m ? redondear(m.descuento_unitario * l.cantidad) : 0;
+        productos += Number(l.precio) * l.cantidad;
+        garantias += Number(l.garantia_costo || 0);
+        descuentoPromo += descuento;
+        if (m) {
+            const k = m.promo.id;
+            promosAplicadas[k] = promosAplicadas[k] || { id: k, nombre: m.promo.nombre, monto: 0 };
+            promosAplicadas[k].monto = redondear(promosAplicadas[k].monto + descuento);
+        }
+        return { ...l, promocion_id: m ? m.promo.id : null, promocion_nombre: m ? m.promo.nombre : null, descuento };
+    });
+    productos = redondear(productos); garantias = redondear(garantias); descuentoPromo = redondear(descuentoPromo);
+    const subtotal = redondear(productos + garantias);
+    const base = redondear(subtotal - descuentoPromo);
+    const impDetalle = impuestos.map((t) => ({ nombre: t.nombre, porcentaje: t.porcentaje, monto: redondear(base * t.porcentaje / 100) }));
+    const impTotal = redondear(impDetalle.reduce((a, t) => a + t.monto, 0));
+    const envio = lineas.length === 0 ? 0 : (base >= ENVIO_GRATIS_DESDE ? 0 : ENVIO_COSTO);
+    const puntos = redondear(Math.min(Number(descuentoPuntos) || 0, base));
+    return {
+        lineas: detalle,
+        productos, garantias, subtotal,
+        descuento_promocion: descuentoPromo,
+        promociones: Object.values(promosAplicadas),
+        base_impuestos: base,
+        impuestos: impDetalle,
+        impuestos_total: impTotal,
+        envio,
+        envio_gratis_desde: ENVIO_GRATIS_DESDE,
+        descuento_puntos: puntos,
+        total: redondear(base + impTotal + envio - puntos),
+    };
+}
+
+// Consulta del catálogo (la usan GET /api/productos y GET /api/catalogo).
+// Filtros: categoria (nombre o id), uso, marca, precio_min, precio_max,
+// busqueda / buscar, destacado=1, promocion=1, orden=novedades.
+async function consultarCatalogo(q) {
+    if (q.ids) {   // atajo para el comparador: ?ids=1,2,3 (máximo 4)
+        const ids = String(q.ids).split(',').map(Number).filter((n) => n > 0).slice(0, 4);
+        if (ids.length === 0) return [];
         const r = await pool.query(
             `SELECT p.*, c.nombre AS categoria_nombre FROM productos p
-             LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.id = ANY($1)`,
-            [ids]
-        );
-        // respeta el orden pedido
-        return res.json(ids.map((id) => r.rows.find((x) => x.id === id)).filter(Boolean));
+             LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.id = ANY($1)`, [ids]);
+        const promos = await promocionesVigentes();
+        return decorarPrecios(ids.map((id) => r.rows.find((x) => x.id === id)).filter(Boolean), promos);
     }
-
-    const { categoria, uso, precio_min, precio_max, busqueda, marca } = req.query;
+    const { categoria, uso, precio_min, precio_max, marca } = q;
+    const busqueda = q.busqueda || q.buscar;
     const cond = ['p.activo = true'];
     const values = [];
     let i = 1;
-
-    if (categoria) { cond.push(`c.nombre = $${i++}`); values.push(categoria); }
+    if (categoria) {
+        if (/^\d+$/.test(String(categoria))) { cond.push(`p.categoria_id = $${i++}`); values.push(Number(categoria)); }
+        else { cond.push(`c.nombre = $${i++}`); values.push(categoria); }
+    }
     if (uso) { cond.push(`$${i++} = ANY(p.uso_recomendado)`); values.push(uso); }
     if (marca) { cond.push(`p.marca ILIKE $${i++}`); values.push(`%${marca}%`); }
     if (precio_min) { cond.push(`p.precio >= $${i++}`); values.push(precio_min); }
     if (precio_max) { cond.push(`p.precio <= $${i++}`); values.push(precio_max); }
     if (busqueda) { cond.push(`(p.nombre ILIKE $${i} OR p.descripcion ILIKE $${i} OR p.marca ILIKE $${i})`); values.push(`%${busqueda}%`); i++; }
-
-    const query = `
+    if (q.destacado === '1' || q.destacado === 'true') cond.push('p.destacado = true');
+    const orden = q.orden === 'novedades' ? 'p.fecha_creacion DESC, p.id DESC' : 'p.nombre ASC';
+    const result = await pool.query(`
         SELECT p.*, c.nombre AS categoria_nombre, c.icono AS categoria_icono
         FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id
         WHERE ${cond.join(' AND ')}
-        ORDER BY p.nombre ASC
-    `;
-    const result = await pool.query(query, values);
-    res.json(result.rows);
-}));
+        ORDER BY ${orden}`, values);
+    let filas = decorarPrecios(result.rows, await promocionesVigentes());
+    if (q.promocion === '1' || q.promocion === 'true') filas = filas.filter((p) => p.promocion);
+    return filas;
+}
 
-app.get('/api/productos/:id', asyncRoute(async (req, res) => {
+async function productoDelCatalogo(id) {
     const result = await pool.query(
         `SELECT p.*, c.nombre AS categoria_nombre FROM productos p
-         LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.id = $1`,
-        [req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
-    res.json({ ...result.rows[0], garantias: planesParaProducto(result.rows[0].precio) });
+         LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.id = $1`, [id]);
+    if (result.rows.length === 0) return null;
+    const [p] = decorarPrecios(result.rows, await promocionesVigentes());
+    return { ...p, garantias: planesParaProducto(p.precio) };
+}
+
+app.get('/api/productos', asyncRoute(async (req, res) => res.json(await consultarCatalogo(req.query))));
+app.get('/api/productos/:id', asyncRoute(async (req, res) => {
+    const p = await productoDelCatalogo(req.params.id);
+    if (!p) return res.status(404).json({ message: 'Producto no encontrado' });
+    res.json(p);
+}));
+
+// Etapa 4 · 4.1.1 Catálogo de artículos (nombres del documento):
+//   GET /catalogo, /catalogo/{id}, /catalogo?categoria=..., /catalogo?buscar=...
+app.get('/api/catalogo', asyncRoute(async (req, res) => res.json(await consultarCatalogo(req.query))));
+app.get('/api/catalogo/:id', asyncRoute(async (req, res) => {
+    const p = await productoDelCatalogo(req.params.id);
+    if (!p || !p.activo) return res.status(404).json({ message: 'Producto no encontrado' });
+    res.json(p);
+}));
+
+// Cotización de una compra (lo que se va a cobrar, con promociones,
+// impuestos, envío y puntos). La usan el carrito y el resumen del checkout
+// para mostrar el mismo desglose que después guarda el pedido.
+//   body: { items: [{producto_id, cantidad, garantia}], puntos_canjear }
+app.post('/api/checkout/cotizar', asyncRoute(async (req, res) => {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const ids = items.map((i) => Number(i.producto_id)).filter(Boolean);
+    const prods = ids.length ? (await pool.query('SELECT id, nombre, precio, categoria_id, stock FROM productos WHERE id = ANY($1)', [ids])).rows : [];
+    const lineas = items.map((i) => {
+        const p = prods.find((x) => x.id === Number(i.producto_id));
+        if (!p) return null;
+        const cantidad = Math.max(1, Math.floor(Number(i.cantidad) || 1));
+        return { producto_id: p.id, nombre: p.nombre, categoria_id: p.categoria_id, precio: Number(p.precio), cantidad,
+                 garantia_costo: costoGarantia(p.precio, planGarantia(i.garantia).clave) * cantidad };
+    }).filter(Boolean);
+    const puntos = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
+    const [promos, imps] = await Promise.all([promocionesVigentes(), impuestosActivos()]);
+    res.json(cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO }));
 }));
 
 // Planes de garantía para un producto (los usa el modal del catálogo)
@@ -525,97 +676,150 @@ app.post('/api/chatbot/recomendar', asyncRoute(async (req, res) => {
 
 // =========================================================
 // CARRITO  (requiere sesión de cliente)
+//   Un cliente tiene un carrito (tabla carrito) con muchos productos
+//   (carrito_detalle). Rutas del documento de la Etapa 4:
+//     POST   /carrito/agregar
+//     GET    /carrito/{cliente_id}
+//     PUT    /carrito/item/{id}
+//     DELETE /carrito/item/{id}
+//     DELETE /carrito/vaciar/{cliente_id}
+//   (y las anteriores POST /carrito, PUT/DELETE /carrito/{id}, DELETE /carrito)
 // =========================================================
 app.use('/api/carrito', requireCliente);
+
+// Carrito del cliente (lo crea si no existe todavía).
+async function carritoDe(db, clienteId) {
+    const r = await db.query(
+        `INSERT INTO carrito (cliente_id) VALUES ($1)
+         ON CONFLICT (cliente_id) DO UPDATE SET cliente_id = EXCLUDED.cliente_id
+         RETURNING *`, [clienteId]);
+    return r.rows[0];
+}
 
 app.get('/api/carrito/:clienteId', asyncRoute(async (req, res) => {
     const clienteId = req.cliente.id; // el de la sesión, no el de la URL
     const result = await pool.query(
-        `SELECT ci.id, ci.cantidad, ci.garantia_clave, ci.garantia_plan, ci.garantia_meses, ci.garantia_costo,
-                p.id AS producto_id, p.nombre, p.precio, p.imagen_url, p.stock
-         FROM carrito_items ci JOIN productos p ON ci.producto_id = p.id
-         WHERE ci.cliente_id = $1 ORDER BY ci.fecha_agregado DESC`,
+        `SELECT cd.id, cd.cantidad, cd.precio_unitario, cd.garantia_clave, cd.garantia_plan, cd.garantia_meses, cd.garantia_costo,
+                p.id AS producto_id, p.nombre, p.precio, p.imagen_url, p.stock, p.categoria_id, c.nombre AS categoria_nombre,
+                ca.id AS carrito_id, ca.estado AS carrito_estado
+         FROM carrito ca
+         JOIN carrito_detalle cd ON cd.carrito_id = ca.id
+         JOIN productos p ON cd.producto_id = p.id
+         LEFT JOIN categorias c ON c.id = p.categoria_id
+         WHERE ca.cliente_id = $1 ORDER BY cd.fecha_agregado DESC`,
         [clienteId]
     );
-    res.json(result.rows);
+    // Cada línea lleva su promoción vigente y el precio con descuento.
+    const promos = await promocionesVigentes();
+    res.json(result.rows.map((r) => {
+        const m = mejorPromocion({ id: r.producto_id, categoria_id: r.categoria_id, precio: r.precio }, promos);
+        return { ...r, promocion: m ? { id: m.promo.id, nombre: m.promo.nombre } : null,
+                 descuento_unitario: m ? m.descuento_unitario : 0,
+                 precio_final: redondear(Number(r.precio) - (m ? m.descuento_unitario : 0)) };
+    }));
 }));
 
-app.post('/api/carrito', asyncRoute(async (req, res) => {
+const agregarAlCarrito = asyncRoute(async (req, res) => {
     const cliente_id = req.cliente.id;
-    const { producto_id, cantidad = 1 } = req.body;
+    const producto_id = Number(req.body.producto_id);
+    const cantidad = Math.floor(Number(req.body.cantidad ?? 1));
+    if (!producto_id) return res.status(400).json({ message: 'Falta el producto' });
+    if (!(cantidad > 0)) return res.status(400).json({ message: 'La cantidad debe ser mayor a cero' });
     const gClave = planGarantia(req.body.garantia).clave;
 
     const prod = await pool.query('SELECT precio, stock, nombre FROM productos WHERE id = $1 AND activo = true', [producto_id]);
     if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
     const precio = prod.rows[0].precio;
-    const gPlan = planGarantia(gClave);
+    const carrito = await carritoDe(pool, cliente_id);
 
     const existente = await pool.query(
-        'SELECT id, cantidad, garantia_clave FROM carrito_items WHERE cliente_id = $1 AND producto_id = $2',
-        [cliente_id, producto_id]
+        'SELECT id, cantidad, garantia_clave FROM carrito_detalle WHERE carrito_id = $1 AND producto_id = $2',
+        [carrito.id, producto_id]
     );
     // No se aparta más de lo que hay en inventario.
     const yaEnCarrito = existente.rows.length ? existente.rows[0].cantidad : 0;
     const disponible = Number(prod.rows[0].stock);
     if (disponible <= 0) return res.status(400).json({ message: `"${prod.rows[0].nombre}" está agotado` });
-    if (yaEnCarrito + Number(cantidad) > disponible) {
+    if (yaEnCarrito + cantidad > disponible) {
         return res.status(400).json({ message: yaEnCarrito
             ? `Solo hay ${disponible} disponibles y ya tienes ${yaEnCarrito} en tu carrito`
             : `Solo hay ${disponible} disponibles` });
     }
+    let item;
     if (existente.rows.length > 0) {
         const row = existente.rows[0];
         const nuevaCantidad = row.cantidad + cantidad;
         // si se pidió una garantía explícita se toma esa; si no, se conserva la que ya tenía
         const claveFinal = (gClave !== 'none') ? gClave : row.garantia_clave;
         const pf = planGarantia(claveFinal);
-        await pool.query(
-            `UPDATE carrito_items SET cantidad = $1, garantia_clave = $2, garantia_plan = $3,
-                 garantia_meses = $4, garantia_costo = $5 WHERE id = $6`,
-            [nuevaCantidad, claveFinal, pf.meses ? pf.label : null, pf.meses, costoGarantia(precio, claveFinal) * nuevaCantidad, row.id]
+        item = await pool.query(
+            `UPDATE carrito_detalle SET cantidad = $1, precio_unitario = $2, garantia_clave = $3, garantia_plan = $4,
+                 garantia_meses = $5, garantia_costo = $6 WHERE id = $7 RETURNING *`,
+            [nuevaCantidad, precio, claveFinal, pf.meses ? pf.label : null, pf.meses, costoGarantia(precio, claveFinal) * nuevaCantidad, row.id]
         );
     } else {
-        await pool.query(
-            `INSERT INTO carrito_items (cliente_id, producto_id, cantidad, garantia_clave, garantia_plan, garantia_meses, garantia_costo)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [cliente_id, producto_id, cantidad, gClave, gPlan.meses ? gPlan.label : null, gPlan.meses, costoGarantia(precio, gClave) * cantidad]
+        const gPlan = planGarantia(gClave);
+        item = await pool.query(
+            `INSERT INTO carrito_detalle (carrito_id, producto_id, cantidad, precio_unitario, garantia_clave, garantia_plan, garantia_meses, garantia_costo)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [carrito.id, producto_id, cantidad, precio, gClave, gPlan.meses ? gPlan.label : null, gPlan.meses, costoGarantia(precio, gClave) * cantidad]
         );
     }
-    res.status(201).json({ message: 'Agregado al carrito' });
-}));
+    await pool.query(`UPDATE carrito SET estado = 'activo' WHERE id = $1`, [carrito.id]);
+    res.status(201).json({ message: 'Agregado al carrito', item: item.rows[0] });
+});
+app.post('/api/carrito', agregarAlCarrito);
+app.post('/api/carrito/agregar', agregarAlCarrito);
 
-app.put('/api/carrito/:id', asyncRoute(async (req, res) => {
+const actualizarItemCarrito = asyncRoute(async (req, res) => {
     const cur = await pool.query(
-        `SELECT ci.id, ci.cantidad, ci.garantia_clave, p.precio, p.stock
-         FROM carrito_items ci JOIN productos p ON p.id = ci.producto_id
-         WHERE ci.id = $1 AND ci.cliente_id = $2`,
+        `SELECT cd.id, cd.cantidad, cd.garantia_clave, p.precio, p.stock
+         FROM carrito_detalle cd
+         JOIN carrito ca ON ca.id = cd.carrito_id
+         JOIN productos p ON p.id = cd.producto_id
+         WHERE cd.id = $1 AND ca.cliente_id = $2`,
         [req.params.id, req.cliente.id]
     );
     if (cur.rows.length === 0) return res.status(404).json({ message: 'Ítem no encontrado en tu carrito' });
     const row = cur.rows[0];
-    const cantidad = req.body.cantidad !== undefined ? Math.max(1, Number(req.body.cantidad)) : row.cantidad;
+    const cantidad = req.body.cantidad !== undefined ? Math.max(1, Math.floor(Number(req.body.cantidad) || 1)) : row.cantidad;
     if (req.body.cantidad !== undefined && cantidad > Number(row.stock)) {
         return res.status(400).json({ message: `Solo hay ${row.stock} disponibles` });
     }
     const gClave = req.body.garantia !== undefined ? planGarantia(req.body.garantia).clave : row.garantia_clave;
     const pf = planGarantia(gClave);
     await pool.query(
-        `UPDATE carrito_items SET cantidad = $1, garantia_clave = $2, garantia_plan = $3,
-             garantia_meses = $4, garantia_costo = $5 WHERE id = $6`,
-        [cantidad, gClave, pf.meses ? pf.label : null, pf.meses, costoGarantia(row.precio, gClave) * cantidad, req.params.id]
+        `UPDATE carrito_detalle SET cantidad = $1, precio_unitario = $2, garantia_clave = $3, garantia_plan = $4,
+             garantia_meses = $5, garantia_costo = $6 WHERE id = $7`,
+        [cantidad, row.precio, gClave, pf.meses ? pf.label : null, pf.meses, costoGarantia(row.precio, gClave) * cantidad, req.params.id]
     );
     res.json({ message: 'Carrito actualizado' });
-}));
+});
+app.put('/api/carrito/item/:id', actualizarItemCarrito);
+app.put('/api/carrito/:id', actualizarItemCarrito);
 
+async function vaciarCarrito(db, clienteId) {
+    await db.query(
+        `DELETE FROM carrito_detalle WHERE carrito_id IN (SELECT id FROM carrito WHERE cliente_id = $1)`, [clienteId]);
+}
+app.delete('/api/carrito/vaciar/:clienteId', asyncRoute(async (req, res) => {
+    if (String(req.params.clienteId) !== String(req.cliente.id)) return res.status(403).json({ message: 'Ese carrito no es de tu cuenta' });
+    await vaciarCarrito(pool, req.cliente.id);
+    res.json({ message: 'Carrito vaciado' });
+}));
 app.delete('/api/carrito', asyncRoute(async (req, res) => {
-    await pool.query('DELETE FROM carrito_items WHERE cliente_id = $1', [req.cliente.id]);
+    await vaciarCarrito(pool, req.cliente.id);
     res.json({ message: 'Carrito vaciado' });
 }));
 
-app.delete('/api/carrito/:id', asyncRoute(async (req, res) => {
-    await pool.query('DELETE FROM carrito_items WHERE id = $1 AND cliente_id = $2', [req.params.id, req.cliente.id]);
+const quitarItemCarrito = asyncRoute(async (req, res) => {
+    await pool.query(
+        `DELETE FROM carrito_detalle WHERE id = $1 AND carrito_id IN (SELECT id FROM carrito WHERE cliente_id = $2)`,
+        [req.params.id, req.cliente.id]);
     res.json({ message: 'Producto eliminado del carrito' });
-}));
+});
+app.delete('/api/carrito/item/:id', quitarItemCarrito);
+app.delete('/api/carrito/:id', quitarItemCarrito);
 
 // =========================================================
 // PEDIDOS (checkout + seguimiento)
@@ -629,7 +833,8 @@ app.delete('/api/carrito/:id', asyncRoute(async (req, res) => {
 async function aplicarCobroPedido(client, pedido, opciones = {}) {
     const sumarMetricas = opciones.metricas !== false;
     const cliente_id = pedido.cliente_id;
-    const subtotal = Number(pedido.subtotal);
+    // Los puntos se ganan sobre lo que se pagó por los productos (ya con promociones).
+    const subtotal = Number(pedido.subtotal) - Number(pedido.descuento_promocion || 0);
     const total = Number(pedido.total);
     const m = await client.query(
         'SELECT COALESCE(valor_total_compras,0) AS gasto, COALESCE(total_compras,0) AS compras FROM metricas_clientes WHERE cliente_id = $1',
@@ -736,8 +941,15 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
             [pedido.cliente_id]
         );
     }
+    // Pagado con el monedero: se reembolsa el total al monedero.
+    let reembolso_monedero = 0;
+    if (pedido.metodo_tipo === 'monedero' && pedido.pago_estado === 'pagado' && pedido.cliente_id) {
+        const mon = await monederoDe(client, pedido.cliente_id, { bloquear: true });
+        await moverMonedero(client, mon, { tipo: 'reembolso', monto: Number(pedido.total), concepto: `Reembolso por cancelar ${pedido.numero_orden}`, pedidoId: pedido.id, usuarioId });
+        reembolso_monedero = Number(pedido.total);
+    }
     await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedido.id]);
-    return { canjeados, ganados, productos: items.rows.length };
+    return { canjeados, ganados, productos: items.rows.length, reembolso_monedero };
 }
 
 // Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
@@ -808,89 +1020,136 @@ function codigoGarantia() {
     return s; // p.ej. AB3C-9KTP-2MQ7-XY4Z
 }
 
-app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
+// =========================================================
+// MONEDERO ELECTRÓNICO (Etapa 4) — helpers
+// =========================================================
+// Monedero del cliente (lo crea si no existe). Con `bloquear` toma la fila
+// FOR UPDATE para que dos cargos a la vez no dejen el saldo negativo.
+async function monederoDe(db, clienteId, { bloquear = false } = {}) {
+    await db.query('INSERT INTO monederos (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [clienteId]);
+    const r = await db.query(`SELECT * FROM monederos WHERE cliente_id = $1 ${bloquear ? 'FOR UPDATE' : ''}`, [clienteId]);
+    return { ...r.rows[0], saldo: Number(r.rows[0].saldo) };
+}
+
+// Aplica un cargo (-) o abono (+) al monedero y deja el movimiento con el
+// saldo resultante. Lanza error si el saldo no alcanza.
+async function moverMonedero(db, monedero, { tipo, monto, concepto, metodo = null, referencia = null, pedidoId = null, usuarioId = null }) {
+    monto = redondear(monto);
+    if (!monto) throw new Error('El monto no puede ser cero');
+    const nuevo = redondear(Number(monedero.saldo) + monto);
+    if (nuevo < 0) throw new Error(`Saldo insuficiente en el monedero (disponible: ${formatoMXN(monedero.saldo)})`);
+    await db.query('UPDATE monederos SET saldo = $1 WHERE id = $2', [nuevo, monedero.id]);
+    const mov = await db.query(
+        `INSERT INTO movimientos_monedero (monedero_id, tipo, monto, saldo_resultante, concepto, metodo, referencia, estado, pedido_id, usuario_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'aplicado',$8,$9) RETURNING *`,
+        [monedero.id, tipo, monto, nuevo, String(concepto || '').slice(0, 200), metodo, referencia, pedidoId, usuarioId]);
+    monedero.saldo = nuevo;
+    return mov.rows[0];
+}
+
+function formatoMXN(n) {
+    return Number(n || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+}
+
+// Métodos de pago de la tienda en línea. inmediato = se cobra al confirmar.
+const METODOS_TIENDA = {
+    tarjeta:  { inmediato: true },
+    paypal:   { inmediato: true },
+    monedero: { inmediato: true },
+    spei:     { inmediato: false, dias: 3 },
+    tienda:   { inmediato: false, dias: 5 },
+};
+
+// 4.1.2 Procesos de pago: validar stock -> generar pedido -> registrar
+// pago -> actualizar inventario -> guardar estado. Todo en una transacción.
+// También responde en POST /api/pagos/procesar (nombre del documento).
+const procesarCompra = asyncRoute(async (req, res) => {
     const cliente_id = req.cliente.id;
-    const { items, metodo_pago, direccion_envio, notas } = req.body;
-    const metodo_tipo = ['tarjeta', 'spei', 'tienda'].includes(req.body.metodo_tipo) ? req.body.metodo_tipo : 'tarjeta';
+    const { items, direccion_envio, notas } = req.body;
+    let metodo_pago = req.body.metodo_pago;
+    const metodo_tipo = METODOS_TIENDA[req.body.metodo_tipo] ? req.body.metodo_tipo : 'tarjeta';
+    const metodo = METODOS_TIENDA[metodo_tipo];
     let puntos_canjear = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
     if (!items || items.length === 0) {
         return res.status(400).json({ message: 'El carrito no tiene productos' });
     }
+    if (metodo_tipo === 'paypal' && !metodo_pago) metodo_pago = 'PayPal';
+    if (metodo_tipo === 'monedero') metodo_pago = 'Monedero Kozmok';
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        let subtotal = 0;
-        let garantiasTotal = 0;
-        const detalles = [];
         const numero_orden = 'ORD-' + Date.now();
 
+        // 1) Validar stock (con bloqueo de fila) y armar las líneas.
+        const lineas = [];
         for (const item of items) {
-            const prod = await client.query('SELECT precio, stock, nombre FROM productos WHERE id = $1 FOR UPDATE', [item.producto_id]);
-            if (prod.rows.length === 0) throw new Error(`Producto ${item.producto_id} no encontrado`);
+            const cantidad = Math.floor(Number(item.cantidad));
+            if (!(cantidad > 0)) throw new Error('Cantidad inválida en el carrito');
+            const prod = await client.query('SELECT id, precio, stock, nombre, categoria_id, activo FROM productos WHERE id = $1 FOR UPDATE', [item.producto_id]);
+            if (prod.rows.length === 0 || !prod.rows[0].activo) throw new Error(`Producto ${item.producto_id} no disponible`);
             const p = prod.rows[0];
-            if (p.stock < item.cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
-
-            const lineaSubtotal = p.precio * item.cantidad;
-            subtotal += Number(lineaSubtotal);
-
+            if (p.stock < cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
             const gp = planGarantia(item.garantia);
-            const gCosto = costoGarantia(p.precio, gp.clave) * item.cantidad;
-            garantiasTotal += gCosto;
-
-            detalles.push({
-                producto_id: item.producto_id, cantidad: item.cantidad, precio_unitario: p.precio, subtotal: lineaSubtotal,
-                garantia_clave: gp.clave, garantia_plan: gp.meses ? gp.label : null, garantia_meses: gp.meses, garantia_costo: gCosto,
+            lineas.push({
+                producto_id: p.id, categoria_id: p.categoria_id, nombre: p.nombre, precio: Number(p.precio), cantidad,
+                garantia_plan: gp.meses ? gp.label : null, garantia_meses: gp.meses, garantia_costo: costoGarantia(p.precio, gp.clave) * cantidad,
             });
-
-            await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [item.cantidad, item.producto_id]);
-            await client.query(
-                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,$3)`,
-                [item.producto_id, item.cantidad, `Venta en línea ${numero_orden}`]
-            );
-            await generarOrdenAutomaticaSiCritico(client, item.producto_id, 'demanda');
         }
 
-        subtotal += garantiasTotal;
-        const impuestos = Math.round(subtotal * 0.16 * 100) / 100;
-        const envio = subtotal >= 10000 ? 0 : 199;
-
-        // ---- Club: canje de puntos como descuento ----
+        // 2) Totales: promociones vigentes + impuestos configurados + envío + puntos.
+        const [promos, imps] = await Promise.all([promocionesVigentes(client), impuestosActivos(client)]);
+        let cot = cotizarLineas(lineas, promos, imps);
         let descuento = 0;
         if (puntos_canjear > 0) {
             const cli = await client.query('SELECT puntos FROM clientes WHERE id = $1 FOR UPDATE', [cliente_id]);
             const saldo = cli.rows[0].puntos;
             puntos_canjear = Math.min(puntos_canjear, saldo);
-            puntos_canjear = puntos_canjear - (puntos_canjear % 100);          // solo múltiplos de 100
-            descuento = Math.min(puntos_canjear * VALOR_PUNTO, subtotal);      // nunca deja el subtotal en negativo
+            puntos_canjear = puntos_canjear - (puntos_canjear % 100);                    // solo múltiplos de 100
+            descuento = Math.min(puntos_canjear * VALOR_PUNTO, cot.base_impuestos);      // nunca deja la base en negativo
             puntos_canjear = Math.round(descuento / VALOR_PUNTO);
+            cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: descuento });
         }
+        const { subtotal, envio, total } = cot;
 
-        const total = Math.round((subtotal + impuestos + envio - descuento) * 100) / 100;
-
-        // Tarjeta = se paga al instante. SPEI / tienda = pago pendiente + código.
-        const inmediato = metodo_tipo === 'tarjeta';
+        // 3) Pago: tarjeta / PayPal / monedero se cobran al instante.
+        //    SPEI / pago en tienda quedan pendientes con referencia y plazo.
+        const inmediato = metodo.inmediato;
         const pago_estado = inmediato ? 'pagado' : 'pendiente';
         const estado = inmediato ? 'confirmado' : 'pendiente';
-        const pago_referencia = inmediato ? null : generarReferenciaPago(metodo_tipo);
-        const pago_vence = inmediato ? null : new Date(Date.now() + (metodo_tipo === 'spei' ? 3 : 5) * 86400000);
+        const pago_referencia = inmediato ? (metodo_tipo === 'paypal' ? 'PAYPAL-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0') : null)
+                                          : generarReferenciaPago(metodo_tipo);
+        const pago_vence = inmediato ? null : new Date(Date.now() + metodo.dias * 86400000);
+        let monedero = null;
+        if (metodo_tipo === 'monedero') {
+            monedero = await monederoDe(client, cliente_id, { bloquear: true });
+            if (monedero.estado !== 'activo') throw new Error('Tu monedero está bloqueado. Contacta a soporte.');
+            if (monedero.saldo < total) throw new Error(`Saldo insuficiente en el monedero: tienes ${formatoMXN(monedero.saldo)} y el total es ${formatoMXN(total)}`);
+        }
 
         const pedido = await client.query(
-            `INSERT INTO pedidos (numero_orden, cliente_id, subtotal, impuestos, envio, descuento, total, estado,
-                                  metodo_pago, pago_estado, pago_referencia, pago_vence, direccion_envio, notas, fecha_confirmacion)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-            [numero_orden, cliente_id, subtotal, impuestos, envio, descuento, total, estado,
-                metodo_pago, pago_estado, pago_referencia, pago_vence, direccion_envio, notas,
+            `INSERT INTO pedidos (numero_orden, cliente_id, subtotal, impuestos, impuestos_detalle, envio, descuento, descuento_promocion, total, estado,
+                                  metodo_pago, metodo_tipo, pago_estado, pago_referencia, pago_vence, direccion_envio, notas, fecha_confirmacion)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+            [numero_orden, cliente_id, subtotal, cot.impuestos_total, JSON.stringify(cot.impuestos), envio, descuento, cot.descuento_promocion, total, estado,
+                metodo_pago || 'Tarjeta', metodo_tipo, pago_estado, pago_referencia, pago_vence, direccion_envio, notas,
                 inmediato ? new Date() : null]
         );
         const pedidoId = pedido.rows[0].id;
 
-        for (const d of detalles) {
+        // 4) Partidas, inventario (salida + movimiento + reabasto) y garantías.
+        for (const d of cot.lineas) {
             const it = await client.query(
-                `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, garantia_plan, garantia_meses, garantia_costo)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-                [pedidoId, d.producto_id, d.cantidad, d.precio_unitario, d.subtotal, d.garantia_plan, d.garantia_meses, d.garantia_costo]
+                `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, garantia_plan, garantia_meses, garantia_costo, promocion_id, descuento)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+                [pedidoId, d.producto_id, d.cantidad, d.precio, redondear(d.precio * d.cantidad), d.garantia_plan, d.garantia_meses, d.garantia_costo, d.promocion_id, d.descuento]
             );
+            await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [d.cantidad, d.producto_id]);
+            await client.query(
+                `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo) VALUES ($1,'salida',$2,$3)`,
+                [d.producto_id, d.cantidad, `Venta en línea ${numero_orden}`]
+            );
+            await generarOrdenAutomaticaSiCritico(client, d.producto_id, 'demanda');
             if (d.garantia_meses > 0) {
                 const vence = new Date();
                 vence.setMonth(vence.getMonth() + d.garantia_meses);
@@ -902,6 +1161,13 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
                 );
                 await client.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
             }
+        }
+
+        // 5) Cargo al monedero (si se pagó con él).
+        let monedero_saldo = null;
+        if (monedero) {
+            await moverMonedero(client, monedero, { tipo: 'compra', monto: -total, concepto: `Compra ${numero_orden}`, pedidoId });
+            monedero_saldo = monedero.saldo;
         }
 
         // El canje de puntos siempre se retiene al crear el pedido (si se
@@ -920,12 +1186,15 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
             puntos_ganados = await aplicarCobroPedido(client, pedido.rows[0]);
         }
 
-        await client.query('DELETE FROM carrito_items WHERE cliente_id = $1', [cliente_id]);
+        await vaciarCarrito(client, cliente_id);
+        await client.query(`UPDATE carrito SET estado = 'convertido' WHERE cliente_id = $1`, [cliente_id]);
+        const pago = await client.query('SELECT * FROM pagos WHERE pedido_id = $1', [pedidoId]);
         await client.query('COMMIT');
 
         res.status(201).json({
             ...pedido.rows[0], puntos_ganados, puntos_canjeados: puntos_canjear,
-            metodo_tipo, garantias_total: garantiasTotal,
+            metodo_tipo, garantias_total: cot.garantias, promociones: cot.promociones,
+            pago: pago.rows[0] || null, monedero_saldo,
         });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -933,7 +1202,9 @@ app.post('/api/pedidos', requireCliente, asyncRoute(async (req, res) => {
     } finally {
         client.release();
     }
-}));
+});
+app.post('/api/pedidos', requireCliente, procesarCompra);
+app.post('/api/pagos/procesar', requireCliente, procesarCompra);
 
 app.get('/api/pedidos/cliente/:clienteId', requireCliente, asyncRoute(async (req, res) => {
     const result = await pool.query(
@@ -1125,15 +1396,13 @@ app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     res.json(r.rows);
 }));
 
-app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
-    const { asunto, categoria, descripcion, prioridad, pedido_id } = req.body;
-    if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
-
+// Crea un ticket (folio TK-xxxx), su primer mensaje y la interacción CRM.
+async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }) {
     const ins = await pool.query(
-        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id)
-         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5) RETURNING id`,
-        [req.params.id, asunto.slice(0, 160), (categoria || 'general').slice(0, 40),
-            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null]
+        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje)
+         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6) RETURNING id`,
+        [clienteId, String(asunto).slice(0, 160), (categoria || 'general').slice(0, 40),
+            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion]
     );
     const t = await pool.query(
         "UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *",
@@ -1147,9 +1416,34 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     // También queda como interacción CRM
     await pool.query(
         `INSERT INTO interacciones (cliente_id, tipo, descripcion) VALUES ($1, 'soporte', $2)`,
-        [req.params.id, `Ticket ${folio}: ${asunto}`]
+        [clienteId, `Ticket ${folio}: ${asunto}`]
     );
-    res.status(201).json({ message: 'Ticket creado', ticket: t.rows[0] });
+    return t.rows[0];
+}
+
+// Respuesta del equipo: va al hilo y queda como "respuesta" del ticket.
+// Si estaba abierto pasa a En proceso (o al estado que se indique).
+async function responderTicket(ticketId, usuarioId, mensaje, estado) {
+    const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [ticketId]);
+    if (t.rows.length === 0) return false;
+    await pool.query(
+        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`,
+        [ticketId, usuarioId, mensaje]
+    );
+    const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'].includes(estado) ? estado : null;
+    await pool.query(
+        `UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP, respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP,
+             estado = COALESCE($3, CASE WHEN estado = 'abierto' THEN 'en_proceso' ELSE estado END) WHERE id = $1`,
+        [ticketId, mensaje, est]
+    );
+    return true;
+}
+
+app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
+    const { asunto, descripcion } = req.body;
+    if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
+    const ticket = await crearTicket(req.params.id, req.body);
+    res.status(201).json({ message: 'Ticket creado', ticket });
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
@@ -1561,6 +1855,11 @@ const PERMISOS_API = [
     { ruta: /^\/erp\/reportes\/guardados(\/|$)/,        metodos: TODO, permisos: ['reportes-erp'] },
     { ruta: /^\/erp\/recursos(\/|$)/,                 metodos: TODO, permisos: ['recursos'] },
     { ruta: /^\/erp\//,                                metodos: LEER, permisos: ['erp', 'ordenes-erp', 'reportes-erp', 'nivel-erp'] },
+    // Tienda (Etapa 4)
+    { ruta: /^\/promociones(\/|$)/,                    metodos: TODO, permisos: ['promociones'] },
+    { ruta: /^\/impuestos(\/|$)/,                      metodos: TODO, permisos: ['impuestos'] },
+    { ruta: /^\/monederos(\/|$)/,                      metodos: TODO, permisos: ['monedero'] },
+    { ruta: /^\/pagos$/,                                metodos: LEER, permisos: ['pagos', 'pedidos', 'ordenes-erp'] },
     // Cuentas (solo admin; además cada ruta lleva requireAdmin)
     { ruta: /^\/usuarios(\/|$)/,                       metodos: TODO, permisos: ['usuarios'] },
 ];
@@ -1900,16 +2199,8 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
 app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
     const { mensaje } = req.body;
     if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [req.params.id]);
-    if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`,
-        [req.params.id, req.usuario.id, mensaje]
-    );
-    await pool.query(
-        "UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP, estado = CASE WHEN estado = 'abierto' THEN 'en_proceso' ELSE estado END WHERE id = $1",
-        [req.params.id]
-    );
+    const ok = await responderTicket(req.params.id, req.usuario.id, mensaje);
+    if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.status(201).json({ message: 'Respuesta enviada' });
 }));
 
@@ -2159,7 +2450,7 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
     const {
         nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
         procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-        uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario
+        uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario, destacado
     } = req.body;
 
     if (!nombre || precio === undefined || precio < 0) {
@@ -2170,14 +2461,14 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
         `INSERT INTO productos
          (nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
           procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-          uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          uso_recomendado, imagen_url, proveedor_id, vendedor_id, activo, restock, costo_unitario, destacado)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
          RETURNING *`,
         [nombre, descripcion || '', categoria_id || null, marca || '', precio, stock || 0, stock_minimo || 5,
             procesador || null, ram_gb || null, almacenamiento || null, tarjeta_grafica || null, pantalla || null,
             uso_recomendado || [], imagen_url || '', proveedor_id || null, vendedor_id || null,
             activo !== undefined ? activo : true, restock || 'push',
-            costo_unitario === undefined || costo_unitario === '' ? null : costo_unitario]
+            costo_unitario === undefined || costo_unitario === '' ? null : costo_unitario, destacado === true]
     );
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.status(201).json({ message: 'Producto creado', producto: result.rows[0] });
@@ -2187,7 +2478,7 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
     const {
         nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
         procesador, ram_gb, almacenamiento, tarjeta_grafica, pantalla,
-        uso_recomendado, imagen_url, proveedor_id, activo, restock, costo_unitario
+        uso_recomendado, imagen_url, proveedor_id, activo, restock, costo_unitario, destacado
     } = req.body;
 
     const result = await pool.query(
@@ -2200,11 +2491,12 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
             tarjeta_grafica = COALESCE($11, tarjeta_grafica), pantalla = COALESCE($12, pantalla),
             uso_recomendado = COALESCE($13, uso_recomendado), imagen_url = COALESCE($14, imagen_url),
             proveedor_id = COALESCE($15, proveedor_id), activo = COALESCE($16, activo),
-            restock = COALESCE($17, restock), costo_unitario = COALESCE($18, costo_unitario)
+            restock = COALESCE($17, restock), costo_unitario = COALESCE($18, costo_unitario),
+            destacado = COALESCE($20, destacado)
          WHERE id = $19 RETURNING *`,
         [nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo, procesador, ram_gb,
             almacenamiento, tarjeta_grafica, pantalla, uso_recomendado, imagen_url, proveedor_id, activo, restock,
-            costo_unitario === '' ? null : costo_unitario, req.params.id]
+            costo_unitario === '' ? null : costo_unitario, req.params.id, typeof destacado === 'boolean' ? destacado : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
@@ -3288,42 +3580,47 @@ const procesarOrdenERP = asyncRoute(async (req, res) => {
         let subtotal = 0;
         const detalle = [];
         for (const l of lineas) {
-            const pr = await client.query('SELECT id, nombre, precio, stock, activo FROM productos WHERE id = $1 FOR UPDATE', [l.producto_id]);
+            const pr = await client.query('SELECT id, nombre, precio, stock, activo, categoria_id FROM productos WHERE id = $1 FOR UPDATE', [l.producto_id]);
             if (pr.rows.length === 0 || !pr.rows[0].activo) throw new Error(`Producto ${l.producto_id} no disponible`);
             const p = pr.rows[0];
             if (p.stock < l.cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
             const lineaSub = Math.round(Number(p.precio) * l.cantidad * 100) / 100;
             subtotal += lineaSub;
-            detalle.push({ ...l, nombre: p.nombre, precio: Number(p.precio), subtotal: lineaSub });
+            detalle.push({ ...l, nombre: p.nombre, precio: Number(p.precio), categoria_id: p.categoria_id, subtotal: lineaSub });
         }
         pasos.push({ clave: 'stock', texto: `Stock validado (${detalle.length} producto${detalle.length === 1 ? '' : 's'})` });
 
         // 2) Crear la orden.
-        subtotal = Math.round(subtotal * 100) / 100;
-        const impuestos = Math.round(subtotal * 0.16 * 100) / 100;
-        const envio = subtotal >= 10000 ? 0 : 199;
-        const total = Math.round((subtotal + impuestos + envio) * 100) / 100;
+        // Mismas promociones e impuestos que la tienda en línea (Etapa 4).
+        const [promos, imps] = await Promise.all([promocionesVigentes(client), impuestosActivos(client)]);
+        const cot = cotizarLineas(detalle, promos, imps);
+        subtotal = cot.subtotal;
+        const impuestos = cot.impuestos_total;
+        const envio = cot.envio;
+        const total = cot.total;
         const m = METODOS_ERP[metodo];
         const folio = await client.query(`SELECT 'OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0') AS folio`);
         const numero_orden = folio.rows[0].folio;
         const ped = await client.query(
-            `INSERT INTO pedidos (numero_orden, cliente_id, vendedor_id, origen, subtotal, impuestos, envio, descuento, total,
-                                  estado, metodo_pago, pago_estado, pago_referencia, pago_vence, direccion_envio, notas, fecha_confirmacion)
-             VALUES ($1,$2,$3,'erp',$4,$5,$6,0,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+            `INSERT INTO pedidos (numero_orden, cliente_id, vendedor_id, origen, subtotal, impuestos, impuestos_detalle, envio, descuento,
+                                  descuento_promocion, total, estado, metodo_pago, metodo_tipo, pago_estado, pago_referencia, pago_vence,
+                                  direccion_envio, notas, fecha_confirmacion)
+             VALUES ($1,$2,$3,'erp',$4,$5,$16,$6,0,$17,$7,$8,$9,$18,$10,$11,$12,$13,$14,$15) RETURNING *`,
             [numero_orden, cliente_id, req.usuario.id, subtotal, impuestos, envio, total,
                 m.inmediato ? 'confirmado' : 'pendiente', m.texto, m.inmediato ? 'pagado' : 'pendiente',
                 m.inmediato ? null : 'ERP-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0'),
                 m.inmediato ? null : new Date(Date.now() + 3 * 86400000),
-                direccion_envio || null, notas || null, m.inmediato ? new Date() : null]
+                direccion_envio || null, notas || null, m.inmediato ? new Date() : null,
+                JSON.stringify(cot.impuestos), cot.descuento_promocion, metodo]
         );
         const pedido = ped.rows[0];
         pasos.push({ clave: 'orden', texto: `Orden ${numero_orden} creada` });
 
         // 3) Partidas + descuento de stock + movimiento de inventario.
-        for (const d of detalle) {
+        for (const d of cot.lineas) {
             await client.query(
-                `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1,$2,$3,$4,$5)`,
-                [pedido.id, d.producto_id, d.cantidad, d.precio, d.subtotal]
+                `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, promocion_id, descuento) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+                [pedido.id, d.producto_id, d.cantidad, d.precio, d.subtotal, d.promocion_id, d.descuento]
             );
             await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [d.cantidad, d.producto_id]);
             await client.query(
@@ -3860,6 +4157,509 @@ app.get('/api/usuarios/:id/actividad', requireUsuario, asyncRoute(async (req, re
 // =========================================================
 app.get('/api', (req, res) => res.json({ status: 'ok', message: 'API Kozmok activa' }));
 
+// =========================================================
+// ETAPA 4 · CARRITO Y SUS AGREGADOS
+//   Pagos, promociones, impuestos, monedero, atención a clientes y
+//   autenticación con los nombres de ruta del documento de la etapa.
+// =========================================================
+
+// Quién hace la llamada: cliente de la tienda o usuario interno. Para las
+// rutas que comparten los dos (pagos, tickets).
+async function quienLlama(req) {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return null;
+    const [tipo, id] = Buffer.from(token, 'base64').toString('utf8').split(':');
+    if (tipo === 'cliente' && id) {
+        const r = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE id = $1 AND estado_cliente = 'activo'`, [id]);
+        return r.rows[0] ? { tipo: 'cliente', ...r.rows[0] } : null;
+    }
+    if (tipo === 'usuario' && id) {
+        const r = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [id]);
+        return r.rows[0] && r.rows[0].activo ? { tipo: 'usuario', ...r.rows[0] } : null;
+    }
+    return null;
+}
+const requireSesion = async (req, res, next) => {
+    try {
+        req.quien = await quienLlama(req);
+        if (!req.quien) return res.status(401).json({ message: 'Inicia sesión para continuar' });
+        next();
+    } catch { res.status(401).json({ message: 'Inicia sesión para continuar' }); }
+};
+// Para rutas públicas del documento que modifican configuración (POST /promociones,
+// PUT /impuestos/{id}...): solo usuarios internos con permiso de esa sección.
+const requireInterno = (clave) => async (req, res, next) => {
+    try {
+        const q = await quienLlama(req);
+        if (!q || q.tipo !== 'usuario') return res.status(401).json({ message: 'Requiere sesión del equipo interno' });
+        if (!puedeVer(q.rol, clave)) return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
+        req.usuario = q;
+        next();
+    } catch { res.status(401).json({ message: 'No autenticado' }); }
+};
+
+// ---------------------------------------------------------
+// 4.1.2 PAGOS
+//   POST /pagos/procesar  (arriba, junto con POST /pedidos)
+//   GET  /pagos/{id}      el pago y su pedido
+// ---------------------------------------------------------
+const SELECT_PAGO = `
+    SELECT pg.*, p.numero_orden, p.origen, p.estado AS pedido_estado, p.subtotal, p.descuento, p.descuento_promocion,
+           p.impuestos, p.impuestos_detalle, p.envio, p.total, p.cliente_id, p.pago_vence, p.fecha_pedido,
+           COALESCE(c.nombre, 'Cliente eliminado') AS cliente_nombre, c.correo AS cliente_correo
+    FROM pagos pg
+    JOIN pedidos p ON p.id = pg.pedido_id
+    LEFT JOIN clientes c ON c.id = p.cliente_id`;
+
+app.get('/api/pagos/:id', requireSesion, asyncRoute(async (req, res) => {
+    const r = await pool.query(`${SELECT_PAGO} WHERE pg.id = $1`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Pago no encontrado' });
+    const pago = r.rows[0];
+    if (req.quien.tipo === 'cliente' && Number(pago.cliente_id) !== Number(req.quien.id)) {
+        return res.status(403).json({ message: 'Este pago no es de tu cuenta' });
+    }
+    res.json(pago);
+}));
+// Pago de un pedido (atajo usado por el comprobante y el detalle del pedido).
+app.get('/api/pedidos/:id/pago', requireSesion, asyncRoute(async (req, res) => {
+    const r = await pool.query(`${SELECT_PAGO} WHERE pg.pedido_id = $1`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Pago no encontrado' });
+    if (req.quien.tipo === 'cliente' && Number(r.rows[0].cliente_id) !== Number(req.quien.id)) {
+        return res.status(403).json({ message: 'Este pago no es de tu cuenta' });
+    }
+    res.json(r.rows[0]);
+}));
+
+// Panel: listado de pagos con filtros y totales.
+app.get('/api/admin/pagos', asyncRoute(async (req, res) => {
+    const { estado, metodo, busqueda, desde, hasta } = req.query;
+    const cond = [], v = [];
+    if (estado) { v.push(estado); cond.push(`pg.estado = $${v.length}`); }
+    if (metodo) { v.push(metodo); cond.push(`pg.metodo_pago = $${v.length}`); }
+    if (busqueda) { v.push(`%${busqueda}%`); cond.push(`(p.numero_orden ILIKE $${v.length} OR c.nombre ILIKE $${v.length} OR pg.referencia ILIKE $${v.length})`); }
+    if (desde) { v.push(desde); cond.push(`pg.fecha >= $${v.length}::date`); }
+    if (hasta) { v.push(hasta); cond.push(`pg.fecha < $${v.length}::date + 1`); }
+    const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+    const [rows, tot] = await Promise.all([
+        pool.query(`${SELECT_PAGO} ${where} ORDER BY pg.fecha DESC LIMIT 300`, v),
+        pool.query(`SELECT pg.metodo_pago, pg.estado, COUNT(*)::int AS n, COALESCE(SUM(pg.monto),0) AS monto
+                    FROM pagos pg JOIN pedidos p ON p.id = pg.pedido_id LEFT JOIN clientes c ON c.id = p.cliente_id
+                    ${where} GROUP BY pg.metodo_pago, pg.estado`, v),
+    ]);
+    const resumen = { cobrado: 0, pendiente: 0, reembolsado: 0, pagos: 0, por_metodo: {} };
+    for (const t of tot.rows) {
+        const m = Number(t.monto);
+        resumen.pagos += t.n;
+        if (t.estado === 'pagado') { resumen.cobrado += m; resumen.por_metodo[t.metodo_pago] = (resumen.por_metodo[t.metodo_pago] || 0) + m; }
+        if (t.estado === 'pendiente') resumen.pendiente += m;
+        if (t.estado === 'reembolsado') resumen.reembolsado += m;
+    }
+    ['cobrado', 'pendiente', 'reembolsado'].forEach((k) => { resumen[k] = redondear(resumen[k]); });
+    Object.keys(resumen.por_metodo).forEach((k) => { resumen.por_metodo[k] = redondear(resumen.por_metodo[k]); });
+    res.json({ resumen, pagos: rows.rows });
+}));
+
+// ---------------------------------------------------------
+// 4.1.4 PROMOCIONES
+//   GET  /promociones          vigentes (tienda) · ?todas=1 con sesión interna
+//   POST /promociones          alta (equipo con permiso "promociones")
+//   PUT  /promociones/{id}     edición
+//   Panel: /admin/promociones (GET, POST, PUT, DELETE)
+// ---------------------------------------------------------
+function leerPromocion(b) {
+    const tipo = b.tipo_descuento === 'monto' ? 'monto' : 'porcentaje';
+    const alcance = ['todos', 'categoria', 'producto'].includes(b.alcance) ? b.alcance : 'todos';
+    const valor = Number(b.valor);
+    const p = {
+        nombre: String(b.nombre || '').trim().slice(0, 100),
+        descripcion: b.descripcion ? String(b.descripcion).slice(0, 300) : null,
+        tipo_descuento: tipo, valor, alcance,
+        categoria_id: alcance === 'categoria' ? Number(b.categoria_id) || null : null,
+        producto_id: alcance === 'producto' ? Number(b.producto_id) || null : null,
+        fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin,
+        estado: b.estado === 'inactiva' ? 'inactiva' : 'activa',
+        mostrar_banner: b.mostrar_banner !== false,
+    };
+    if (!p.nombre) throw new Error('El nombre de la promoción es obligatorio');
+    if (!(valor > 0)) throw new Error('El valor del descuento debe ser mayor a cero');
+    if (tipo === 'porcentaje' && valor > 90) throw new Error('El porcentaje no puede pasar de 90%');
+    if (alcance === 'categoria' && !p.categoria_id) throw new Error('Elige la categoría de la promoción');
+    if (alcance === 'producto' && !p.producto_id) throw new Error('Elige el producto de la promoción');
+    if (!p.fecha_inicio || !p.fecha_fin) throw new Error('Indica la vigencia (inicio y fin)');
+    if (new Date(p.fecha_fin) <= new Date(p.fecha_inicio)) throw new Error('La fecha de fin debe ser posterior al inicio');
+    return p;
+}
+const SELECT_PROMO = `
+    SELECT pr.*, c.nombre AS categoria_nombre, p.nombre AS producto_nombre, u.nombre AS usuario_nombre,
+           CASE WHEN pr.estado = 'inactiva' THEN 'inactiva'
+                WHEN pr.fecha_fin < CURRENT_TIMESTAMP THEN 'vencida'
+                WHEN pr.fecha_inicio > CURRENT_TIMESTAMP THEN 'programada'
+                ELSE 'vigente' END AS situacion,
+           (SELECT COUNT(DISTINCT pi.pedido_id)::int FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+             WHERE pi.promocion_id = pr.id AND pe.estado <> 'cancelado') AS pedidos,
+           (SELECT COALESCE(SUM(pi.descuento),0) FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+             WHERE pi.promocion_id = pr.id AND pe.estado <> 'cancelado') AS descuento_otorgado
+    FROM promociones pr
+    LEFT JOIN categorias c ON c.id = pr.categoria_id
+    LEFT JOIN productos p ON p.id = pr.producto_id
+    LEFT JOIN usuarios u ON u.id = pr.usuario_id`;
+
+const listarPromociones = asyncRoute(async (req, res) => {
+    const q = await quienLlama(req).catch(() => null);
+    const todas = (req.query.todas === '1' || req.path.startsWith('/api/admin')) && q && q.tipo === 'usuario';
+    if (!todas) {
+        // tienda: solo las vigentes, con cuántos productos aplican
+        const promos = await promocionesVigentes();
+        const prods = await pool.query('SELECT id, categoria_id, precio FROM productos WHERE activo = true');
+        return res.json(promos.map((pr) => ({
+            id: pr.id, nombre: pr.nombre, descripcion: pr.descripcion, tipo_descuento: pr.tipo_descuento, valor: pr.valor,
+            alcance: pr.alcance, categoria_id: pr.categoria_id, categoria_nombre: pr.categoria_nombre,
+            producto_id: pr.producto_id, producto_nombre: pr.producto_nombre,
+            fecha_inicio: pr.fecha_inicio, fecha_fin: pr.fecha_fin, mostrar_banner: pr.mostrar_banner,
+            productos: prods.rows.filter((p) => pr.alcance === 'todos' || (pr.alcance === 'categoria' && p.categoria_id === pr.categoria_id) || (pr.alcance === 'producto' && p.id === pr.producto_id)).length,
+        })));
+    }
+    const r = await pool.query(`${SELECT_PROMO} ORDER BY pr.fecha_fin DESC, pr.id DESC`);
+    res.json(r.rows);
+});
+const crearPromocion = asyncRoute(async (req, res) => {
+    let p; try { p = leerPromocion(req.body); } catch (e) { return res.status(400).json({ message: e.message }); }
+    const r = await pool.query(
+        `INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.usuario.id]);
+    const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [r.rows[0].id]);
+    res.status(201).json({ message: 'Promoción creada', promocion: full.rows[0] });
+});
+const editarPromocion = asyncRoute(async (req, res) => {
+    const cur = await pool.query('SELECT * FROM promociones WHERE id = $1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ message: 'Promoción no encontrada' });
+    let p; try { p = leerPromocion({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: e.message }); }
+    await pool.query(
+        `UPDATE promociones SET nombre=$1, descripcion=$2, tipo_descuento=$3, valor=$4, alcance=$5, categoria_id=$6, producto_id=$7,
+             fecha_inicio=$8, fecha_fin=$9, estado=$10, mostrar_banner=$11 WHERE id=$12`,
+        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.params.id]);
+    const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [req.params.id]);
+    res.json({ message: 'Promoción actualizada', promocion: full.rows[0] });
+});
+app.get('/api/promociones', listarPromociones);
+app.post('/api/promociones', requireInterno('promociones'), crearPromocion);
+app.put('/api/promociones/:id', requireInterno('promociones'), editarPromocion);
+app.get('/api/admin/promociones', listarPromociones);
+app.post('/api/admin/promociones', crearPromocion);
+app.put('/api/admin/promociones/:id', editarPromocion);
+app.delete('/api/admin/promociones/:id', asyncRoute(async (req, res) => {
+    // Si ya se usó en pedidos se desactiva (para no perder el historial); si no, se borra.
+    const usada = await pool.query('SELECT 1 FROM pedido_items WHERE promocion_id = $1 LIMIT 1', [req.params.id]);
+    if (usada.rows.length) {
+        await pool.query(`UPDATE promociones SET estado = 'inactiva' WHERE id = $1`, [req.params.id]);
+        return res.json({ message: 'La promoción ya se usó en pedidos: se desactivó en lugar de borrarse' });
+    }
+    const r = await pool.query('DELETE FROM promociones WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ message: 'Promoción no encontrada' });
+    res.json({ message: 'Promoción eliminada' });
+}));
+
+// ---------------------------------------------------------
+// 4.1.5 IMPUESTOS (configurador del cálculo)
+//   GET  /impuestos         activos (tienda) · ?todos=1 con sesión interna
+//   POST /impuestos         alta (permiso "impuestos")
+//   PUT  /impuestos/{id}    edición
+// ---------------------------------------------------------
+function leerImpuesto(b) {
+    const i = {
+        nombre: String(b.nombre || '').trim().slice(0, 60),
+        porcentaje: Number(b.porcentaje),
+        descripcion: b.descripcion ? String(b.descripcion).slice(0, 200) : null,
+        estado: b.estado === 'inactivo' ? 'inactivo' : 'activo',
+    };
+    if (!i.nombre) throw new Error('El nombre del impuesto es obligatorio');
+    if (!(i.porcentaje >= 0 && i.porcentaje <= 100)) throw new Error('El porcentaje debe estar entre 0 y 100');
+    return i;
+}
+const listarImpuestos = asyncRoute(async (req, res) => {
+    const q = await quienLlama(req).catch(() => null);
+    const todos = (req.query.todos === '1' || req.path.startsWith('/api/admin')) && q && q.tipo === 'usuario';
+    const r = await pool.query(`SELECT * FROM impuestos ${todos ? '' : "WHERE estado = 'activo'"} ORDER BY id`);
+    const filas = r.rows.map((x) => ({ ...x, porcentaje: Number(x.porcentaje) }));
+    const tasa = filas.filter((x) => x.estado === 'activo').reduce((a, x) => a + x.porcentaje, 0);
+    // ejemplo del documento: subtotal 1000 -> total con impuestos
+    res.json(todos ? { impuestos: filas, tasa_total: tasa, ejemplo: { subtotal: 1000, impuesto: redondear(1000 * tasa / 100), total: redondear(1000 * (1 + tasa / 100)) } } : filas);
+});
+const crearImpuesto = asyncRoute(async (req, res) => {
+    let i; try { i = leerImpuesto(req.body); } catch (e) { return res.status(400).json({ message: e.message }); }
+    try {
+        const r = await pool.query(`INSERT INTO impuestos (nombre, porcentaje, descripcion, estado) VALUES ($1,$2,$3,$4) RETURNING *`,
+            [i.nombre, i.porcentaje, i.descripcion, i.estado]);
+        res.status(201).json({ message: 'Impuesto creado', impuesto: r.rows[0] });
+    } catch (e) {
+        if (e.code === '23505') return res.status(400).json({ message: 'Ya existe un impuesto con ese nombre' });
+        throw e;
+    }
+});
+const editarImpuesto = asyncRoute(async (req, res) => {
+    const cur = await pool.query('SELECT * FROM impuestos WHERE id = $1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ message: 'Impuesto no encontrado' });
+    let i; try { i = leerImpuesto({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: e.message }); }
+    try {
+        const r = await pool.query(`UPDATE impuestos SET nombre=$1, porcentaje=$2, descripcion=$3, estado=$4 WHERE id=$5 RETURNING *`,
+            [i.nombre, i.porcentaje, i.descripcion, i.estado, req.params.id]);
+        res.json({ message: 'Impuesto actualizado', impuesto: r.rows[0] });
+    } catch (e) {
+        if (e.code === '23505') return res.status(400).json({ message: 'Ya existe un impuesto con ese nombre' });
+        throw e;
+    }
+});
+app.get('/api/impuestos', listarImpuestos);
+app.post('/api/impuestos', requireInterno('impuestos'), crearImpuesto);
+app.put('/api/impuestos/:id', requireInterno('impuestos'), editarImpuesto);
+app.get('/api/admin/impuestos', listarImpuestos);
+app.post('/api/admin/impuestos', crearImpuesto);
+app.put('/api/admin/impuestos/:id', editarImpuesto);
+app.delete('/api/admin/impuestos/:id', asyncRoute(async (req, res) => {
+    // Los pedidos guardan su propio desglose (impuestos_detalle), así que borrar no altera el historial.
+    const r = await pool.query('DELETE FROM impuestos WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ message: 'Impuesto no encontrado' });
+    res.json({ message: 'Impuesto eliminado' });
+}));
+
+// ---------------------------------------------------------
+// MONEDERO (cliente)
+//   GET  /monedero              saldo + movimientos
+//   POST /monedero/recargar     { monto, metodo: tarjeta | paypal | transferencia }
+// ---------------------------------------------------------
+const RECARGA_MIN = 50, RECARGA_MAX = 20000;
+app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
+    const m = await monederoDe(pool, req.cliente.id);
+    const movs = await pool.query(
+        `SELECT mm.*, p.numero_orden FROM movimientos_monedero mm
+         LEFT JOIN pedidos p ON p.id = mm.pedido_id
+         WHERE mm.monedero_id = $1 ORDER BY mm.fecha DESC, mm.id DESC LIMIT 100`, [m.id]);
+    const pend = movs.rows.filter((x) => x.estado === 'pendiente').reduce((a, x) => a + Number(x.monto), 0);
+    res.json({ ...m, saldo_pendiente: redondear(pend), recarga_min: RECARGA_MIN, recarga_max: RECARGA_MAX, movimientos: movs.rows });
+}));
+app.post('/api/monedero/recargar', requireCliente, asyncRoute(async (req, res) => {
+    const monto = redondear(req.body.monto);
+    const metodo = ['tarjeta', 'paypal', 'transferencia'].includes(req.body.metodo) ? req.body.metodo : null;
+    if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres recargar' });
+    if (!(monto >= RECARGA_MIN && monto <= RECARGA_MAX)) {
+        return res.status(400).json({ message: `La recarga debe ser de ${formatoMXN(RECARGA_MIN)} a ${formatoMXN(RECARGA_MAX)}` });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const m = await monederoDe(client, req.cliente.id, { bloquear: true });
+        if (m.estado !== 'activo') throw new Error('Tu monedero está bloqueado. Contacta a soporte.');
+        const referencia = 'REC-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
+        const etiqueta = { tarjeta: 'tarjeta', paypal: 'PayPal', transferencia: 'transferencia' }[metodo];
+        let mov;
+        if (metodo === 'transferencia') {
+            // Queda pendiente: el saldo sube cuando el equipo confirma la transferencia.
+            const r = await client.query(
+                `INSERT INTO movimientos_monedero (monedero_id, tipo, monto, concepto, metodo, referencia, estado)
+                 VALUES ($1,'recarga',$2,$3,'transferencia',$4,'pendiente') RETURNING *`,
+                [m.id, monto, 'Recarga por transferencia', referencia]);
+            mov = r.rows[0];
+        } else {
+            const detalle = metodo === 'tarjeta' && req.body.tarjeta ? ` ${String(req.body.tarjeta).slice(0, 40)}` : '';
+            mov = await moverMonedero(client, m, { tipo: 'recarga', monto, concepto: `Recarga con ${etiqueta}${detalle}`, metodo, referencia });
+        }
+        await client.query('COMMIT');
+        res.status(201).json({
+            message: metodo === 'transferencia'
+                ? `Recarga registrada. Transfiere ${formatoMXN(monto)} con la referencia ${referencia}; el saldo se acredita al confirmarse.`
+                : `Recarga de ${formatoMXN(monto)} aplicada`,
+            movimiento: mov, saldo: m.saldo, pendiente: metodo === 'transferencia',
+            datos_transferencia: metodo === 'transferencia' ? { banco: 'STP', clabe: '646180157000000004', beneficiario: 'Kozmok S.A. de C.V.', referencia } : null,
+        });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(400).json({ message: e.message });
+    } finally { client.release(); }
+}));
+
+// ---------------------------------------------------------
+// MONEDERO (administración)
+//   GET  /admin/monederos                     saldos + resumen de uso
+//   GET  /admin/monederos/:clienteId          monedero y movimientos de un cliente
+//   POST /admin/monederos/:clienteId/ajuste   { monto (+/-), motivo }
+//   PUT  /admin/monederos/:clienteId/estado   { estado: activo | bloqueado }
+//   PUT  /admin/monederos/movimientos/:id     { accion: confirmar | rechazar } (recargas por transferencia)
+// ---------------------------------------------------------
+app.get('/api/admin/monederos', asyncRoute(async (req, res) => {
+    const { busqueda } = req.query;
+    const v = [];
+    let where = '';
+    if (busqueda) { v.push(`%${busqueda}%`); where = `WHERE c.nombre ILIKE $1 OR c.correo ILIKE $1`; }
+    const [lista, resumen, pendientes, porMes] = await Promise.all([
+        pool.query(`
+            SELECT m.id, m.cliente_id, m.saldo, m.estado, m.fecha_actualizacion, c.nombre, c.correo,
+                   (SELECT MAX(fecha) FROM movimientos_monedero x WHERE x.monedero_id = m.id) AS ultimo_movimiento,
+                   (SELECT COALESCE(SUM(monto),0) FROM movimientos_monedero x WHERE x.monedero_id = m.id AND x.tipo = 'recarga' AND x.estado = 'aplicado') AS recargado,
+                   (SELECT COALESCE(-SUM(monto),0) FROM movimientos_monedero x WHERE x.monedero_id = m.id AND x.tipo = 'compra') AS consumido
+            FROM monederos m JOIN clientes c ON c.id = m.cliente_id ${where}
+            ORDER BY m.saldo DESC, c.nombre ASC`, v),
+        pool.query(`
+            SELECT (SELECT COALESCE(SUM(saldo),0) FROM monederos) AS saldo_total,
+                   (SELECT COUNT(*)::int FROM monederos WHERE saldo > 0) AS con_saldo,
+                   COALESCE(SUM(monto) FILTER (WHERE tipo = 'recarga' AND estado = 'aplicado' AND fecha >= date_trunc('month', CURRENT_DATE)), 0) AS recargas_mes,
+                   COALESCE(-SUM(monto) FILTER (WHERE tipo = 'compra' AND fecha >= date_trunc('month', CURRENT_DATE)), 0) AS consumos_mes,
+                   COALESCE(SUM(monto) FILTER (WHERE tipo = 'reembolso' AND fecha >= date_trunc('month', CURRENT_DATE)), 0) AS reembolsos_mes,
+                   COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS recargas_pendientes
+            FROM movimientos_monedero`),
+        pool.query(`
+            SELECT mm.*, c.nombre, c.correo, m.cliente_id FROM movimientos_monedero mm
+            JOIN monederos m ON m.id = mm.monedero_id JOIN clientes c ON c.id = m.cliente_id
+            WHERE mm.estado = 'pendiente' ORDER BY mm.fecha ASC`),
+        pool.query(`
+            SELECT to_char(date_trunc('month', g), 'YYYY-MM') AS mes,
+                   COALESCE(SUM(mm.monto) FILTER (WHERE mm.tipo = 'recarga' AND mm.estado = 'aplicado'), 0) AS recargas,
+                   COALESCE(-SUM(mm.monto) FILTER (WHERE mm.tipo = 'compra'), 0) AS consumos
+            FROM generate_series(date_trunc('month', CURRENT_DATE) - INTERVAL '5 months', date_trunc('month', CURRENT_DATE), INTERVAL '1 month') g
+            LEFT JOIN movimientos_monedero mm ON date_trunc('month', mm.fecha) = g
+            GROUP BY g ORDER BY g`),
+    ]);
+    res.json({ resumen: resumen.rows[0], pendientes: pendientes.rows, por_mes: porMes.rows, monederos: lista.rows });
+}));
+app.get('/api/admin/monederos/:clienteId', asyncRoute(async (req, res) => {
+    const c = await pool.query('SELECT id, nombre, correo, telefono FROM clientes WHERE id = $1', [req.params.clienteId]);
+    if (!c.rows.length) return res.status(404).json({ message: 'Cliente no encontrado' });
+    const m = await monederoDe(pool, req.params.clienteId);
+    const movs = await pool.query(
+        `SELECT mm.*, p.numero_orden, u.nombre AS usuario_nombre FROM movimientos_monedero mm
+         LEFT JOIN pedidos p ON p.id = mm.pedido_id LEFT JOIN usuarios u ON u.id = mm.usuario_id
+         WHERE mm.monedero_id = $1 ORDER BY mm.fecha DESC, mm.id DESC`, [m.id]);
+    res.json({ cliente: c.rows[0], ...m, movimientos: movs.rows });
+}));
+app.post('/api/admin/monederos/:clienteId/ajuste', asyncRoute(async (req, res) => {
+    const monto = redondear(req.body.monto);
+    const motivo = String(req.body.motivo || '').trim();
+    if (!monto) return res.status(400).json({ message: 'Indica un monto distinto de cero (positivo abona, negativo descuenta)' });
+    if (Math.abs(monto) > 50000) return res.status(400).json({ message: 'Un ajuste no puede pasar de $50,000' });
+    if (motivo.length < 4) return res.status(400).json({ message: 'Escribe el motivo del ajuste' });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const c = await client.query('SELECT id FROM clientes WHERE id = $1', [req.params.clienteId]);
+        if (!c.rows.length) throw new Error('Cliente no encontrado');
+        const m = await monederoDe(client, req.params.clienteId, { bloquear: true });
+        const mov = await moverMonedero(client, m, { tipo: 'ajuste', monto, concepto: `Ajuste: ${motivo}`, usuarioId: req.usuario.id });
+        await client.query('COMMIT');
+        res.status(201).json({ message: 'Ajuste aplicado', saldo: m.saldo, movimiento: mov });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(400).json({ message: e.message });
+    } finally { client.release(); }
+}));
+app.put('/api/admin/monederos/:clienteId/estado', asyncRoute(async (req, res) => {
+    const estado = req.body.estado === 'bloqueado' ? 'bloqueado' : 'activo';
+    await monederoDe(pool, req.params.clienteId);
+    await pool.query('UPDATE monederos SET estado = $1 WHERE cliente_id = $2', [estado, req.params.clienteId]);
+    res.json({ message: estado === 'bloqueado' ? 'Monedero bloqueado' : 'Monedero activado' });
+}));
+app.put('/api/admin/monederos/movimientos/:id', asyncRoute(async (req, res) => {
+    const accion = req.body.accion === 'rechazar' ? 'rechazar' : 'confirmar';
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const r = await client.query(`SELECT * FROM movimientos_monedero WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`, [req.params.id]);
+        if (!r.rows.length) throw new Error('La recarga ya no está pendiente');
+        const mov = r.rows[0];
+        if (accion === 'rechazar') {
+            await client.query(`UPDATE movimientos_monedero SET estado = 'cancelado', usuario_id = $1 WHERE id = $2`, [req.usuario.id, mov.id]);
+        } else {
+            const m = (await client.query('SELECT * FROM monederos WHERE id = $1 FOR UPDATE', [mov.monedero_id])).rows[0];
+            const nuevo = redondear(Number(m.saldo) + Number(mov.monto));
+            await client.query('UPDATE monederos SET saldo = $1 WHERE id = $2', [nuevo, m.id]);
+            await client.query(
+                `UPDATE movimientos_monedero SET estado = 'aplicado', saldo_resultante = $1, usuario_id = $2, fecha = CURRENT_TIMESTAMP,
+                     concepto = 'Recarga por transferencia (confirmada)' WHERE id = $3`, [nuevo, req.usuario.id, mov.id]);
+        }
+        await client.query('COMMIT');
+        res.json({ message: accion === 'rechazar' ? 'Recarga rechazada' : 'Recarga confirmada y saldo acreditado' });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(400).json({ message: e.message });
+    } finally { client.release(); }
+}));
+
+// ---------------------------------------------------------
+// 4.1.6 ATENCIÓN A CLIENTES (nombres del documento)
+//   POST /atencion/ticket                 el cliente abre un ticket
+//   GET  /atencion/tickets                los suyos (cliente) o todos (equipo)
+//   GET  /atencion/ticket/{id}            ticket con su hilo y respuesta
+//   PUT  /atencion/ticket/{id}/respuesta  el equipo responde (y puede cambiar el estado)
+// ---------------------------------------------------------
+app.post('/api/atencion/ticket', requireCliente, asyncRoute(async (req, res) => {
+    const { asunto } = req.body;
+    const mensaje = req.body.mensaje || req.body.descripcion;
+    if (!asunto || !mensaje) return res.status(400).json({ message: 'Asunto y mensaje son requeridos' });
+    const ticket = await crearTicket(req.cliente.id, { ...req.body, descripcion: mensaje });
+    res.status(201).json({ message: 'Ticket creado', ticket });
+}));
+app.get('/api/atencion/tickets', requireSesion, asyncRoute(async (req, res) => {
+    const esCliente = req.quien.tipo === 'cliente';
+    if (!esCliente && !puedeVer(req.quien.rol, 'soporte')) return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
+    const r = await pool.query(
+        `SELECT t.id, t.folio, t.cliente_id, c.nombre AS cliente_nombre, t.asunto, t.mensaje, t.estado, t.prioridad,
+                t.fecha_creacion AS fecha, t.respuesta, t.fecha_respuesta, t.fecha_actualizacion
+         FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+         ${esCliente ? 'WHERE t.cliente_id = $1' : ''} ORDER BY t.fecha_actualizacion DESC`,
+        esCliente ? [req.quien.id] : []);
+    res.json(r.rows);
+}));
+app.get('/api/atencion/ticket/:id', requireSesion, asyncRoute(async (req, res) => {
+    const t = await pool.query(
+        `SELECT t.*, t.fecha_creacion AS fecha, c.nombre AS cliente_nombre, c.correo AS cliente_correo
+         FROM tickets t JOIN clientes c ON c.id = t.cliente_id WHERE t.id = $1`, [req.params.id]);
+    if (!t.rows.length) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (req.quien.tipo === 'cliente' && Number(t.rows[0].cliente_id) !== Number(req.quien.id)) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (req.quien.tipo === 'usuario' && !puedeVer(req.quien.rol, 'soporte')) return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
+    const msgs = await pool.query(
+        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m LEFT JOIN usuarios u ON m.usuario_id = u.id
+         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`, [req.params.id]);
+    res.json({ ...t.rows[0], mensajes: msgs.rows });
+}));
+app.put('/api/atencion/ticket/:id/respuesta', requireInterno('soporte'), asyncRoute(async (req, res) => {
+    const respuesta = String(req.body.respuesta || req.body.mensaje || '').trim();
+    if (!respuesta) return res.status(400).json({ message: 'Escribe la respuesta' });
+    const ok = await responderTicket(req.params.id, req.usuario.id, respuesta, req.body.estado);
+    if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const t = await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Respuesta enviada', ticket: t.rows[0] });
+}));
+
+// ---------------------------------------------------------
+// 4.3 REGISTRO Y AUTENTICACIÓN DE CLIENTES (nombres del documento)
+//   POST /auth/registro   POST /auth/login (con "correo" = cliente; con "email" = equipo)
+//   POST /auth/logout     GET /auth/perfil     PUT /auth/perfil
+// ---------------------------------------------------------
+app.post('/api/auth/logout', (req, res) => {
+    // Los tokens no se guardan en el servidor: cerrar sesión es borrar el
+    // token del navegador (lo hace el front). Se responde ok para el flujo.
+    res.json({ success: true, message: 'Sesión cerrada' });
+});
+const CAMPOS_PERFIL = 'id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal, estado_cliente, etapa_crm, puntos, codigo_socio, fecha_registro, ultimo_login';
+app.get('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(`SELECT ${CAMPOS_PERFIL} FROM clientes WHERE id = $1`, [req.cliente.id]);
+    const m = await monederoDe(pool, req.cliente.id);
+    res.json({ ...r.rows[0], monedero: { saldo: m.saldo, estado: m.estado } });
+}));
+app.put('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
+    const b = req.body;
+    const nombre = b.nombre !== undefined ? String(b.nombre).trim() : undefined;
+    if (nombre !== undefined && nombre.length < 2) return res.status(400).json({ message: 'Escribe tu nombre' });
+    const r = await pool.query(
+        `UPDATE clientes SET
+            nombre = COALESCE($1, nombre), telefono = COALESCE($2, telefono), empresa = COALESCE($3, empresa),
+            direccion = COALESCE($4, direccion), ciudad = COALESCE($5, ciudad), estado = COALESCE($6, estado),
+            codigo_postal = COALESCE($7, codigo_postal)
+         WHERE id = $8 RETURNING ${CAMPOS_PERFIL}`,
+        [nombre || null, b.telefono ?? null, b.empresa ?? null, b.direccion ?? null, b.ciudad ?? null, b.estado ?? null, b.codigo_postal ?? null, req.cliente.id]);
+    res.json({ message: 'Perfil actualizado', cliente: r.rows[0] });
+}));
+
 // Bases cargadas con una versión anterior de database.sql: agrega lo que
 // falte sin tener que recargar todo (y sin tocar lo que ya existe).
 async function migrarEsquema() {
@@ -3925,6 +4725,8 @@ app.listen(PORT, async () => {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
         console.log(`Base de datos: conectada (${dbConfig.database}@${dbConfig.host}:${dbConfig.port}) - ${r.rows[0].n} productos`);
         await migrarEsquema();
+        const e4 = await pool.query(`SELECT to_regclass('public.monederos') AS t`);
+        if (!e4.rows[0].t) console.error('  Faltan las tablas de la Etapa 4 (carrito, pagos, promociones, impuestos, monedero): vuelve a cargar db/database.sql.');
         await tareasPeriodicas();
         setInterval(tareasPeriodicas, 60 * 1000);
     } catch (err) {

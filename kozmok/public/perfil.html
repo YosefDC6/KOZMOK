@@ -69,10 +69,11 @@ function tarjetaSocio(P, rec) {
 }
 
 montarCuenta('perfil', async (panel, P) => {
-    const [pedidos, favs, rec] = await Promise.all([
+    const [pedidos, favs, rec, mon] = await Promise.all([
         api(`/pedidos/cliente/${P.id}`),
         api(`/clientes/${P.id}/favoritos`),
         api(`/clientes/${P.id}/recompensas`),
+        api('/monedero').catch(() => ({ saldo: 0 })),
     ]);
     const gastado = rec.gasto_total || pedidos.filter((x) => x.estado !== 'cancelado').reduce((a, x) => a + Number(x.total), 0);
     const numCompras = rec.compras_total || pedidos.length;
@@ -91,6 +92,7 @@ montarCuenta('perfil', async (panel, P) => {
             <div class="stat-card"><div class="stat-label">Compras</div><div class="stat-value">${numCompras}</div></div>
             <div class="stat-card"><div class="stat-label">Total gastado</div><div class="stat-value" style="font-size:1.25rem">${formatoMoneda(gastado)}</div></div>
             <div class="stat-card"><div class="stat-label">Favoritos</div><div class="stat-value">${favs.length}</div></div>
+            <a class="stat-card" href="/monedero.html" style="text-decoration:none"><div class="stat-label">Mi monedero</div><div class="stat-value" style="font-size:1.25rem;color:var(--success)">${formatoMoneda(mon.saldo)}</div><div class="stat-sub">Recargar o ver movimientos</div></a>
         </div>
 
         <div class="cuenta-actions">

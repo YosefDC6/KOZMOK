@@ -122,6 +122,25 @@ function formatoMoneda(valor) {
     return Number(valor || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
 }
 
+// Desglose de impuestos de un pedido. Los pedidos nuevos guardan su detalle
+// (impuestos_detalle); los anteriores a la Etapa 4 solo el total (IVA 16%).
+function impuestosDe(d) {
+    const det = Array.isArray(d.impuestos_detalle) ? d.impuestos_detalle : [];
+    return det.length ? det : [{ nombre: 'IVA', porcentaje: 16, monto: Number(d.impuestos) || 0 }];
+}
+window.impuestosDe = impuestosDe;
+
+// Precio con promoción: precio final + precio de lista tachado + etiqueta.
+// p: producto del catálogo (trae precio, precio_final y promocion).
+function precioHTML(p, { clase = '' } = {}) {
+    const lista = Number(p.precio);
+    const final = Number(p.precio_final ?? p.precio);
+    if (!p.promocion || !(final < lista)) return `<span class="${clase}">${formatoMoneda(lista)}</span>`;
+    const etiqueta = p.promocion.tipo_descuento === 'monto'
+        ? `-${formatoMoneda(lista - final)}` : `-${Math.round((1 - final / lista) * 100)}%`;
+    return `<span class="${clase} precio-promo">${formatoMoneda(final)}</span> <s class="precio-antes">${formatoMoneda(lista)}</s> <span class="tag-promo" title="${String(p.promocion.nombre || '').replace(/"/g, '')}">${etiqueta}</span>`;
+}
+
 function formatoFecha(fecha) {
     if (!fecha) return '—';
     return new Date(fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -220,4 +239,5 @@ window.Favoritos = Favoritos;
 window.irALogin = irALogin;
 window.formatoMoneda = formatoMoneda;
 window.formatoFecha = formatoFecha;
+window.precioHTML = precioHTML;
 window.actualizarBadgeCarrito = actualizarBadgeCarrito;

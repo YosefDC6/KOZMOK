@@ -173,7 +173,8 @@
                 </table>
             </div>
             ${fila('Subtotal', formatoMoneda(d.subtotal))}
-            ${fila('IVA', formatoMoneda(d.impuestos), 'color:var(--text-muted)')}
+            ${Number(d.descuento_promocion) > 0 ? fila('Promociones', '-' + formatoMoneda(d.descuento_promocion), 'color:var(--success)') : ''}
+            ${impuestosDe(d).map((t) => fila(`${t.nombre} (${Number(t.porcentaje)}%)`, formatoMoneda(t.monto), 'color:var(--text-muted)')).join('')}
             ${fila('Envío', Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio), 'color:var(--text-muted)')}
             ${Number(d.descuento) > 0 ? fila('Descuento Club de puntos', '-' + formatoMoneda(d.descuento), 'color:var(--success)') : ''}
             ${fila('Total', formatoMoneda(d.total), 'font-weight:700;font-size:1.05rem')}

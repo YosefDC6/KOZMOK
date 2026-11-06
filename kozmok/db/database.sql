@@ -20,6 +20,13 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS movimientos_monedero    CASCADE;
+DROP TABLE IF EXISTS monederos               CASCADE;
+DROP TABLE IF EXISTS pagos                   CASCADE;
+DROP TABLE IF EXISTS promociones             CASCADE;
+DROP TABLE IF EXISTS impuestos               CASCADE;
+DROP TABLE IF EXISTS carrito_detalle         CASCADE;
+DROP TABLE IF EXISTS carrito                 CASCADE;
 DROP TABLE IF EXISTS recursos_erp            CASCADE;
 DROP TABLE IF EXISTS reportes_erp            CASCADE;
 DROP TABLE IF EXISTS procesos_erp            CASCADE;
@@ -52,6 +59,8 @@ DROP SEQUENCE IF EXISTS folio_erp_seq;
 DROP FUNCTION IF EXISTS actualizar_fecha()                 CASCADE;
 DROP FUNCTION IF EXISTS actualizar_metricas_interaccion()  CASCADE;
 DROP FUNCTION IF EXISTS actualizar_metricas_compra()       CASCADE;
+DROP FUNCTION IF EXISTS sincronizar_pago()                 CASCADE;
+DROP FUNCTION IF EXISTS crear_monedero_cliente()           CASCADE;
 
 
 -- =========================================================
@@ -128,6 +137,8 @@ CREATE TABLE productos (
     proveedor_id        INTEGER REFERENCES proveedores(id),
     vendedor_id         INTEGER REFERENCES usuarios(id),
     activo              BOOLEAN DEFAULT TRUE,
+    -- Etapa 4 (comercialización): aparece en "Destacados" de la portada
+    destacado           BOOLEAN NOT NULL DEFAULT FALSE,
     restock             VARCHAR(10) DEFAULT 'push' CHECK (restock IN ('push','pull')),
     -- lo que cuesta comprarlo al proveedor (para valorar los pedidos de reposición)
     costo_unitario      NUMERIC(10,2) CHECK (costo_unitario >= 0),
@@ -204,20 +215,84 @@ CREATE TABLE metricas_clientes (
 );
 
 -- ---------------------------------------------------------
--- CARRITO (persistente por cliente, simple)
+-- CARRITO (Etapa 4): un cliente tiene UN carrito y el carrito
+-- tiene muchos productos (carrito_detalle). precio_unitario es
+-- el precio al momento de agregarlo; al pagar se vuelve a validar
+-- precio y stock contra el catálogo.
 -- ---------------------------------------------------------
-CREATE TABLE carrito_items (
+CREATE TABLE carrito (
+    id                  SERIAL PRIMARY KEY,
+    cliente_id          INTEGER NOT NULL UNIQUE REFERENCES clientes(id) ON DELETE CASCADE,
+    -- activo = tiene productos / se está usando; convertido = se pagó
+    -- (se vació al generar el pedido) y vuelve a 'activo' al agregar algo.
+    estado              VARCHAR(12) NOT NULL DEFAULT 'activo'
+                         CHECK (estado IN ('activo','convertido','abandonado')),
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE carrito_detalle (
     id              SERIAL PRIMARY KEY,
-    cliente_id      INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
-    producto_id     INTEGER REFERENCES productos(id) ON DELETE CASCADE,
+    carrito_id      INTEGER NOT NULL REFERENCES carrito(id) ON DELETE CASCADE,
+    producto_id     INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
     cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
+    precio_unitario NUMERIC(10,2) NOT NULL CHECK (precio_unitario >= 0),
     -- garantía extendida opcional para esta línea del carrito
     garantia_clave  VARCHAR(10) NOT NULL DEFAULT 'none',
     garantia_plan   VARCHAR(40),
     garantia_meses  INTEGER NOT NULL DEFAULT 0,
     garantia_costo  NUMERIC(10,2) NOT NULL DEFAULT 0,
-    fecha_agregado  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    fecha_agregado  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (carrito_id, producto_id)
 );
+CREATE INDEX idx_carrito_detalle_carrito ON carrito_detalle(carrito_id);
+
+-- ---------------------------------------------------------
+-- IMPUESTOS (Etapa 4 · configurador del cálculo de impuestos)
+-- Se aplican todos los que estén activos sobre el subtotal
+-- (después de promociones). Se configuran en el panel.
+-- ---------------------------------------------------------
+CREATE TABLE impuestos (
+    id                  SERIAL PRIMARY KEY,
+    nombre              VARCHAR(60) NOT NULL UNIQUE,
+    porcentaje          NUMERIC(5,2) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
+    descripcion         VARCHAR(200),
+    estado              VARCHAR(10) NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo','inactivo')),
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------
+-- PROMOCIONES (Etapa 4 · comercialización)
+--   tipo_descuento: porcentaje (% del precio) o monto ($ por pieza)
+--   alcance: todos los productos, una categoría o un producto
+--   Solo aplica si está activa y dentro de su vigencia. Si a un
+--   producto le tocan varias, se usa la que más descuenta.
+-- ---------------------------------------------------------
+CREATE TABLE promociones (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(100) NOT NULL,
+    descripcion     VARCHAR(300),
+    tipo_descuento  VARCHAR(12) NOT NULL CHECK (tipo_descuento IN ('porcentaje','monto')),
+    valor           NUMERIC(10,2) NOT NULL CHECK (valor > 0),
+    alcance         VARCHAR(10) NOT NULL DEFAULT 'todos' CHECK (alcance IN ('todos','categoria','producto')),
+    categoria_id    INTEGER REFERENCES categorias(id) ON DELETE CASCADE,
+    producto_id     INTEGER REFERENCES productos(id) ON DELETE CASCADE,
+    fecha_inicio    TIMESTAMP NOT NULL,
+    fecha_fin       TIMESTAMP NOT NULL,
+    estado          VARCHAR(10) NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
+    -- se muestra en el banner de promociones de la portada
+    mostrar_banner  BOOLEAN NOT NULL DEFAULT TRUE,
+    usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha_creacion  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT promociones_vigencia CHECK (fecha_fin > fecha_inicio),
+    CONSTRAINT promociones_porcentaje CHECK (tipo_descuento <> 'porcentaje' OR valor <= 100),
+    CONSTRAINT promociones_alcance CHECK (
+        (alcance = 'todos'     AND categoria_id IS NULL AND producto_id IS NULL) OR
+        (alcance = 'categoria' AND categoria_id IS NOT NULL AND producto_id IS NULL) OR
+        (alcance = 'producto'  AND producto_id IS NOT NULL AND categoria_id IS NULL))
+);
+CREATE INDEX idx_promociones_vigencia ON promociones(estado, fecha_inicio, fecha_fin);
 
 -- ---------------------------------------------------------
 -- PEDIDOS
@@ -235,11 +310,19 @@ CREATE TABLE pedidos (
     subtotal              NUMERIC(12,2) NOT NULL DEFAULT 0,
     impuestos             NUMERIC(12,2) NOT NULL DEFAULT 0,
     envio                 NUMERIC(12,2) NOT NULL DEFAULT 0,
+    -- descuento = puntos del Club canjeados; descuento_promocion = promociones
     descuento             NUMERIC(12,2) NOT NULL DEFAULT 0,
+    descuento_promocion   NUMERIC(12,2) NOT NULL DEFAULT 0,
+    -- desglose de los impuestos aplicados: [{nombre, porcentaje, monto}]
+    impuestos_detalle     JSONB NOT NULL DEFAULT '[]'::jsonb,
     total                 NUMERIC(12,2) NOT NULL DEFAULT 0,
     estado                VARCHAR(20) DEFAULT 'pendiente'
                            CHECK (estado IN ('pendiente','confirmado','procesando','enviado','entregado','cancelado')),
     metodo_pago           VARCHAR(60),
+    -- tipo de método (lo usa la tabla pagos); metodo_pago es el texto legible
+    metodo_tipo           VARCHAR(14)
+                           CHECK (metodo_tipo IS NULL OR metodo_tipo IN
+                                  ('tarjeta','paypal','spei','tienda','monedero','efectivo','transferencia')),
     -- Estado del pago (tarjeta = pagado al instante; SPEI / pago en tienda
     -- = pendiente hasta que se registre el pago). pago_referencia es el
     -- código que el cliente usa para pagar SPEI o presentar en caja.
@@ -272,8 +355,32 @@ CREATE TABLE pedido_items (
     -- garantía extendida contratada para esta línea (0 = sin garantía)
     garantia_plan     VARCHAR(40),
     garantia_meses    INTEGER NOT NULL DEFAULT 0,
-    garantia_costo    NUMERIC(10,2) NOT NULL DEFAULT 0
+    garantia_costo    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- promoción aplicada a la línea (descuento total de la línea)
+    promocion_id      INTEGER REFERENCES promociones(id) ON DELETE SET NULL,
+    descuento         NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (descuento >= 0)
 );
+
+-- ---------------------------------------------------------
+-- PAGOS (Etapa 4 · procesos de pago): un pedido tiene un pago.
+-- La fila la crea y la mantiene el trigger trg_pedido_pago a
+-- partir del pedido (método, monto y estado), así nunca se
+-- desajusta con lo que se ve en Pedidos / Órdenes.
+-- ---------------------------------------------------------
+CREATE TABLE pagos (
+    id           SERIAL PRIMARY KEY,
+    pedido_id    INTEGER NOT NULL UNIQUE REFERENCES pedidos(id) ON DELETE CASCADE,
+    monto        NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+    metodo_pago  VARCHAR(14) NOT NULL
+                  CHECK (metodo_pago IN ('tarjeta','paypal','spei','tienda','monedero','efectivo','transferencia')),
+    descripcion  VARCHAR(80),       -- p. ej. "Tarjeta Visa ****4821"
+    estado       VARCHAR(12) NOT NULL DEFAULT 'pendiente'
+                  CHECK (estado IN ('pendiente','pagado','cancelado','reembolsado')),
+    referencia   VARCHAR(40),
+    fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,   -- cuándo se generó
+    fecha_pago   TIMESTAMP                              -- cuándo se cobró
+);
+CREATE INDEX idx_pagos_estado ON pagos(estado);
 
 -- ---------------------------------------------------------
 -- GARANTÍAS EXTENDIDAS
@@ -534,6 +641,11 @@ CREATE TABLE tickets (
                          CHECK (estado IN ('abierto','en_proceso','resuelto','cerrado')),
     pedido_id           INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     asignado_a          INTEGER REFERENCES usuarios(id),
+    -- Atención a clientes (Etapa 4): el mensaje inicial y la última
+    -- respuesta del equipo quedan en el ticket además de en el hilo.
+    mensaje             TEXT,
+    respuesta           TEXT,
+    fecha_respuesta     TIMESTAMP,
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -549,6 +661,40 @@ CREATE TABLE ticket_mensajes (
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ticketmsg_ticket ON ticket_mensajes(ticket_id);
+
+-- ---------------------------------------------------------
+-- MONEDERO ELECTRÓNICO (Etapa 4): saldo en pesos del cliente.
+-- Se recarga (tarjeta, PayPal o transferencia) y se usa para
+-- pagar. Cada cargo o abono queda en movimientos_monedero con el
+-- saldo que dejó. El saldo nunca puede quedar negativo.
+-- ---------------------------------------------------------
+CREATE TABLE monederos (
+    id                  SERIAL PRIMARY KEY,
+    cliente_id          INTEGER NOT NULL UNIQUE REFERENCES clientes(id) ON DELETE CASCADE,
+    saldo               NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (saldo >= 0),
+    estado              VARCHAR(10) NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo','bloqueado')),
+    fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE movimientos_monedero (
+    id                SERIAL PRIMARY KEY,
+    monedero_id       INTEGER NOT NULL REFERENCES monederos(id) ON DELETE CASCADE,
+    -- recarga (+), compra (-), reembolso (+, al cancelar), ajuste (+/- del admin)
+    tipo              VARCHAR(10) NOT NULL CHECK (tipo IN ('recarga','compra','reembolso','ajuste')),
+    monto             NUMERIC(12,2) NOT NULL CHECK (monto <> 0),
+    saldo_resultante  NUMERIC(12,2),
+    concepto          VARCHAR(200),
+    metodo            VARCHAR(14) CHECK (metodo IS NULL OR metodo IN ('tarjeta','paypal','transferencia')),
+    referencia        VARCHAR(40),
+    -- una recarga por transferencia queda pendiente hasta que el equipo la confirma
+    estado            VARCHAR(10) NOT NULL DEFAULT 'aplicado' CHECK (estado IN ('aplicado','pendiente','cancelado')),
+    pedido_id         INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    usuario_id        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_movmonedero_monedero ON movimientos_monedero(monedero_id);
+CREATE INDEX idx_movmonedero_fecha ON movimientos_monedero(fecha);
 
 -- =========================================================
 -- TRIGGER: actualizar fecha_actualizacion automáticamente
@@ -570,6 +716,70 @@ CREATE TRIGGER trg_usuarios_fecha BEFORE UPDATE ON usuarios
     FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
 CREATE TRIGGER trg_tickets_fecha BEFORE UPDATE ON tickets
     FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_carrito_fecha BEFORE UPDATE ON carrito
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_impuestos_fecha BEFORE UPDATE ON impuestos
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+CREATE TRIGGER trg_monederos_fecha BEFORE UPDATE ON monederos
+    FOR EACH ROW EXECUTE FUNCTION actualizar_fecha();
+
+-- =========================================================
+-- TRIGGER: cada cliente nuevo nace con su monedero (saldo 0)
+-- =========================================================
+CREATE OR REPLACE FUNCTION crear_monedero_cliente() RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO monederos (cliente_id) VALUES (NEW.id) ON CONFLICT (cliente_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_cliente_monedero AFTER INSERT ON clientes
+    FOR EACH ROW EXECUTE FUNCTION crear_monedero_cliente();
+
+-- =========================================================
+-- TRIGGER: mantener el pago (tabla pagos) de cada pedido
+--   pedido pagado            -> pago 'pagado'
+--   pago pendiente           -> pago 'pendiente'
+--   pedido cancelado sin pago-> pago 'cancelado'
+--   pedido cancelado ya pagado -> pago 'reembolsado'
+-- =========================================================
+CREATE OR REPLACE FUNCTION sincronizar_pago() RETURNS TRIGGER AS $$
+DECLARE
+    v_tipo   VARCHAR(14);
+    v_estado VARCHAR(12);
+BEGIN
+    v_tipo := COALESCE(NEW.metodo_tipo, CASE
+        WHEN NEW.metodo_pago ILIKE '%monedero%'      THEN 'monedero'
+        WHEN NEW.metodo_pago ILIKE '%paypal%'        THEN 'paypal'
+        WHEN NEW.metodo_pago ILIKE '%spei%'          THEN 'spei'
+        WHEN NEW.metodo_pago ILIKE '%tienda%'        THEN 'tienda'
+        WHEN NEW.metodo_pago ILIKE 'efectivo%'       THEN 'efectivo'
+        WHEN NEW.metodo_pago ILIKE '%transferencia%' THEN 'transferencia'
+        ELSE 'tarjeta' END);
+    v_estado := CASE
+        WHEN NEW.estado = 'cancelado' AND NEW.pago_estado = 'pagado' THEN 'reembolsado'
+        WHEN NEW.estado = 'cancelado'    THEN 'cancelado'
+        WHEN NEW.pago_estado = 'pagado'  THEN 'pagado'
+        ELSE 'pendiente' END;
+    INSERT INTO pagos (pedido_id, monto, metodo_pago, descripcion, estado, referencia, fecha, fecha_pago)
+    VALUES (NEW.id, NEW.total, v_tipo, LEFT(NEW.metodo_pago, 80), v_estado, NEW.pago_referencia,
+            COALESCE(NEW.fecha_pedido, CURRENT_TIMESTAMP),
+            CASE WHEN NEW.pago_estado = 'pagado' THEN COALESCE(NEW.fecha_confirmacion, NEW.fecha_pedido, CURRENT_TIMESTAMP) END)
+    ON CONFLICT (pedido_id) DO UPDATE SET
+        monto       = EXCLUDED.monto,
+        metodo_pago = EXCLUDED.metodo_pago,
+        descripcion = EXCLUDED.descripcion,
+        estado      = EXCLUDED.estado,
+        referencia  = EXCLUDED.referencia,
+        fecha_pago  = CASE WHEN NEW.pago_estado = 'pagado'
+                           THEN COALESCE(pagos.fecha_pago, CURRENT_TIMESTAMP) ELSE NULL END;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pedido_pago
+    AFTER INSERT OR UPDATE OF estado, pago_estado, total, metodo_pago, metodo_tipo, pago_referencia ON pedidos
+    FOR EACH ROW EXECUTE FUNCTION sincronizar_pago();
 
 -- =========================================================
 -- TRIGGER: mantener metricas_clientes al registrar interacción
@@ -1185,6 +1395,51 @@ INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, estado) VA
 INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUES
  (1, 'cliente', NULL, 'Recibí la laptop pero el cargador no venía en la caja.', CURRENT_TIMESTAMP - INTERVAL '3 days'),
  (1, 'equipo',  1,    'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.', CURRENT_TIMESTAMP - INTERVAL '2 days');
+
+
+-- Atención a clientes: mensaje inicial y última respuesta del ticket de ejemplo
+UPDATE tickets SET mensaje = 'Recibí la laptop pero el cargador no venía en la caja.',
+                   respuesta = 'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.',
+                   fecha_respuesta = CURRENT_TIMESTAMP - INTERVAL '2 days'
+ WHERE folio = 'TK-1001';
+
+-- =========================================================
+-- ETAPA 4: impuestos, promociones, destacados y monedero
+-- =========================================================
+
+-- Impuestos configurables (se aplican todos los activos en el checkout)
+INSERT INTO impuestos (nombre, porcentaje, descripcion, estado) VALUES
+ ('IVA',                    16.00, 'Impuesto al Valor Agregado, tasa general', 'activo'),
+ ('IVA región fronteriza',   8.00, 'Tasa reducida para la región fronteriza norte y sur (no se usa en la tienda en línea)', 'inactivo');
+
+-- Productos destacados de la portada
+UPDATE productos SET destacado = true WHERE id IN (2, 30, 7, 63, 56, 15, 41, 47, 51);
+
+-- Promociones de ejemplo (la vigencia se calcula desde hoy para que la
+-- demo siempre tenga promociones activas)
+INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id) VALUES
+ ('Semana de laptops', '10% de descuento en todas las laptops.', 'porcentaje', 10, 'categoria',
+   (SELECT id FROM categorias WHERE nombre = 'Laptops'), NULL,
+   CURRENT_DATE - INTERVAL '3 days', CURRENT_DATE + INTERVAL '30 days', 'activa', true, 1),
+ ('Periféricos gamer', '15% de descuento en periféricos.', 'porcentaje', 15, 'categoria',
+   (SELECT id FROM categorias WHERE nombre = 'Periféricos'), NULL,
+   CURRENT_DATE - INTERVAL '1 days', CURRENT_DATE + INTERVAL '20 days', 'activa', true, 1),
+ ('$500 menos en tu monitor', '$500 de descuento por pieza en el monitor seleccionado.', 'monto', 500, 'producto',
+   NULL, 15, CURRENT_DATE - INTERVAL '2 days', CURRENT_DATE + INTERVAL '15 days', 'activa', true, 1),
+ ('Regreso a clases', '8% en todo el catálogo (ejemplo de promoción ya vencida).', 'porcentaje', 8, 'todos',
+   NULL, NULL, CURRENT_DATE - INTERVAL '70 days', CURRENT_DATE - INTERVAL '40 days', 'activa', false, 1);
+
+-- Monedero: saldo y movimientos de ejemplo (el saldo es la suma de los
+-- movimientos aplicados). Los monederos los crea el trigger trg_cliente_monedero.
+INSERT INTO movimientos_monedero (monedero_id, tipo, monto, saldo_resultante, concepto, metodo, referencia, estado, fecha) VALUES
+ ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga',  650.00,  650.00, 'Recarga con tarjeta', 'tarjeta', 'REC-1000000001', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '35 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga', 1000.00, 1650.00, 'Recarga con PayPal',  'paypal',  'REC-1000000002', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '20 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 1), 'ajuste',  -450.00, 1200.00, 'Ajuste: recarga duplicada', NULL, NULL, 'aplicado', CURRENT_TIMESTAMP - INTERVAL '19 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  500.00,  500.00, 'Recarga con tarjeta', 'tarjeta', 'REC-1000000003', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '9 days'),
+ ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  300.00,   NULL,  'Recarga por transferencia', 'transferencia', 'REC-1000000004', 'pendiente', CURRENT_TIMESTAMP - INTERVAL '1 days');
+UPDATE movimientos_monedero SET usuario_id = 1 WHERE tipo = 'ajuste';
+UPDATE monederos SET saldo = 1200.00 WHERE cliente_id = 1;
+UPDATE monederos SET saldo =  500.00 WHERE cliente_id = 2;
 
 -- =========================================================
 --  Listo. Credenciales de prueba:

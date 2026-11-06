@@ -106,7 +106,8 @@
 
                 <div class="rec-tot">
                     <div><span>Subtotal</span><span class="mono">${money(d.subtotal)}</span></div>
-                    <div><span>IVA (16%)</span><span class="mono">${money(d.impuestos)}</span></div>
+                    ${Number(d.descuento_promocion) > 0 ? `<div class="rec-desc"><span>Promociones</span><span class="mono">−${money(d.descuento_promocion)}</span></div>` : ''}
+                    ${impuestosDe(d).map((t) => `<div><span>${t.nombre} (${Number(t.porcentaje)}%)</span><span class="mono">${money(t.monto)}</span></div>`).join('')}
                     <div><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : money(d.envio)}</span></div>
                     ${Number(d.descuento) > 0 ? `<div class="rec-desc"><span>Descuento Club de puntos</span><span class="mono">−${money(d.descuento)}</span></div>` : ''}
                     <div class="rec-total"><span>Total</span><span class="mono">${money(d.total)}</span></div>

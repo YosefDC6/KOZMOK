@@ -30,6 +30,8 @@ async function renderNavbar() {
             <div class="menu-panel cat-panel" role="menu">
                 <a href="/index.html?ver=todo" role="menuitem">${icon('grid', 16)} Todo el catálogo</a>
                 <a href="/armar-pc.html" role="menuitem">${icon('cpu', 16)} Arma tu PC</a>
+                <a href="/index.html?promocion=1" role="menuitem">${icon('star', 16)} Promociones</a>
+                <a href="/index.html?orden=novedades" role="menuitem">${icon('clock', 16)} Novedades</a>
                 <div class="menu-sep"></div>
                 ${catLinks}
             </div>
@@ -50,6 +52,7 @@ async function renderNavbar() {
                 ${M('home', 'Resumen', '/perfil.html')}
                 ${M('package', 'Mis pedidos', '/pedidos.html')}
                 ${M('star', 'Club de puntos', '/recompensas.html')}
+                ${M('wallet', 'Mi monedero', '/monedero.html')}
                 ${M('heart', 'Favoritos', '/favoritos.html')}
                 ${M('pin', 'Direcciones', '/direcciones.html')}
                 ${M('card', 'Métodos de pago', '/pagos.html')}
@@ -111,6 +114,8 @@ async function renderNavbar() {
                 <span class="drawer-label">Categorías</span>
                 <a href="/index.html?ver=todo">${icon('grid', 16)} Todo el catálogo</a>
                 <a href="/armar-pc.html">${icon('cpu', 16)} Arma tu PC</a>
+                <a href="/index.html?promocion=1">${icon('star', 16)} Promociones</a>
+                <a href="/index.html?orden=novedades">${icon('clock', 16)} Novedades</a>
                 ${catLinks}
             </div>
             <div class="drawer-section">
@@ -119,6 +124,7 @@ async function renderNavbar() {
                     <a href="/perfil.html">Resumen</a>
                     <a href="/pedidos.html">Mis pedidos</a>
                     <a href="/recompensas.html">Club de puntos</a>
+                    <a href="/monedero.html">Mi monedero</a>
                     <a href="/favoritos.html">Favoritos</a>
                     <a href="/resenas.html">Mis reseñas</a>
                     <a href="/garantias.html">Mis garantías</a>
@@ -172,6 +178,7 @@ async function renderNavbar() {
     document.addEventListener('click', () => dropdowns.forEach((dd) => dd.classList.remove('open')));
     document.querySelectorAll('#btn-logout, #btn-logout-drawer').forEach((b) =>
         b.addEventListener('click', () => {
+            api('/auth/logout', { method: 'POST' }).catch(() => {});
             Sesion.cerrarSesionCliente();
             if (window.toast) toast('Sesión cerrada', 'ok');
             setTimeout(() => location.href = '/index.html', 400);
@@ -312,6 +319,7 @@ const MiniPanel = {
             const rows = await api(`/carrito/${c.id}`);
             return rows.map((r) => ({
                 id: r.id, producto_id: r.producto_id, nombre: r.nombre, precio: Number(r.precio),
+                precio_final: Number(r.precio_final ?? r.precio), promocion: r.promocion,
                 imagen_url: r.imagen_url, stock: Number(r.stock), cantidad: r.cantidad,
                 garantia: r.garantia_plan, garantia_costo: Number(r.garantia_costo || 0),
             }));
@@ -320,6 +328,7 @@ const MiniPanel = {
         const prods = await Promise.all(lista.map((it) => api(`/productos/${it.producto_id}`).catch(() => null)));
         return lista.map((it, i) => prods[i] && ({
             id: it.producto_id, producto_id: it.producto_id, nombre: prods[i].nombre, precio: Number(prods[i].precio),
+            precio_final: Number(prods[i].precio_final ?? prods[i].precio), promocion: prods[i].promocion,
             imagen_url: prods[i].imagen_url, categoria_nombre: prods[i].categoria_nombre,
             stock: Number(prods[i].stock), cantidad: it.cantidad, garantia: null, garantia_costo: 0,
         })).filter(Boolean);
@@ -346,7 +355,7 @@ const MiniPanel = {
                 <img src="${imagenProducto(it)}" alt="" onerror="this.src='/img/producto.svg'">
                 <div class="mp-info">
                     <div class="mp-nombre">${it.nombre}</div>
-                    <div class="mp-precio">${formatoMoneda(it.precio)}${it.garantia ? ` <span class="mp-gar">+ ${it.garantia}</span>` : ''}</div>
+                    <div class="mp-precio">${precioHTML(it)}${it.garantia ? ` <span class="mp-gar">+ ${it.garantia}</span>` : ''}</div>
                     <div class="mp-acciones">
                         <div class="mp-qty">
                             <button data-act="menos" data-id="${it.id}" ${it.cantidad <= 1 ? 'disabled' : ''} aria-label="Menos">${icon('minus', 14)}</button>
@@ -356,13 +365,15 @@ const MiniPanel = {
                         <button class="mp-quitar" data-act="quitar" data-id="${it.id}">Quitar</button>
                     </div>
                 </div>
-                <div class="mp-sub">${formatoMoneda(it.precio * it.cantidad + it.garantia_costo)}</div>
+                <div class="mp-sub">${formatoMoneda(it.precio_final * it.cantidad + it.garantia_costo)}</div>
             </div>`).join('');
 
-        const subtotal = items.reduce((a, i) => a + i.precio * i.cantidad + i.garantia_costo, 0);
-        const faltaEnvio = Math.max(0, 10000 - items.reduce((a, i) => a + i.precio * i.cantidad, 0));
+        const subtotal = items.reduce((a, i) => a + i.precio_final * i.cantidad + i.garantia_costo, 0);
+        const ahorro = items.reduce((a, i) => a + (i.precio - i.precio_final) * i.cantidad, 0);
+        const faltaEnvio = Math.max(0, 10000 - subtotal);
         foot.innerHTML = `
             <div class="mp-total"><span>Subtotal (${n} ${n === 1 ? 'pieza' : 'piezas'})</span><strong>${formatoMoneda(subtotal)}</strong></div>
+            ${ahorro > 0 ? `<div class="mp-nota mp-ahorro">${icon('star', 13)} Ahorras ${formatoMoneda(ahorro)} con promociones</div>` : ''}
             <div class="mp-nota">${faltaEnvio > 0 ? `Te faltan ${formatoMoneda(faltaEnvio)} para el envío gratis.` : 'Tu pedido ya tiene envío gratis.'} IVA y envío se calculan al pagar.</div>
             <a href="/carrito.html" class="btn btn-primary btn-block">${Sesion.cliente() ? 'Ir a pagar' : 'Ver carrito y pagar'} ${icon('arrow', 16)}</a>
             <button class="btn btn-ghost btn-block" id="mp-seguir">Seguir comprando</button>`;
@@ -401,7 +412,12 @@ const MiniPanel = {
             return;
         }
         let favs = [];
-        try { favs = await api(`/clientes/${cliente.id}/favoritos`); }
+        try {
+            // los favoritos no traen la promoción: se toma del catálogo
+            const [lista, cat] = await Promise.all([api(`/clientes/${cliente.id}/favoritos`), api('/catalogo?promocion=1').catch(() => [])]);
+            this._promos = new Map(cat.map((p) => [p.id, p]));
+            favs = lista;
+        }
         catch (e) { body.innerHTML = `<div class="mp-vacio">${e.message}</div>`; foot.innerHTML = ''; return; }
         if (this.pestana !== 'favoritos') return;
         document.getElementById('mp-n-favoritos').textContent = favs.length || '';
@@ -416,7 +432,7 @@ const MiniPanel = {
                 <img src="${imagenProducto(p)}" alt="" onerror="this.src='/img/producto.svg'">
                 <div class="mp-info">
                     <div class="mp-nombre">${p.nombre}</div>
-                    <div class="mp-precio">${formatoMoneda(p.precio)}
+                    <div class="mp-precio">${precioHTML(decorarProductoFav(p))}
                         <span class="mp-stock ${Number(p.stock) > 0 ? '' : 'agotado'}">${Number(p.stock) > 0 ? 'En stock' : 'Agotado'}</span></div>
                     <div class="mp-acciones">
                         <button class="btn btn-primary btn-sm" data-fav="carrito" data-id="${p.id}" ${Number(p.stock) > 0 ? '' : 'disabled'}>${icon('cart', 14)} Agregar</button>
@@ -445,6 +461,10 @@ const MiniPanel = {
     },
 };
 window.MiniPanel = MiniPanel;
+function decorarProductoFav(p) {
+    const c = MiniPanel._promos && MiniPanel._promos.get(p.id);
+    return c ? { ...p, precio_final: c.precio_final, promocion: c.promocion } : p;
+}
 
 // =========================================================
 // BOTÓN "REGRESAR"

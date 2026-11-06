@@ -1,6 +1,6 @@
 # Kozmok
 
-Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), **ERP** (órdenes de clientes e integración de módulos), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
+Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), **ERP** (órdenes de clientes e integración de módulos), **carrito con pagos, monedero, promociones e impuestos configurables** (Etapa 4), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
 
 Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front-end en HTML, CSS y JavaScript sin frameworks.
 
@@ -9,13 +9,16 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ## Funcionalidades principales
 
 ### Tienda (cliente)
-- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio y marca (guardados en la URL), orden y vistos recientemente.
+- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca y "solo en promoción" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
+- **Comercialización**: banner de promociones vigentes en la portada, productos **destacados** (se marcan en el panel), sección de **novedades** y precio con descuento visible (precio final, precio de lista tachado y etiqueta `-10%` / `-$500`) en catálogo, ficha, carrito y panel lateral.
+- **Panel lateral de carrito y favoritos**: el corazón y el carrito de la barra abren un panel a la derecha (pestañas Carrito / Favoritos) sin cambiar de pantalla; en todas las páginas hay un botón **Regresar**.
 - **Carrito sin sesión**: se puede llenar sin cuenta (catálogo, Arma tu PC, asesor); al iniciar sesión o registrarse pasa solo a la cuenta.
 - **Ficha de producto** con especificaciones, stock real, reseñas y **garantía extendida** (12, 24 o 36 meses, con certificado y folio).
 - **Comparador** de hasta 4 productos lado a lado.
 - **Arma tu PC**: armado pieza por pieza con validación de compatibilidad en vivo (socket, DDR4/DDR5, formato de placa y watts de la fuente) y builds recomendadas por uso.
 - **Chatbot asesor**: pregunta uso → categoría → presupuesto (o texto libre) y sugiere hasta 5 productos con stock.
-- **Carrito y checkout**: direcciones y métodos de pago guardados, IVA 16 % y envío de $199 (gratis desde $10,000).
+- **Carrito y checkout**: direcciones y métodos de pago guardados; desglose calculado por el servidor (productos, garantías, promociones, cada impuesto activo, envío de $199 —gratis desde $10,000— y puntos). Pago con **tarjeta, PayPal (simulado), monedero, SPEI o en tienda**.
+- **Mi monedero**: saldo en pesos para pagar en un clic. Recarga con tarjeta o PayPal (al instante) o por transferencia (se acredita cuando el equipo la confirma), historial con el saldo de cada movimiento y reembolso automático si se cancela una compra pagada con monedero.
 - **Mi cuenta**: pedidos con seguimiento y cancelación, favoritos, direcciones, métodos de pago, seguridad, preferencias y tickets de soporte.
 - **Club de puntos**: niveles Bronce, Plata, Oro y Platino; 100 puntos equivalen a $10 de descuento.
 - **Tarjeta virtual de socio** con código QR para verificación en tienda física.
@@ -50,6 +53,12 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 - **Reportes ERP**: KPIs por rango de fechas (ventas, órdenes, productos vendidos, clientes activos, inventario disponible, por cobrar), ventas por mes, más vendidos, inventario por rotación, órdenes por estado y exportación a CSV. Los reportes se pueden **guardar** como foto del periodo y consultarse después. `GET /api/admin/erp/metricas` devuelve los indicadores globales.
 - **Panel por rol** (solo admin): columnas por rol y matriz de permisos sección × rol, generadas de los mismos permisos del menú.
 
+### Panel interno – TIENDA (Etapa 4: carrito y sus agregados)
+- **Promociones**: alta y edición de descuentos por **porcentaje** o **monto por pieza**, para todo el catálogo, una categoría o un producto, con vigencia (inicio–fin), activa/inactiva y "mostrar en el banner". Muestra situación (vigente, programada, vencida, inactiva), pedidos que la usaron y descuento otorgado. Se aplican solas en catálogo, carrito, checkout y órdenes del ERP (si a un producto le tocan varias, gana la que más descuenta).
+- **Impuestos** (solo admin): configurador del cálculo. Se aplican todos los activos sobre el subtotal ya con promociones (p. ej. subtotal 1000 + IVA 16 % = 1160). Cada pedido guarda su desglose (`impuestos_detalle`), así que cambiar un porcentaje no altera pedidos anteriores.
+- **Monedero**: saldo total en monederos, recargas y consumos del mes, gráfica de 6 meses, recargas por transferencia por confirmar o rechazar, ficha de cada cliente con su historial, **ajustes manuales** (abono o cargo con motivo, quedan a nombre de quien los hizo) y bloqueo del monedero.
+- **Pagos**: el pago de cada pedido (tienda y ERP) con método, monto, estado (pagado, pendiente, reembolsado, cancelado), referencia y fecha de cobro; filtros, totales por método y exportación a CSV. "Gestionar" abre el gestor del pedido para registrar el cobro.
+
 ---
 
 ## Roles
@@ -58,8 +67,8 @@ Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**
 
 | Rol | Entra a | Acceso |
 |---|---|---|
-| **Administrador** | Dashboard CRM | Todo: CRM, SCM y ERP, cuentas y equipo, Nivel ERP y Panel por rol |
-| **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes y Mi actividad |
+| **Administrador** | Dashboard CRM | Todo: CRM, SCM, ERP y Tienda (incluidos Impuestos), cuentas y equipo, Nivel ERP y Panel por rol |
+| **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes, Promociones, Monedero, Pagos y Mi actividad |
 | **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, captura, surte y envía) y Reportes |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
 
@@ -98,6 +107,8 @@ npm start        # o: npm run dev  (con nodemon)
 
 Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, todo está listo.
 
+> **Actualizar desde una versión anterior (Etapa 4):** vuelve a cargar `db/database.sql` (paso 4). Crea las tablas nuevas (`carrito`, `carrito_detalle`, `pagos`, `promociones`, `impuestos`, `monederos`, `movimientos_monedero`) y reemplaza `carrito_items`. Si faltan, la consola lo avisa al arrancar.
+
 ### Cuentas de prueba
 
 | Rol | Correo | Contraseña |
@@ -120,16 +131,30 @@ KOZMOK/
     ├── db.config.js          # conexión a PostgreSQL
     ├── db/database.sql       # esquema + triggers + datos de ejemplo
     └── public/               # front-end estático
-        ├── index.html, carrito.html, armar-pc.html, comparar.html, ...
+        ├── index.html, carrito.html, monedero.html, armar-pc.html, comparar.html, ...
         ├── css/style.css
-        ├── js/               # api, layout, chatbot, tema, toasts, etc.
+        ├── js/               # api, layout (barra + panel lateral carrito/favoritos), chatbot, tema, toasts, etc.
         └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)
-                              #   y ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
-                              #   reportes-erp, panel-roles)
+                              #   ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
+                              #   reportes-erp, panel-roles) y TIENDA (promociones,
+                              #   impuestos, monedero, pagos)
                               # admin/js/permisos.js: permisos por rol (menú + API)
 ```
 
-**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito_items, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa, expuestos en `GET/POST/PUT/DELETE /api/admin/erp/recursos`) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`.
+**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito y carrito_detalle, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa, expuestos en `GET/POST/PUT/DELETE /api/admin/erp/recursos`) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`. Propias de la Etapa 4: carrito (uno por cliente) y carrito_detalle, pagos (uno por pedido, lo mantiene el trigger `trg_pedido_pago`), promociones, impuestos, monederos (lo crea el trigger `trg_cliente_monedero` para cada cliente) y movimientos_monedero.
+
+### Rutas de la Etapa 4 (nombres del documento)
+
+| Sección | Rutas |
+|---|---|
+| Catálogo | `GET /api/catalogo`, `GET /api/catalogo/:id`, `?categoria=`, `?buscar=`, `?destacado=1`, `?promocion=1`, `?orden=novedades` |
+| Pagos | `POST /api/pagos/procesar` (valida stock → genera pedido → registra pago → actualiza inventario), `GET /api/pagos/:id`, `GET /api/pedidos/:id/pago`, `GET /api/admin/pagos` |
+| Carrito | `POST /api/carrito/agregar`, `GET /api/carrito/:cliente_id`, `PUT /api/carrito/item/:id`, `DELETE /api/carrito/item/:id`, `DELETE /api/carrito/vaciar/:cliente_id`, `POST /api/checkout/cotizar` |
+| Promociones | `GET /api/promociones`, `POST /api/promociones`, `PUT /api/promociones/:id` (+ `/api/admin/promociones`, con `DELETE`) |
+| Impuestos | `GET /api/impuestos`, `POST /api/impuestos`, `PUT /api/impuestos/:id` (+ `/api/admin/impuestos`, con `DELETE`) |
+| Atención a clientes | `POST /api/atencion/ticket`, `GET /api/atencion/tickets`, `GET /api/atencion/ticket/:id`, `PUT /api/atencion/ticket/:id/respuesta` |
+| Autenticación | `POST /api/auth/registro`, `POST /api/auth/login` (con `correo` = cliente, con `email` = equipo), `POST /api/auth/logout`, `GET /api/auth/perfil`, `PUT /api/auth/perfil` |
+| Monedero | `GET /api/monedero`, `POST /api/monedero/recargar`, `GET /api/admin/monederos[/:clienteId]`, `POST /api/admin/monederos/:clienteId/ajuste`, `PUT /api/admin/monederos/:clienteId/estado`, `PUT /api/admin/monederos/movimientos/:id` |
 
 ---
 

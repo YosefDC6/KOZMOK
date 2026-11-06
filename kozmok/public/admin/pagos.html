@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pagos · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="kpis"></div>
+
+        <div class="filters-bar" style="margin-top:18px">
+            <input type="search" id="f-buscar" placeholder="Folio, cliente o referencia…" />
+            <select id="f-estado">
+                <option value="">Todos los estados</option>
+                <option value="pagado">Pagado</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="reembolsado">Reembolsado</option>
+                <option value="cancelado">Cancelado</option>
+            </select>
+            <select id="f-metodo">
+                <option value="">Todos los métodos</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="paypal">PayPal</option>
+                <option value="monedero">Monedero</option>
+                <option value="spei">SPEI</option>
+                <option value="tienda">Pago en tienda</option>
+                <option value="efectivo">Efectivo (ERP)</option>
+                <option value="transferencia">Transferencia (ERP)</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="exportar()">Exportar CSV</button>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Pago</th><th>Pedido</th><th>Cliente</th><th>Método</th><th style="text-align:right">Monto</th><th>Estado</th><th>Fecha de pago</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="8">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-top:10px">
+            Cada pedido tiene un pago. Se genera al crear el pedido (tienda o ERP) y cambia solo: queda <em>pagado</em> al cobrarse,
+            <em>reembolsado</em> si se cancela un pedido ya pagado y <em>cancelado</em> si se cancela sin pago. El cobro se registra desde el gestor del pedido.
+        </p>
+    </main>
+</div>
+
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('pagos');
+document.getElementById('topbar').innerHTML = adminHeader('Pagos', 'El pago de cada pedido: método, monto, estado y referencia.');
+
+const METODO = { tarjeta: 'Tarjeta', paypal: 'PayPal', monedero: 'Monedero', spei: 'SPEI', tienda: 'Pago en tienda', efectivo: 'Efectivo', transferencia: 'Transferencia' };
+const ESTADO = { pagado: ['Pagado', 'var(--success)'], pendiente: ['Pendiente', 'var(--warning)'], reembolsado: ['Reembolsado', 'var(--accent-light)'], cancelado: ['Cancelado', 'var(--text-muted)'] };
+const money2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+let PAGOS = [];
+
+async function cargar() {
+    const qs = new URLSearchParams();
+    const b = document.getElementById('f-buscar').value.trim(); if (b) qs.set('busqueda', b);
+    const e = document.getElementById('f-estado').value; if (e) qs.set('estado', e);
+    const m = document.getElementById('f-metodo').value; if (m) qs.set('metodo', m);
+    const r = await api('/admin/pagos?' + qs.toString());
+    PAGOS = r.pagos;
+    const pm = Object.entries(r.resumen.por_metodo).sort((a, b) => b[1] - a[1]);
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Cobrado</div><div class="stat-value" style="font-size:1.4rem;color:var(--success)">${money2(r.resumen.cobrado)}</div><div class="stat-sub">${r.resumen.pagos} pagos en el filtro</div></div>
+        <div class="stat-card"><div class="stat-label">Por cobrar</div><div class="stat-value" style="font-size:1.4rem;color:var(--warning)">${money2(r.resumen.pendiente)}</div></div>
+        <div class="stat-card"><div class="stat-label">Reembolsado</div><div class="stat-value" style="font-size:1.4rem">${money2(r.resumen.reembolsado)}</div></div>
+        <div class="stat-card"><div class="stat-label">Método más usado</div><div class="stat-value" style="font-size:1.1rem">${pm.length ? METODO[pm[0][0]] || pm[0][0] : '—'}</div><div class="stat-sub">${pm.slice(0, 3).map(([k, v]) => `${METODO[k] || k}: ${money2(v)}`).join(' · ')}</div></div>`;
+    document.getElementById('tabla').innerHTML = PAGOS.length ? PAGOS.map((p) => {
+        const [t, c] = ESTADO[p.estado] || [p.estado, 'var(--text-muted)'];
+        return `<tr>
+            <td class="mono">PAG-${String(p.id).padStart(5, '0')}${p.referencia ? `<div style="color:var(--text-muted);font-size:.74rem">${p.referencia}</div>` : ''}</td>
+            <td class="mono">${p.numero_orden}<div style="font-size:.74rem"><span class="tag">${p.origen === 'erp' ? 'ERP' : 'En línea'}</span></div></td>
+            <td>${p.cliente_nombre}</td>
+            <td>${METODO[p.metodo_pago] || p.metodo_pago}<div style="color:var(--text-muted);font-size:.76rem">${p.descripcion || ''}</div></td>
+            <td class="mono" style="text-align:right">${money2(p.monto)}</td>
+            <td><span class="tag" style="color:${c};border-color:${c}">${t}</span></td>
+            <td style="font-size:.84rem">${p.fecha_pago ? formatoFecha(p.fecha_pago) : p.pago_vence && p.estado === 'pendiente' ? `vence ${formatoFecha(p.pago_vence)}` : '—'}</td>
+            <td><button class="btn btn-outline btn-sm" onclick="GestionPedido.abrir(${p.pedido_id}, { onCambio: cargar })">Gestionar</button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="8" style="color:var(--text-muted)">No hay pagos con ese filtro.</td></tr>';
+}
+
+function exportar() {
+    descargarCSV('pagos', PAGOS.map((p) => ({ pago: 'PAG-' + String(p.id).padStart(5, '0'), pedido: p.numero_orden, canal: p.origen, cliente: p.cliente_nombre,
+        metodo: METODO[p.metodo_pago] || p.metodo_pago, monto: p.monto, estado: p.estado, referencia: p.referencia || '', fecha: p.fecha, fecha_pago: p.fecha_pago || '' })));
+}
+
+let tm = null;
+document.getElementById('f-buscar').addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(cargar, 250); });
+['f-estado', 'f-metodo'].forEach((id) => document.getElementById(id).addEventListener('change', cargar));
+cargar();
+</script>
+</body>
+</html>

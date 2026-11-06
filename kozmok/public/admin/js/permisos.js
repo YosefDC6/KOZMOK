@@ -11,6 +11,10 @@
 //   'reposicion'        generar pedidos de reposición al proveedor desde
 //                       Inventario, el Dashboard SCM o la Nueva orden
 //
+// Etapa 4 (bloque TIENDA del menú): 'promociones', 'impuestos',
+// 'monedero' (administración de monederos) y 'pagos'. Impuestos queda
+// solo para el administrador.
+//
 // Para un rol nuevo: agrégalo aquí, en ROLES_INTERNOS (server.js) y en
 // el CHECK de la tabla usuarios (db/database.sql).
 (function (raiz) {
@@ -26,6 +30,7 @@
         ventas: [
             'dashboard', 'clientes', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
+            'promociones', 'monedero', 'pagos',
             'mi-actividad',
         ],
 

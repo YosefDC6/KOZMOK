@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Promociones · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="kpis"></div>
+
+        <div class="filters-bar" style="margin-top:18px">
+            <input type="search" id="f-buscar" placeholder="Buscar promoción…" />
+            <select id="f-situacion">
+                <option value="">Todas</option>
+                <option value="vigente">Vigentes</option>
+                <option value="programada">Programadas</option>
+                <option value="vencida">Vencidas</option>
+                <option value="inactiva">Inactivas</option>
+            </select>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Promoción</th><th>Descuento</th><th>Aplica a</th><th>Vigencia</th><th>Situación</th><th>Uso</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-top:10px">
+            Las promociones vigentes se aplican solas en el catálogo, el carrito, el checkout y las órdenes del ERP. Si a un producto le tocan varias, se usa la que más descuenta.
+        </p>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-promo">
+    <div class="modal" style="max-width:560px" id="modal-promo-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('promociones');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Promociones', 'Descuentos por porcentaje o monto, con vigencia y productos aplicables.',
+    '<button class="btn btn-primary" onclick="abrirPromo()">Nueva promoción</button>'
+);
+
+let PROMOS = [], CATEGORIAS = [], PRODUCTOS = [];
+const SITUACION = {
+    vigente:    ['Vigente', 'var(--success)'],
+    programada: ['Programada', 'var(--accent-light)'],
+    vencida:    ['Vencida', 'var(--text-muted)'],
+    inactiva:   ['Inactiva', 'var(--warning)'],
+};
+
+const valorTxt = (p) => p.tipo_descuento === 'porcentaje' ? `${Number(p.valor)}%` : `${formatoMoneda(p.valor)} por pieza`;
+const alcanceTxt = (p) => p.alcance === 'todos' ? 'Todo el catálogo'
+    : p.alcance === 'categoria' ? `Categoría: ${p.categoria_nombre || '—'}` : `Producto: ${p.producto_nombre || '—'}`;
+const pill = (k) => { const [t, c] = SITUACION[k] || [k, 'var(--text-muted)']; return `<span class="tag" style="color:${c};border-color:${c}">${t}</span>`; };
+
+async function cargar() {
+    PROMOS = await api('/admin/promociones');
+    const vig = PROMOS.filter((p) => p.situacion === 'vigente');
+    const desc = PROMOS.reduce((a, p) => a + Number(p.descuento_otorgado || 0), 0);
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Vigentes</div><div class="stat-value">${vig.length}</div><div class="stat-sub">${vig.filter((p) => p.mostrar_banner).length} en el banner de la tienda</div></div>
+        <div class="stat-card"><div class="stat-label">Programadas</div><div class="stat-value">${PROMOS.filter((p) => p.situacion === 'programada').length}</div></div>
+        <div class="stat-card"><div class="stat-label">Pedidos con promoción</div><div class="stat-value">${PROMOS.reduce((a, p) => a + p.pedidos, 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Descuento otorgado</div><div class="stat-value" style="font-size:1.4rem">${formatoMoneda(desc)}</div><div class="stat-sub">en pedidos no cancelados</div></div>`;
+    pintar();
+}
+
+function pintar() {
+    const q = document.getElementById('f-buscar').value.trim().toLowerCase();
+    const sit = document.getElementById('f-situacion').value;
+    const lista = PROMOS.filter((p) => (!sit || p.situacion === sit) && (!q || `${p.nombre} ${p.descripcion || ''}`.toLowerCase().includes(q)));
+    document.getElementById('tabla').innerHTML = lista.length ? lista.map((p) => `
+        <tr>
+            <td><strong>${p.nombre}</strong>${p.mostrar_banner ? ` <span class="tag" title="Se muestra en el banner de la portada">Banner</span>` : ''}
+                <div style="color:var(--text-muted);font-size:.78rem">${p.descripcion || ''}</div></td>
+            <td class="mono">${valorTxt(p)}</td>
+            <td>${alcanceTxt(p)}</td>
+            <td style="font-size:.84rem">${formatoFecha(p.fecha_inicio)} – ${formatoFecha(p.fecha_fin)}</td>
+            <td>${pill(p.situacion)}</td>
+            <td style="font-size:.84rem">${p.pedidos} pedido${p.pedidos === 1 ? '' : 's'}<div style="color:var(--text-muted)">${formatoMoneda(p.descuento_otorgado)}</div></td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-outline btn-sm" onclick="abrirPromo(${p.id})">Editar</button>
+                <button class="btn btn-ghost btn-sm" onclick="alternar(${p.id})">${p.estado === 'activa' ? 'Desactivar' : 'Activar'}</button>
+                <button class="btn btn-ghost btn-sm" onclick="eliminar(${p.id})" title="Eliminar">${icon('x', 14)}</button>
+            </td>
+        </tr>`).join('') : `<tr><td colspan="7" style="color:var(--text-muted)">No hay promociones con ese filtro.</td></tr>`;
+}
+
+const fechaInput = (f) => { if (!f) return ''; const d = new Date(f); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+async function abrirPromo(id) {
+    if (!CATEGORIAS.length) CATEGORIAS = await api('/categorias');
+    if (!PRODUCTOS.length) PRODUCTOS = (await api('/admin/productos').catch(() => api('/productos'))).filter((p) => p.activo !== false);
+    const p = id ? PROMOS.find((x) => x.id === id) : { tipo_descuento: 'porcentaje', alcance: 'todos', estado: 'activa', mostrar_banner: true,
+        fecha_inicio: new Date(), fecha_fin: new Date(Date.now() + 14 * 86400000) };
+    document.getElementById('modal-promo-body').innerHTML = `
+        <button class="modal-close" onclick="cerrarModal()">${icon('x', 18)}</button>
+        <h3>${id ? 'Editar promoción' : 'Nueva promoción'}</h3>
+        <div class="field"><label>Nombre</label><input id="pr-nombre" value="${(p.nombre || '').replace(/"/g, '&quot;')}" placeholder="Ej. Semana de laptops" /></div>
+        <div class="field"><label>Descripción (se ve en el banner)</label><input id="pr-desc" value="${(p.descripcion || '').replace(/"/g, '&quot;')}" /></div>
+        <div class="field-row">
+            <div class="field"><label>Tipo de descuento</label>
+                <select id="pr-tipo" onchange="vistaPrevia()">
+                    <option value="porcentaje" ${p.tipo_descuento === 'porcentaje' ? 'selected' : ''}>Porcentaje (%)</option>
+                    <option value="monto" ${p.tipo_descuento === 'monto' ? 'selected' : ''}>Monto fijo por pieza ($)</option>
+                </select></div>
+            <div class="field"><label>Valor</label><input id="pr-valor" type="number" min="0.01" step="0.01" value="${p.valor ?? ''}" oninput="vistaPrevia()" /></div>
+        </div>
+        <div class="field"><label>Productos aplicables</label>
+            <select id="pr-alcance" onchange="cambioAlcance()">
+                <option value="todos" ${p.alcance === 'todos' ? 'selected' : ''}>Todo el catálogo</option>
+                <option value="categoria" ${p.alcance === 'categoria' ? 'selected' : ''}>Una categoría</option>
+                <option value="producto" ${p.alcance === 'producto' ? 'selected' : ''}>Un producto</option>
+            </select></div>
+        <div class="field" id="box-cat"><label>Categoría</label>
+            <select id="pr-cat" onchange="vistaPrevia()">${CATEGORIAS.map((c) => `<option value="${c.id}" ${Number(p.categoria_id) === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('')}</select></div>
+        <div class="field" id="box-prod"><label>Producto</label>
+            <select id="pr-prod" onchange="vistaPrevia()">${PRODUCTOS.map((x) => `<option value="${x.id}" ${Number(p.producto_id) === x.id ? 'selected' : ''}>${x.nombre} · ${formatoMoneda(x.precio)}</option>`).join('')}</select></div>
+        <div class="field-row">
+            <div class="field"><label>Inicia</label><input id="pr-ini" type="date" value="${fechaInput(p.fecha_inicio)}" /></div>
+            <div class="field"><label>Termina (incluido)</label><input id="pr-fin" type="date" value="${fechaInput(p.fecha_fin)}" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field"><label><input type="checkbox" id="pr-activa" style="width:auto;display:inline-block" ${p.estado !== 'inactiva' ? 'checked' : ''}/> Activa</label></div>
+            <div class="field"><label><input type="checkbox" id="pr-banner" style="width:auto;display:inline-block" ${p.mostrar_banner ? 'checked' : ''}/> Mostrar en el banner</label></div>
+        </div>
+        <div class="pago-box" id="pr-preview" style="font-size:.85rem"></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:6px" onclick="guardar(${id || ''})">${id ? 'Guardar cambios' : 'Crear promoción'}</button>`;
+    document.getElementById('modal-promo').classList.add('open');
+    cambioAlcance();
+}
+function cerrarModal() { document.getElementById('modal-promo').classList.remove('open'); }
+
+function cambioAlcance() {
+    const a = document.getElementById('pr-alcance').value;
+    document.getElementById('box-cat').hidden = a !== 'categoria';
+    document.getElementById('box-prod').hidden = a !== 'producto';
+    vistaPrevia();
+}
+
+// Cuántos productos toca y cómo queda un precio de ejemplo
+function vistaPrevia() {
+    const a = document.getElementById('pr-alcance').value;
+    const tipo = document.getElementById('pr-tipo').value;
+    const valor = Number(document.getElementById('pr-valor').value) || 0;
+    const aplica = PRODUCTOS.filter((x) => a === 'todos' || (a === 'categoria' && x.categoria_id === Number(document.getElementById('pr-cat').value)) || (a === 'producto' && x.id === Number(document.getElementById('pr-prod').value)));
+    const ej = aplica[0];
+    const box = document.getElementById('pr-preview');
+    if (!ej || !valor) { box.innerHTML = `${icon('info', 14)} Aplica a <strong>${aplica.length}</strong> producto${aplica.length === 1 ? '' : 's'}.`; return; }
+    const d = Math.min(Number(ej.precio), tipo === 'porcentaje' ? Number(ej.precio) * valor / 100 : valor);
+    box.innerHTML = `${icon('info', 14)} Aplica a <strong>${aplica.length}</strong> producto${aplica.length === 1 ? '' : 's'}. Ejemplo: ${ej.nombre} pasa de ${formatoMoneda(ej.precio)} a <strong style="color:var(--success)">${formatoMoneda(Number(ej.precio) - d)}</strong>.`;
+}
+
+async function guardar(id) {
+    const ini = document.getElementById('pr-ini').value, fin = document.getElementById('pr-fin').value;
+    const body = {
+        nombre: document.getElementById('pr-nombre').value.trim(),
+        descripcion: document.getElementById('pr-desc').value.trim(),
+        tipo_descuento: document.getElementById('pr-tipo').value,
+        valor: Number(document.getElementById('pr-valor').value),
+        alcance: document.getElementById('pr-alcance').value,
+        categoria_id: Number(document.getElementById('pr-cat').value),
+        producto_id: Number(document.getElementById('pr-prod').value),
+        fecha_inicio: ini ? ini + 'T00:00:00' : '',
+        fecha_fin: fin ? fin + 'T23:59:59' : '',
+        estado: document.getElementById('pr-activa').checked ? 'activa' : 'inactiva',
+        mostrar_banner: document.getElementById('pr-banner').checked,
+    };
+    try {
+        const r = id ? await api(`/admin/promociones/${id}`, { method: 'PUT', body }) : await api('/admin/promociones', { method: 'POST', body });
+        toast(r.message, 'ok');
+        cerrarModal();
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function alternar(id) {
+    const p = PROMOS.find((x) => x.id === id);
+    try {
+        await api(`/admin/promociones/${id}`, { method: 'PUT', body: { estado: p.estado === 'activa' ? 'inactiva' : 'activa' } });
+        toast(p.estado === 'activa' ? 'Promoción desactivada' : 'Promoción activada', 'ok');
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function eliminar(id) {
+    if (!(await confirmar('¿Eliminar esta promoción? Si ya se usó en pedidos solo se desactiva.', { okText: 'Eliminar', peligro: true }))) return;
+    try { const r = await api(`/admin/promociones/${id}`, { method: 'DELETE' }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+document.getElementById('f-buscar').addEventListener('input', pintar);
+document.getElementById('f-situacion').addEventListener('change', pintar);
+document.getElementById('modal-promo').addEventListener('click', (e) => { if (e.target.id === 'modal-promo') cerrarModal(); });
+cargar();
+</script>
+</body>
+</html>

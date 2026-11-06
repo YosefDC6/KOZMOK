@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Monedero · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="kpis"></div>
+
+        <div id="pendientes"></div>
+
+        <div class="card" style="margin:18px 0">
+            <h3 style="margin-top:0">Uso del monedero (últimos 6 meses)</h3>
+            <div class="mon-chart" id="grafica"></div>
+        </div>
+
+        <div class="filters-bar">
+            <input type="search" id="f-buscar" placeholder="Buscar cliente por nombre o correo…" />
+            <button class="btn btn-outline btn-sm" onclick="exportar()">Exportar CSV</button>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Cliente</th><th style="text-align:right">Saldo</th><th style="text-align:right">Recargado</th><th style="text-align:right">Consumido</th><th>Último movimiento</th><th>Estado</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-mon">
+    <div class="modal" style="max-width:640px" id="modal-mon-body"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('monedero');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Monedero', 'Consulta recargas y consumos, confirma transferencias y aplica ajustes cuando haga falta.'
+);
+
+let DATA = null;
+const money2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+const TIPO = { recarga: 'Recarga', compra: 'Compra', reembolso: 'Reembolso', ajuste: 'Ajuste' };
+const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+async function cargar() {
+    const q = document.getElementById('f-buscar').value.trim();
+    DATA = await api('/admin/monederos' + (q ? '?busqueda=' + encodeURIComponent(q) : ''));
+    const r = DATA.resumen;
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Saldo en monederos</div><div class="stat-value" style="font-size:1.4rem">${money2(r.saldo_total)}</div><div class="stat-sub">${r.con_saldo} cliente${r.con_saldo === 1 ? '' : 's'} con saldo</div></div>
+        <div class="stat-card"><div class="stat-label">Recargas del mes</div><div class="stat-value" style="font-size:1.4rem;color:var(--success)">${money2(r.recargas_mes)}</div></div>
+        <div class="stat-card"><div class="stat-label">Consumos del mes</div><div class="stat-value" style="font-size:1.4rem">${money2(r.consumos_mes)}</div><div class="stat-sub">${Number(r.reembolsos_mes) > 0 ? money2(r.reembolsos_mes) + ' reembolsados' : 'compras pagadas con monedero'}</div></div>
+        <div class="stat-card"><div class="stat-label">Recargas por confirmar</div><div class="stat-value" style="color:${r.recargas_pendientes ? 'var(--warning)' : 'inherit'}">${r.recargas_pendientes}</div><div class="stat-sub">transferencias</div></div>`;
+
+    document.getElementById('pendientes').innerHTML = DATA.pendientes.length ? `
+        <div class="card" style="margin-top:18px;border-color:var(--warning)">
+            <h3 style="margin-top:0">${icon('clock', 17)} Recargas por transferencia pendientes</h3>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Fecha</th><th>Cliente</th><th>Referencia</th><th style="text-align:right">Monto</th><th></th></tr></thead>
+                <tbody>${DATA.pendientes.map((m) => `<tr>
+                    <td>${formatoFecha(m.fecha)}</td><td>${m.nombre}<div style="color:var(--text-muted);font-size:.78rem">${m.correo}</div></td>
+                    <td class="mono">${m.referencia || '—'}</td><td class="mono" style="text-align:right">${money2(m.monto)}</td>
+                    <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="resolver(${m.id}, 'confirmar')">Confirmar depósito</button>
+                        <button class="btn btn-ghost btn-sm" onclick="resolver(${m.id}, 'rechazar')">Rechazar</button></td></tr>`).join('')}</tbody>
+            </table></div>
+        </div>` : '';
+
+    const max = Math.max(1, ...DATA.por_mes.map((m) => Math.max(Number(m.recargas), Number(m.consumos))));
+    document.getElementById('grafica').innerHTML = DATA.por_mes.map((m) => {
+        const [y, mm] = m.mes.split('-');
+        return `<div class="mc-col">
+            <div class="mc-bars">
+                <span class="mc-bar rec" style="height:${Number(m.recargas) / max * 100}%" title="Recargas ${money2(m.recargas)}"></span>
+                <span class="mc-bar con" style="height:${Number(m.consumos) / max * 100}%" title="Consumos ${money2(m.consumos)}"></span>
+            </div>
+            <span class="mc-mes">${MES[Number(mm) - 1]} ${y.slice(2)}</span>
+        </div>`;
+    }).join('') + `<div class="mc-ley"><span><i class="rec"></i> Recargas</span><span><i class="con"></i> Consumos</span></div>`;
+
+    document.getElementById('tabla').innerHTML = DATA.monederos.length ? DATA.monederos.map((m) => `
+        <tr>
+            <td>${avatarIni(m.nombre)} ${m.nombre}<div style="color:var(--text-muted);font-size:.78rem;padding-left:34px">${m.correo}</div></td>
+            <td class="mono" style="text-align:right;font-weight:600">${money2(m.saldo)}</td>
+            <td class="mono" style="text-align:right;color:var(--text-muted)">${money2(m.recargado)}</td>
+            <td class="mono" style="text-align:right;color:var(--text-muted)">${money2(m.consumido)}</td>
+            <td style="font-size:.84rem">${m.ultimo_movimiento ? formatoFecha(m.ultimo_movimiento) : '—'}</td>
+            <td>${m.estado === 'activo' ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>' : '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Bloqueado</span>'}</td>
+            <td><button class="btn btn-outline btn-sm" onclick="abrir(${m.cliente_id})">Ver</button></td>
+        </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-muted)">Sin resultados.</td></tr>';
+}
+
+async function abrir(clienteId) {
+    const d = await api(`/admin/monederos/${clienteId}`);
+    document.getElementById('modal-mon-body').innerHTML = `
+        <button class="modal-close" onclick="cerrar()">${icon('x', 18)}</button>
+        <h3 style="margin-bottom:2px">${d.cliente.nombre}</h3>
+        <div style="color:var(--text-muted);font-size:.84rem;margin-bottom:14px">${d.cliente.correo}${d.cliente.telefono ? ' · ' + d.cliente.telefono : ''}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+            <div><span style="font-size:.8rem;color:var(--text-muted)">Saldo actual</span><div class="mono" style="font-size:1.8rem;color:var(--success)">${money2(d.saldo)}</div></div>
+            <button class="btn btn-outline btn-sm" onclick="cambiarEstado(${clienteId}, '${d.estado === 'activo' ? 'bloqueado' : 'activo'}')">${icon('lock', 14)} ${d.estado === 'activo' ? 'Bloquear monedero' : 'Desbloquear monedero'}</button>
+        </div>
+        <div class="card" style="padding:14px;margin-bottom:14px">
+            <strong style="font-size:.9rem">Ajuste manual</strong>
+            <p style="font-size:.78rem;color:var(--text-muted);margin:2px 0 8px">Positivo abona saldo, negativo lo descuenta. Queda registrado con tu nombre.</p>
+            <div class="field-row">
+                <div class="field"><label>Monto ($)</label><input type="number" id="aj-monto" step="0.01" placeholder="Ej. 200 o -150" /></div>
+                <div class="field" style="flex:2"><label>Motivo</label><input id="aj-motivo" placeholder="Ej. Compensación por retraso" /></div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="ajustar(${clienteId})">Aplicar ajuste</button>
+        </div>
+        <div class="table-wrap" style="max-height:300px;overflow:auto"><table>
+            <thead><tr><th>Fecha</th><th>Movimiento</th><th style="text-align:right">Monto</th><th style="text-align:right">Saldo</th></tr></thead>
+            <tbody>${d.movimientos.length ? d.movimientos.map((m) => `<tr style="${m.estado !== 'aplicado' ? 'opacity:.65' : ''}">
+                <td style="font-size:.82rem">${formatoFecha(m.fecha)}</td>
+                <td style="font-size:.84rem"><strong>${TIPO[m.tipo] || m.tipo}</strong> · ${m.concepto || ''}${m.numero_orden ? ' · ' + m.numero_orden : ''}${m.usuario_nombre ? `<div style="color:var(--text-muted);font-size:.76rem">por ${m.usuario_nombre}</div>` : ''}${m.estado !== 'aplicado' ? ` <span class="tag">${m.estado}</span>` : ''}</td>
+                <td class="mono" style="text-align:right;color:${Number(m.monto) >= 0 ? 'var(--success)' : 'var(--danger)'}">${Number(m.monto) >= 0 ? '+' : ''}${money2(m.monto)}</td>
+                <td class="mono" style="text-align:right">${m.saldo_resultante !== null ? money2(m.saldo_resultante) : '—'}</td></tr>`).join('') : '<tr><td colspan="4">Sin movimientos.</td></tr>'}</tbody>
+        </table></div>`;
+    document.getElementById('modal-mon').classList.add('open');
+}
+function cerrar() { document.getElementById('modal-mon').classList.remove('open'); }
+
+async function ajustar(clienteId) {
+    const monto = Number(document.getElementById('aj-monto').value);
+    const motivo = document.getElementById('aj-motivo').value.trim();
+    if (!monto) { toast('Escribe un monto distinto de cero', 'warn'); return; }
+    if (!(await confirmar(`¿${monto > 0 ? 'Abonar' : 'Descontar'} ${money2(Math.abs(monto))} al monedero?`, { okText: 'Aplicar' }))) return;
+    try {
+        const r = await api(`/admin/monederos/${clienteId}/ajuste`, { method: 'POST', body: { monto, motivo } });
+        toast(`${r.message}. Nuevo saldo: ${money2(r.saldo)}`, 'ok');
+        await cargar(); abrir(clienteId);
+    } catch (e) { toast(e.message, 'error'); }
+}
+async function cambiarEstado(clienteId, estado) {
+    try { const r = await api(`/admin/monederos/${clienteId}/estado`, { method: 'PUT', body: { estado } }); toast(r.message, 'ok'); await cargar(); abrir(clienteId); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function resolver(id, accion) {
+    if (accion === 'rechazar' && !(await confirmar('¿Rechazar esta recarga? No se acreditará el saldo.', { okText: 'Rechazar', peligro: true }))) return;
+    try { const r = await api(`/admin/monederos/movimientos/${id}`, { method: 'PUT', body: { accion } }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+function exportar() {
+    descargarCSV('monederos', DATA.monederos.map((m) => ({ cliente: m.nombre, correo: m.correo, saldo: m.saldo, recargado: m.recargado, consumido: m.consumido, estado: m.estado })));
+}
+
+let t = null;
+document.getElementById('f-buscar').addEventListener('input', () => { clearTimeout(t); t = setTimeout(cargar, 250); });
+document.getElementById('modal-mon').addEventListener('click', (e) => { if (e.target.id === 'modal-mon') cerrar(); });
+cargar();
+</script>
+</body>
+</html>
