@@ -149,6 +149,19 @@ Seguridad de sesion
      boton Buscar.
    - "Categorias" desplegable.
    - Iconos: favoritos, carrito (con contador) y el menu de la cuenta.
+   - PANEL LATERAL: al dar clic en el corazon o en el carrito NO se cambia
+     de pantalla; se abre un panel a la derecha con dos pestanas:
+        * Carrito  : productos con [-] cantidad [+], "Quitar", subtotal,
+                     aviso de envio gratis, "Ir a pagar" (abre carrito.html
+                     para el checkout) y "Seguir comprando" (cierra el panel).
+        * Favoritos: productos guardados con "Agregar" al carrito y
+                     "Quitar"; "Ver todos mis favoritos" abre favoritos.html.
+     Se cierra con la X, tocando fuera del panel o con la tecla Esc. Los
+     contadores y la pagina de atras se actualizan solos. En movil se abre
+     desde "Carrito" en la barra inferior.
+   - BOTON "REGRESAR": en todas las paginas menos la portada hay una flecha
+     bajo la barra para volver a la pantalla anterior (o "Volver a la
+     tienda" si se entro directo por enlace).
    - En movil hay un menu lateral y una barra inferior tipo app.
 
 3.3  FICHA DE PRODUCTO  (ventana emergente desde el catalogo)

@@ -80,8 +80,8 @@ async function renderNavbar() {
 
                 <div class="nav-actions">
                     ${categoriasMenu}
-                    <a href="/favoritos.html" class="icon-btn hide-sm" title="Favoritos">${icon('heart', 20)}<span class="badge-count" id="fav-badge" style="display:none">0</span></a>
-                    <a href="/carrito.html" class="icon-btn" title="Carrito">${icon('cart', 20)}<span class="badge-count" id="cart-badge" style="display:none">0</span></a>
+                    <a href="/favoritos.html" class="icon-btn hide-sm" id="nav-fav" title="Favoritos" data-panel="favoritos">${icon('heart', 20)}<span class="badge-count" id="fav-badge" style="display:none">0</span></a>
+                    <a href="/carrito.html" class="icon-btn" id="nav-cart" title="Carrito" data-panel="carrito">${icon('cart', 20)}<span class="badge-count" id="cart-badge" style="display:none">0</span></a>
                     ${cuentaMenu}
                 </div>
             </div>
@@ -90,7 +90,7 @@ async function renderNavbar() {
         <nav class="bottom-nav" id="bottom-nav">
             <a href="/index.html" data-match="/index.html,/"><span class="bn-ico">${icon('home', 20)}</span>Inicio</a>
             <a href="/index.html?ver=todo" data-match="__catalogo"><span class="bn-ico">${icon('grid', 20)}</span>Catálogo</a>
-            <a href="/carrito.html" data-match="/carrito.html"><span class="bn-ico">${icon('cart', 20)}</span>Carrito</a>
+            <a href="/carrito.html" data-match="/carrito.html" data-panel="carrito"><span class="bn-ico">${icon('cart', 20)}</span>Carrito</a>
             <a href="${cliente ? '/perfil.html' : '/login.html'}" data-match="/perfil.html,/login.html,/registro.html"><span class="bn-ico">${icon('user', 20)}</span>${cliente ? 'Perfil' : 'Entrar'}</a>
             ${cliente
                 ? `<a href="#" class="is-exit" id="bn-logout"><span class="bn-ico">${icon('logout', 20)}</span>Salir</a>`
@@ -215,6 +215,262 @@ async function renderNavbar() {
 
     actualizarBadgeCarrito();
     actualizarBadgeFavoritos();
+    MiniPanel.montar();
+    renderBotonRegresar();
+}
+
+// =========================================================
+// PANEL LATERAL DE CARRITO Y FAVORITOS
+// Al dar clic en el corazón o en el carrito se abre un panel a la derecha
+// con dos pestañas, para revisar y modificar sin cambiar de pantalla.
+// Solo se sale de la página para ver el carrito completo / pagar.
+// =========================================================
+const MiniPanel = {
+    pestana: 'carrito',
+
+    montar() {
+        if (document.getElementById('mp-panel')) return;
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `
+            <div class="mp-overlay" id="mp-overlay"></div>
+            <aside class="mp-panel" id="mp-panel" role="dialog" aria-modal="true" aria-label="Carrito y favoritos" aria-hidden="true">
+                <div class="mp-head">
+                    <div class="mp-tabs" role="tablist">
+                        <button class="mp-tab" role="tab" data-tab="carrito">${icon('cart', 16)} Carrito <span class="mp-tab-n" id="mp-n-carrito"></span></button>
+                        <button class="mp-tab" role="tab" data-tab="favoritos">${icon('heart', 16)} Favoritos <span class="mp-tab-n" id="mp-n-favoritos"></span></button>
+                    </div>
+                    <button class="modal-close" id="mp-close" aria-label="Cerrar">${icon('x', 20)}</button>
+                </div>
+                <div class="mp-body" id="mp-body"><div class="mp-vacio">Cargando…</div></div>
+                <div class="mp-foot" id="mp-foot"></div>
+            </aside>`;
+        document.body.append(...wrap.children);
+
+        document.getElementById('mp-overlay').addEventListener('click', () => this.cerrar());
+        document.getElementById('mp-close').addEventListener('click', () => this.cerrar());
+        document.querySelectorAll('.mp-tab').forEach((b) =>
+            b.addEventListener('click', () => this.mostrar(b.dataset.tab)));
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.cerrar(); });
+
+        // Iconos de la barra (y la barra inferior en móvil) abren el panel en vez de navegar
+        document.querySelectorAll('[data-panel]').forEach((a) => a.addEventListener('click', (e) => {
+            const tab = a.dataset.panel;
+            // En la propia página completa no tiene caso abrir el panel de lo mismo
+            if ((tab === 'carrito' && location.pathname === '/carrito.html') ||
+                (tab === 'favoritos' && location.pathname === '/favoritos.html')) return;
+            e.preventDefault();
+            this.abrir(tab);
+        }));
+    },
+
+    abrir(tab) {
+        document.getElementById('mp-panel').classList.add('open');
+        document.getElementById('mp-panel').setAttribute('aria-hidden', 'false');
+        document.getElementById('mp-overlay').classList.add('open');
+        document.body.classList.add('mp-lock');
+        this.mostrar(tab || this.pestana);
+    },
+
+    cerrar() {
+        const p = document.getElementById('mp-panel');
+        if (!p || !p.classList.contains('open')) return;
+        p.classList.remove('open');
+        p.setAttribute('aria-hidden', 'true');
+        document.getElementById('mp-overlay').classList.remove('open');
+        document.body.classList.remove('mp-lock');
+    },
+
+    mostrar(tab) {
+        this.pestana = tab;
+        document.querySelectorAll('.mp-tab').forEach((b) => {
+            const on = b.dataset.tab === tab;
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        return tab === 'favoritos' ? this.pintarFavoritos() : this.pintarCarrito();
+    },
+
+    // Avisa a la página actual (carrito.html, catálogo...) que algo cambió
+    sincronizar(tipo, detalle) {
+        actualizarBadgeCarrito();
+        actualizarBadgeFavoritos();
+        if (tipo === 'carrito' && location.pathname === '/carrito.html') {
+            if (Sesion.cliente() && window.cargarCarrito) window.cargarCarrito();
+            else if (window.cargarCarritoInvitado) window.cargarCarritoInvitado();
+        }
+        if (tipo === 'favoritos' && detalle && detalle.productoId) {
+            if (window.Favoritos) Favoritos._set.delete(Number(detalle.productoId));
+            document.querySelectorAll(`#producto-${detalle.productoId} .fav-btn`).forEach((b) => b.classList.remove('on'));
+        }
+        document.dispatchEvent(new CustomEvent('kz:' + tipo + '-cambio', { detail: detalle || {} }));
+    },
+
+    // ---------- Carrito ----------
+    async itemsCarrito() {
+        if (Sesion.cliente()) {
+            const c = Sesion.cliente();
+            const rows = await api(`/carrito/${c.id}`);
+            return rows.map((r) => ({
+                id: r.id, producto_id: r.producto_id, nombre: r.nombre, precio: Number(r.precio),
+                imagen_url: r.imagen_url, stock: Number(r.stock), cantidad: r.cantidad,
+                garantia: r.garantia_plan, garantia_costo: Number(r.garantia_costo || 0),
+            }));
+        }
+        const lista = CarritoInvitado.leer();
+        const prods = await Promise.all(lista.map((it) => api(`/productos/${it.producto_id}`).catch(() => null)));
+        return lista.map((it, i) => prods[i] && ({
+            id: it.producto_id, producto_id: it.producto_id, nombre: prods[i].nombre, precio: Number(prods[i].precio),
+            imagen_url: prods[i].imagen_url, categoria_nombre: prods[i].categoria_nombre,
+            stock: Number(prods[i].stock), cantidad: it.cantidad, garantia: null, garantia_costo: 0,
+        })).filter(Boolean);
+    },
+
+    async pintarCarrito() {
+        const body = document.getElementById('mp-body');
+        const foot = document.getElementById('mp-foot');
+        let items = [];
+        try { items = await this.itemsCarrito(); }
+        catch (e) { body.innerHTML = `<div class="mp-vacio">${e.message}</div>`; foot.innerHTML = ''; return; }
+        if (this.pestana !== 'carrito') return;   // el usuario cambió de pestaña mientras cargaba
+        const n = items.reduce((a, i) => a + i.cantidad, 0);
+        document.getElementById('mp-n-carrito').textContent = n ? n : '';
+
+        if (!items.length) {
+            body.innerHTML = `<div class="mp-vacio">${icon('cart', 34)}<p>Tu carrito está vacío.</p>
+                <a href="/index.html?ver=todo" class="btn btn-outline btn-sm">Ver catálogo</a></div>`;
+            foot.innerHTML = '';
+            return;
+        }
+        body.innerHTML = items.map((it) => `
+            <div class="mp-item">
+                <img src="${imagenProducto(it)}" alt="" onerror="this.src='/img/producto.svg'">
+                <div class="mp-info">
+                    <div class="mp-nombre">${it.nombre}</div>
+                    <div class="mp-precio">${formatoMoneda(it.precio)}${it.garantia ? ` <span class="mp-gar">+ ${it.garantia}</span>` : ''}</div>
+                    <div class="mp-acciones">
+                        <div class="mp-qty">
+                            <button data-act="menos" data-id="${it.id}" ${it.cantidad <= 1 ? 'disabled' : ''} aria-label="Menos">${icon('minus', 14)}</button>
+                            <span>${it.cantidad}</span>
+                            <button data-act="mas" data-id="${it.id}" ${it.cantidad >= it.stock ? 'disabled' : ''} aria-label="Más">${icon('plus', 14)}</button>
+                        </div>
+                        <button class="mp-quitar" data-act="quitar" data-id="${it.id}">Quitar</button>
+                    </div>
+                </div>
+                <div class="mp-sub">${formatoMoneda(it.precio * it.cantidad + it.garantia_costo)}</div>
+            </div>`).join('');
+
+        const subtotal = items.reduce((a, i) => a + i.precio * i.cantidad + i.garantia_costo, 0);
+        const faltaEnvio = Math.max(0, 10000 - items.reduce((a, i) => a + i.precio * i.cantidad, 0));
+        foot.innerHTML = `
+            <div class="mp-total"><span>Subtotal (${n} ${n === 1 ? 'pieza' : 'piezas'})</span><strong>${formatoMoneda(subtotal)}</strong></div>
+            <div class="mp-nota">${faltaEnvio > 0 ? `Te faltan ${formatoMoneda(faltaEnvio)} para el envío gratis.` : 'Tu pedido ya tiene envío gratis.'} IVA y envío se calculan al pagar.</div>
+            <a href="/carrito.html" class="btn btn-primary btn-block">${Sesion.cliente() ? 'Ir a pagar' : 'Ver carrito y pagar'} ${icon('arrow', 16)}</a>
+            <button class="btn btn-ghost btn-block" id="mp-seguir">Seguir comprando</button>`;
+        document.getElementById('mp-seguir').addEventListener('click', () => this.cerrar());
+
+        body.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () =>
+            this.accionCarrito(b.dataset.act, Number(b.dataset.id), items.find((i) => i.id === Number(b.dataset.id)))));
+    },
+
+    async accionCarrito(act, id, it) {
+        if (!it) return;
+        try {
+            if (Sesion.cliente()) {
+                if (act === 'quitar') await api(`/carrito/${id}`, { method: 'DELETE' });
+                else await api(`/carrito/${id}`, { method: 'PUT', body: { cantidad: it.cantidad + (act === 'mas' ? 1 : -1) } });
+            } else {
+                if (act === 'quitar') CarritoInvitado.quitar(id);
+                else CarritoInvitado.cambiar(id, { cantidad: Math.min(it.stock, Math.max(1, it.cantidad + (act === 'mas' ? 1 : -1))) });
+            }
+            if (act === 'quitar' && window.toast) toast('Producto quitado del carrito', 'ok');
+        } catch (e) { if (window.toast) toast(e.message, 'error'); }
+        this.sincronizar('carrito');
+        this.pintarCarrito();
+    },
+
+    // ---------- Favoritos ----------
+    async pintarFavoritos() {
+        const body = document.getElementById('mp-body');
+        const foot = document.getElementById('mp-foot');
+        const cliente = Sesion.cliente();
+        if (!cliente) {
+            body.innerHTML = `<div class="mp-vacio">${icon('heart', 34)}<p>Inicia sesión para guardar y ver tus favoritos.</p>
+                <button class="btn btn-primary btn-sm" id="mp-login">Iniciar sesión</button></div>`;
+            foot.innerHTML = '';
+            document.getElementById('mp-login').addEventListener('click', () => irALogin());
+            return;
+        }
+        let favs = [];
+        try { favs = await api(`/clientes/${cliente.id}/favoritos`); }
+        catch (e) { body.innerHTML = `<div class="mp-vacio">${e.message}</div>`; foot.innerHTML = ''; return; }
+        if (this.pestana !== 'favoritos') return;
+        document.getElementById('mp-n-favoritos').textContent = favs.length || '';
+
+        if (!favs.length) {
+            body.innerHTML = `<div class="mp-vacio">${icon('heart', 34)}<p>Aún no tienes favoritos. Toca el corazón de un producto para guardarlo.</p></div>`;
+            foot.innerHTML = '';
+            return;
+        }
+        body.innerHTML = favs.map((p) => `
+            <div class="mp-item">
+                <img src="${imagenProducto(p)}" alt="" onerror="this.src='/img/producto.svg'">
+                <div class="mp-info">
+                    <div class="mp-nombre">${p.nombre}</div>
+                    <div class="mp-precio">${formatoMoneda(p.precio)}
+                        <span class="mp-stock ${Number(p.stock) > 0 ? '' : 'agotado'}">${Number(p.stock) > 0 ? 'En stock' : 'Agotado'}</span></div>
+                    <div class="mp-acciones">
+                        <button class="btn btn-primary btn-sm" data-fav="carrito" data-id="${p.id}" ${Number(p.stock) > 0 ? '' : 'disabled'}>${icon('cart', 14)} Agregar</button>
+                        <button class="mp-quitar" data-fav="quitar" data-id="${p.id}">Quitar</button>
+                    </div>
+                </div>
+            </div>`).join('');
+        foot.innerHTML = `<a href="/favoritos.html" class="btn btn-outline btn-block">Ver todos mis favoritos</a>`;
+
+        body.querySelectorAll('[data-fav]').forEach((b) => b.addEventListener('click', async () => {
+            const id = Number(b.dataset.id);
+            try {
+                if (b.dataset.fav === 'carrito') {
+                    b.disabled = true;
+                    await agregarProducto(id, 1);
+                    if (window.toast) toast('Agregado al carrito', 'ok');
+                    this.sincronizar('carrito');
+                    b.disabled = false;
+                    return;
+                }
+                await api(`/clientes/${cliente.id}/favoritos/${id}`, { method: 'DELETE' });
+                this.sincronizar('favoritos', { productoId: id });
+                this.pintarFavoritos();
+            } catch (e) { b.disabled = false; if (window.toast) toast(e.message, 'error'); }
+        }));
+    },
+};
+window.MiniPanel = MiniPanel;
+
+// =========================================================
+// BOTÓN "REGRESAR"
+// En las páginas que no son la portada aparece una flecha para volver a
+// donde estaba el cliente (o a la tienda si llegó directo por enlace).
+// =========================================================
+function renderBotonRegresar() {
+    const enPortada = (location.pathname === '/' || location.pathname === '/index.html') && !location.search;
+    // Tras pagar no tiene sentido "regresar" al checkout
+    if (location.pathname === '/gracias.html') return;
+    const ph = document.getElementById('navbar-placeholder');
+    if (enPortada || !ph || document.getElementById('kz-regresar')) return;
+
+    let vieneDeLaTienda = false;
+    try { vieneDeLaTienda = !!document.referrer && new URL(document.referrer).origin === location.origin && document.referrer !== location.href; }
+    catch { /* referrer inválido */ }
+
+    const bar = document.createElement('div');
+    bar.className = 'container regresar-bar';
+    bar.innerHTML = `<button class="btn-regresar" id="kz-regresar" type="button">
+        <span class="br-ico">${icon('arrow', 16)}</span> ${vieneDeLaTienda ? 'Regresar' : 'Volver a la tienda'}</button>`;
+    ph.insertAdjacentElement('afterend', bar);
+    document.getElementById('kz-regresar').addEventListener('click', () => {
+        if (vieneDeLaTienda && history.length > 1) history.back();
+        else location.href = '/index.html';
+    });
 }
 
 async function actualizarBadgeFavoritos() {
