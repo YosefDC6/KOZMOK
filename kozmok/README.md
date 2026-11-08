@@ -35,6 +35,7 @@ kozmok/
     ├── cliente-panel.html  # redirección a cuenta.html (compatibilidad)
     ├── login.html / registro.html   # con ?next=, mostrar/ocultar contraseña
     ├── css/style.css
+    ├── css/arcade.css      # estilo Arcade de la tienda (solo páginas del cliente)
     ├── js/api.js, layout.js, chatbot.js, toast.js
     └── admin/
         ├── login.html

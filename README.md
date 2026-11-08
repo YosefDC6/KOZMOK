@@ -16,6 +16,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **En el celular**: filtros en un panel lateral, barra inferior con Inicio, Catálogo, Favoritos, Carrito y Cuenta (con aviso de pedido en camino) y "Mi cuenta" como fila deslizable.
 - **Checkout por pasos**: Carrito → Envío → Pago → Confirmar, con barra de avance, el resumen siempre visible y cada paso en la dirección (`?paso=2`), así "atrás" regresa al paso anterior.
 - **Logo KZK** (estilo Arcade: letras inclinadas con contorno grueso y sombra sólida del color del tema): en la barra, el panel, los comprobantes y el ícono de la pestaña. La **tarjeta de socio** y la del Club usan el diseño KZK; el cliente puede volver al **diseño clásico** desde la propia tarjeta o en Preferencias (se guarda en su cuenta).
+- **Diseño de la tienda en estilo Arcade** (igual que el logo): títulos gruesos, inclinados y en mayúsculas, botones con contorno marcado y sombra sólida del color del tema, etiquetas de promoción tipo calcomanía y pasos de compra en bloques inclinados. Funciona con los cuatro temas (Índigo, Esmeralda, Grafito y Claro); el panel interno conserva su diseño.
 - **Carrito sin sesión**: se puede llenar sin cuenta (catálogo, Arma tu PC, asesor); al iniciar sesión o registrarse pasa solo a la cuenta.
 - **Ficha de producto** con especificaciones, stock real, reseñas y **garantía extendida** (12, 24 o 36 meses, con certificado y folio).
 - **Comparador** de hasta 4 productos lado a lado.

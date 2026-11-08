@@ -6,17 +6,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Kozmok · Cómputo y electrónica</title>
 <link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
 </head>
 <body>
 <div id="navbar-placeholder"></div>
 
 <header class="hero" id="hero">
     <div class="hero-inner">
-        <h1>El equipo correcto para lo&nbsp;que <span class="hl">vas a hacer</span> con&nbsp;él.</h1>
-        <p>Compara procesador, RAM y gráficos en cada ficha, revisa el stock antes de comprar, y si no sabes por dónde empezar, deja que el asistente te recomiende según tu presupuesto.</p>
-        <div class="hero-actions">
-            <a href="/index.html?ver=todo" class="btn btn-primary btn-lg">Ver catálogo</a>
-            <a href="#" class="btn btn-outline btn-lg" onclick="document.getElementById('chatbot-toggle').click(); return false;">Preguntarle al asistente</a>
+        <div class="hero-txt">
+            <span class="arc-sticker">Cómputo y electrónica</span>
+            <h1>El equipo correcto <span class="hl">para lo que vas</span> a hacer con&nbsp;él.</h1>
+            <p>Compara procesador, RAM y gráficos en cada ficha, revisa el stock antes de comprar, y si no sabes por dónde empezar, deja que el asistente te recomiende según tu presupuesto.</p>
+            <div class="hero-actions">
+                <a href="/index.html?ver=todo" class="btn btn-primary btn-lg">Ver catálogo</a>
+                <a href="#" class="btn btn-outline btn-lg" onclick="document.getElementById('chatbot-toggle').click(); return false;">Preguntarle al asistente</a>
+            </div>
+        </div>
+        <div class="hero-logo" aria-hidden="true">
+            <span data-logo="150"></span>
+            <div class="hero-sellos">
+                <span class="arc-sticker blanca">Arma tu PC</span>
+                <span class="arc-sticker blanca">Stock real</span>
+                <span class="arc-sticker blanca">Garantía directa</span>
+            </div>
         </div>
     </div>
 </header>
@@ -583,9 +595,9 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
                 }).join('')}
             </select>
         </div>` : ''}
-        <div style="display:flex;gap:10px;margin-top:6px">
+        <div style="display:flex;gap:12px;margin-top:6px">
             <button class="btn btn-primary" style="flex:1" ${p.stock === 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id}, true)">
-                ${p.stock === 0 ? 'Sin stock' : 'Agregar al carrito'}
+                ${p.stock === 0 ? 'Sin stock' : icon('cart', 16) + ' Agregar al carrito'}
             </button>
             <button class="btn btn-outline ${fav ? 'fav-on' : ''}" id="modal-fav" onclick="toggleFav(event, ${p.id}, true)">${icon('heart', 16)} ${fav ? 'Guardado' : 'Guardar'}</button>
             <button class="btn btn-ghost" title="Copiar enlace del producto" aria-label="Compartir" onclick="compartirProducto(${p.id})">${icon('share', 16)}</button>
