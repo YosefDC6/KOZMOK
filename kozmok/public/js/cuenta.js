@@ -39,6 +39,9 @@ async function montarCuenta(key, render) {
         <a href="/ayuda.html" class="cuenta-help">${icon('help')}<span>Ayuda y soporte</span></a>
         <button class="menu-logout" id="cn-logout">${icon('logout')}<span>Cerrar sesión</span></button>
     `;
+    // en el celular el menú es una fila deslizable: se centra la sección actual
+    const act = nav.querySelector('.cuenta-links a.active');
+    if (act && matchMedia('(max-width: 860px)').matches) act.scrollIntoView({ block: 'nearest', inline: 'center' });
     document.getElementById('cn-logout').addEventListener('click', () => {
         Sesion.cerrarSesionCliente();
         if (window.toast) toast('Sesión cerrada', 'ok');
@@ -71,3 +74,52 @@ window.montarCuenta = montarCuenta;
 window.ESTADO_LABEL = { pendiente: 'Pendiente', confirmado: 'Confirmado', procesando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
 window.NIVEL_SOCIO = { Prospecto: 'Socio nuevo', Activo: 'Nivel Plata', Frecuente: 'Nivel Oro', Inactivo: 'Inactivo' };
 window.val = (id) => document.getElementById(id).value.trim();
+
+
+// =========================================================
+// DISEÑO DE LA TARJETA DE SOCIO / CLUB
+//   'kzk'     -> diseño nuevo con el logo KZK (por defecto)
+//   'clasica' -> diseño anterior (degradado del nivel con el fantasma)
+// Se guarda en las preferencias de la cuenta (clientes.preferencias.tarjeta)
+// y una copia en el navegador para pintar sin esperar al servidor.
+// =========================================================
+const DisenoTarjeta = {
+    opciones: [
+        { clave: 'kzk', nombre: 'KZK' },
+        { clave: 'clasica', nombre: 'Clásica' },
+    ],
+    actual(P) {
+        const v = (P && P.preferencias && P.preferencias.tarjeta) || localStorage.getItem('kz_tarjeta') || 'kzk';
+        return v === 'clasica' ? 'clasica' : 'kzk';
+    },
+    // Marca de agua y logo de cada diseño (los dos van en el HTML; el CSS muestra el que toca)
+    adornos(tamano = 200) {
+        return `<span class="tj-marca tj-solo-kzk" aria-hidden="true">${logoKZK(Math.round(tamano * 0.55))}</span>
+                <span class="tj-marca tj-solo-clasica socio-fantasma-g" aria-hidden="true">${icon('ghost', tamano)}</span>`;
+    },
+    logo() {
+        return `<span class="tj-logo tj-solo-kzk">${logoKZK(11)}</span><span class="tj-logo tj-solo-clasica">${icon('ghost', 16)}</span>`;
+    },
+    // Botones para cambiar de diseño debajo de la tarjeta
+    selector(P, d) {
+        return `<div class="tj-selector" role="group" aria-label="Diseño de la tarjeta">
+            <span>Diseño de la tarjeta</span>
+            ${this.opciones.map((o) => `<button type="button" class="tj-op ${o.clave === d ? 'on' : ''}" data-tj="${o.clave}" aria-pressed="${o.clave === d}">${o.nombre}</button>`).join('')}
+        </div>`;
+    },
+    // Engancha los botones: cambia el diseño al instante y lo guarda
+    activar(P, contenedor = document) {
+        contenedor.querySelectorAll('[data-tj]').forEach((b) => b.addEventListener('click', () => this.cambiar(P, b.dataset.tj)));
+    },
+    async cambiar(P, d) {
+        document.querySelectorAll('.tj-card').forEach((c) => { c.classList.remove('diseno-kzk', 'diseno-clasica'); c.classList.add('diseno-' + d); });
+        document.querySelectorAll('[data-tj]').forEach((b) => { const on = b.dataset.tj === d; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+        localStorage.setItem('kz_tarjeta', d);
+        try {
+            P.preferencias = { ...(P.preferencias || {}), tarjeta: d };
+            await api(`/clientes/${P.id}/preferencias`, { method: 'PUT', body: P.preferencias });
+            toast(d === 'kzk' ? 'Tarjeta con el diseño KZK' : 'Tarjeta con el diseño clásico', 'ok');
+        } catch (e) { toast('No se pudo guardar el diseño: ' + e.message, 'error'); }
+    },
+};
+window.DisenoTarjeta = DisenoTarjeta;

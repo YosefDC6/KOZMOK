@@ -11,7 +11,11 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ### Tienda (cliente)
 - **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca y "solo en promoción" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
 - **Comercialización**: banner de promociones vigentes en la portada, productos **destacados** (se marcan en el panel), sección de **novedades** y precio con descuento visible (precio final, precio de lista tachado y etiqueta `-10%` / `-$500`) en catálogo, ficha, carrito y panel lateral.
-- **Panel lateral de carrito y favoritos**: el corazón y el carrito de la barra abren un panel a la derecha (pestañas Carrito / Favoritos) sin cambiar de pantalla; en todas las páginas hay un botón **Regresar**.
+- **Panel lateral de carrito y favoritos**: el corazón y el carrito de la barra abren un panel a la derecha (pestañas Carrito / Favoritos) sin cambiar de pantalla. Al agregar un producto el panel se abre solo unos segundos para confirmarlo.
+- **Navegación cómoda**: buscador con sugerencias en vivo (productos con foto y precio, categorías y búsquedas recientes; tecla `/` para buscar), ficha de producto con enlace propio que se cierra con "atrás" y se puede compartir, catálogo de 24 en 24 con "Ver más", la posición del catálogo se conserva al regresar, botón "volver arriba", menú de categorías con sus marcas principales, migas de pan y botón **Regresar** en todas las páginas, y página 404 con buscador.
+- **En el celular**: filtros en un panel lateral, barra inferior con Inicio, Catálogo, Favoritos, Carrito y Cuenta (con aviso de pedido en camino) y "Mi cuenta" como fila deslizable.
+- **Checkout por pasos**: Carrito → Envío → Pago → Confirmar, con barra de avance, el resumen siempre visible y cada paso en la dirección (`?paso=2`), así "atrás" regresa al paso anterior.
+- **Logo KZK**: monograma de Kozmok en la barra, el panel, los comprobantes y el ícono de la pestaña. La **tarjeta de socio** y la del Club usan el diseño KZK; el cliente puede volver al **diseño clásico** desde la propia tarjeta o en Preferencias (se guarda en su cuenta).
 - **Carrito sin sesión**: se puede llenar sin cuenta (catálogo, Arma tu PC, asesor); al iniciar sesión o registrarse pasa solo a la cuenta.
 - **Ficha de producto** con especificaciones, stock real, reseñas y **garantía extendida** (12, 24 o 36 meses, con certificado y folio).
 - **Comparador** de hasta 4 productos lado a lado.
@@ -131,7 +135,8 @@ KOZMOK/
     ├── db.config.js          # conexión a PostgreSQL
     ├── db/database.sql       # esquema + triggers + datos de ejemplo
     └── public/               # front-end estático
-        ├── index.html, carrito.html, monedero.html, armar-pc.html, comparar.html, ...
+        ├── index.html, carrito.html, monedero.html, armar-pc.html, comparar.html, 404.html, ...
+        ├── img/kzk.svg       # logo KZK (ícono de la pestaña); en páginas se dibuja con logoKZK() de icons.js
         ├── css/style.css
         ├── js/               # api, layout (barra + panel lateral carrito/favoritos), chatbot, tema, toasts, etc.
         └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)

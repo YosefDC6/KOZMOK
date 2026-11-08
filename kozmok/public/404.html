@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Página no encontrada · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<main class="container pagina-404">
+    <div class="p404-marca" data-logo="64"></div>
+    <span class="p404-codigo">Error 404</span>
+    <h1>Esta página no existe</h1>
+    <p>Puede que el enlace esté mal escrito o que el producto ya no esté en el catálogo. Busca lo que necesitas o sigue por aquí:</p>
+
+    <form class="p404-buscar" id="p404-buscar" role="search">
+        <input type="search" id="p404-q" placeholder="Buscar productos, marcas…" aria-label="Buscar" />
+        <button class="btn btn-primary" type="submit" data-ic="search" data-ic-size="16">Buscar</button>
+    </form>
+
+    <div class="p404-accesos">
+        <a href="/index.html" class="card"><span data-ic="home" data-ic-size="20"></span><strong>Inicio</strong><span>Destacados y promociones</span></a>
+        <a href="/index.html?ver=todo" class="card"><span data-ic="grid" data-ic-size="20"></span><strong>Catálogo</strong><span>Todos los productos</span></a>
+        <a href="/index.html?promocion=1" class="card"><span data-ic="star" data-ic-size="20"></span><strong>Promociones</strong><span>Productos con descuento</span></a>
+        <a href="/ayuda.html" class="card"><span data-ic="help" data-ic-size="20"></span><strong>Ayuda</strong><span>Envíos, garantía y pagos</span></a>
+    </div>
+</main>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script>
+document.getElementById('p404-buscar').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = document.getElementById('p404-q').value.trim();
+    if (q && window.Buscador) Buscador.guardarReciente(q);
+    location.href = '/index.html?' + (q ? 'busqueda=' + encodeURIComponent(q) : 'ver=todo');
+});
+</script>
+</body>
+</html>

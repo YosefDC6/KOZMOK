@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Club de puntos · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -35,12 +36,12 @@ montarCuenta('recompensas', async (panel, P) => {
         </div>
 
         <div class="club-hero">
-            <div class="club-card lv-${r.nivel.clave}">
+            <div class="club-card tj-card diseno-${DisenoTarjeta.actual(P)} lv-${r.nivel.clave}">
                 <div class="cc-top">
-                    <span class="cc-marca"><span class="cc-logo">${icon('ghost', 16)}</span> Kozmok <em>Club</em></span>
+                    <span class="cc-marca"><span class="cc-logo">${DisenoTarjeta.logo()}</span> Kozmok <em>Club</em></span>
                     <span class="cc-nivel">${nivelBadge(r.nivel.clave, 18)} ${r.nivel.nombre}</span>
                 </div>
-                <span class="cc-fantasma" aria-hidden="true">${icon('ghost', 190)}</span>
+                ${DisenoTarjeta.adornos(190)}
                 <div class="cc-chip" aria-hidden="true"></div>
                 <div class="cc-saldo">
                     <span class="cc-pts">${r.puntos.toLocaleString('es-MX')}<small>pts</small></span>
@@ -120,6 +121,8 @@ montarCuenta('recompensas', async (panel, P) => {
             </table>
         </div>
     `;
+    panel.querySelector('.club-hero').insertAdjacentHTML('afterend', DisenoTarjeta.selector(P, DisenoTarjeta.actual(P)));
+    DisenoTarjeta.activar(P, panel);
 });
 </script>
 </body>

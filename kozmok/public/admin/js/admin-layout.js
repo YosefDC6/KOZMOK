@@ -140,7 +140,7 @@ function renderAdminSidebar(activo) {
 
     el.innerHTML = `
         <div class="brand-fila">
-            <div class="brand"><span class="brand-mark">${ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
+            <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(13) : ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
             <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
         </div>
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>

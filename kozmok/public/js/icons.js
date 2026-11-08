@@ -18,6 +18,7 @@
         grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/>',
         logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
         check: '<polyline points="20 6 9 17 4 12"/>',
+        share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>',
         x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
         chevron: '<polyline points="6 9 12 15 18 9"/>',
         arrow: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
@@ -58,9 +59,9 @@
         'Periféricos': 'mouse', 'Monitores': 'monitor', 'Accesorios': 'headphones',
     };
 
-    window.icon = function (name, size = 18) {
+    window.icon = function (name, size = 18, extra = '') {
         const p = P[name] || P.grid;
-        return `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+        return `<svg class="ic${extra ? ' ic-' + extra : ''}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
     };
     window.iconCategoria = function (nombre, size = 22) {
         return window.icon(CAT[nombre] || 'grid', size);
@@ -86,9 +87,36 @@
     };
     window.NIVEL_COLOR = NIVEL_COLOR;
 
+    // ---------------------------------------------------------
+    // LOGO KZK (monograma de Kozmok)
+    //   Letras geométricas K·Z·K de trazo grueso. La diagonal de la Z es
+    //   el "corte" de la marca y lleva su propio color (--kzk-corte), con
+    //   una chispa junto a la última K. Toma currentColor, así sigue a
+    //   cada tema. logoKZK(alto) -> <svg> de ese alto.
+    // ---------------------------------------------------------
+    window.logoKZK = function (alto = 16, { titulo = 'Kozmok' } = {}) {
+        const ancho = Math.round(alto * 60 / 28);
+        const letras = [
+            'M2 4h5v20H2z',                                     // K: asta
+            'M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z',     // K: brazos
+            'M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z', // Z
+            'M39 4h5v20h-5z',                                   // K: asta
+            'M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z',    // K: brazos
+        ];
+        const corte = 'M29.4 8.6H35L27.6 19.4H22z';             // diagonal de la Z
+        const chispa = 'M57.6 0l.85 1.9 1.9.85-1.9.85-.85 1.9-.85-1.9-1.9-.85 1.9-.85z';
+        return `<svg class="kzk-logo" viewBox="0 0 60.4 28" width="${ancho}" height="${alto}" role="img" aria-label="${titulo}"><title>${titulo}</title>
+            <g fill="currentColor">${letras.map((d) => `<path d="${d}"/>`).join('')}</g>
+            <g fill="var(--kzk-corte, currentColor)"><path d="${corte}"/><path d="${chispa}"/></g>
+        </svg>`;
+    };
+
     // Rellena íconos en HTML estático: <span data-ic="cart" data-ic-size="18"></span>
     // El ícono se antepone al contenido existente del elemento.
     document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('[data-logo]').forEach((el) => {
+            el.innerHTML = window.logoKZK(Number(el.dataset.logo) || 16);
+        });
         document.querySelectorAll('[data-ic]').forEach((el) => {
             const prev = el.innerHTML.trim();
             el.innerHTML = window.icon(el.dataset.ic, Number(el.dataset.icSize) || 20) + (prev ? ' ' + prev : '');

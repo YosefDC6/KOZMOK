@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Kozmok · Cómputo y electrónica</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -105,7 +106,11 @@
         </div>
     </div>
 
-    <div class="filters-bar">
+    <!-- En el celular los filtros viven en un panel lateral (botón "Filtros") -->
+    <button class="btn btn-outline filtros-btn" id="filtros-abrir" type="button" aria-controls="filtros-panel"><span data-ic="settings" data-ic-size="16"></span> Filtros <span class="filtros-n" id="filtros-n"></span></button>
+    <div class="filtros-overlay" id="filtros-overlay"></div>
+    <div class="filters-bar" id="filtros-panel">
+        <div class="filtros-head"><strong>Filtros</strong><button type="button" class="modal-close" id="filtros-cerrar" aria-label="Cerrar filtros" data-ic="x" data-ic-size="18"></button></div>
         <select id="f-categoria"><option value="">Todas las categorías</option></select>
         <select id="f-uso">
             <option value="">Cualquier uso</option>
@@ -126,6 +131,7 @@
         <select id="f-marca" aria-label="Marca"><option value="">Todas las marcas</option></select>
         <label class="f-promo"><input type="checkbox" id="f-promocion" /> Solo en promoción</label>
         <button class="btn btn-outline btn-sm" onclick="limpiarFiltros()">Limpiar</button>
+        <button class="btn btn-primary filtros-ver" id="filtros-ver" type="button">Ver productos</button>
     </div>
 
     <div class="active-filters" id="active-filters"></div>
@@ -143,6 +149,11 @@
 
     <div class="grid-products" id="grid-productos">
         <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+    </div>
+    <div class="cargar-mas" id="cargar-mas" hidden>
+        <span id="cargar-mas-txt"></span>
+        <div class="cm-barra"><span id="cargar-mas-barra"></span></div>
+        <button class="btn btn-outline" id="cargar-mas-btn" type="button">Ver más productos</button>
     </div>
 </section>
 
@@ -304,7 +315,7 @@ function tarjetasProducto(lista, { nuevo = false } = {}) {
     return lista.map((p) => {
         const agotado = p.stock === 0;
         const pocas = !agotado && p.stock <= p.stock_minimo;
-        const badgePromo = p.promocion && !agotado ? `<span class="pc-badge promo" title="${p.promocion.nombre}">${icon('star', 12)} ${p.promocion.nombre}</span>` : '';
+        const badgePromo = p.promocion && !agotado ? `<span class="pc-badge pc-promo" title="${p.promocion.nombre}">${icon('star', 12)} ${p.promocion.nombre}</span>` : '';
         return `
         <div class="product-card" id="producto-${p.id}">
             <div class="pc-media" onclick="verProducto(${p.id})" role="button" tabindex="0" aria-label="Ver ${p.nombre}"
@@ -335,14 +346,74 @@ function tarjetasProducto(lista, { nuevo = false } = {}) {
     }).join('');
 }
 
-function renderProductos(lista) {
+// "Cargar más": se muestran de 24 en 24 para que la página cargue rápido.
+const POR_PAGINA = 24;
+let LISTA_ACTUAL = [];
+let MOSTRADOS = POR_PAGINA;
+
+function renderProductos(lista, { conservar = false } = {}) {
     const grid = document.getElementById('grid-productos');
+    LISTA_ACTUAL = lista;
+    if (!conservar) MOSTRADOS = POR_PAGINA;
     document.getElementById('result-count').textContent = `${lista.length} producto${lista.length === 1 ? '' : 's'}`;
+    document.getElementById('filtros-ver').textContent = `Ver ${lista.length} producto${lista.length === 1 ? '' : 's'}`;
     if (lista.length === 0) {
         grid.innerHTML = '<div class="empty-state">No encontramos productos con esos filtros. Prueba ajustar los filtros o <a href="#" onclick="limpiarFiltros();return false;">quitarlos todos</a>.</div>';
+        document.getElementById('cargar-mas').hidden = true;
         return;
     }
-    grid.innerHTML = tarjetasProducto(lista);
+    grid.innerHTML = tarjetasProducto(lista.slice(0, MOSTRADOS));
+    pintarCargarMas();
+}
+
+function pintarCargarMas() {
+    const total = LISTA_ACTUAL.length, n = Math.min(MOSTRADOS, total);
+    document.getElementById('cargar-mas').hidden = n >= total;
+    document.getElementById('cargar-mas-txt').textContent = `Viendo ${n} de ${total} productos`;
+    document.getElementById('cargar-mas-barra').style.width = Math.round(n / total * 100) + '%';
+    document.getElementById('cargar-mas-btn').textContent = `Ver ${Math.min(POR_PAGINA, total - n)} más`;
+}
+
+function cargarMas() {
+    const grid = document.getElementById('grid-productos');
+    const desde = MOSTRADOS;
+    MOSTRADOS += POR_PAGINA;
+    grid.insertAdjacentHTML('beforeend', tarjetasProducto(LISTA_ACTUAL.slice(desde, MOSTRADOS)));
+    pintarCargarMas();
+    // lleva el foco a la primera tarjeta nueva (teclado / lector de pantalla)
+    const nueva = grid.children[desde];
+    if (nueva) { const f = nueva.querySelector('.pc-media'); if (f) f.focus({ preventScroll: true }); }
+}
+document.getElementById('cargar-mas-btn').addEventListener('click', cargarMas);
+
+// ---- Conservar la posición al regresar al catálogo (desde el carrito, otra página…) ----
+const CLAVE_POS = () => 'kz_pos:' + location.pathname + location.search;
+window.addEventListener('pagehide', () => {
+    if (document.getElementById('catalogo').hidden) return;
+    try { sessionStorage.setItem(CLAVE_POS(), JSON.stringify({ y: scrollY, n: MOSTRADOS })); } catch { /* */ }
+});
+function restaurarPosicion() {
+    const nav = performance.getEntriesByType('navigation')[0];
+    if (!nav || nav.type !== 'back_forward') return;
+    let pos = null;
+    try { pos = JSON.parse(sessionStorage.getItem(CLAVE_POS())); } catch { /* */ }
+    if (!pos) return;
+    if (pos.n > MOSTRADOS) { MOSTRADOS = pos.n; renderProductos(LISTA_ACTUAL, { conservar: true }); }
+    requestAnimationFrame(() => window.scrollTo(0, pos.y));
+}
+
+// ---- Filtros en panel lateral (celular) ----
+function abrirFiltros(abrir) {
+    document.getElementById('filtros-panel').classList.toggle('open', abrir);
+    document.getElementById('filtros-overlay').classList.toggle('open', abrir);
+    document.body.classList.toggle('mp-lock', abrir);
+}
+document.getElementById('filtros-abrir').addEventListener('click', () => abrirFiltros(true));
+['filtros-cerrar', 'filtros-overlay', 'filtros-ver'].forEach((id) => document.getElementById(id).addEventListener('click', () => abrirFiltros(false)));
+function contarFiltros() {
+    const n = ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].filter((id) => document.getElementById(id).value).length
+        + (document.getElementById('f-promocion').checked ? 1 : 0);
+    document.getElementById('filtros-n').textContent = n ? n : '';
 }
 
 function ordenar(lista) {
@@ -376,7 +447,8 @@ async function cargarProductos() {
     if (![...params].length) params.set('ver', 'todo');
 
     // Refleja el estado en la URL (para compartir / volver atrás)
-    history.replaceState(null, '', '/index.html?' + params.toString());
+    // conserva el #producto-<id> (ficha abierta o enlace compartido)
+    history.replaceState(history.state, '', '/index.html?' + params.toString() + (/^#producto-\d+$/.test(location.hash) ? location.hash : ''));
     actualizarEncabezado(categoria, busqueda, uso, soloPromo, orden === 'novedades');
 
     const grid = document.getElementById('grid-productos');
@@ -392,6 +464,13 @@ async function cargarProductos() {
         const lista = marca ? productos.filter((p) => p.marca === marca) : productos;
         TODOS_LOS_PRODUCTOS = lista;
         renderProductos(ordenar(lista));
+        contarFiltros();
+        if (!cargarProductos._primera) {
+            cargarProductos._primera = true;
+            // el catálogo carga después del primer pintado: la posición la restauramos nosotros
+            if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+            restaurarPosicion();
+        }
         abrirDesdeHash();
     } catch (e) {
         grid.innerHTML = '<div class="empty-state">No se pudo conectar con el servidor. Verifica que el backend esté corriendo.</div>';
@@ -454,22 +533,30 @@ function limpiarFiltros() {
     cargarProductos();
 }
 
-function verProducto(id) {
-    const p = TODOS_LOS_PRODUCTOS.find((x) => x.id === id);
-    if (!p) return;
+// La ficha tiene su propia dirección (#producto-<id>): se puede compartir,
+// "atrás" la cierra y al cerrarla te quedas en el mismo punto del catálogo.
+async function verProducto(id, { desdeHistorial = false } = {}) {
+    let p = TODOS_LOS_PRODUCTOS.find((x) => x.id === id);
+    if (!p) {   // producto que no está en el filtro actual (enlace compartido, buscador)
+        try { p = await api(`/catalogo/${id}`); } catch { toast('Ese producto ya no está disponible', 'warn'); return; }
+    }
+    const hash = '#producto-' + id;
+    if (!desdeHistorial && location.hash !== hash) {
+        history.pushState({ kzFicha: id }, '', location.pathname + location.search + hash);
+    }
     guardarVisto(id);
     const fav = Favoritos.tiene(id);
     const urgencia = (p.stock > 0 && p.stock <= p.stock_minimo)
         ? `<div class="stock-urgente">${icon('alert', 14)} ¡Solo quedan ${p.stock}! Cómpralo antes de que se agote.</div>` : '';
     document.getElementById('modal-producto-body').innerHTML = `
-        <button class="modal-close" onclick="document.getElementById('modal-producto').classList.remove('open')">${icon('x', 20)}</button>
+        <button class="modal-close" onclick="cerrarFicha()" aria-label="Cerrar">${icon('x', 20)}</button>
         <div class="pm-grid">
         <div class="pm-media">
             <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" />
             ${specsTabla(p)}
         </div>
         <div class="pm-info">
-        <span class="product-brand">${[p.marca, p.categoria_nombre].filter(Boolean).join(' · ')}</span>
+        <nav class="pm-migas" aria-label="Estás en"><a href="/index.html">Inicio</a> / ${p.categoria_nombre ? `<a href="/index.html?categoria=${encodeURIComponent(p.categoria_nombre)}">${p.categoria_nombre}</a> / ` : ''}${p.marca ? `<a href="/index.html?${new URLSearchParams({ categoria: p.categoria_nombre || '', marca: p.marca })}">${p.marca}</a>` : ''}</nav>
         <h3 class="pm-nombre">${p.nombre}</h3>
         <p class="pm-desc">${p.descripcion || ''}</p>
         <div class="pm-precio">
@@ -501,6 +588,7 @@ function verProducto(id) {
                 ${p.stock === 0 ? 'Sin stock' : 'Agregar al carrito'}
             </button>
             <button class="btn btn-outline ${fav ? 'fav-on' : ''}" id="modal-fav" onclick="toggleFav(event, ${p.id}, true)">${icon('heart', 16)} ${fav ? 'Guardado' : 'Guardar'}</button>
+            <button class="btn btn-ghost" title="Copiar enlace del producto" aria-label="Compartir" onclick="compartirProducto(${p.id})">${icon('share', 16)}</button>
         </div>
         <button class="cmp-toggle ${Comparar.tiene(p.id) ? 'on' : ''}" data-cmp="${p.id}" style="margin-top:10px" aria-pressed="${Comparar.tiene(p.id)}" onclick="alternarComparar(event, ${p.id})">${icon('grid', 13)} Añadir a comparar</button>
         </div>
@@ -509,6 +597,25 @@ function verProducto(id) {
     `;
     document.getElementById('modal-producto').classList.add('open');
     cargarResenas(id);
+}
+
+// Cerrar la ficha: si se abrió desde aquí, "atrás" quita el #producto del
+// historial; si se llegó por enlace directo, solo se limpia la dirección.
+function cerrarFicha() {
+    const m = document.getElementById('modal-producto');
+    if (!m.classList.contains('open')) return;
+    if (history.state && history.state.kzFicha) { history.back(); return; }
+    m.classList.remove('open');
+    if (/^#producto-\d+$/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+}
+
+async function compartirProducto(id) {
+    const url = location.origin + '/index.html?ver=todo#producto-' + id;
+    try {
+        if (navigator.share && matchMedia('(pointer: coarse)').matches) { await navigator.share({ url }); return; }
+        await navigator.clipboard.writeText(url);
+        toast('Enlace del producto copiado', 'ok');
+    } catch { toast(url, 'info'); }
 }
 
 function estrellasHTML(n, editable) {
@@ -582,9 +689,9 @@ async function agregarAlCarrito(productoId, cerrarModal) {
     const gEl = document.getElementById('modal-garantia');
     const garantia = (cerrarModal && gEl) ? gEl.value : 'none';
     try {
+        if (cerrarModal) cerrarFicha();
+        // el panel lateral se abre solo para confirmar (ver agregarProducto)
         await agregarProducto(productoId, cantidad, garantia);
-        toast((cantidad > 1 ? `${cantidad} agregados al carrito` : 'Agregado al carrito') + (Sesion.cliente() ? '' : '. Se guarda aunque no hayas iniciado sesión.'), 'ok');
-        if (cerrarModal) document.getElementById('modal-producto').classList.remove('open');
     } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -611,16 +718,21 @@ async function toggleFav(ev, productoId, desdeModal) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-// Si llegamos con #producto-<id> (p.ej. desde el chatbot), abrir su ficha
+// Si llegamos con #producto-<id> (enlace compartido, chatbot, buscador), abrir su ficha
 function abrirDesdeHash() {
     const m = (location.hash || '').match(/^#producto-(\d+)$/);
     if (!m) return;
-    const id = Number(m[1]);
-    const card = document.getElementById('producto-' + id);
-    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    verProducto(id);
+    verProducto(Number(m[1]), { desdeHistorial: true });
 }
-window.addEventListener('hashchange', abrirDesdeHash);
+// Atrás / adelante del navegador abre o cierra la ficha
+window.addEventListener('popstate', () => {
+    const m = (location.hash || '').match(/^#producto-(\d+)$/);
+    if (m) verProducto(Number(m[1]), { desdeHistorial: true });
+    else document.getElementById('modal-producto').classList.remove('open');
+});
+// Clic fuera de la ficha o Esc la cierran
+document.getElementById('modal-producto').addEventListener('click', (e) => { if (e.target.id === 'modal-producto') cerrarFicha(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('modal-producto').classList.contains('open')) cerrarFicha(); });
 
 ['f-categoria', 'f-uso', 'f-precio', 'f-marca', 'f-promocion'].forEach((id) => {
     document.getElementById(id).addEventListener('change', cargarProductos);

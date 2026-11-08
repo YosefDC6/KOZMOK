@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Preferencias · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -25,6 +26,7 @@
 <script src="/js/cuenta.js"></script>
 <script>
 let CID = null;
+let PERFIL = null;
 const PREFS_DEF = [
     { key: 'boletin', label: 'Boletín de novedades', desc: 'Lanzamientos y guías de compra por correo.' },
     { key: 'ofertas', label: 'Alertas de ofertas', desc: 'Avísame cuando baje el precio de algo que vi.' },
@@ -34,6 +36,7 @@ const PREFS_DEF = [
 
 montarCuenta('preferencias', async (panel, P) => {
     CID = P.id;
+    PERFIL = P;
     const prefs = P.preferencias || {};
     panel.innerHTML = `
         <div class="cuenta-head"><h1>Preferencias</h1><p>Controla qué comunicaciones recibes.</p></div>
@@ -52,8 +55,29 @@ montarCuenta('preferencias', async (panel, P) => {
             <p style="color:var(--text-muted);font-size:.88rem;margin-top:4px">Elige el tema de color. Se guarda en este navegador y se aplica en toda la tienda.</p>
             <div class="tema-swatches" id="tema-swatches"></div>
         </div>
+
+        <div class="card" style="max-width:580px;margin-top:24px">
+            <h3 style="margin-top:0">Tarjeta de socio</h3>
+            <p style="color:var(--text-muted);font-size:.88rem;margin-top:4px">Elige cómo se ve tu tarjeta virtual en el Resumen y en el Club de puntos. Se guarda en tu cuenta.</p>
+            <div class="tj-previews">
+                ${DisenoTarjeta.opciones.map((o) => `
+                    <button type="button" class="tj-prev ${o.clave === DisenoTarjeta.actual(P) ? 'on' : ''}" data-tj="${o.clave}" aria-pressed="${o.clave === DisenoTarjeta.actual(P)}">
+                        <span class="tj-mini tj-card diseno-${o.clave} lv-oro">${DisenoTarjeta.adornos(80)}<span class="tj-mini-top">${DisenoTarjeta.logo()} <b>Club</b></span><span class="tj-mini-num">•••• 0001</span></span>
+                        <span class="tj-prev-nombre">${o.nombre}</span>
+                    </button>`).join('')}
+            </div>
+        </div>
     `;
     pintarTemas();
+    // la vista previa no cambia de diseño al elegir: solo se marca
+    panel.querySelectorAll('.tj-prev').forEach((b) => b.addEventListener('click', async () => {
+        panel.querySelectorAll('.tj-prev').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+        const d = b.dataset.tj;
+        localStorage.setItem('kz_tarjeta', d);
+        PERFIL.preferencias = { ...(PERFIL.preferencias || {}), tarjeta: d };
+        try { await api(`/clientes/${CID}/preferencias`, { method: 'PUT', body: PERFIL.preferencias }); toast(`Tarjeta con el diseño ${d === 'kzk' ? 'KZK' : 'clásico'}`, 'ok'); }
+        catch (e) { toast(e.message, 'error'); }
+    }));
 });
 
 function pintarTemas() {
@@ -69,8 +93,10 @@ function pintarTemas() {
 }
 
 async function guardarPrefs() {
-    const prefs = {};
+    // se conservan las demás preferencias (p. ej. el diseño de la tarjeta)
+    const prefs = { ...((PERFIL && PERFIL.preferencias) || {}) };
     document.querySelectorAll('[data-pref]').forEach((c) => prefs[c.dataset.pref] = c.checked);
+    if (PERFIL) PERFIL.preferencias = prefs;
     try {
         await api(`/clientes/${CID}/preferencias`, { method: 'PUT', body: prefs });
         toast('Preferencias guardadas', 'ok');

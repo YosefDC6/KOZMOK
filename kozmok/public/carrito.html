@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Carrito · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -10,13 +11,8 @@
 <div id="navbar-placeholder"></div>
 
 <div class="container carrito-page" style="padding-top:36px;padding-bottom:60px;max-width:1160px">
-    <div class="page-hero">
-        <div class="hero-badge" data-ic="cart" data-ic-size="28"></div>
-        <h1>Tu carrito</h1>
-        <p>Revisa tus productos y confirma el envío.</p>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:10px">
-        <a href="/index.html?ver=todo" class="btn btn-ghost btn-sm">Seguir comprando</a>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <h1 style="margin:0;font-size:1.6rem">Finalizar compra</h1>
         <button class="btn btn-ghost btn-sm" id="btn-vaciar" hidden>Vaciar carrito</button>
     </div>
     <div id="carrito-contenido"><div class="empty-state">Cargando…</div></div>
@@ -154,51 +150,202 @@ async function cargarCarrito() {
            </div>`
         : `<p style="font-size:.82rem;color:var(--text-muted)">Tip: guarda direcciones en <a href="/direcciones.html">tu perfil</a> para el próximo pedido.</p>`;
 
+    const nPiezas = items.reduce((a, i) => a + i.cantidad, 0);
     cont.innerHTML = `
+        ${stepperHTML()}
         <div class="cart-layout">
-        <div class="cart-items">${filas}</div>
+        <div class="cart-pasos">
+            <section class="ck-paso" data-paso="1">
+                <h2 class="ck-tit">${icon('cart', 18)} Tu carrito <span>${nPiezas} ${nPiezas === 1 ? 'pieza' : 'piezas'}</span></h2>
+                <div class="cart-items">${filas}</div>
+                <div class="ck-acciones">
+                    <a href="/index.html?ver=todo" class="btn btn-ghost">${icon('arrow', 15, 'flip')} Seguir comprando</a>
+                    <button class="btn btn-primary" onclick="irPaso(2)">Continuar con el envío ${icon('arrow', 15)}</button>
+                </div>
+            </section>
+
+            <section class="ck-paso card" data-paso="2" hidden>
+                <h2 class="ck-tit">${icon('truck', 18)} ¿A dónde lo enviamos?</h2>
+                ${opcionesDir}
+                <div class="field"><label>Dirección de envío</label><input type="text" id="direccion" placeholder="Calle, número, colonia, ciudad" /></div>
+                <div class="field"><label>Notas para la entrega <span style="font-weight:400;color:var(--text-muted)">(opcional)</span></label><input type="text" id="notas" maxlength="200" placeholder="Ej. dejar en recepción" /></div>
+                <div class="ck-acciones">
+                    <button class="btn btn-ghost" onclick="irPaso(1)">${icon('arrow', 15, 'flip')} Volver al carrito</button>
+                    <button class="btn btn-primary" onclick="irPaso(3)">Continuar con el pago ${icon('arrow', 15)}</button>
+                </div>
+            </section>
+
+            <section class="ck-paso card" data-paso="3" hidden>
+                <h2 class="ck-tit">${icon('card', 18)} ¿Cómo quieres pagar?</h2>
+                <div class="field"><label>Método de pago</label>
+                    <select id="metodo-pago" onchange="cambioMetodo()">
+                        ${METODOS.map((m) => `<option value="mp:${m.id}" ${m.predeterminada ? 'selected' : ''}>${MARCA_LABEL[m.marca] || 'Tarjeta'} ****${m.ultimos4}${m.predeterminada ? ' (predeterminada)' : ''}</option>`).join('')}
+                        <option value="nueva">＋ Usar otra tarjeta…</option>
+                        <option value="paypal">PayPal</option>
+                        <option value="spei">Transferencia bancaria (SPEI)</option>
+                        <option value="tienda">Pago en tienda</option>
+                        <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
+                    </select>
+                </div>
+                <div id="box-monedero" class="pago-box" hidden></div>
+                <div id="box-paypal" class="pago-box" hidden>
+                    <h4>${icon('wallet', 15)} PayPal</h4>
+                    <div class="pb-sub" style="margin:0">Al confirmar se simula el cobro en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
+                </div>
+                <div id="tarjeta-nueva" class="card-nueva" hidden>
+                    <div class="field"><label>Número de tarjeta</label>
+                        <input id="tn-num" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" oninput="fmtNum(this)" />
+                    </div>
+                    <div class="field"><label>Titular</label><input id="tn-titular" placeholder="Nombre en la tarjeta" /></div>
+                    <div class="field-row">
+                        <div class="field"><label>Mes</label><select id="tn-mes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select></div>
+                        <div class="field"><label>Año</label><select id="tn-anio">${Array.from({ length: 12 }, (_, i) => { const a = new Date().getFullYear() + i; return `<option value="${a}">${a}</option>`; }).join('')}</select></div>
+                        <div class="field"><label>CVV</label><input id="tn-cvv" inputmode="numeric" maxlength="4" placeholder="123" /></div>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tn-guardar" style="width:auto" checked /> Guardar esta tarjeta para la próxima vez</label>
+                    <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Demo: no se procesa ningún cargo real. Solo se guardan marca y últimos 4 dígitos.</p>
+                </div>
+                ${bloquePuntos}
+                <div class="ck-acciones">
+                    <button class="btn btn-ghost" onclick="irPaso(2)">${icon('arrow', 15, 'flip')} Volver al envío</button>
+                    <button class="btn btn-primary" onclick="irPaso(4)">Revisar pedido ${icon('arrow', 15)}</button>
+                </div>
+            </section>
+
+            <section class="ck-paso card" data-paso="4" hidden>
+                <h2 class="ck-tit">${icon('check', 18)} Revisa y confirma</h2>
+                <div class="ck-revision" id="ck-revision"></div>
+                <div class="ck-acciones">
+                    <button class="btn btn-ghost" onclick="irPaso(3)">${icon('arrow', 15, 'flip')} Volver al pago</button>
+                    <button class="btn btn-primary btn-lg" id="btn-comprar" onclick="confirmarCompra()">Confirmar pedido</button>
+                </div>
+            </section>
+        </div>
+
         <div class="card cart-resumen">
             <h3 class="cart-resumen-tit">Resumen del pedido</h3>
             ${shipHint}
             <div id="resumen-totales">${desgloseHTML(COT)}</div>
-            ${bloquePuntos}
-            ${opcionesDir}
-            <div class="field"><label>Dirección de envío</label><input type="text" id="direccion" placeholder="Calle, número, colonia, ciudad" /></div>
-            <div class="field"><label>Método de pago</label>
-                <select id="metodo-pago" onchange="cambioMetodo()">
-                    ${METODOS.map((m) => `<option value="mp:${m.id}" ${m.predeterminada ? 'selected' : ''}>${MARCA_LABEL[m.marca] || 'Tarjeta'} ****${m.ultimos4}${m.predeterminada ? ' (predeterminada)' : ''}</option>`).join('')}
-                    <option value="nueva">＋ Usar otra tarjeta…</option>
-                    <option value="paypal">PayPal</option>
-                    <option value="spei">Transferencia bancaria (SPEI)</option>
-                    <option value="tienda">Pago en tienda</option>
-                    <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
-                </select>
-            </div>
-            <div id="box-monedero" class="pago-box" hidden></div>
-            <div id="box-paypal" class="pago-box" hidden>
-                <h4>${icon('wallet', 15)} PayPal</h4>
-                <div class="pb-sub" style="margin:0">Al confirmar se simula el cobro en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
-            </div>
-            <div id="tarjeta-nueva" class="card-nueva" hidden>
-                <div class="field"><label>Número de tarjeta</label>
-                    <input id="tn-num" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" oninput="fmtNum(this)" />
-                </div>
-                <div class="field"><label>Titular</label><input id="tn-titular" placeholder="Nombre en la tarjeta" /></div>
-                <div class="field-row">
-                    <div class="field"><label>Mes</label><select id="tn-mes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select></div>
-                    <div class="field"><label>Año</label><select id="tn-anio">${Array.from({ length: 12 }, (_, i) => { const a = new Date().getFullYear() + i; return `<option value="${a}">${a}</option>`; }).join('')}</select></div>
-                    <div class="field"><label>CVV</label><input id="tn-cvv" inputmode="numeric" maxlength="4" placeholder="123" /></div>
-                </div>
-                <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tn-guardar" style="width:auto" checked /> Guardar esta tarjeta para la próxima vez</label>
-                <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Demo: no se procesa ningún cargo real. Solo se guardan marca y últimos 4 dígitos.</p>
-            </div>
-            <button class="btn btn-primary btn-lg" style="width:100%" id="btn-comprar" onclick="confirmarCompra()">Confirmar pedido</button>
+            <button class="btn btn-primary" style="width:100%" id="ck-siguiente" onclick="irPaso(PASO + 1)"></button>
+            <p class="ck-seguro">${icon('lock', 13)} Pago seguro · puedes cancelar mientras no se envíe</p>
         </div>
         </div>
     `;
     recalcular();
     usarDireccionGuardada();
     cambioMetodo();
+    irPaso(pasoDeURL(), { sinHistorial: true, sinValidar: true });
+}
+
+// =========================================================
+// CHECKOUT POR PASOS: 1 Carrito · 2 Envío · 3 Pago · 4 Confirmar
+//   El paso va en la dirección (?paso=2), así "atrás" del navegador
+//   regresa al paso anterior. Solo se avanza si el paso actual está completo.
+// =========================================================
+const PASOS = [
+    { n: 1, nombre: 'Carrito', ic: 'cart', sig: 'Continuar con el envío' },
+    { n: 2, nombre: 'Envío', ic: 'truck', sig: 'Continuar con el pago' },
+    { n: 3, nombre: 'Pago', ic: 'card', sig: 'Revisar pedido' },
+    { n: 4, nombre: 'Confirmar', ic: 'check', sig: null },
+];
+let PASO = 1;
+let PASO_MAX = 1;   // hasta dónde ha llegado (se puede volver a cualquier paso ya visitado)
+
+function pasoDeURL() {
+    const n = Number(new URLSearchParams(location.search).get('paso')) || 1;
+    return Math.min(4, Math.max(1, n));
+}
+
+function stepperHTML() {
+    return `<ol class="ck-stepper" id="ck-stepper" aria-label="Pasos de la compra">
+        ${PASOS.map((p) => `<li data-n="${p.n}"><button type="button" onclick="irPaso(${p.n})"><span class="ck-num">${p.n}</span><span class="ck-nom">${p.nombre}</span></button></li>`).join('')}
+    </ol>`;
+}
+
+function validarPaso(n) {
+    if (n === 1) return true;
+    if (n === 2) {
+        const d = document.getElementById('direccion');
+        if (!d.value.trim()) { toast('Ingresa o elige una dirección de envío', 'warn'); d.focus(); return false; }
+        return true;
+    }
+    if (n === 3) {
+        if (document.getElementById('metodo-pago').value === 'nueva') {
+            const numero = document.getElementById('tn-num').value.replace(/\s/g, '');
+            if (numero.length < 13 || numero.length > 19) { toast('Revisa el número de tarjeta', 'warn'); return false; }
+            if (!document.getElementById('tn-titular').value.trim()) { toast('Escribe el titular de la tarjeta', 'warn'); return false; }
+            if (!/^\d{3,4}$/.test(document.getElementById('tn-cvv').value.trim())) { toast('El CVV debe tener 3 o 4 dígitos', 'warn'); return false; }
+        }
+        if (document.getElementById('metodo-pago').value === 'monedero' && COT && MONEDERO.saldo < COT.total) {
+            toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza. Recarga tu monedero o elige otro método.`, 'warn'); return false;
+        }
+        return true;
+    }
+    return true;
+}
+
+function irPaso(n, { sinHistorial = false, sinValidar = false } = {}) {
+    n = Math.min(4, Math.max(1, n));
+    if (!document.querySelector('.ck-paso')) return;
+    // Para avanzar hay que completar cada paso intermedio
+    if (n > PASO && !sinValidar) {
+        for (let k = PASO; k < n; k++) { if (!validarPaso(k)) { n = k; break; } }
+    }
+    if (sinValidar && n > 1) {   // llegada por URL o "adelante": solo hasta donde ya es válido
+        for (let k = 1; k < n; k++) { const ok = k === 1 || (k === 2 ? !!document.getElementById('direccion').value.trim() : PASO_MAX > k); if (!ok) { n = k; break; } }
+    }
+    PASO = n;
+    PASO_MAX = Math.max(PASO_MAX, n);
+    document.querySelectorAll('.ck-paso').forEach((sec) => { sec.hidden = Number(sec.dataset.paso) !== n; });
+    document.querySelectorAll('#ck-stepper li').forEach((li) => {
+        const k = Number(li.dataset.n);
+        li.classList.toggle('hecho', k < n);
+        li.classList.toggle('actual', k === n);
+        li.querySelector('button').disabled = k > PASO_MAX;
+        li.querySelector('.ck-num').innerHTML = k < n ? icon('check', 13) : k;
+        if (k === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+    });
+    const sig = document.getElementById('ck-siguiente');
+    if (sig) { const p = PASOS[n - 1]; sig.hidden = !p.sig; if (p.sig) sig.innerHTML = `${p.sig} ${icon('arrow', 15)}`; }
+    const vac = document.getElementById('btn-vaciar'); if (vac) vac.hidden = n !== 1;
+    if (n === 4) pintarRevision();
+    if (!sinHistorial) {
+        const q = new URLSearchParams(location.search);
+        if (n === 1) q.delete('paso'); else q.set('paso', n);
+        const url = location.pathname + (q.toString() ? '?' + q : '');
+        if (url !== location.pathname + location.search) history.pushState({ kzPaso: n }, '', url);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+window.addEventListener('popstate', () => { if (cliente) irPaso(pasoDeURL(), { sinHistorial: true, sinValidar: true }); });
+
+// Paso 4: lo que se va a pedir, a dónde y cómo se paga (con "Cambiar" a cada paso)
+function pintarRevision() {
+    const sel = document.getElementById('metodo-pago');
+    const metodo = sel.options[sel.selectedIndex].text.replace(/\s*\(saldo:.*\)$/, '');
+    const pts = puntosCanje();
+    const notas = document.getElementById('notas').value.trim();
+    api(`/carrito/${cliente.id}`).then((items) => {
+        document.getElementById('ck-revision').innerHTML = `
+            <div class="ck-bloque">
+                <div class="ck-bloque-head"><strong>${icon('package', 15)} Productos</strong><button class="ck-cambiar" onclick="irPaso(1)">Cambiar</button></div>
+                ${items.map((i) => `<div class="ck-linea"><span>${i.cantidad} × ${i.nombre}${i.garantia_plan ? ` <em>+ ${i.garantia_plan}</em>` : ''}</span><span class="mono">${formatoMoneda2(Number(i.precio_final ?? i.precio) * i.cantidad + Number(i.garantia_costo || 0))}</span></div>`).join('')}
+            </div>
+            <div class="ck-bloque">
+                <div class="ck-bloque-head"><strong>${icon('pin', 15)} Envío</strong><button class="ck-cambiar" onclick="irPaso(2)">Cambiar</button></div>
+                <div>${document.getElementById('direccion').value.trim()}</div>
+                ${notas ? `<div class="ck-sub">Notas: ${notas.replace(/</g, '&lt;')}</div>` : ''}
+                <div class="ck-sub">${COT && COT.envio === 0 ? 'Envío gratis' : 'Envío estándar ' + formatoMoneda2(COT ? COT.envio : 199)} · llega en 2 a 5 días hábiles</div>
+            </div>
+            <div class="ck-bloque">
+                <div class="ck-bloque-head"><strong>${icon('card', 15)} Pago</strong><button class="ck-cambiar" onclick="irPaso(3)">Cambiar</button></div>
+                <div>${metodo}</div>
+                ${pts ? `<div class="ck-sub">Canjeas ${pts.toLocaleString('es-MX')} puntos del Club</div>` : ''}
+                ${sel.value === 'spei' || sel.value === 'tienda' ? '<div class="ck-sub">Recibirás una ficha de pago; el pedido se confirma al pagar.</div>' : ''}
+            </div>`;
+        const b = document.getElementById('btn-comprar');
+        if (b && !b.disabled && COT) b.textContent = 'Confirmar pedido · ' + formatoMoneda2(COT.total);
+    });
 }
 
 function fmtNum(el) {
@@ -262,6 +409,7 @@ function recalcular() {
         try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts } }); } catch { return; }
         const r = document.getElementById('resumen-totales'); if (r) r.innerHTML = desgloseHTML(COT);
         const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = 'Confirmar pedido · ' + formatoMoneda2(COT.total);
+        if (PASO === 4) pintarRevision();
         pintarBoxMonedero();
     }, pts ? 250 : 0);
 }
@@ -346,7 +494,7 @@ async function confirmarCompra() {
     if (!direccion) { toast('Ingresa o elige una dirección de envío', 'warn'); return; }
 
     const mp = await resolverMetodoPago();
-    if (!mp) return;
+    if (!mp) { irPaso(3, { sinValidar: true }); return; }
     // Pago con monedero: validación y confirmación (saldo antes y después)
     if (mp.tipo === 'monedero') {
         if (MONEDERO.saldo < COT.total) { toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza para el total de ${formatoMoneda2(COT.total)}. Recarga tu monedero o elige otro método.`, 'warn'); return; }
@@ -362,6 +510,7 @@ async function confirmarCompra() {
             body: {
                 items: items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, garantia: i.garantia_clave || 'none' })),
                 metodo_pago: mp.texto, metodo_tipo: mp.tipo, direccion_envio: direccion,
+                notas: document.getElementById('notas').value.trim() || null,
                 puntos_canjear: puntosCanje(),
             }
         });

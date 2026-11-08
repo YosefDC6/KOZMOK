@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Favoritos · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -64,7 +65,6 @@ async function quitarFav(pid) {
 async function favAlCarrito(pid) {
     try {
         await agregarProducto(pid, 1);
-        toast('Agregado al carrito', 'ok');
         actualizarBadgeCarrito();
     } catch (e) { toast(e.message, 'error'); }
 }

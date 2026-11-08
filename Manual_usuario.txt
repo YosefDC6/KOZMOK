@@ -147,6 +147,11 @@ Seguridad de sesion
      promocion=1 u orden=novedades) la portada se convierte en CATALOGO: solo
      la lista de productos con filtros.
    - Filtro "Solo en promocion" y orden "Mas recientes" / "Mayor descuento".
+   - El catalogo muestra 24 productos y el boton "Ver 24 mas" (con barra de
+     cuantos llevas). Si sales a otra pagina y regresas, vuelves al mismo
+     punto con los mismos productos cargados.
+   - En el celular los filtros se abren con el boton "Filtros (n)" en un
+     panel lateral con "Ver N productos".
      En "Categorias" (arriba) tambien hay accesos a Promociones y Novedades.
    - PRECIO CON PROMOCION: si un producto tiene una promocion vigente se ve
      el precio final en verde, el precio de lista tachado y una etiqueta
@@ -158,9 +163,18 @@ Seguridad de sesion
      (laptop, monitor, procesador, etc.).
 
 3.2  BUSCADOR Y NAVEGACION  (barra superior, en todas las paginas)
+   - Logo KZK (monograma de Kozmok): lleva al inicio.
    - Campo de busqueda + selector de alcance ("Todo" o una categoria) +
-     boton Buscar.
-   - "Categorias" desplegable.
+     boton Buscar. Tecla "/" lleva directo al buscador.
+   - SUGERENCIAS EN VIVO: desde 2 letras aparece una lista con hasta 5
+     productos (foto, marca, categoria y precio con promocion), las
+     categorias que coinciden y "Ver los N resultados". Con el campo vacio
+     muestra las busquedas recientes (se pueden quitar con la X) y accesos
+     a categorias. Se navega con flechas, Enter y Esc. Clic en un producto
+     abre su ficha (en la tienda sin recargar la pagina).
+   - "Categorias" desplegable: accesos rapidos (Todo, Arma tu PC,
+     Promociones, Novedades) y cada categoria con sus marcas principales y
+     cuantos productos tiene en promocion.
    - Iconos: favoritos, carrito (con contador) y el menu de la cuenta
      (incluye "Mi monedero").
    - PANEL LATERAL: al dar clic en el corazon o en el carrito NO se cambia
@@ -173,12 +187,28 @@ Seguridad de sesion
      Se cierra con la X, tocando fuera del panel o con la tecla Esc. Los
      contadores y la pagina de atras se actualizan solos. En movil se abre
      desde "Carrito" en la barra inferior.
-   - BOTON "REGRESAR": en todas las paginas menos la portada hay una flecha
-     bajo la barra para volver a la pantalla anterior (o "Volver a la
-     tienda" si se entro directo por enlace).
-   - En movil hay un menu lateral y una barra inferior tipo app.
+     Al AGREGAR un producto (catalogo, ficha, comparador, favoritos) el
+     panel se abre solo con el aviso "Agregado al carrito" y el producto
+     resaltado; se cierra a los 5 segundos si no lo tocas.
+   - BOTON "REGRESAR" y MIGAS DE PAN: en todas las paginas menos la portada
+     hay una flecha bajo la barra para volver a la pantalla anterior (o
+     "Volver a la tienda" si se entro directo por enlace) y, al lado, donde
+     estas (p. ej. Inicio / Mi cuenta / Mis pedidos).
+   - "Volver arriba": boton redondo que aparece al bajar en paginas largas.
+   - Pagina 404: si un enlace no existe se muestra una pagina con buscador
+     y accesos a Inicio, Catalogo, Promociones y Ayuda.
+   - En movil hay un menu lateral y una barra inferior tipo app: Inicio,
+     Catalogo, Favoritos y Carrito (con contadores; abren el panel lateral)
+     y Cuenta (con un punto verde si tienes un pedido en proceso o en
+     camino; entonces lleva a Mis pedidos). En el menu de la cuenta,
+     "Mis pedidos" muestra "1 en camino".
 
 3.3  FICHA DE PRODUCTO  (ventana emergente desde el catalogo)
+   - Tiene su propia direccion (index.html#producto-<id>): el boton
+     "atras" del navegador o del celular la cierra, Esc o clic fuera
+     tambien, y al cerrarla sigues en el mismo punto del catalogo. El boton
+     de compartir copia el enlace del producto. Arriba muestra donde esta
+     (Inicio / Categoria / Marca) con enlaces.
    - Fotos, especificaciones (procesador, RAM, grafica, pantalla), precio y
      stock real.
    - Selector de cantidad y aviso "Solo quedan N" cuando hay poco stock.
@@ -259,6 +289,17 @@ Seguridad de sesion
    - Al terminar todas las piezas, resume el total y te lleva al carrito.
 
 3.5  CARRITO Y COMPRA  (carrito.html)
+   - CHECKOUT POR PASOS (con sesion): 1 Carrito -> 2 Envio -> 3 Pago ->
+     4 Confirmar. Arriba hay una barra de avance (los pasos hechos llevan
+     palomita y se puede volver a ellos con clic); a la derecha el resumen
+     siempre visible con el boton para seguir. Solo avanza si el paso esta
+     completo (direccion escrita, datos de tarjeta validos, saldo de
+     monedero suficiente). El paso va en la direccion (?paso=2): "atras"
+     del navegador regresa al paso anterior.
+        2 Envio    : direccion guardada o nueva y notas para la entrega.
+        3 Pago     : metodo de pago y canje de puntos.
+        4 Confirmar: revision de productos, envio y pago, cada uno con
+                     "Cambiar", y "Confirmar pedido".
    - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
      PC, asesor, comparador): se guarda en el navegador, sin pasarse del
      stock, y el contador de arriba lo muestra. El carrito muestra los
@@ -317,6 +358,9 @@ Seguridad de sesion
 
 3.6  MI CUENTA  (menu arriba a la derecha -> "Perfil")
    Cada seccion es su propia pagina:
+
+   En el celular el menu de Mi cuenta es una fila deslizable arriba, con la
+   seccion actual centrada.
 
    Resumen (perfil.html)
       - Saludo, tarjeta virtual de socio (ver 7), nivel del Club con su
@@ -390,6 +434,7 @@ Seguridad de sesion
       - Notificaciones por correo (boletin, ofertas, estado de pedidos,
         stock de favoritos).
       - Apariencia: elegir el tema de color (ver 10).
+      - Tarjeta de socio: diseno KZK o Clasico, con vista previa (ver 7).
 
 3.7  REGISTRO DE CUENTA  (registro.html)
    - Pide nombre, correo, contrasena y CONFIRMAR contrasena (deben coincidir).
@@ -1105,6 +1150,15 @@ Movimientos
 ===============================================================================
  7. TARJETA VIRTUAL Y QR DE SOCIO
 ===============================================================================
+
+Diseno de la tarjeta
+   - KZK (por defecto): fondo oscuro con el monograma KZK de marca de agua y
+     franja y detalles del color del nivel (Bronce, Plata, Oro, Platino).
+   - Clasico: el diseno anterior, degradado del color del nivel.
+   - Se cambia con los botones "Diseno de la tarjeta: KZK / Clasica" debajo
+     de la tarjeta (Resumen y Club de puntos) o en Preferencias. Se guarda
+     en la cuenta (clientes.preferencias.tarjeta), asi se respeta en
+     cualquier dispositivo. Aplica a la tarjeta de socio y a la del Club.
 
 Cada cliente tiene una tarjeta virtual en su Resumen (perfil.html) con:
    - un numero de tarjeta (derivado de su ID, siempre el mismo),

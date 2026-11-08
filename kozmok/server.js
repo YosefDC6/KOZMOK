@@ -4718,6 +4718,12 @@ async function migrarEsquema() {
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
 }
 
+// Página no encontrada: la API responde JSON; el resto, la página 404 de la tienda.
+app.use((req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ message: 'Ruta no encontrada' });
+    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+});
+
 app.listen(PORT, async () => {
     console.log(`Kozmok escuchando en http://localhost:${PORT}`);
     // Ping a la base para dejar claro en el arranque si conectó o no.

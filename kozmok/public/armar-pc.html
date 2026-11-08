@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Arma tu PC · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
@@ -242,7 +243,7 @@ async function agregarBuildAlCarrito() {
     try {
         const piezas = SLOTS.map((s) => SELECCION[s.tipo]).filter(Boolean);
         for (const producto_id of piezas) {
-            await agregarProducto(producto_id, 1);
+            await agregarProducto(producto_id, 1, 'none', { confirmar: false });
         }
         actualizarBadgeCarrito();
         toast('Tu PC armada se agregó al carrito', 'ok');

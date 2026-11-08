@@ -189,7 +189,9 @@ window.CarritoInvitado = CarritoInvitado;
 // Agregar al carrito desde cualquier parte de la tienda (catálogo, ficha,
 // Arma tu PC, asesor, comparador, favoritos). Con sesión va al servidor;
 // sin sesión se guarda en el navegador sin pasarse del stock.
-async function agregarProducto(productoId, cantidad = 1, garantia = 'none') {
+// confirmar: abre el panel lateral con el producto recién agregado (por
+// defecto). El chatbot y Arma tu PC lo apagan porque agregan en serie.
+async function agregarProducto(productoId, cantidad = 1, garantia = 'none', { confirmar = true } = {}) {
     if (Sesion.cliente()) {
         await api('/carrito', { method: 'POST', body: { producto_id: productoId, cantidad, garantia } });
     } else {
@@ -200,6 +202,7 @@ async function agregarProducto(productoId, cantidad = 1, garantia = 'none') {
         CarritoInvitado.agregar(productoId, cantidad, garantia);
     }
     actualizarBadgeCarrito();
+    if (confirmar && window.MiniPanel) MiniPanel.confirmarAgregado(productoId, cantidad);
 }
 window.agregarProducto = agregarProducto;
 

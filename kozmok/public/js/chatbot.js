@@ -191,7 +191,9 @@
         // (si la conversación se restauró ya abierta, no hace falta el aviso).
         let visto = false;
         try { visto = localStorage.getItem('kz_asesor_visto') === '1'; } catch (e) {}
-        if (!visto && !panel.classList.contains('open')) {
+        // En el checkout y las pantallas de pago no se muestra para no tapar el formulario
+        const enCheckout = /^\/(carrito|gracias|recibo|login|registro)\.html$/.test(location.pathname);
+        if (!visto && !enCheckout && !panel.classList.contains('open')) {
             const nudge = document.createElement('div');
             nudge.className = 'chatbot-nudge';
             nudge.innerHTML = `<button aria-label="Cerrar">${window.icon ? icon('x', 14) : '×'}</button>
@@ -267,7 +269,7 @@
             card.querySelector('[data-add]').addEventListener('click', async (e) => {
                 e.stopPropagation();
                 try {
-                    await agregarProducto(p.id, 1);
+                    await agregarProducto(p.id, 1, 'none', { confirmar: false });
                     if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
                     window.toast ? toast('Agregado al carrito', 'ok') : agregarMensaje('Agregado al carrito', 'bot');
                 } catch (err) {
@@ -513,7 +515,7 @@
 
     async function elegirComponenteArmado(slot, producto) {
         try {
-            await agregarProducto(producto.id, 1);
+            await agregarProducto(producto.id, 1, 'none', { confirmar: false });
             if (window.actualizarBadgeCarrito) actualizarBadgeCarrito();
             ELEGIDO_ARMADO[slot.tipo] = producto;
             if (PRESUPUESTO_RESTANTE) PRESUPUESTO_RESTANTE = Math.max(0, PRESUPUESTO_RESTANTE - Number(producto.precio));

@@ -50,7 +50,7 @@ async function renderNavbar() {
                     <span>${cliente.correo}</span>
                 </div>
                 ${M('home', 'Resumen', '/perfil.html')}
-                ${M('package', 'Mis pedidos', '/pedidos.html')}
+                <a href="/pedidos.html" role="menuitem">${icon('package')} Mis pedidos <span class="menu-aviso" id="menu-en-camino" hidden></span></a>
                 ${M('star', 'Club de puntos', '/recompensas.html')}
                 ${M('wallet', 'Mi monedero', '/monedero.html')}
                 ${M('heart', 'Favoritos', '/favoritos.html')}
@@ -73,10 +73,11 @@ async function renderNavbar() {
         <nav class="navbar">
             <div class="navbar-inner">
                 <button class="hamburger" id="hamburger" aria-label="Menú">${icon('menu', 22)}</button>
-                <a href="/index.html" class="brand"><span class="brand-mark">${icon('ghost', 16)}</span> <span class="hide-sm">Kozmok</span></a>
+                <a href="/index.html" class="brand" aria-label="Kozmok, ir al inicio"><span class="brand-mark">${logoKZK(13)}</span> <span class="hide-sm">Kozmok</span></a>
 
-                <form class="nav-search" id="nav-search" role="search">
-                    <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…" aria-label="Buscar" />
+                <form class="nav-search" id="nav-search" role="search" autocomplete="off">
+                    <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…  ( / )" aria-label="Buscar"
+                           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sug-nav-search-input" />
                     <select id="nav-scope" aria-label="Categoría a buscar">${scopeOptions}</select>
                     <button type="submit">${icon('search', 16)}<span class="hide-sm">Buscar</span></button>
                 </form>
@@ -93,11 +94,9 @@ async function renderNavbar() {
         <nav class="bottom-nav" id="bottom-nav">
             <a href="/index.html" data-match="/index.html,/"><span class="bn-ico">${icon('home', 20)}</span>Inicio</a>
             <a href="/index.html?ver=todo" data-match="__catalogo"><span class="bn-ico">${icon('grid', 20)}</span>Catálogo</a>
-            <a href="/carrito.html" data-match="/carrito.html" data-panel="carrito"><span class="bn-ico">${icon('cart', 20)}</span>Carrito</a>
-            <a href="${cliente ? '/perfil.html' : '/login.html'}" data-match="/perfil.html,/login.html,/registro.html"><span class="bn-ico">${icon('user', 20)}</span>${cliente ? 'Perfil' : 'Entrar'}</a>
-            ${cliente
-                ? `<a href="#" class="is-exit" id="bn-logout"><span class="bn-ico">${icon('logout', 20)}</span>Salir</a>`
-                : `<a href="/ayuda.html" data-match="/ayuda.html"><span class="bn-ico">${icon('help', 20)}</span>Ayuda</a>`}
+            <a href="/favoritos.html" data-match="/favoritos.html" data-panel="favoritos"><span class="bn-ico">${icon('heart', 20)}<span class="bn-badge" id="bn-fav-badge" hidden></span></span>Favoritos</a>
+            <a href="/carrito.html" data-match="/carrito.html" data-panel="carrito"><span class="bn-ico">${icon('cart', 20)}<span class="bn-badge" id="bn-cart-badge" hidden></span></span>Carrito</a>
+            <a href="${cliente ? '/perfil.html' : '/login.html'}" id="bn-cuenta" data-match="/perfil.html,/pedidos.html,/login.html,/registro.html"><span class="bn-ico">${icon('user', 20)}<span class="bn-punto" id="bn-punto" hidden></span></span>${cliente ? 'Cuenta' : 'Entrar'}</a>
         </nav>
 
         <div class="drawer-overlay" id="drawer-overlay"></div>
@@ -106,8 +105,8 @@ async function renderNavbar() {
                 <strong>${cliente ? 'Hola, ' + nombreCorto : 'Menú'}</strong>
                 <button class="modal-close" id="drawer-close" aria-label="Cerrar">${icon('x', 20)}</button>
             </div>
-            <form class="drawer-search" id="drawer-search">
-                <input type="search" id="drawer-search-input" placeholder="Buscar…" />
+            <form class="drawer-search" id="drawer-search" autocomplete="off">
+                <input type="search" id="drawer-search-input" placeholder="Buscar…" role="combobox" aria-autocomplete="list" aria-expanded="false" />
                 <button type="submit">${icon('search', 16)}</button>
             </form>
             <div class="drawer-section">
@@ -149,6 +148,7 @@ async function renderNavbar() {
     if (inp) inp.value = params.get('busqueda') || '';
     const hacerBusqueda = (valor, scope) => {
         const q = (valor || '').trim();
+        if (q) Buscador.guardarReciente(q);
         const qs = new URLSearchParams();
         if (q) qs.set('busqueda', q);
         if (scope) qs.set('categoria', scope);
@@ -162,6 +162,13 @@ async function renderNavbar() {
     document.getElementById('drawer-search').addEventListener('submit', (e) => {
         e.preventDefault(); hacerBusqueda(document.getElementById('drawer-search-input').value, '');
     });
+    Buscador.montar(inp, () => document.getElementById('nav-scope').value, hacerBusqueda, categorias);
+    Buscador.montar(document.getElementById('drawer-search-input'), () => '', hacerBusqueda, categorias);
+
+    // ---- Menú de categorías: al abrirlo por primera vez se arma con las
+    //      marcas principales de cada categoría y su acceso a promociones ----
+    const catDD = document.getElementById('cat-dd');
+    if (catDD) catDD.querySelector('[aria-haspopup]').addEventListener('click', () => armarMenuCategorias(catDD, categorias), { once: true });
 
     // ---- Dropdowns (cuenta + categorías): un solo manejador ----
     const dropdowns = ['cuenta-dd', 'cat-dd'].map((id) => document.getElementById(id)).filter(Boolean);
@@ -212,19 +219,208 @@ async function renderNavbar() {
         );
         if (activo) a.classList.add('active');
     });
-    const bnLogout = document.getElementById('bn-logout');
-    if (bnLogout) bnLogout.addEventListener('click', (e) => {
-        e.preventDefault();
-        Sesion.cerrarSesionCliente();
-        if (window.toast) toast('Sesión cerrada', 'ok');
-        setTimeout(() => location.href = '/index.html', 400);
-    });
 
     actualizarBadgeCarrito();
     actualizarBadgeFavoritos();
     MiniPanel.montar();
     renderBotonRegresar();
+    montarVolverArriba();
+    if (cliente) avisarPedidosEnCamino(cliente);
+    // los contadores de la barra inferior copian a los de arriba
+    ['cart-badge', 'fav-badge'].forEach((id) => {
+        const src = document.getElementById(id);
+        const dst = document.getElementById(id === 'cart-badge' ? 'bn-cart-badge' : 'bn-fav-badge');
+        if (!src || !dst) return;
+        const copiar = () => { dst.textContent = src.textContent; dst.hidden = src.style.display === 'none' || !Number(src.textContent); };
+        copiar();
+        new MutationObserver(copiar).observe(src, { attributes: true, childList: true, characterData: true, subtree: true });
+    });
 }
+
+async function armarMenuCategorias(dd, categorias) {
+    let prods = [];
+    try { prods = await api('/catalogo'); } catch { return; }   // sin datos se queda el menú simple
+    const porCat = categorias.map((c) => {
+        const lista = prods.filter((p) => p.categoria_nombre === c.nombre);
+        const marcas = {};
+        lista.forEach((p) => { if (p.marca) marcas[p.marca] = (marcas[p.marca] || 0) + 1; });
+        return { ...c, n: lista.length, promo: lista.filter((p) => p.promocion).length,
+                 marcas: Object.entries(marcas).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 4).map(([m]) => m) };
+    }).filter((c) => c.n > 0);
+    const panel = dd.querySelector('.cat-panel');
+    const u = (q) => '/index.html?' + new URLSearchParams(q).toString();
+    panel.classList.add('mega');
+    panel.innerHTML = `
+        <div class="mega-rapidos">
+            <a href="/index.html?ver=todo" role="menuitem">${icon('grid', 15)} Todo el catálogo</a>
+            <a href="/armar-pc.html" role="menuitem">${icon('cpu', 15)} Arma tu PC</a>
+            <a href="/index.html?promocion=1" role="menuitem">${icon('star', 15)} Promociones</a>
+            <a href="/index.html?orden=novedades" role="menuitem">${icon('clock', 15)} Novedades</a>
+        </div>
+        <div class="mega-grid">
+            ${porCat.map((c) => `
+                <div class="mega-col">
+                    <a class="mega-cat" role="menuitem" href="${u({ categoria: c.nombre })}">${iconCategoria(c.nombre, 17)} ${c.nombre} <span>${c.n}</span></a>
+                    ${c.marcas.map((m) => `<a class="mega-marca" role="menuitem" href="${u({ categoria: c.nombre, marca: m })}">${m}</a>`).join('')}
+                    ${c.promo ? `<a class="mega-promo" role="menuitem" href="${u({ categoria: c.nombre, promocion: '1' })}">${icon('star', 12)} ${c.promo} en promoción</a>` : ''}
+                </div>`).join('')}
+        </div>`;
+    const actual = new URLSearchParams(location.search).get('categoria');
+    if (actual) panel.querySelectorAll('.mega-cat').forEach((a) => { if (a.getAttribute('href') === u({ categoria: actual })) a.classList.add('active'); });
+}
+
+// Pedidos en camino: punto en "Cuenta" (barra inferior) y aviso en "Mis pedidos"
+async function avisarPedidosEnCamino(cliente) {
+    try {
+        const peds = await api(`/pedidos/cliente/${cliente.id}`);
+        const n = peds.filter((p) => ['confirmado', 'procesando', 'enviado'].includes(p.estado)).length;
+        const enviados = peds.filter((p) => p.estado === 'enviado').length;
+        const punto = document.getElementById('bn-punto');
+        const aviso = document.getElementById('menu-en-camino');
+        if (punto) { punto.hidden = !n; if (n) document.getElementById('bn-cuenta').href = '/pedidos.html'; }
+        if (aviso) { aviso.hidden = !n; aviso.textContent = enviados ? `${enviados} en camino` : `${n} en proceso`; }
+    } catch { /* sin conexión: sin aviso */ }
+}
+
+// Botón "volver arriba": aparece al bajar en páginas largas
+function montarVolverArriba() {
+    if (document.getElementById('kz-arriba')) return;
+    const b = document.createElement('button');
+    b.id = 'kz-arriba'; b.type = 'button'; b.className = 'kz-arriba'; b.setAttribute('aria-label', 'Volver arriba');
+    b.innerHTML = icon('chevron', 20);
+    b.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    document.body.appendChild(b);
+    let pend = false;
+    window.addEventListener('scroll', () => {
+        if (pend) return; pend = true;
+        requestAnimationFrame(() => { b.classList.toggle('show', scrollY > 900); pend = false; });
+    }, { passive: true });
+}
+
+// =========================================================
+// BUSCADOR CON SUGERENCIAS EN VIVO
+//   Mientras se escribe (2+ letras) muestra hasta 5 productos con foto y
+//   precio (con promoción), las categorías que coinciden y "ver todos".
+//   Sin texto muestra las búsquedas recientes (se guardan en el navegador).
+//   Teclado: flechas para moverse, Enter para abrir, Esc para cerrar.
+// =========================================================
+const Buscador = {
+    CLAVE: 'kz_busquedas',
+    recientes() { try { return JSON.parse(localStorage.getItem(this.CLAVE)) || []; } catch { return []; } },
+    guardarReciente(q) {
+        const l = [q, ...this.recientes().filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 6);
+        try { localStorage.setItem(this.CLAVE, JSON.stringify(l)); } catch { /* sin storage */ }
+    },
+    quitarReciente(q) {
+        try { localStorage.setItem(this.CLAVE, JSON.stringify(this.recientes().filter((x) => x !== q))); } catch { /* */ }
+    },
+
+    montar(input, scope, buscar, categorias) {
+        if (!input) return;
+        const form = input.closest('form');
+        const caja = document.createElement('div');
+        caja.className = 'sug-caja';
+        caja.id = 'sug-' + input.id;
+        caja.setAttribute('role', 'listbox');
+        caja.hidden = true;
+        form.style.position = 'relative';
+        form.appendChild(caja);
+        let timer = null, pedido = 0, activo = -1;
+
+        const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const resaltar = (texto, q) => {
+            const i = texto.toLowerCase().indexOf(q.toLowerCase());
+            return i < 0 ? esc(texto) : esc(texto.slice(0, i)) + '<mark>' + esc(texto.slice(i, i + q.length)) + '</mark>' + esc(texto.slice(i + q.length));
+        };
+        const opciones = () => [...caja.querySelectorAll('[data-sug]')];
+        const marcar = (i) => {
+            const ops = opciones();
+            activo = Math.max(-1, Math.min(i, ops.length - 1));
+            ops.forEach((o, k) => o.classList.toggle('on', k === activo));
+            if (ops[activo]) ops[activo].scrollIntoView({ block: 'nearest' });
+        };
+        const abrir = (html) => { caja.innerHTML = html; caja.hidden = !html; input.setAttribute('aria-expanded', html ? 'true' : 'false'); activo = -1; };
+        const cerrar = () => abrir('');
+
+        const pintarRecientes = () => {
+            const rec = this.recientes();
+            const cats = categorias.slice(0, 6);
+            abrir((rec.length ? `<div class="sug-tit">Búsquedas recientes</div>` + rec.map((r) => `
+                <div class="sug-op sug-rec" data-sug="q" data-q="${esc(r)}" role="option">${icon('clock', 15)} <span>${esc(r)}</span>
+                    <button type="button" class="sug-x" data-quitar="${esc(r)}" aria-label="Quitar ${esc(r)}">${icon('x', 13)}</button></div>`).join('') : '')
+                + (cats.length ? `<div class="sug-tit">Explorar</div><div class="sug-chips">${cats.map((c) => `<a class="sug-chip" data-sug="url" href="/index.html?categoria=${encodeURIComponent(c.nombre)}">${iconCategoria(c.nombre, 14)} ${esc(c.nombre)}</a>`).join('')}
+                    <a class="sug-chip" data-sug="url" href="/index.html?promocion=1">${icon('star', 14)} Promociones</a></div>` : ''));
+        };
+
+        const sugerir = async (q) => {
+            const n = ++pedido;
+            const qs = new URLSearchParams({ buscar: q });
+            if (scope()) qs.set('categoria', scope());
+            let prods = [];
+            try { prods = await api('/catalogo?' + qs.toString()); } catch { return; }
+            if (n !== pedido || input.value.trim() !== q) return;   // llegó tarde
+            const cats = categorias.filter((c) => c.nombre.toLowerCase().includes(q.toLowerCase())).slice(0, 3);
+            const top = prods.slice(0, 5);
+            if (!top.length && !cats.length) {
+                abrir(`<div class="sug-vacio">${icon('search', 16)} Sin resultados para "<strong>${esc(q)}</strong>". Prueba con otra palabra o <a href="/index.html?ver=todo">ve todo el catálogo</a>.</div>`);
+                return;
+            }
+            abrir(
+                (cats.length ? cats.map((c) => `<a class="sug-op" data-sug="url" role="option" href="/index.html?categoria=${encodeURIComponent(c.nombre)}">${iconCategoria(c.nombre, 16)} <span>${resaltar(c.nombre, q)} <em>categoría</em></span></a>`).join('') : '')
+                + top.map((p) => `
+                    <a class="sug-op sug-prod" data-sug="prod" data-id="${p.id}" role="option" href="/index.html?busqueda=${encodeURIComponent(q)}#producto-${p.id}">
+                        <img src="${imagenProducto(p)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/img/producto.svg'">
+                        <span class="sug-info"><span class="sug-nom">${resaltar(p.nombre, q)}</span><span class="sug-meta">${esc(p.marca || '')} · ${esc(p.categoria_nombre || '')}${Number(p.stock) <= 0 ? ' · <b class="agot">Agotado</b>' : ''}</span></span>
+                        <span class="sug-precio">${precioHTML(p)}</span>
+                    </a>`).join('')
+                + `<a class="sug-todos" data-sug="todos" href="#">${icon('search', 14)} Ver los ${prods.length} resultados de "${esc(q)}" ${icon('arrow', 14)}</a>`);
+        };
+
+        input.addEventListener('input', () => {
+            clearTimeout(timer);
+            const q = input.value.trim();
+            if (q.length < 2) { if (!q) pintarRecientes(); else cerrar(); return; }
+            timer = setTimeout(() => sugerir(q), 160);
+        });
+        input.addEventListener('focus', () => { if (!input.value.trim()) pintarRecientes(); else if (input.value.trim().length >= 2) sugerir(input.value.trim()); });
+        input.addEventListener('keydown', (e) => {
+            if (caja.hidden) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); marcar(activo + 1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); marcar(activo - 1); }
+            else if (e.key === 'Escape') { cerrar(); }
+            else if (e.key === 'Enter' && activo >= 0) { e.preventDefault(); opciones()[activo].click(); }
+        });
+        // clic en una sugerencia
+        caja.addEventListener('mousedown', (e) => e.preventDefault());   // no perder el foco antes del clic
+        caja.addEventListener('click', (e) => {
+            const x = e.target.closest('[data-quitar]');
+            if (x) { e.preventDefault(); e.stopPropagation(); this.quitarReciente(x.dataset.quitar); pintarRecientes(); return; }
+            const op = e.target.closest('[data-sug]');
+            if (!op) return;
+            const tipo = op.dataset.sug;
+            if (tipo === 'q') { e.preventDefault(); input.value = op.dataset.q; buscar(op.dataset.q, scope()); }
+            else if (tipo === 'todos') { e.preventDefault(); buscar(input.value, scope()); }
+            else if (tipo === 'prod') {
+                this.guardarReciente(input.value.trim());
+                // en la tienda (index) se abre la ficha ahí mismo, sin recargar
+                if (window.verProducto && (location.pathname === '/' || location.pathname === '/index.html')) {
+                    e.preventDefault(); cerrar(); input.blur(); verProducto(Number(op.dataset.id));
+                }
+            }
+        });
+        document.addEventListener('click', (e) => { if (!form.contains(e.target)) cerrar(); });
+    },
+};
+window.Buscador = Buscador;
+
+// Atajo de teclado: "/" lleva al buscador (si no se está escribiendo en otro campo)
+document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const inp = document.getElementById('nav-search-input');
+    if (inp && inp.offsetParent !== null) { e.preventDefault(); inp.focus(); inp.select(); }
+});
 
 // =========================================================
 // PANEL LATERAL DE CARRITO Y FAVORITOS
@@ -280,6 +476,8 @@ const MiniPanel = {
 
     cerrar() {
         const p = document.getElementById('mp-panel');
+        clearTimeout(this._autoCierre);
+        this._recien = null;
         if (!p || !p.classList.contains('open')) return;
         p.classList.remove('open');
         p.setAttribute('aria-hidden', 'true');
@@ -295,6 +493,28 @@ const MiniPanel = {
             b.setAttribute('aria-selected', on ? 'true' : 'false');
         });
         return tab === 'favoritos' ? this.pintarFavoritos() : this.pintarCarrito();
+    },
+
+    // Confirmación al agregar: abre el panel en Carrito con un aviso arriba y
+    // el producto resaltado. Se cierra solo a los 5 s si no se toca.
+    async confirmarAgregado(productoId, cantidad = 1) {
+        if (location.pathname === '/carrito.html') {   // ya se está viendo el carrito
+            if (window.toast) toast('Agregado al carrito', 'ok');
+            this.sincronizar('carrito');
+            return;
+        }
+        this._recien = Number(productoId);
+        this.abrir('carrito');
+        clearTimeout(this._autoCierre);
+        const panel = document.getElementById('mp-panel');
+        const programar = () => { clearTimeout(this._autoCierre); this._autoCierre = setTimeout(() => { if (!panel.matches(':hover')) this.cerrar(); }, 5000); };
+        programar();
+        if (!panel._kzHover) {
+            panel._kzHover = true;
+            panel.addEventListener('mouseleave', () => { if (panel.classList.contains('open') && this._recien) programar(); });
+            panel.addEventListener('mouseenter', () => clearTimeout(this._autoCierre));
+            panel.addEventListener('click', () => { clearTimeout(this._autoCierre); this._recien = null; });
+        }
     },
 
     // Avisa a la página actual (carrito.html, catálogo...) que algo cambió
@@ -350,8 +570,10 @@ const MiniPanel = {
             foot.innerHTML = '';
             return;
         }
-        body.innerHTML = items.map((it) => `
-            <div class="mp-item">
+        const recien = this._recien ? items.find((i) => Number(i.producto_id) === this._recien) : null;
+        body.innerHTML = (recien ? `<div class="mp-agregado" role="status">${icon('check', 16)} <span><strong>Agregado al carrito</strong>${Sesion.cliente() ? '' : '<br><small>Se guarda aunque no hayas iniciado sesión.</small>'}</span></div>` : '')
+          + items.map((it) => `
+            <div class="mp-item ${recien && it === recien ? 'mp-nuevo' : ''}">
                 <img src="${imagenProducto(it)}" alt="" onerror="this.src='/img/producto.svg'">
                 <div class="mp-info">
                     <div class="mp-nombre">${it.nombre}</div>
@@ -447,7 +669,7 @@ const MiniPanel = {
             try {
                 if (b.dataset.fav === 'carrito') {
                     b.disabled = true;
-                    await agregarProducto(id, 1);
+                    await agregarProducto(id, 1, 'none', { confirmar: false });
                     if (window.toast) toast('Agregado al carrito', 'ok');
                     this.sincronizar('carrito');
                     b.disabled = false;
@@ -471,6 +693,31 @@ function decorarProductoFav(p) {
 // En las páginas que no son la portada aparece una flecha para volver a
 // donde estaba el cliente (o a la tienda si llegó directo por enlace).
 // =========================================================
+// Migas de pan de cada página (el catálogo tiene las suyas)
+const CUENTA_MIGA = ['Mi cuenta', '/perfil.html'];
+const MIGAS = {
+    '/carrito.html': [['Carrito']],
+    '/comparar.html': [['Catálogo', '/index.html?ver=todo'], ['Comparar productos']],
+    '/armar-pc.html': [['Catálogo', '/index.html?ver=todo'], ['Arma tu PC']],
+    '/ayuda.html': [['Centro de ayuda']],
+    '/login.html': [['Iniciar sesión']],
+    '/registro.html': [['Crear cuenta']],
+    '/perfil.html': [['Mi cuenta']],
+    '/pedidos.html': [CUENTA_MIGA, ['Mis pedidos']],
+    '/recibo.html': [CUENTA_MIGA, ['Mis pedidos', '/pedidos.html'], ['Comprobante']],
+    '/recompensas.html': [CUENTA_MIGA, ['Club de puntos']],
+    '/monedero.html': [CUENTA_MIGA, ['Mi monedero']],
+    '/favoritos.html': [CUENTA_MIGA, ['Favoritos']],
+    '/resenas.html': [CUENTA_MIGA, ['Mis reseñas']],
+    '/garantias.html': [CUENTA_MIGA, ['Mis garantías']],
+    '/direcciones.html': [CUENTA_MIGA, ['Direcciones']],
+    '/pagos.html': [CUENTA_MIGA, ['Métodos de pago']],
+    '/soporte.html': [CUENTA_MIGA, ['Soporte']],
+    '/datos.html': [CUENTA_MIGA, ['Mis datos']],
+    '/seguridad.html': [CUENTA_MIGA, ['Seguridad']],
+    '/preferencias.html': [CUENTA_MIGA, ['Preferencias']],
+};
+
 function renderBotonRegresar() {
     const enPortada = (location.pathname === '/' || location.pathname === '/index.html') && !location.search;
     // Tras pagar no tiene sentido "regresar" al checkout
@@ -484,8 +731,11 @@ function renderBotonRegresar() {
 
     const bar = document.createElement('div');
     bar.className = 'container regresar-bar';
+    const migas = MIGAS[location.pathname];
     bar.innerHTML = `<button class="btn-regresar" id="kz-regresar" type="button">
-        <span class="br-ico">${icon('arrow', 16)}</span> ${vieneDeLaTienda ? 'Regresar' : 'Volver a la tienda'}</button>`;
+        <span class="br-ico">${icon('arrow', 16)}</span> ${vieneDeLaTienda ? 'Regresar' : 'Volver a la tienda'}</button>
+        ${migas ? `<nav class="migas" aria-label="Estás en"><a href="/index.html">Inicio</a>${migas.map(([t, h], i) =>
+            ` <span aria-hidden="true">/</span> ${i === migas.length - 1 ? `<span aria-current="page">${t}</span>` : `<a href="${h}">${t}</a>`}`).join('')}</nav>` : ''}`;
     ph.insertAdjacentElement('afterend', bar);
     document.getElementById('kz-regresar').addEventListener('click', () => {
         if (vieneDeLaTienda && history.length > 1) history.back();
@@ -512,7 +762,7 @@ function renderFooter() {
         <footer>
             <div class="container footer-grid">
                 <div>
-                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${icon('ghost', 16)}</span> Kozmok</div>
+                    <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${logoKZK(13)}</span> Kozmok</div>
                     <p style="font-size:.85rem">Cómputo y electrónica con stock real, comparador de especificaciones y asesor de compra.</p>
                 </div>
                 <div>
