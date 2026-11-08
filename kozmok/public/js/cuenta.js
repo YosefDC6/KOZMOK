@@ -98,7 +98,7 @@ const DisenoTarjeta = {
                 <span class="tj-marca tj-solo-clasica socio-fantasma-g" aria-hidden="true">${icon('ghost', tamano)}</span>`;
     },
     logo() {
-        return `<span class="tj-logo tj-solo-kzk">${logoKZK(11)}</span><span class="tj-logo tj-solo-clasica">${icon('ghost', 16)}</span>`;
+        return `<span class="tj-logo tj-solo-kzk">${logoKZK(15)}</span><span class="tj-logo tj-solo-clasica">${icon('ghost', 16)}</span>`;
     },
     // Botones para cambiar de diseño debajo de la tarjeta
     selector(P, d) {

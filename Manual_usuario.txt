@@ -163,7 +163,8 @@ Seguridad de sesion
      (laptop, monitor, procesador, etc.).
 
 3.2  BUSCADOR Y NAVEGACION  (barra superior, en todas las paginas)
-   - Logo KZK (monograma de Kozmok): lleva al inicio.
+   - Logo KZK (estilo Arcade: letras inclinadas con contorno grueso y
+     sombra del color del tema elegido): lleva al inicio.
    - Campo de busqueda + selector de alcance ("Todo" o una categoria) +
      boton Buscar. Tecla "/" lleva directo al buscador.
    - SUGERENCIAS EN VIVO: desde 2 letras aparece una lista con hasta 5

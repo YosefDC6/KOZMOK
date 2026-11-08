@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4fd49a"/><stop offset="1" stop-color="#1c8f5c"/></linearGradient></defs>
-  <rect width="64" height="64" rx="15" fill="#11141a"/>
-  <g transform="translate(4.6 18) scale(0.9)">
-    <g fill="#ffffff">
-      <path d="M2 4h5v20H2z"/><path d="M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z"/>
-      <path d="M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z"/>
-      <path d="M39 4h5v20h-5z"/><path d="M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z"/>
+  <rect width="64" height="64" rx="15" fill="#0B0E14"/>
+  <g transform="translate(-1 17) scale(0.92)">
+    <g transform="skewX(-12) translate(6 0)">
+      <g transform="translate(3.2 3.6)" fill="#6E8BF0" stroke="#6E8BF0" stroke-width="3.4" stroke-linejoin="miter">
+        <path d="M2 4h5v20H2z"/><path d="M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z"/><path d="M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z"/><path d="M39 4h5v20h-5z"/><path d="M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z"/>
+      </g>
+      <g fill="#ffffff" stroke="#0B0E14" stroke-width="3.4" stroke-linejoin="miter" paint-order="stroke">
+        <path d="M2 4h5v20H2z"/><path d="M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z"/><path d="M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z"/><path d="M39 4h5v20h-5z"/><path d="M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z"/>
+      </g>
     </g>
-    <g fill="url(#g)"><path d="M29.4 8.6H35L27.6 19.4H22z"/><path d="M57.6 0l.85 1.9 1.9.85-1.9.85-.85 1.9-.85-1.9-1.9-.85 1.9-.85z"/></g>
   </g>
 </svg>

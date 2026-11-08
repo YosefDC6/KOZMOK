@@ -2030,11 +2030,11 @@ tr.mov-off td { opacity: .7; }
 /* =========================================================
    LOGO KZK
 ========================================================= */
-:root { --kzk-corte: var(--accent); }
+:root { --kzk-tinta: #fff; --kzk-contorno: #0B0E14; --kzk-sombra: var(--accent); }
 .kzk-logo { display: block; flex-shrink: 0; }
-.brand-mark { width: auto; min-width: 32px; padding: 0 8px; --kzk-corte: rgba(255, 255, 255, .55); }
+.brand-mark { width: auto; min-width: 0; height: auto; padding: 0; background: none; box-shadow: none; }
 .rec-marca { display: inline-flex; align-items: center; gap: 8px; }
-.rec-marca .kzk-logo { color: inherit; --kzk-corte: var(--accent); }
+.rec-marca .kzk-logo { --kzk-sombra: var(--accent); }
 
 /* =========================================================
    TARJETA DE SOCIO / CLUB: diseño KZK (nuevo) o clásico
@@ -2054,7 +2054,7 @@ tr.mov-off td { opacity: .7; }
         radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--c2) 34%, transparent) 0%, transparent 55%),
         linear-gradient(150deg, #0d1016 0%, #141922 55%, color-mix(in srgb, var(--c1) 45%, #141922) 100%);
     box-shadow: 0 24px 48px -22px rgba(0, 0, 0, .7), inset 0 0 0 1px color-mix(in srgb, var(--c3) 22%, transparent);
-    --kzk-corte: var(--c3);
+    --kzk-sombra: var(--c2);
 }
 .tj-card.diseno-kzk::before {
     inset: 0 auto 0 0; width: 6px; height: auto; transform: none;

@@ -88,26 +88,28 @@
     window.NIVEL_COLOR = NIVEL_COLOR;
 
     // ---------------------------------------------------------
-    // LOGO KZK (monograma de Kozmok)
-    //   Letras geométricas K·Z·K de trazo grueso. La diagonal de la Z es
-    //   el "corte" de la marca y lleva su propio color (--kzk-corte), con
-    //   una chispa junto a la última K. Toma currentColor, así sigue a
-    //   cada tema. logoKZK(alto) -> <svg> de ese alto.
+    // LOGO KZK (monograma de Kozmok, estilo "Arcade")
+    //   Letras K·Z·K inclinadas, con contorno grueso y una sombra sólida
+    //   desplazada del color del tema, más una chispa. Los colores salen de
+    //   variables CSS, así cada tema y cada lugar los ajusta:
+    //     --kzk-tinta    letras            (blanco)
+    //     --kzk-contorno contorno          (casi negro)
+    //     --kzk-sombra   sombra y chispa   (acento del tema)
+    //   logoKZK(alto) -> <svg> de ese alto (ancho = 2 x alto).
     // ---------------------------------------------------------
     window.logoKZK = function (alto = 16, { titulo = 'Kozmok' } = {}) {
-        const ancho = Math.round(alto * 60 / 28);
         const letras = [
-            'M2 4h5v20H2z',                                     // K: asta
-            'M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z',     // K: brazos
-            'M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z', // Z
-            'M39 4h5v20h-5z',                                   // K: asta
-            'M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z',    // K: brazos
-        ];
-        const corte = 'M29.4 8.6H35L27.6 19.4H22z';             // diagonal de la Z
-        const chispa = 'M57.6 0l.85 1.9 1.9.85-1.9.85-.85 1.9-.85-1.9-1.9-.85 1.9-.85z';
-        return `<svg class="kzk-logo" viewBox="0 0 60.4 28" width="${ancho}" height="${alto}" role="img" aria-label="${titulo}"><title>${titulo}</title>
-            <g fill="currentColor">${letras.map((d) => `<path d="${d}"/>`).join('')}</g>
-            <g fill="var(--kzk-corte, currentColor)"><path d="${corte}"/><path d="${chispa}"/></g>
+            'M2 4h5v20H2z', 'M13.2 4h6.3l-8.6 10 8.6 10h-6.3L7 15.7v-3.4z',
+            'M22 4h13v4.6L27.6 19.4H35V24H22v-4.6L29.4 8.6H22z',
+            'M39 4h5v20h-5z', 'M50.2 4h6.3l-8.6 10 8.6 10h-6.3L44 15.7v-3.4z',
+        ].map((d) => `<path d="${d}"/>`).join('');
+        const sombra = 'fill:var(--kzk-sombra,#6E8BF0);stroke:var(--kzk-sombra,#6E8BF0)';
+        return `<svg class="kzk-logo" viewBox="-4 -2 72 36" width="${alto * 2}" height="${alto}" role="img" aria-label="${titulo}"><title>${titulo}</title>
+            <g transform="skewX(-12) translate(6 0)">
+                <g transform="translate(3.2 3.6)" style="${sombra}" stroke-width="3.4" stroke-linejoin="miter">${letras}</g>
+                <g style="fill:var(--kzk-tinta,#fff);stroke:var(--kzk-contorno,#0B0E14)" stroke-width="3.4" stroke-linejoin="miter" paint-order="stroke">${letras}</g>
+                <path d="M58 2.5l1.2 2.7 2.7 1.2-2.7 1.2-1.2 2.7-1.2-2.7-2.7-1.2 2.7-1.2z" style="fill:var(--kzk-sombra,#6E8BF0)"/>
+            </g>
         </svg>`;
     };
 
