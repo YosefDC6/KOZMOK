@@ -44,6 +44,8 @@ Levantar el servidor
    - Luego:   npm start
    - Al arrancar, la consola muestra:
         Kozmok escuchando en http://localhost:3000
+        Desde un celular en la misma red Wi-Fi abre:
+           http://192.168.x.x:3000   (Wi-Fi)
         Base de datos: conectada (kozmok@localhost:5432) - 73 productos
         Seguridad: sesiones en cookie HttpOnly, bloqueo tras 5 intentos, ...
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
@@ -53,6 +55,25 @@ Levantar el servidor
 Direcciones
    - Tienda (clientes):     http://localhost:3000/
    - Panel interno:         http://localhost:3000/admin/login.html
+
+Probar desde celulares
+   1. Conecta el celular a la MISMA red Wi-Fi que la computadora.
+   2. Abre en el navegador del celular la direccion que muestra la consola
+      (http://192.168.x.x:3000). El panel: la misma con /admin/login.html.
+   3. Windows: la primera vez que corre npm start aparece el aviso del
+      Firewall de Windows Defender; marca "Redes privadas" y "Permitir
+      acceso". La red Wi-Fi debe estar como "Privada" (Configuracion -> Red
+      e Internet -> Wi-Fi -> tu red -> Tipo de perfil de red).
+      Si ya lo negaste: Panel de control -> Firewall de Windows Defender ->
+      Permitir una aplicacion -> marca "Node.js" en Privada.
+   4. Si no carga en una red de la escuela, esa red puede aislar a los
+      equipos entre si: comparte internet desde un celular (hotspot) y
+      conecta ahi la computadora y los celulares de prueba.
+   - La IP puede cambiar al cambiar de red: usa siempre la que imprime la
+     consola. Para que solo se abra en la computadora pon HOST=127.0.0.1
+     en el .env.
+   - Las pruebas de ataque (npm run prueba:seguridad) siguen siendo solo
+     contra localhost.
      (no hay enlace desde la tienda; se entra por URL, a proposito)
 
 

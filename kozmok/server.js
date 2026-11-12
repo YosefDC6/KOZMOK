@@ -15,6 +15,19 @@ const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
+// prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
+const HOST = process.env.HOST || '0.0.0.0';
+
+// IPs de esta computadora en la red local (Wi-Fi o cable), para abrir la
+// tienda desde un celular conectado a la misma red.
+function ipsDeRed() {
+    const os = require('os');
+    return Object.entries(os.networkInterfaces())
+        .flatMap(([nombre, lista]) => (lista || []).map((i) => ({ nombre, ...i })))
+        .filter((i) => (i.family === 'IPv4' || i.family === 4) && !i.internal && !i.address.startsWith('169.254.'))
+        .map((i) => ({ nombre: i.nombre, ip: i.address }));
+}
 
 const { usaValoresPorDefecto, ...configPg } = dbConfig;
 const pool = new Pool(configPg);
@@ -5100,8 +5113,15 @@ app.use((req, res) => {
     res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en http://localhost:${PORT}`);
+    if (HOST === '0.0.0.0' || HOST === '::') {
+        const ips = ipsDeRed();
+        if (ips.length) {
+            console.log('Desde un celular en la misma red Wi-Fi abre:');
+            ips.forEach((x) => console.log(`   http://${x.ip}:${PORT}   (${x.nombre})`));
+        } else console.log('Sin red local detectada: solo se puede abrir desde esta computadora.');
+    } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
