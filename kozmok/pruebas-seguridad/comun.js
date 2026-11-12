@@ -1,16 +1,32 @@
 // pruebas-seguridad/comun.js
 // Utilidades para las pruebas de ataque contra NUESTRO PROPIO servidor
-// (Etapa 5: demostrar que las defensas funcionan). Por defecto solo se
-// permite atacar localhost; para otro servidor propio usa --objetivo-propio.
+// (Etapa 5: demostrar que las defensas funcionan). Se permite atacar:
+//   - esta misma computadora (localhost), y
+//   - una dirección de red local (192.168.x.x, 10.x.x.x, 172.16-31.x.x),
+//     por ejemplo el servidor conectado al hotspot de un celular y el
+//     atacante en otra computadora de esa misma red.
+// Cualquier otra dirección necesita --objetivo-propio (solo servidores
+// del propio proyecto).
 //
-//   node pruebas-seguridad/1-fuerza-bruta.js [http://localhost:3000]
+//   node pruebas-seguridad/todas.js                         (localhost)
+//   node pruebas-seguridad/todas.js http://192.168.43.20:3000   (por Wi-Fi)
 
+const os = require('os');
 const args = process.argv.slice(2);
 const URL_BASE = (args.find((a) => /^https?:\/\//.test(a)) || process.env.KOZMOK_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
-const host = new URL(URL_BASE).hostname;
-if (!['localhost', '127.0.0.1', '::1'].includes(host) && !args.includes('--objetivo-propio')) {
-    console.error(`Estas pruebas solo se corren contra tu propio servidor. ${host} no es localhost.`);
+const host = new URL(URL_BASE).hostname.replace(/^\[|\]$/g, '');
+const LOOPBACK = ['localhost', '127.0.0.1', '::1'];
+// IPv4 privada (RFC 1918): solo existe dentro de una red local, nunca en internet.
+const esRedLocal = (h) => /^10\.\d+\.\d+\.\d+$/.test(h) || /^192\.168\.\d+\.\d+$/.test(h)
+    || /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h) || /\.local$/i.test(h);
+const IPS_PROPIAS = Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address);
+// ¿El servidor es esta misma computadora? (solo así se puede leer la base
+// para las comprobaciones directas y para desbloquear).
+const ES_ESTA_COMPU = LOOPBACK.includes(host) || IPS_PROPIAS.includes(host);
+
+if (!ES_ESTA_COMPU && !esRedLocal(host) && !args.includes('--objetivo-propio')) {
+    console.error(`Estas pruebas solo se corren contra tu propio servidor (localhost o tu red local). ${host} no lo es.`);
     console.error('Si de verdad es tu servidor del proyecto, agrega --objetivo-propio.');
     process.exit(1);
 }
@@ -75,11 +91,16 @@ function navegador(userAgent = 'Mozilla/5.0 (Prueba de seguridad Kozmok) Chrome/
 
 async function servidorArriba() {
     try {
-        const r = await fetch(URL_BASE + '/api');
-        if (r.ok) return true;
+        const r = await fetch(URL_BASE + '/api', { signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+            if (!ES_ESTA_COMPU) console.log(`${C.gris}  Atacando ${URL_BASE} por la red (el panel registrará la IP de esta computadora).${C.fin}`);
+            return true;
+        }
     } catch { /* abajo */ }
-    console.error(`${C.mal}No hay servidor en ${URL_BASE}. Arráncalo con "npm start" y vuelve a intentar.${C.fin}`);
+    console.error(`${C.mal}No hay servidor en ${URL_BASE}.${C.fin}`);
+    if (ES_ESTA_COMPU) console.error('Arráncalo con "npm start" y vuelve a intentar.');
+    else console.error('Revisa que el servidor esté encendido, que las dos computadoras estén en la misma red Wi-Fi y que el Firewall de Windows permita Node.js en redes privadas.');
     process.exit(1);
 }
 
-module.exports = { URL_BASE, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args };
+module.exports = { URL_BASE, ES_ESTA_COMPU, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args };

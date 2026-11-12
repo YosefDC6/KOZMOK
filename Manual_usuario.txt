@@ -72,8 +72,8 @@ Probar desde celulares
    - La IP puede cambiar al cambiar de red: usa siempre la que imprime la
      consola. Para que solo se abra en la computadora pon HOST=127.0.0.1
      en el .env.
-   - Las pruebas de ataque (npm run prueba:seguridad) siguen siendo solo
-     contra localhost.
+   - Las pruebas de ataque tambien se pueden correr desde otra computadora
+     de la misma red contra esta direccion (ver 4.16).
      (no hay enlace desde la tienda; se entra por URL, a proposito)
 
 
@@ -1542,6 +1542,14 @@ Reglas de negocio embebidas
         npm run prueba:sesion
         npm run desbloquear          levanta bloqueos (-- --todo limpia la bitacora)
    Cada linea dice DEFENDIDO o VULNERABLE.
+   Por Wi-Fi desde otra computadora (servidor y atacante en la misma red,
+   por ejemplo el hotspot de un celular):
+        node pruebas-seguridad/todas.js http://192.168.x.x:3000
+   (la direccion es la que muestra la consola del servidor). En el panel se
+   ve la IP de la computadora atacante. Al terminar, desbloquea desde el
+   servidor (npm run desbloquear) o con el boton "Desbloquear". Solo se
+   permite atacar localhost o direcciones de red local (192.168.x.x,
+   10.x.x.x, 172.16-31.x.x). Guia completa en SEGURIDAD.md.
 
    Ajustes (archivo .env): MAX_FALLOS_CUENTA, MAX_FALLOS_IP,
    BLOQUEO_CUENTA_MIN, BLOQUEO_IP_MIN, SESION_HORAS_CLIENTE,

@@ -72,7 +72,7 @@ Detalle de cada ataque, cómo se prueba y qué lo detiene en [`SEGURIDAD.md`](SE
 - **XSS, CSRF y datos ajenos**: limpieza de HTML en lo que entra y escape al mostrar, cabeceras CSP, rechazo de peticiones de otros sitios y cada cliente solo ve lo suyo.
 - **Tienda**: "¿Olvidaste tu contraseña?" con enlace de un solo uso (30 min) y *Mi cuenta → Seguridad* con sesiones abiertas (se pueden cerrar) y últimos intentos de acceso.
 - **Panel** (*Cuenta → Seguridad*, solo admin): eventos de seguridad, intentos de inicio de sesión, bloqueos (con "Desbloquear"), sesiones activas y correos enviados.
-- **Pruebas**: `npm run prueba:seguridad` ataca nuestro propio servidor local (fuerza bruta, inyección SQL, robo de sesión) y marca cada defensa como DEFENDIDO o VULNERABLE.
+- **Pruebas**: `npm run prueba:seguridad` ataca nuestro propio servidor (fuerza bruta, inyección SQL, robo de sesión) y marca cada defensa como DEFENDIDO o VULNERABLE. También se puede atacar por Wi-Fi desde otra computadora de la misma red (por ejemplo el hotspot de un celular): `node pruebas-seguridad/todas.js http://192.168.x.x:3000`.
 
 ---
 

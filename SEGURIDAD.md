@@ -2,7 +2,7 @@
 
 Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestro propio servidor y qué defensa los detiene. Todo se puede demostrar en vivo con los scripts de `kozmok/pruebas-seguridad/` o a mano con el navegador, `curl` o Postman.
 
-> Los ataques se hacen **solo contra nuestro servidor local** (`http://localhost:3000`). Los scripts se niegan a atacar otra dirección si no se les pasa `--objetivo-propio`.
+> Los ataques se hacen **solo contra nuestro propio servidor**: en la misma computadora (`http://localhost:3000`) o en la red local, por ejemplo por Wi-Fi o por el hotspot de un celular (`http://192.168.x.x:3000`). Los scripts se niegan a atacar cualquier otra dirección si no se les pasa `--objetivo-propio`.
 
 ## Resumen
 
@@ -51,6 +51,25 @@ npm run desbloquear
 ```
 
 `npm run desbloquear -- --todo` además borra la bitácora de intentos y eventos para empezar la demo en limpio.
+
+### Atacar por Wi-Fi desde otra computadora (más realista)
+
+Así el ataque viaja por la red, como el de un atacante de verdad, y en el panel se ve la IP de la computadora atacante.
+
+1. **Servidor:** conecta su computadora a una red Wi-Fi o al **hotspot de un celular** (sirve con los datos móviles: la red local la crea el celular) y corre `npm start`. La consola muestra la dirección, por ejemplo `http://192.168.43.20:3000`. En Windows permite Node.js en *Redes privadas* cuando salga el aviso del Firewall.
+2. **Atacante:** otra computadora conectada a **la misma red**, con Node.js 18+ y una copia del repositorio (no hace falta `npm install`). Dentro de `kozmok/`:
+
+```bash
+node pruebas-seguridad/todas.js http://192.168.43.20:3000
+```
+
+(o cada una: `node pruebas-seguridad/1-fuerza-bruta.js http://192.168.43.20:3000 --ip`).
+
+3. **Proyector:** en la computadora del servidor abre el panel → *Cuenta → Seguridad*: aparecen los intentos, el bloqueo de la cuenta (y de la IP con `--ip`), la inyección SQL y la sesión robada, con la IP del atacante.
+
+Desde la otra computadora no se puede tocar la base del servidor, así que la comprobación "si se roban la base de datos" se omite y los bloqueos no se levantan solos: al terminar, corre `npm run desbloquear` en el servidor o usa **Desbloquear** en *Seguridad → Bloqueos*.
+
+> Solo funciona dentro de la misma red. Desde internet (otro celular con sus datos móviles, fuera del hotspot) no se llega al servidor: la compañía telefónica no deja entrar conexiones a los celulares, y abrir el servidor a internet no es parte de la demo.
 
 ## 1. Fuerza bruta
 

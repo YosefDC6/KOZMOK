@@ -9,7 +9,7 @@
 //   g) robar la base: las contraseñas solo están como hash bcrypt
 //
 //   npm run prueba:sesion
-const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C } = require('./comun');
+const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C, ES_ESTA_COMPU } = require('./comun');
 
 const VICTIMA = { correo: 'sofia@correo.com', password: 'Demo#KZ2026' };
 
@@ -70,7 +70,9 @@ const VICTIMA = { correo: 'sofia@correo.com', password: 'Demo#KZ2026' };
     verificar('No puede ver el carrito de otro cliente', r.status === 403, `${r.status}`);
 
     titulo('g) Si se roban la base de datos');
-    try {
+    if (!ES_ESTA_COMPU) {
+        console.log(`${C.aviso}  (se omite: la base está en la computadora del servidor; corre esta prueba ahí para revisarla)${C.fin}`);
+    } else try {
         const { Pool } = require('pg');
         const { usaValoresPorDefecto, ...cfg } = require('../db.config.js');
         const pool = new Pool(cfg);

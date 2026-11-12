@@ -5,6 +5,18 @@
 //
 //   npm run desbloquear           levanta todos los bloqueos activos
 //   npm run desbloquear -- --todo además borra intentos y eventos de la demo
+//   Habla directo con la base, así que se corre en la computadora del
+//   servidor. Si las pruebas se corrieron desde otra computadora de la red,
+//   ahí solo se explica cómo desbloquear.
+const { ES_ESTA_COMPU, URL_BASE } = require('./comun');
+
+if (!ES_ESTA_COMPU) {
+    console.log(`El servidor (${URL_BASE}) está en otra computadora: desde aquí no se puede tocar su base.`);
+    console.log('Para quitar los bloqueos de la demo: en la computadora del servidor corre "npm run desbloquear",');
+    console.log('o en el panel entra a Cuenta → Seguridad → Bloqueos y pulsa "Desbloquear".');
+    process.exit(0);
+}
+
 const { Pool } = require('pg');
 const { usaValoresPorDefecto, ...cfg } = require('../db.config.js');
 
