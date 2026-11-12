@@ -2,53 +2,87 @@
 //  Kozmok CRM - Backend (Express + PostgreSQL)
 // =========================================================
 const express = require('express');
-const cors = require('cors');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const path = require('path');
 const { Pool } = require('pg');
-const dbConfig = require('./db.config.js');
+const dbConfig = require('./db.config.js');   // lee el .env (contraseña de la base)
+// Etapa 5: defensas contra fuerza bruta, robo de sesión/credenciales e
+// inyección SQL (ver SEGURIDAD.md).
+const seg = require('./seguridad.js');
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
+const { usaValoresPorDefecto, ...configPg } = dbConfig;
+const pool = new Pool(configPg);
+
+// Cabeceras de seguridad en todas las respuestas (CSP, nosniff, DENY...).
+// Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
+// que ningún otro sitio puede llamar a la API con la sesión del usuario.
+seg.instalar(app, pool);
 app.use(express.static(path.join(__dirname, 'public')));
+// Cuerpos JSON de máximo 100 KB (evita peticiones gigantes).
+app.use(express.json({ limit: '100kb' }));
 
-const pool = new Pool(dbConfig);
+// Capas de protección de la API, en orden:
+//   1) límite de peticiones por IP, 2) origen (CSRF),
+//   3) detector de inyección SQL, 4) limpieza de HTML (XSS).
+app.use('/api', seg.limitador({ nombre: 'api', ventanaMs: 60000, max: 600 }));
+app.use('/api', seg.verificarOrigen);
+app.use('/api', seg.filtroInyeccionSQL);
+app.use('/api', seg.sanitizarEntrada);
+// Límite más estricto para login, registro y recuperación de contraseña.
+const limiteAuth = seg.limitador({
+    nombre: 'auth', ventanaMs: 60000, max: 15,
+    mensaje: 'Demasiados intentos en poco tiempo desde tu conexión. Espera un minuto e intenta de nuevo.',
+});
+// Y para lo que mueve dinero (pagar, recargar el monedero).
+const limiteDinero = seg.limitador({ nombre: 'pagos', ventanaMs: 60000, max: 12 });
 
-// Solo se registran errores reales del servidor en la consola; nada
-// decorativo. El cliente nunca ve mensajes de consola: la UI usa toasts.
+// Los identificadores de las rutas deben ser números: "/clientes/1 OR 1=1"
+// se rechaza aquí, antes de llegar a la base.
+['id', 'clienteId', 'ticketId', 'dirId', 'mpId', 'garId', 'pedidoId', 'productoId', 'cliente_id', 'movId', 'itemId'].forEach((p) => {
+    app.param(p, (req, res, next, valor) => {
+        if (seg.esId(valor)) return next();
+        return res.status(400).json({ message: 'Identificador no válido' });
+    });
+});
 
-const asyncRoute = (fn) => (req, res) => fn(req, res).catch((err) => {
-    console.error(req.method, req.originalUrl, '->', err.message);
-    res.status(500).json({ error: 'Error del servidor', detalle: err.message });
+// Solo se registran errores reales del servidor en la consola. Al usuario
+// nunca se le muestra el detalle (SQL, tablas, pila): solo un mensaje
+// genérico y un folio para buscarlo en la consola.
+const asyncRoute = (fn) => (req, res, next) => fn(req, res, next).catch((err) => {
+    const folio = crypto.randomBytes(3).toString('hex').toUpperCase();
+    console.error(`[${folio}]`, req.method, req.originalUrl, '->', err.message);
+    if (res.headersSent) return;
+    if (err.code && String(err.code).startsWith('22')) return res.status(400).json({ message: seg.mensajeSeguro(err) });
+    res.status(500).json({ error: 'Error del servidor', message: 'Ocurrió un error interno. Intenta de nuevo.', folio });
 });
 
 // =========================================================
 // MIDDLEWARE DE AUTENTICACIÓN (equipo interno)
-// El token es el Base64 "usuario:<id>:<timestamp>" que emite
-// /api/auth/login-usuario. Se envía en el header Authorization.
+// La sesión es un token aleatorio en la cookie HttpOnly "kz_admin" (o en
+// el header Authorization: Bearer, para Postman). Se valida contra la
+// tabla sesiones: que exista, no esté revocada ni vencida y sea del
+// mismo navegador que la abrió.
 // =========================================================
 async function requireUsuario(req, res, next) {
     try {
-        const header = req.headers.authorization || '';
-        const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-        if (!token) return res.status(401).json({ message: 'Sesión no encontrada. Inicia sesión de nuevo.' });
-
-        const decoded = Buffer.from(token, 'base64').toString('utf8'); // "usuario:<id>:<ts>"
-        const [tipo, id] = decoded.split(':');
-        if (tipo !== 'usuario' || !id) return res.status(401).json({ message: 'Token inválido' });
-
-        const result = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [id]);
+        const s = await seg.leerSesion(req, 'usuario');
+        if (!s) return res.status(401).json({ message: 'Sesión no encontrada o vencida. Inicia sesión de nuevo.' });
+        const result = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [s.usuario_id]);
         if (result.rows.length === 0 || !result.rows[0].activo) {
+            await seg.revocarSesion(s.id, 'cuenta inactiva');
             return res.status(403).json({ message: 'Cuenta inactiva o inexistente' });
         }
         req.usuario = result.rows[0];
+        req.sesion = s;
         next();
     } catch (e) {
+        console.error('requireUsuario ->', e.message);
         return res.status(401).json({ message: 'No autenticado' });
     }
 }
@@ -80,38 +114,54 @@ function requirePermiso(...claves) {
 
 // =========================================================
 // MIDDLEWARE DE AUTENTICACIÓN (cliente / tienda)
-// Token Base64 "cliente:<id>:<timestamp>" que emiten
-// login-cliente y registro-cliente. Obliga a iniciar sesión
-// para el carrito, los pedidos y el perfil.
+// Cookie HttpOnly "kz_sesion" que emiten el login y el registro.
+// Obliga a iniciar sesión para el carrito, los pedidos y el perfil.
 // =========================================================
 async function requireCliente(req, res, next) {
     try {
-        const header = req.headers.authorization || '';
-        const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-        if (!token) return res.status(401).json({ message: 'Inicia sesión para continuar' });
-
-        const decoded = Buffer.from(token, 'base64').toString('utf8'); // "cliente:<id>:<ts>"
-        const [tipo, id] = decoded.split(':');
-        if (tipo !== 'cliente' || !id) return res.status(401).json({ message: 'Sesión no válida' });
-
+        const s = await seg.leerSesion(req, 'cliente');
+        if (!s) return res.status(401).json({ message: 'Inicia sesión para continuar' });
         const r = await pool.query(
             "SELECT id, nombre, correo FROM clientes WHERE id = $1 AND estado_cliente = 'activo'",
-            [id]
+            [s.cliente_id]
         );
-        if (r.rows.length === 0) return res.status(401).json({ message: 'Sesión no válida' });
+        if (r.rows.length === 0) {
+            await seg.revocarSesion(s.id, 'cliente inactivo');
+            return res.status(401).json({ message: 'Sesión no válida' });
+        }
         req.cliente = r.rows[0];
+        req.sesion = s;
         next();
     } catch (e) {
+        console.error('requireCliente ->', e.message);
         return res.status(401).json({ message: 'Inicia sesión para continuar' });
     }
 }
 
-// El :id de la ruta debe ser el propio cliente autenticado.
+// El :id (o :clienteId) de la ruta debe ser el propio cliente autenticado.
+// Si no, es un intento de ver datos ajenos (IDOR): se rechaza y se registra.
 function mismoCliente(req, res, next) {
-    if (String(req.cliente.id) !== String(req.params.id)) {
+    const pedido = req.params.id ?? req.params.clienteId ?? req.params.cliente_id;
+    if (String(req.cliente.id) !== String(pedido)) {
+        seg.registrarEvento(req, { tipo: 'acceso_ajeno', severidad: 'media', cliente_id: req.cliente.id, detalle: `El cliente ${req.cliente.id} intentó usar datos del cliente ${pedido}` });
         return res.status(403).json({ message: 'No puedes ver ni modificar datos de otra cuenta' });
     }
     next();
+}
+
+// Id del cliente de una sesión opcional (rutas públicas), o null.
+async function clienteDeSesion(req) {
+    try { const s = await seg.leerSesion(req, 'cliente'); return s ? Number(s.cliente_id) : null; }
+    catch { return null; }
+}
+
+// Correos que manda el sistema. Sin servidor SMTP quedan en la tabla
+// correos_salida (se ven en el panel: Cuenta → Seguridad → Correos).
+async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null }) {
+    if (!para) return;
+    await db.query(
+        `INSERT INTO correos_salida (para, asunto, cuerpo, tipo, cliente_id, pedido_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [para, String(asunto).slice(0, 200), cuerpo, tipo, cliente_id, pedido_id]);
 }
 
 // =========================================================
@@ -185,42 +235,78 @@ async function estadoRecompensas(clienteId) {
 }
 
 // =========================================================
-// AUTENTICACIÓN
+// AUTENTICACIÓN (Etapa 5: sesiones seguras y fuerza bruta)
+//   - Mismo mensaje y mismo tiempo exista o no el correo.
+//   - Cada fallo cuenta para el bloqueo de la cuenta y de la IP.
+//   - La sesión va en una cookie HttpOnly con token aleatorio.
 // =========================================================
+
+const CAMPOS_CLIENTE = `id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
+                        etapa_crm, puntos, codigo_socio, fecha_registro`;
+
+// Mensaje de "cuenta / IP bloqueada" con los minutos que faltan.
+function respuestaBloqueo(res, bloqueo) {
+    const min = seg.minutosRestantes(bloqueo.hasta);
+    res.setHeader('Retry-After', String(min * 60));
+    return res.status(429).json({
+        message: bloqueo.tipo === 'ip'
+            ? `Se detectaron demasiados intentos fallidos desde tu conexión. El acceso está bloqueado ${min} minuto(s).`
+            : `Cuenta bloqueada temporalmente por demasiados intentos fallidos. Intenta de nuevo en ${min} minuto(s) o recupera tu contraseña.`,
+        bloqueado: true, minutos: min,
+    });
+}
 
 // Login de cliente (tienda)
 const loginCliente = asyncRoute(async (req, res) => {
-    const { correo, password } = req.body;
+    const correo = seg.normalizarCorreo(req.body.correo || req.body.email);
+    const password = String(req.body.password || '');
     if (!correo || !password) return res.status(400).json({ message: 'Correo y contraseña son requeridos' });
+    if (!seg.correoValido(correo) || password.length > 200) return res.status(400).json({ message: 'Correo o contraseña con formato no válido' });
 
-    const result = await pool.query(
-        `SELECT * FROM clientes WHERE correo = $1 AND estado_cliente = 'activo'`,
-        [correo]
-    );
-    if (result.rows.length === 0) return res.status(401).json({ message: 'Correo o contraseña incorrectos' });
+    const bloqueo = await seg.bloqueoActivo({ ambito: 'cliente', correo, ip: seg.ipDe(req) });
+    if (bloqueo) {
+        await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: false, motivo: 'bloqueado' });
+        return respuestaBloqueo(res, bloqueo);
+    }
 
+    const result = await pool.query('SELECT * FROM clientes WHERE LOWER(correo) = $1', [correo]);
     const cliente = result.rows[0];
-    const valido = await bcrypt.compare(password, cliente.password).catch(() => false);
-    if (!valido) return res.status(401).json({ message: 'Correo o contraseña incorrectos' });
+    const valido = await seg.compararPassword(password, cliente && cliente.password);
+    if (!valido || cliente.estado_cliente !== 'activo') {
+        const r = await seg.registrarFallo(req, { ambito: 'cliente', correo, motivo: valido ? 'cuenta_inactiva' : 'credenciales' });
+        if (r.bloqueo) return respuestaBloqueo(res, { tipo: r.bloqueo.tipo, hasta: new Date(Date.now() + r.bloqueo.minutos * 60000) });
+        return res.status(401).json({
+            message: 'Correo o contraseña incorrectos.' + (r.restantes <= 3 ? ` Te quedan ${r.restantes} intento(s) antes de que la cuenta se bloquee ${seg.CONFIG.bloqueoCuentaMin} minutos.` : ''),
+            intentos_restantes: r.restantes,
+        });
+    }
 
+    await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true });
     await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
-    delete cliente.password;
-    const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
-    res.json({ success: true, cliente, token });
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id);
+    const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
+    // El token va en la cookie HttpOnly. Solo se devuelve en el cuerpo si
+    // lo pide un cliente de API (Postman, pruebas): { "modo": "token" }.
+    res.json({ success: true, cliente: datos, expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
 });
-app.post('/api/auth/login-cliente', loginCliente);
 
-// Registro de cliente (también POST /api/auth/registro, nombre del documento)
+// Registro de cliente: correo único y contraseña fuerte cifrada con bcrypt.
 const registrarCliente = asyncRoute(async (req, res) => {
-    const { nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal } = req.body;
+    const b = req.body || {};
+    const nombre = String(b.nombre || '').trim();
+    const correo = seg.normalizarCorreo(b.correo || b.email);
+    const password = String(b.password || '');
     if (!nombre || !correo || !password) return res.status(400).json({ message: 'Nombre, correo y contraseña son obligatorios' });
-    if (password.length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres' });
+    if (!seg.nombreValido(nombre)) return res.status(400).json({ message: 'Escribe tu nombre solo con letras (2 a 150 caracteres)' });
+    if (!seg.correoValido(correo)) return res.status(400).json({ message: 'El correo no tiene un formato válido' });
+    if (!seg.telefonoValido(b.telefono)) return res.status(400).json({ message: 'El teléfono no es válido' });
+    const errPass = seg.validarPassword(password, { correo, nombre });
+    if (errPass) return res.status(400).json({ message: errPass });
 
-    const existe = await pool.query('SELECT id FROM clientes WHERE correo = $1', [correo]);
-    if (existe.rows.length > 0) return res.status(400).json({ message: 'Este correo ya está registrado' });
+    const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [correo]);
+    if (existe.rows.length > 0) return res.status(409).json({ message: 'Este correo ya está registrado. Inicia sesión o recupera tu contraseña.' });
 
-    const hash = await bcrypt.hash(password, 10);
-
+    const hash = await seg.hashPassword(password);
     // Código de socio único (reintenta si choca con uno existente)
     let codigoSocio;
     for (let intento = 0; intento < 5; intento++) {
@@ -228,47 +314,76 @@ const registrarCliente = asyncRoute(async (req, res) => {
         const dup = await pool.query('SELECT 1 FROM clientes WHERE codigo_socio = $1', [codigoSocio]);
         if (dup.rows.length === 0) break;
     }
+    const txt = (v, n) => (v ? String(v).trim().slice(0, n) || null : null);
+    const db = await pool.connect();
+    let cliente;
+    try {
+        await db.query('BEGIN');
+        const result = await db.query(
+            `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigo_socio, estado_cliente, etapa_crm)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'activo','Prospecto')
+             RETURNING ${CAMPOS_CLIENTE}`,
+            [nombre.slice(0, 150), correo, hash, txt(b.telefono, 30), txt(b.empresa, 150), txt(b.ciudad, 100), txt(b.estado, 100),
+                txt(b.direccion, 200), txt(b.codigo_postal, 15), codigoSocio]
+        );
+        cliente = result.rows[0];
+        await db.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [cliente.id]);
+        await enviarCorreo(db, {
+            para: correo, tipo: 'registro', cliente_id: cliente.id,
+            asunto: '¡Bienvenido a Kozmok!',
+            cuerpo: `Hola ${nombre}:\n\nTu cuenta quedó creada. Ya puedes comprar, usar tu monedero y seguir tus pedidos.\nTu código de socio es ${codigoSocio}.\n\nSi no fuiste tú, responde este correo.`,
+        });
+        await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
 
-    const result = await pool.query(
-        `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigo_socio, estado_cliente, etapa_crm)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'activo','Prospecto')
-         RETURNING id, nombre, correo, telefono, empresa, ciudad, estado, codigo_socio, etapa_crm, fecha_registro`,
-        [nombre, correo, hash, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigoSocio]
-    );
-    const cliente = result.rows[0];
-    await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1)', [cliente.id]);
-
-    const token = Buffer.from(`cliente:${cliente.id}:${Date.now()}`).toString('base64');
-    res.status(201).json({ success: true, cliente, token });
+    await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true, motivo: 'registro' });
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id);
+    res.status(201).json({ success: true, cliente, expira: s.expira, ...(b.modo === 'token' ? { token: s.token } : {}) });
 });
-app.post('/api/auth/registro-cliente', registrarCliente);
-app.post('/api/auth/registro', registrarCliente);
 
 // Login de usuario interno (admin / ventas / logística). Responde también
 // con los permisos del rol para armar el menú dinámico.
-// /api/auth/login es el nombre del endpoint en el documento del ERP.
 const loginUsuario = asyncRoute(async (req, res) => {
-    const { email, password } = req.body;
+    const email = seg.normalizarCorreo(req.body.email || req.body.correo);
+    const password = String(req.body.password || '');
     if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos' });
+    if (!seg.correoValido(email) || password.length > 200) return res.status(400).json({ message: 'Credenciales con formato no válido' });
 
-    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
-    if (result.rows.length === 0) return res.status(401).json({ message: 'Credenciales incorrectas' });
+    const bloqueo = await seg.bloqueoActivo({ ambito: 'usuario', correo: email, ip: seg.ipDe(req) });
+    if (bloqueo) {
+        await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: false, motivo: 'bloqueado' });
+        return respuestaBloqueo(res, bloqueo);
+    }
 
+    const result = await pool.query('SELECT * FROM usuarios WHERE LOWER(email) = $1', [email]);
     const usuario = result.rows[0];
-    if (!usuario.activo) return res.status(403).json({ message: 'Cuenta inactiva' });
+    const valido = await seg.compararPassword(password, usuario && usuario.password_hash);
+    if (!valido || !usuario.activo) {
+        const r = await seg.registrarFallo(req, { ambito: 'usuario', correo: email, motivo: valido ? 'cuenta_inactiva' : 'credenciales' });
+        if (r.bloqueo) return respuestaBloqueo(res, { tipo: r.bloqueo.tipo, hasta: new Date(Date.now() + r.bloqueo.minutos * 60000) });
+        return res.status(401).json({
+            message: 'Credenciales incorrectas.' + (r.restantes <= 3 ? ` Quedan ${r.restantes} intento(s) antes del bloqueo.` : ''),
+            intentos_restantes: r.restantes,
+        });
+    }
 
-    const valido = await bcrypt.compare(password, usuario.password_hash).catch(() => false);
-    if (!valido) return res.status(401).json({ message: 'Credenciales incorrectas' });
-
+    await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: true });
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
-    delete usuario.password_hash;
-    const token = Buffer.from(`usuario:${usuario.id}:${Date.now()}`).toString('base64');
-    res.json({ success: true, usuario, token, permisos: PERMISOS[usuario.rol] || [] });
+    const s = await seg.crearSesion(req, res, 'usuario', usuario.id);
+    const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo };
+    res.json({ success: true, usuario: datos, permisos: PERMISOS[usuario.rol] || [], expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
 });
-app.post('/api/auth/login-usuario', loginUsuario);
-// POST /api/auth/login sirve a los dos: con "correo" entra un cliente de la
-// tienda (Etapa 4); con "email" entra un usuario del equipo (ERP).
-app.post('/api/auth/login', (req, res) => ((req.body && req.body.correo && !req.body.email) ? loginCliente : loginUsuario)(req, res));
+
+app.post('/api/auth/login-cliente', limiteAuth, loginCliente);
+app.post('/api/auth/registro-cliente', limiteAuth, registrarCliente);
+app.post('/api/auth/registro', limiteAuth, registrarCliente);
+app.post('/api/auth/login-usuario', limiteAuth, loginUsuario);
+// POST /api/auth/login sirve a los dos: con { "tipo": "cliente" | "usuario" };
+// sin tipo, "correo" = cliente de la tienda y "email" = equipo (ERP).
+app.post('/api/auth/login', limiteAuth, (req, res, next) => {
+    const tipo = req.body.tipo || ((req.body.correo && !req.body.email) ? 'cliente' : 'usuario');
+    return (tipo === 'cliente' ? loginCliente : loginUsuario)(req, res, next);
+});
 
 // =========================================================
 // CATEGORÍAS Y PRODUCTOS (catálogo público)
@@ -495,7 +610,7 @@ app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
     // reseñar, que es solo cuando ya recibió el producto.
     let mi_resena = null;
     let puede_resenar = false;
-    const cid = clienteDeToken(req);
+    const cid = await clienteDeSesion(req);
     if (cid) {
         const [mia, compra] = await Promise.all([
             pool.query('SELECT calificacion, comentario, fecha FROM resenas WHERE cliente_id = $1 AND producto_id = $2', [cid, req.params.id]),
@@ -513,16 +628,6 @@ app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
         sesion: Boolean(cid),
     });
 }));
-
-// Id del cliente de una sesión opcional (rutas públicas), o null.
-function clienteDeToken(req) {
-    const h = req.headers.authorization || '';
-    if (!h.startsWith('Bearer ')) return null;
-    try {
-        const [tipo, id] = Buffer.from(h.slice(7), 'base64').toString('utf8').split(':');
-        return tipo === 'cliente' && Number(id) ? Number(id) : null;
-    } catch { return null; }
-}
 
 // Una reseña solo la deja quien recibió el producto (pedido entregado).
 async function clienteRecibioProducto(clienteId, productoId) {
@@ -696,7 +801,7 @@ async function carritoDe(db, clienteId) {
     return r.rows[0];
 }
 
-app.get('/api/carrito/:clienteId', asyncRoute(async (req, res) => {
+app.get('/api/carrito/:clienteId', mismoCliente, asyncRoute(async (req, res) => {
     const clienteId = req.cliente.id; // el de la sesión, no el de la URL
     const result = await pool.query(
         `SELECT cd.id, cd.cantidad, cd.precio_unitario, cd.garantia_clave, cd.garantia_plan, cd.garantia_meses, cd.garantia_costo,
@@ -1198,15 +1303,15 @@ const procesarCompra = asyncRoute(async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
-        res.status(400).json({ message: error.message });
+        res.status(400).json({ message: seg.mensajeSeguro(error) });
     } finally {
         client.release();
     }
 });
-app.post('/api/pedidos', requireCliente, procesarCompra);
-app.post('/api/pagos/procesar', requireCliente, procesarCompra);
+app.post('/api/pedidos', limiteDinero, requireCliente, procesarCompra);
+app.post('/api/pagos/procesar', limiteDinero, requireCliente, procesarCompra);
 
-app.get('/api/pedidos/cliente/:clienteId', requireCliente, asyncRoute(async (req, res) => {
+app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
     const result = await pool.query(
         `SELECT p.*, STRING_AGG(pr.nombre, ', ') AS productos
          FROM pedidos p LEFT JOIN pedido_items pi ON p.id = pi.pedido_id
@@ -1217,9 +1322,17 @@ app.get('/api/pedidos/cliente/:clienteId', requireCliente, asyncRoute(async (req
     res.json(result.rows);
 }));
 
+// Detalle de un pedido: el cliente dueño o el equipo interno. A un cliente
+// que pide un pedido ajeno se le responde igual que si no existiera.
 app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
+    const quien = await quienLlama(req);
+    if (!quien) return res.status(401).json({ message: 'Inicia sesión para continuar' });
     const pedido = await pool.query('SELECT * FROM pedidos WHERE id = $1', [req.params.id]);
     if (pedido.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
+    if (quien.tipo === 'cliente' && Number(pedido.rows[0].cliente_id) !== Number(quien.id)) {
+        seg.registrarEvento(req, { tipo: 'acceso_ajeno', severidad: 'media', cliente_id: quien.id, detalle: `Intentó ver el pedido #${req.params.id}, que no es suyo` });
+        return res.status(404).json({ message: 'Pedido no encontrado' });
+    }
     const items = await pool.query(
         `SELECT pi.*, p.nombre, p.imagen_url FROM pedido_items pi JOIN productos p ON pi.producto_id = p.id WHERE pi.pedido_id = $1`,
         [req.params.id]
@@ -1236,17 +1349,17 @@ app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
 // Recibo / comprobante de un pedido. Lo puede ver el cliente dueño o
 // cualquier usuario interno (administrador, ventas o logística).
 app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    // Lo ve el equipo interno (sesión del panel) o el cliente dueño.
     let quien = null;
-    try {
-        const [tipo, tid] = Buffer.from(token || '', 'base64').toString('utf8').split(':');
-        if (tipo === 'cliente' && tid) quien = { tipo: 'cliente', id: Number(tid) };
-        else if (tipo === 'usuario' && tid) {
-            const u = await pool.query('SELECT id, activo FROM usuarios WHERE id = $1', [tid]);
-            if (u.rows[0] && u.rows[0].activo) quien = { tipo: 'usuario', id: Number(tid) };
-        }
-    } catch (e) { /* token inválido */ }
+    const su = await seg.leerSesion(req, 'usuario');
+    if (su) {
+        const u = await pool.query('SELECT id, activo FROM usuarios WHERE id = $1', [su.usuario_id]);
+        if (u.rows[0] && u.rows[0].activo) quien = { tipo: 'usuario', id: Number(su.usuario_id) };
+    }
+    if (!quien) {
+        const sc = await seg.leerSesion(req, 'cliente');
+        if (sc) quien = { tipo: 'cliente', id: Number(sc.cliente_id) };
+    }
     if (!quien) return res.status(401).json({ message: 'Inicia sesión para ver el comprobante' });
 
     const pr = await pool.query(
@@ -1257,6 +1370,7 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
     if (pr.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
     const pedido = pr.rows[0];
     if (quien.tipo === 'cliente' && quien.id !== Number(pedido.cliente_id)) {
+        seg.registrarEvento(req, { tipo: 'acceso_ajeno', severidad: 'media', cliente_id: quien.id, detalle: `Intentó ver el comprobante del pedido #${pedido.id}` });
         return res.status(403).json({ message: 'Este comprobante no es de tu cuenta' });
     }
 
@@ -1339,6 +1453,8 @@ app.get('/api/clientes/:id/recompensas', asyncRoute(async (req, res) => {
 
 app.put('/api/clientes/:id', asyncRoute(async (req, res) => {
     const { nombre, telefono, empresa, direccion, ciudad, estado, codigo_postal } = req.body;
+    if (nombre !== undefined && nombre !== null && !seg.nombreValido(nombre)) return res.status(400).json({ message: 'Escribe tu nombre solo con letras (2 a 150 caracteres)' });
+    if (!seg.telefonoValido(telefono)) return res.status(400).json({ message: 'El teléfono no es válido' });
     const result = await pool.query(
         `UPDATE clientes SET
             nombre        = COALESCE($1, nombre),
@@ -1356,21 +1472,33 @@ app.put('/api/clientes/:id', asyncRoute(async (req, res) => {
     res.json({ message: 'Datos actualizados', cliente: result.rows[0] });
 }));
 
-// Cambiar contraseña (verifica la actual)
-app.put('/api/clientes/:id/password', asyncRoute(async (req, res) => {
-    const { actual, nueva } = req.body;
+// Cambiar contraseña (verifica la actual). La nueva debe cumplir la
+// política; al cambiarla se cierran las sesiones de otros dispositivos.
+app.put('/api/clientes/:id/password', limiteAuth, asyncRoute(async (req, res) => {
+    const actual = String(req.body.actual || '');
+    const nueva = String(req.body.nueva || '');
     if (!actual || !nueva) return res.status(400).json({ message: 'Contraseña actual y nueva son requeridas' });
-    if (nueva.length < 6) return res.status(400).json({ message: 'La nueva contraseña debe tener al menos 6 caracteres' });
 
-    const result = await pool.query('SELECT password FROM clientes WHERE id = $1', [req.params.id]);
+    const result = await pool.query('SELECT nombre, correo, password FROM clientes WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
+    const c = result.rows[0];
 
-    const valido = await bcrypt.compare(actual, result.rows[0].password).catch(() => false);
-    if (!valido) return res.status(401).json({ message: 'La contraseña actual no es correcta' });
+    const err = seg.validarPassword(nueva, { correo: c.correo, nombre: c.nombre });
+    if (err) return res.status(400).json({ message: err });
+    const valido = await seg.compararPassword(actual, c.password);
+    if (!valido) {
+        // Adivinar la contraseña actual también cuenta como fuerza bruta.
+        const r = await seg.registrarFallo(req, { ambito: 'cliente', correo: seg.normalizarCorreo(c.correo) });
+        return res.status(400).json({ message: 'La contraseña actual no es correcta.' + (r.restantes <= 3 ? ` Te quedan ${r.restantes} intento(s).` : '') });
+    }
+    if (await seg.compararPassword(nueva, c.password)) return res.status(400).json({ message: 'La nueva contraseña debe ser distinta de la actual' });
 
-    const hash = await bcrypt.hash(nueva, 10);
-    await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [hash, req.params.id]);
-    res.json({ message: 'Contraseña actualizada' });
+    await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [await seg.hashPassword(nueva), req.params.id]);
+    const cerradas = await seg.revocarSesionesDe('cliente', req.cliente.id, 'cambio de contraseña', req.sesion.id);
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: req.cliente.id, detalle: `Cambio de contraseña; ${cerradas} sesión(es) cerradas` });
+    await enviarCorreo(pool, { para: c.correo, tipo: 'seguridad', cliente_id: req.cliente.id, asunto: 'Tu contraseña cambió',
+        cuerpo: `Hola ${c.nombre}:\n\nLa contraseña de tu cuenta Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros dispositivos` : ''}. Si no fuiste tú, recupera tu contraseña de inmediato.` });
+    res.json({ message: cerradas ? `Contraseña actualizada. Cerramos ${cerradas} sesión(es) en otros dispositivos.` : 'Contraseña actualizada', sesiones_cerradas: cerradas });
 }));
 
 // Preferencias de la cuenta (notificaciones, boletín, etc.)
@@ -1797,7 +1925,7 @@ app.put('/api/pedidos/:id/cancelar', requireCliente, asyncRoute(async (req, res)
         res.json({ message: canjeados > 0 ? `Pedido cancelado. Se devolvieron ${canjeados} puntos y el stock.` : 'Pedido cancelado y stock restaurado' });
     } catch (error) {
         await client.query('ROLLBACK');
-        res.status(400).json({ message: error.message });
+        res.status(400).json({ message: seg.mensajeSeguro(error) });
     } finally {
         client.release();
     }
@@ -1962,12 +2090,14 @@ app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) 
 app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
     const { nombre, correo, password, telefono, empresa, ciudad, estado } = req.body;
     if (!nombre || !correo || !password) return res.status(400).json({ message: 'Nombre, correo y contraseña son obligatorios' });
-    if (password.length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres' });
+    if (!seg.correoValido(seg.normalizarCorreo(correo))) return res.status(400).json({ message: 'El correo no es válido' });
+    const errPass = seg.validarPassword(password, { correo, nombre });
+    if (errPass) return res.status(400).json({ message: errPass });
 
-    const existe = await pool.query('SELECT id FROM clientes WHERE correo = $1', [correo]);
+    const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [seg.normalizarCorreo(correo)]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado' });
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await seg.hashPassword(password);
     let codigoSocio;
     for (let i = 0; i < 5; i++) {
         codigoSocio = generarCodigoSocio();
@@ -3073,7 +3203,8 @@ app.get('/api/admin/scm/reportes', asyncRoute(async (req, res) => {
     res.json({ rotacion, mensual: mensual.rows, pedidos: pedidos.rows[0] });
 }));
 
-app.get('/api/proveedores', asyncRoute(async (req, res) => {
+// Solo el equipo interno ve a los proveedores (datos de contacto).
+app.get('/api/proveedores', requireUsuario, asyncRoute(async (req, res) => {
     const result = await pool.query('SELECT * FROM proveedores WHERE activo = true ORDER BY nombre ASC');
     res.json(result.rows);
 }));
@@ -3234,7 +3365,7 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
         res.json({ message: 'Estado actualizado', pedido: result.rows[0] });
     } catch (e) {
         await client.query('ROLLBACK');
-        res.status(e.status || 400).json({ message: e.message });
+        res.status(e.status || 400).json({ message: seg.mensajeSeguro(e) });
     } finally {
         client.release();
     }
@@ -3461,8 +3592,9 @@ app.post('/api/admin/erp/clientes', requirePermiso('orden-nueva'), asyncRoute(as
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = LOWER($1)', [correo]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado en el CRM' });
 
-    const temporal = 'KZ-' + Math.random().toString(36).slice(2, 8).toUpperCase();
-    const hash = await bcrypt.hash(temporal, 10);
+    // Temporal aleatoria (generador criptográfico) que cumple la política.
+    const temporal = 'Kz#' + crypto.randomBytes(5).toString('hex').toUpperCase() + 'a';
+    const hash = await seg.hashPassword(temporal);
     let codigoSocio;
     for (let i = 0; i < 5; i++) {
         codigoSocio = generarCodigoSocio();
@@ -3662,7 +3794,7 @@ const procesarOrdenERP = asyncRoute(async (req, res) => {
         });
     } catch (e) {
         await client.query('ROLLBACK');
-        res.status(400).json({ message: e.message });
+        res.status(400).json({ message: seg.mensajeSeguro(e) });
     } finally {
         client.release();
     }
@@ -4009,6 +4141,76 @@ app.delete('/api/admin/erp/recursos/:id', asyncRoute(async (req, res) => {
 }));
 
 // =========================================================
+// ADMIN: SEGURIDAD (Etapa 5) — tablero de ataques y defensas
+// =========================================================
+app.get('/api/admin/seguridad/resumen', requireAdmin, asyncRoute(async (req, res) => {
+    const [k, porTipo, eventos, intentos, bloqueos, sesiones, topIps] = await Promise.all([
+        pool.query(`
+            SELECT (SELECT COUNT(*)::int FROM intentos_login WHERE NOT exito AND fecha > CURRENT_TIMESTAMP - INTERVAL '24 hours') AS fallidos_24h,
+                   (SELECT COUNT(*)::int FROM intentos_login WHERE exito AND fecha > CURRENT_TIMESTAMP - INTERVAL '24 hours') AS exitosos_24h,
+                   (SELECT COUNT(*)::int FROM bloqueos WHERE levantado IS NULL AND hasta > CURRENT_TIMESTAMP) AS bloqueos_activos,
+                   (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo = 'inyeccion_sql' AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS sqli_7d,
+                   (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo = 'xss' AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS xss_7d,
+                   (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo IN ('sesion_robada','token_invalido','sesion_revocada') AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS sesiones_7d,
+                   (SELECT COUNT(*)::int FROM sesiones WHERE revocada IS NULL AND expira > CURRENT_TIMESTAMP) AS sesiones_activas`),
+        pool.query(`SELECT tipo, COUNT(*)::int AS total FROM eventos_seguridad WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '7 days' GROUP BY tipo ORDER BY total DESC`),
+        pool.query(`
+            SELECT e.*, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre FROM eventos_seguridad e
+            LEFT JOIN clientes c ON c.id = e.cliente_id LEFT JOIN usuarios u ON u.id = e.usuario_id
+            ORDER BY e.fecha DESC LIMIT 150`),
+        pool.query(`SELECT * FROM intentos_login ORDER BY fecha DESC LIMIT 150`),
+        pool.query(`
+            SELECT b.*, (b.levantado IS NULL AND b.hasta > CURRENT_TIMESTAMP) AS activo, u.nombre AS levantado_por_nombre
+            FROM bloqueos b LEFT JOIN usuarios u ON u.id = b.levantado_por ORDER BY b.creado DESC LIMIT 60`),
+        pool.query(`
+            SELECT s.id, s.tipo, s.ip, s.user_agent, s.creada, s.ultimo_uso, s.expira,
+                   COALESCE(c.nombre, u.nombre) AS dueno, COALESCE(c.correo, u.email) AS correo
+            FROM sesiones s LEFT JOIN clientes c ON c.id = s.cliente_id LEFT JOIN usuarios u ON u.id = s.usuario_id
+            WHERE s.revocada IS NULL AND s.expira > CURRENT_TIMESTAMP ORDER BY s.ultimo_uso DESC LIMIT 100`),
+        pool.query(`
+            SELECT ip, COUNT(*)::int AS fallos, COUNT(DISTINCT correo)::int AS cuentas, MAX(fecha) AS ultimo
+            FROM intentos_login WHERE NOT exito AND fecha > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+            GROUP BY ip ORDER BY fallos DESC LIMIT 10`),
+    ]);
+    const C = seg.CONFIG;
+    res.json({
+        kpis: k.rows[0], eventos_por_tipo: porTipo.rows, eventos: eventos.rows, intentos: intentos.rows,
+        bloqueos: bloqueos.rows, sesiones: sesiones.rows.map((x) => ({ ...x, actual: req.sesion && x.id === req.sesion.id })), top_ips: topIps.rows,
+        config: {
+            max_fallos_cuenta: C.maxFallosCuenta, max_fallos_ip: C.maxFallosIp, ventana_min: C.ventanaMin,
+            bloqueo_cuenta_min: C.bloqueoCuentaMin, bloqueo_ip_min: C.bloqueoIpMin, horas_sesion_cliente: C.horasSesionCliente,
+            horas_sesion_equipo: C.horasSesionEquipo, inactividad_min_equipo: C.minInactividadEquipo, filtro_sql: C.filtroSQL, costo_bcrypt: C.costoBcrypt,
+        },
+    });
+}));
+app.post('/api/admin/seguridad/bloqueos/:id/levantar', requireAdmin, asyncRoute(async (req, res) => {
+    const r = await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP, levantado_por = $2 WHERE id = $1 AND levantado IS NULL RETURNING tipo, valor`, [req.params.id, req.usuario.id]);
+    if (!r.rows[0]) return res.status(404).json({ message: 'El bloqueo ya no está activo' });
+    await seg.registrarEvento(req, { tipo: 'desbloqueo', severidad: 'baja', usuario_id: req.usuario.id, detalle: `Se levantó el bloqueo de ${r.rows[0].tipo} ${r.rows[0].valor}` });
+    res.json({ message: 'Bloqueo levantado' });
+}));
+app.post('/api/admin/seguridad/sesiones/:id/revocar', requireAdmin, asyncRoute(async (req, res) => {
+    if (req.sesion && Number(req.params.id) === Number(req.sesion.id)) return res.status(400).json({ message: 'Esa es tu sesión actual: usa Cerrar sesión' });
+    await seg.revocarSesion(req.params.id, `revocada por ${req.usuario.nombre}`);
+    await seg.registrarEvento(req, { tipo: 'sesion_revocada_admin', severidad: 'baja', usuario_id: req.usuario.id, detalle: `Sesión #${req.params.id} revocada desde el panel` });
+    res.json({ message: 'Sesión cerrada' });
+}));
+
+// Correos que "envió" el sistema (sin SMTP quedan en correos_salida):
+// bienvenida, recuperación de contraseña y aviso de cambio de contraseña.
+app.get('/api/admin/correos', requireAdmin, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT id, para, asunto, tipo, fecha, LEFT(cuerpo, 160) AS vista FROM correos_salida
+         ORDER BY fecha DESC LIMIT 100`);
+    res.json(r.rows);
+}));
+app.get('/api/admin/correos/:id', requireAdmin, asyncRoute(async (req, res) => {
+    const r = await pool.query('SELECT * FROM correos_salida WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ message: 'Correo no encontrado' });
+    res.json(r.rows[0]);
+}));
+
+// =========================================================
 // ADMIN: GARANTÍAS EXTENDIDAS
 // =========================================================
 function conVigencia(g) {
@@ -4111,12 +4313,14 @@ app.get('/api/admin/roles', requireUsuario, asyncRoute(async (req, res) => {
 app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     const { nombre, email, password, telefono, rol, activo } = req.body;
     if (!nombre || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña son obligatorios' });
-    if (password.length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres' });
+    if (!seg.correoValido(seg.normalizarCorreo(email))) return res.status(400).json({ message: 'El email no es válido' });
+    const errPass = seg.validarPassword(password, { correo: email, nombre });
+    if (errPass) return res.status(400).json({ message: errPass });
     if (!ROLES_INTERNOS[rol]) return res.status(400).json({ message: 'Rol no válido' });
-    const existe = await pool.query('SELECT id FROM usuarios WHERE email = $1', [email]);
+    const existe = await pool.query('SELECT id FROM usuarios WHERE LOWER(email) = $1', [seg.normalizarCorreo(email)]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'El email ya está registrado' });
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await seg.hashPassword(password);
     const result = await pool.query(
         `INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, nombre, email, telefono, rol, activo`,
@@ -4164,19 +4368,21 @@ app.get('/api', (req, res) => res.json({ status: 'ok', message: 'API Kozmok acti
 // =========================================================
 
 // Quién hace la llamada: cliente de la tienda o usuario interno. Para las
-// rutas que comparten los dos (pagos, tickets).
+// rutas que comparten los dos (pagos, tickets). Si el navegador tiene las
+// dos sesiones abiertas, las pantallas del panel mandan "X-Kz-Panel: 1"
+// para que gane la del equipo; la tienda usa la del cliente.
 async function quienLlama(req) {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token) return null;
-    const [tipo, id] = Buffer.from(token, 'base64').toString('utf8').split(':');
-    if (tipo === 'cliente' && id) {
-        const r = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE id = $1 AND estado_cliente = 'activo'`, [id]);
-        return r.rows[0] ? { tipo: 'cliente', ...r.rows[0] } : null;
-    }
-    if (tipo === 'usuario' && id) {
-        const r = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [id]);
-        return r.rows[0] && r.rows[0].activo ? { tipo: 'usuario', ...r.rows[0] } : null;
+    const orden = req.headers['x-kz-panel'] === '1' ? ['usuario', 'cliente'] : ['cliente', 'usuario'];
+    for (const tipo of orden) {
+        const s = await seg.leerSesion(req, tipo);
+        if (!s) continue;
+        if (tipo === 'cliente') {
+            const r = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE id = $1 AND estado_cliente = 'activo'`, [s.cliente_id]);
+            if (r.rows[0]) return { tipo: 'cliente', ...r.rows[0] };
+        } else {
+            const r = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [s.usuario_id]);
+            if (r.rows[0] && r.rows[0].activo) return { tipo: 'usuario', ...r.rows[0] };
+        }
     }
     return null;
 }
@@ -4324,7 +4530,7 @@ const listarPromociones = asyncRoute(async (req, res) => {
     res.json(r.rows);
 });
 const crearPromocion = asyncRoute(async (req, res) => {
-    let p; try { p = leerPromocion(req.body); } catch (e) { return res.status(400).json({ message: e.message }); }
+    let p; try { p = leerPromocion(req.body); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     const r = await pool.query(
         `INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
@@ -4335,7 +4541,7 @@ const crearPromocion = asyncRoute(async (req, res) => {
 const editarPromocion = asyncRoute(async (req, res) => {
     const cur = await pool.query('SELECT * FROM promociones WHERE id = $1', [req.params.id]);
     if (!cur.rows.length) return res.status(404).json({ message: 'Promoción no encontrada' });
-    let p; try { p = leerPromocion({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: e.message }); }
+    let p; try { p = leerPromocion({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     await pool.query(
         `UPDATE promociones SET nombre=$1, descripcion=$2, tipo_descuento=$3, valor=$4, alcance=$5, categoria_id=$6, producto_id=$7,
              fecha_inicio=$8, fecha_fin=$9, estado=$10, mostrar_banner=$11 WHERE id=$12`,
@@ -4388,7 +4594,7 @@ const listarImpuestos = asyncRoute(async (req, res) => {
     res.json(todos ? { impuestos: filas, tasa_total: tasa, ejemplo: { subtotal: 1000, impuesto: redondear(1000 * tasa / 100), total: redondear(1000 * (1 + tasa / 100)) } } : filas);
 });
 const crearImpuesto = asyncRoute(async (req, res) => {
-    let i; try { i = leerImpuesto(req.body); } catch (e) { return res.status(400).json({ message: e.message }); }
+    let i; try { i = leerImpuesto(req.body); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     try {
         const r = await pool.query(`INSERT INTO impuestos (nombre, porcentaje, descripcion, estado) VALUES ($1,$2,$3,$4) RETURNING *`,
             [i.nombre, i.porcentaje, i.descripcion, i.estado]);
@@ -4401,7 +4607,7 @@ const crearImpuesto = asyncRoute(async (req, res) => {
 const editarImpuesto = asyncRoute(async (req, res) => {
     const cur = await pool.query('SELECT * FROM impuestos WHERE id = $1', [req.params.id]);
     if (!cur.rows.length) return res.status(404).json({ message: 'Impuesto no encontrado' });
-    let i; try { i = leerImpuesto({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: e.message }); }
+    let i; try { i = leerImpuesto({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     try {
         const r = await pool.query(`UPDATE impuestos SET nombre=$1, porcentaje=$2, descripcion=$3, estado=$4 WHERE id=$5 RETURNING *`,
             [i.nombre, i.porcentaje, i.descripcion, i.estado, req.params.id]);
@@ -4439,7 +4645,7 @@ app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
     const pend = movs.rows.filter((x) => x.estado === 'pendiente').reduce((a, x) => a + Number(x.monto), 0);
     res.json({ ...m, saldo_pendiente: redondear(pend), recarga_min: RECARGA_MIN, recarga_max: RECARGA_MAX, movimientos: movs.rows });
 }));
-app.post('/api/monedero/recargar', requireCliente, asyncRoute(async (req, res) => {
+app.post('/api/monedero/recargar', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
     const monto = redondear(req.body.monto);
     const metodo = ['tarjeta', 'paypal', 'transferencia'].includes(req.body.metodo) ? req.body.metodo : null;
     if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres recargar' });
@@ -4475,7 +4681,7 @@ app.post('/api/monedero/recargar', requireCliente, asyncRoute(async (req, res) =
         });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
-        res.status(400).json({ message: e.message });
+        res.status(400).json({ message: seg.mensajeSeguro(e) });
     } finally { client.release(); }
 }));
 
@@ -4549,7 +4755,7 @@ app.post('/api/admin/monederos/:clienteId/ajuste', asyncRoute(async (req, res) =
         res.status(201).json({ message: 'Ajuste aplicado', saldo: m.saldo, movimiento: mov });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
-        res.status(400).json({ message: e.message });
+        res.status(400).json({ message: seg.mensajeSeguro(e) });
     } finally { client.release(); }
 }));
 app.put('/api/admin/monederos/:clienteId/estado', asyncRoute(async (req, res) => {
@@ -4580,7 +4786,7 @@ app.put('/api/admin/monederos/movimientos/:id', asyncRoute(async (req, res) => {
         res.json({ message: accion === 'rechazar' ? 'Recarga rechazada' : 'Recarga confirmada y saldo acreditado' });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
-        res.status(400).json({ message: e.message });
+        res.status(400).json({ message: seg.mensajeSeguro(e) });
     } finally { client.release(); }
 }));
 
@@ -4635,11 +4841,102 @@ app.put('/api/atencion/ticket/:id/respuesta', requireInterno('soporte'), asyncRo
 //   POST /auth/registro   POST /auth/login (con "correo" = cliente; con "email" = equipo)
 //   POST /auth/logout     GET /auth/perfil     PUT /auth/perfil
 // ---------------------------------------------------------
-app.post('/api/auth/logout', (req, res) => {
-    // Los tokens no se guardan en el servidor: cerrar sesión es borrar el
-    // token del navegador (lo hace el front). Se responde ok para el flujo.
+// Cerrar sesión: la sesión se revoca en el servidor (aunque alguien haya
+// copiado la cookie, ya no sirve) y se borra la cookie.
+app.post('/api/auth/logout', asyncRoute(async (req, res) => {
+    const tipos = req.body && ['cliente', 'usuario'].includes(req.body.tipo) ? [req.body.tipo] : ['cliente', 'usuario'];
+    for (const tipo of tipos) {
+        const token = seg.tokenDe(req, tipo);
+        if (token) await pool.query(
+            `UPDATE sesiones SET revocada = CURRENT_TIMESTAMP, motivo_revocacion = 'cerró sesión'
+             WHERE token_hash = $1 AND revocada IS NULL`, [seg.sha256(token)]);
+        seg.borrarCookie(req, res, seg.COOKIE[tipo]);
+    }
     res.json({ success: true, message: 'Sesión cerrada' });
-});
+}));
+
+// Estado de la sesión de la tienda sin dar 401: lo usa la barra de
+// navegación para limpiar los datos del navegador si la sesión venció.
+app.get('/api/auth/estado', asyncRoute(async (req, res) => {
+    const id = await clienteDeSesion(req);
+    if (!id) return res.json({ cliente: null });
+    const r = await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1 AND estado_cliente = 'activo'`, [id]);
+    res.json({ cliente: r.rows[0] || null });
+}));
+
+// Recuperar contraseña: siempre responde lo mismo (no revela si el correo
+// existe). Si existe, "envía" un enlace de un solo uso que vence en 30 min.
+app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
+    const correo = seg.normalizarCorreo(req.body.correo);
+    const generico = { message: 'Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja.' };
+    if (!seg.correoValido(correo)) return res.status(400).json({ message: 'Escribe un correo válido' });
+    const c = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE LOWER(correo) = $1 AND estado_cliente = 'activo'`, [correo]);
+    if (!c.rows[0]) { await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', detalle: `Recuperación pedida para un correo no registrado: ${correo}` }); return res.json(generico); }
+    const recientes = await pool.query(`SELECT COUNT(*)::int AS n FROM recuperaciones WHERE cliente_id = $1 AND fecha > CURRENT_TIMESTAMP - INTERVAL '1 hour'`, [c.rows[0].id]);
+    if (recientes.rows[0].n >= 3) return res.json(generico);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await pool.query(`INSERT INTO recuperaciones (cliente_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
+        [c.rows[0].id, seg.sha256(token), seg.ipDe(req)]);
+    const enlace = `${req.protocol || 'http'}://${req.headers.host}/restablecer.html?token=${token}`;
+    await enviarCorreo(pool, {
+        para: c.rows[0].correo, tipo: 'recuperacion', cliente_id: c.rows[0].id,
+        asunto: 'Restablece tu contraseña de Kozmok',
+        cuerpo: `Hola ${c.rows[0].nombre}:\n\nRecibimos una solicitud para restablecer tu contraseña. Abre este enlace (vence en 30 minutos y solo sirve una vez):\n${enlace}\n\nSi no fuiste tú, ignora este correo: tu contraseña no cambia.`,
+    });
+    res.json(generico);
+}));
+
+app.post('/api/auth/restablecer', limiteAuth, asyncRoute(async (req, res) => {
+    const token = String(req.body.token || '');
+    const nueva = String(req.body.nueva || req.body.password || '');
+    if (!/^[A-Za-z0-9_-]{30,60}$/.test(token)) return res.status(400).json({ message: 'El enlace no es válido' });
+    const r = await pool.query(
+        `SELECT r.id, r.cliente_id, c.correo, c.nombre FROM recuperaciones r JOIN clientes c ON c.id = r.cliente_id
+         WHERE r.token_hash = $1 AND r.usado IS NULL AND r.expira > CURRENT_TIMESTAMP`, [seg.sha256(token)]);
+    const rec = r.rows[0];
+    if (!rec) {
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'media', detalle: 'Se usó un enlace de recuperación inválido, vencido o ya usado' });
+        return res.status(400).json({ message: 'El enlace ya venció o ya se usó. Pide uno nuevo.' });
+    }
+    const err = seg.validarPassword(nueva, { correo: rec.correo, nombre: rec.nombre });
+    if (err) return res.status(400).json({ message: err });
+    await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [await seg.hashPassword(nueva), rec.cliente_id]);
+    await pool.query('UPDATE recuperaciones SET usado = CURRENT_TIMESTAMP WHERE cliente_id = $1 AND usado IS NULL', [rec.cliente_id]);
+    const cerradas = await seg.revocarSesionesDe('cliente', rec.cliente_id, 'contraseña restablecida');
+    await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`cliente:${seg.normalizarCorreo(rec.correo)}`]);
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: rec.cliente_id, detalle: `Contraseña restablecida por enlace; ${cerradas} sesión(es) cerradas` });
+    await enviarCorreo(pool, { para: rec.correo, tipo: 'seguridad', cliente_id: rec.cliente_id, asunto: 'Tu contraseña cambió',
+        cuerpo: `Hola ${rec.nombre}:\n\nTu contraseña se restableció y cerramos tus sesiones abiertas. Si no fuiste tú, contáctanos de inmediato.` });
+    res.json({ message: 'Contraseña actualizada. Inicia sesión con tu nueva contraseña.' });
+}));
+
+// Sesiones abiertas del cliente (pantalla Seguridad de su cuenta).
+app.get('/api/auth/sesiones', requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT id, ip, user_agent, creada, ultimo_uso, expira FROM sesiones
+         WHERE cliente_id = $1 AND revocada IS NULL AND expira > CURRENT_TIMESTAMP ORDER BY ultimo_uso DESC`, [req.cliente.id]);
+    res.json(r.rows.map((s) => ({ ...s, actual: s.id === req.sesion.id })));
+}));
+app.delete('/api/auth/sesiones/:id', requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `UPDATE sesiones SET revocada = CURRENT_TIMESTAMP, motivo_revocacion = 'cerrada por el cliente'
+         WHERE id = $1 AND cliente_id = $2 AND revocada IS NULL RETURNING id`, [req.params.id, req.cliente.id]);
+    if (!r.rows[0]) return res.status(404).json({ message: 'Sesión no encontrada' });
+    res.json({ message: 'Sesión cerrada' });
+}));
+app.post('/api/auth/sesiones/cerrar-otras', requireCliente, asyncRoute(async (req, res) => {
+    const n = await seg.revocarSesionesDe('cliente', req.cliente.id, 'cerrada por el cliente', req.sesion.id);
+    res.json({ message: n ? `Se cerraron ${n} sesión(es) en otros dispositivos` : 'No había otras sesiones abiertas' });
+}));
+// Últimos inicios de sesión (buenos y fallidos) para que el cliente
+// note si alguien está intentando entrar a su cuenta.
+app.get('/api/auth/actividad', requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT fecha, ip, user_agent, exito, motivo FROM intentos_login
+         WHERE tipo = 'cliente' AND correo = LOWER($1) ORDER BY fecha DESC LIMIT 15`, [req.cliente.correo]);
+    res.json(r.rows);
+}));
+
 const CAMPOS_PERFIL = 'id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal, estado_cliente, etapa_crm, puntos, codigo_socio, fecha_registro, ultimo_login';
 app.get('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
     const r = await pool.query(`SELECT ${CAMPOS_PERFIL} FROM clientes WHERE id = $1`, [req.cliente.id]);
@@ -4649,7 +4946,8 @@ app.get('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
 app.put('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
     const b = req.body;
     const nombre = b.nombre !== undefined ? String(b.nombre).trim() : undefined;
-    if (nombre !== undefined && nombre.length < 2) return res.status(400).json({ message: 'Escribe tu nombre' });
+    if (nombre !== undefined && !seg.nombreValido(nombre)) return res.status(400).json({ message: 'Escribe tu nombre solo con letras (2 a 150 caracteres)' });
+    if (!seg.telefonoValido(b.telefono)) return res.status(400).json({ message: 'El teléfono no es válido' });
     const r = await pool.query(
         `UPDATE clientes SET
             nombre = COALESCE($1, nombre), telefono = COALESCE($2, telefono), empresa = COALESCE($3, empresa),
@@ -4663,6 +4961,84 @@ app.put('/api/auth/perfil', requireCliente, asyncRoute(async (req, res) => {
 // Bases cargadas con una versión anterior de database.sql: agrega lo que
 // falte sin tener que recargar todo (y sin tocar lo que ya existe).
 async function migrarEsquema() {
+    // Etapa 5 (seguridad): sesiones, intentos, bloqueos, bitácora,
+    // recuperación de contraseña y correos.
+    await pool.query(`CREATE TABLE IF NOT EXISTS sesiones (
+    id                SERIAL PRIMARY KEY,
+    token_hash        CHAR(64) UNIQUE NOT NULL,
+    tipo              VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    cliente_id        INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+    usuario_id        INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    ip                VARCHAR(64),
+    user_agent        VARCHAR(300),
+    huella            CHAR(64),
+    creada            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ultimo_uso        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expira            TIMESTAMP NOT NULL,
+    revocada          TIMESTAMP,
+    motivo_revocacion VARCHAR(80),
+    CONSTRAINT sesiones_dueno_check CHECK (
+        (tipo = 'cliente' AND cliente_id IS NOT NULL AND usuario_id IS NULL) OR
+        (tipo = 'usuario' AND usuario_id IS NOT NULL AND cliente_id IS NULL))
+)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sesiones_cliente ON sesiones(cliente_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sesiones_usuario ON sesiones(usuario_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS intentos_login (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    correo      VARCHAR(150),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    exito       BOOLEAN NOT NULL,
+    motivo      VARCHAR(60),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_intentos_correo ON intentos_login(tipo, correo, fecha DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_intentos_ip     ON intentos_login(ip, fecha DESC)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS bloqueos (
+    id             SERIAL PRIMARY KEY,
+    tipo           VARCHAR(10) NOT NULL CHECK (tipo IN ('ip','cuenta')),
+    valor          VARCHAR(170) NOT NULL,      
+    motivo         VARCHAR(200),
+    hasta          TIMESTAMP NOT NULL,
+    creado         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    levantado      TIMESTAMP,
+    levantado_por  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bloqueos_valor ON bloqueos(tipo, valor, hasta)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS eventos_seguridad (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(30) NOT NULL,          
+    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('baja','media','alta')),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    metodo      VARCHAR(8),
+    ruta        VARCHAR(200),
+    detalle     VARCHAR(500),
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    usuario_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eventos_fecha ON eventos_seguridad(fecha DESC)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS recuperaciones (
+    id          SERIAL PRIMARY KEY,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    token_hash  CHAR(64) UNIQUE NOT NULL,
+    expira      TIMESTAMP NOT NULL,
+    usado       TIMESTAMP,
+    ip          VARCHAR(64),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS correos_salida (
+    id          SERIAL PRIMARY KEY,
+    para        VARCHAR(150) NOT NULL,
+    asunto      VARCHAR(200) NOT NULL,
+    cuerpo      TEXT NOT NULL,
+    tipo        VARCHAR(20) NOT NULL DEFAULT 'general',
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
     await pool.query('ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS direccion VARCHAR(200)');
     const costo = await pool.query(
         `SELECT 1 FROM information_schema.columns WHERE table_name = 'productos' AND column_name = 'costo_unitario'`
@@ -4730,7 +5106,9 @@ app.listen(PORT, async () => {
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');
         console.log(`Base de datos: conectada (${dbConfig.database}@${dbConfig.host}:${dbConfig.port}) - ${r.rows[0].n} productos`);
+        if (usaValoresPorDefecto) console.log('Aviso: no hay archivo .env; se usa la contraseña de PostgreSQL por defecto. Copia .env.example como .env.');
         await migrarEsquema();
+        console.log(`Seguridad: sesiones en cookie HttpOnly, bloqueo tras ${seg.CONFIG.maxFallosCuenta} intentos, filtro SQL "${seg.CONFIG.filtroSQL}".`);
         const e4 = await pool.query(`SELECT to_regclass('public.monederos') AS t`);
         if (!e4.rows[0].t) console.error('  Faltan las tablas de la Etapa 4 (carrito, pagos, promociones, impuestos, monedero): vuelve a cargar db/database.sql.');
         await tareasPeriodicas();

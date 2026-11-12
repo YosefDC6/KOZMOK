@@ -56,7 +56,7 @@ async function montarCuenta(key, render) {
         irALogin();
         return;
     }
-    Sesion.guardarCliente({ ...sesion, ...PERFIL }, localStorage.getItem('kz_token'));
+    Sesion.guardarCliente({ ...sesion, ...PERFIL });
     window.PERFIL = PERFIL;
     document.getElementById('cn-nombre').textContent = PERFIL.nombre;
     document.getElementById('cn-correo').textContent = PERFIL.correo;

@@ -30,15 +30,16 @@
             <div class="field"><label>Correo electrónico</label><input type="email" id="correo" required autocomplete="email" /></div>
 
             <div class="field">
-                <label>Contraseña (mín. 6)</label>
+                <label>Contraseña</label>
                 <div style="display:flex;gap:8px">
-                    <input type="password" id="password" minlength="6" required autocomplete="new-password" oninput="medirPass()" />
+                    <input type="password" id="password" minlength="8" maxlength="72" required autocomplete="new-password" oninput="medirPass()" />
                     <button type="button" class="btn btn-outline btn-sm" id="toggle-pass" aria-label="Mostrar u ocultar contraseña" data-ic="eye" data-ic-size="16"></button>
                 </div>
                 <div class="pass-meter" id="pass-meter" hidden>
                     <div class="pm-track"><span id="pm-fill"></span></div>
                     <span class="pm-label" id="pm-label"></span>
                 </div>
+                <div id="reglas-slot"></div>
             </div>
 
             <div class="field-row">
@@ -55,8 +56,8 @@
                 <div class="field"><label>Ciudad</label><input type="text" id="ciudad" /></div>
                 <div class="field"><label>Estado</label><input type="text" id="estado" /></div>
             </div>
-            <div id="registro-error" style="color:var(--danger);font-size:.85rem;margin-bottom:12px;display:none"></div>
-            <button class="btn btn-primary" style="width:100%" type="submit">Crear cuenta</button>
+            <div id="registro-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="btn-registrar">Crear cuenta</button>
         </form>
         <p style="margin-top:16px;text-align:center">¿Ya tienes cuenta? <a href="/login.html">Inicia sesión</a></p>
     </div>
@@ -76,8 +77,8 @@ if (sesion) {
     document.getElementById('auth-title').textContent = 'Ya tienes una cuenta';
     document.getElementById('auth-sub').textContent = 'Estás dentro con una sesión activa.';
     document.getElementById('ya-nombre').textContent = sesion.nombre;
-    document.getElementById('btn-otra').addEventListener('click', () => {
-        Sesion.cerrarSesionCliente();
+    document.getElementById('btn-otra').addEventListener('click', async () => {
+        await Sesion.cerrarSesionCliente();
         location.reload();
     });
 }
@@ -98,12 +99,12 @@ const NIVELES_PASS = [
 function fuerzaPassword(pw) {
     if (!pw) return 0;
     let s = 0;
-    if (pw.length >= 6) s++;
+    if (pw.length >= 8) s++;
     if (pw.length >= 10) s++;
     if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
     if (/\d/.test(pw)) s++;
     if (/[^A-Za-z0-9]/.test(pw)) s++;
-    if (pw.length < 6) s = Math.min(s, 1);
+    if (pw.length < 8) s = Math.min(s, 1);
     return Math.min(s, 4);
 }
 function medirPass() {
@@ -136,10 +137,14 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     const password = document.getElementById('password').value;
     const password2 = document.getElementById('password2').value;
     const errorBox = document.getElementById('registro-error');
-    errorBox.style.display = 'none';
+    const mostrar = (t) => { errorBox.textContent = t; errorBox.hidden = false; };
+    errorBox.hidden = true;
 
-    if (password.length < 6) { errorBox.textContent = 'La contraseña debe tener al menos 6 caracteres.'; errorBox.style.display = 'block'; return; }
-    if (password !== password2) { errorBox.textContent = 'Las contraseñas no coinciden.'; errorBox.style.display = 'block'; return; }
+    const falta = ReglasPass.faltante(password);
+    if (falta) return mostrar(falta);
+    if (password !== password2) return mostrar('Las contraseñas no coinciden.');
+    const btn = document.getElementById('btn-registrar');
+    btn.disabled = true; btn.textContent = 'Creando cuenta…';
 
     const body = {
         nombre: document.getElementById('nombre').value,
@@ -152,7 +157,7 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     };
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
-        Sesion.guardarCliente(data.cliente, data.token);
+        Sesion.guardarCliente(data.cliente);
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `¡Cuenta creada! Tu carrito (${r.pasados} producto(s)) ya está en tu cuenta.` : '¡Cuenta creada!', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));
@@ -161,10 +166,14 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
         const destino = next && next.startsWith('/') && !next.startsWith('//') ? next : (r.pasados ? '/carrito.html' : '/perfil.html');
         setTimeout(() => location.href = destino, 600);
     } catch (err) {
-        errorBox.textContent = err.message;
-        errorBox.style.display = 'block';
+        mostrar(err.message);
+        btn.disabled = false; btn.textContent = 'Crear cuenta';
     }
 });
+
+// Lista de reglas de la contraseña (se van marcando al escribir).
+document.getElementById('reglas-slot').outerHTML = ReglasPass.html('pass-reglas');
+ReglasPass.enlazar(document.getElementById('password'), document.getElementById('pass-reglas'));
 
 // Conserva a dónde volver (p. ej. el carrito) al cambiar entre entrar y crear cuenta.
 (() => {

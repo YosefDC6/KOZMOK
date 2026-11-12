@@ -4,19 +4,17 @@
 const API_BASE = '/api';
 
 async function api(path, options = {}) {
-    // En páginas del equipo interno (/admin/*) se usa el token de admin;
-    // en la tienda, el token del cliente. Nunca se mezclan: si se hiciera
-    // `admin_token || token`, un token de admin viejo en el navegador se
-    // mandaría en la tienda, el servidor lo rechazaría (401) y el guardia
-    // de cuenta rebotaría al login una y otra vez.
+    // Etapa 5: la sesión viaja sola en una cookie HttpOnly (kz_sesion en la
+    // tienda, kz_admin en el panel) que el JavaScript no puede leer, así
+    // que un script inyectado tampoco puede robarla. Las pantallas del panel
+    // avisan con "X-Kz-Panel" para que, si el navegador tiene las dos
+    // sesiones abiertas, las rutas compartidas usen la del equipo.
     const esPanel = location.pathname.startsWith('/admin/');
-    const token = esPanel
-        ? localStorage.getItem('kz_admin_token')
-        : localStorage.getItem('kz_token');
     const res = await fetch(API_BASE + path, {
+        credentials: 'same-origin',
         headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: 'Bearer ' + token } : {}),
+            ...(esPanel ? { 'X-Kz-Panel': '1' } : {}),
         },
         ...options,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -26,7 +24,6 @@ async function api(path, options = {}) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
         if (res.status === 401 && location.pathname.startsWith('/admin/') && !location.pathname.endsWith('login.html')) {
             localStorage.removeItem('kz_usuario');
-            localStorage.removeItem('kz_admin_token');
             location.href = '/admin/login.html';
         }
         throw new Error(data.message || data.error || 'Error en la solicitud');
@@ -57,29 +54,65 @@ function ilustracionProducto(p) {
 }
 function imagenProducto(p) { return (p && p.imagen_url) || ilustracionProducto(p); }
 
+// En el navegador solo se guardan los datos para pintar la pantalla
+// (nombre, correo...). La sesión real es la cookie HttpOnly del servidor.
 const Sesion = {
-    guardarCliente(cliente, token) {
+    guardarCliente(cliente) {
         localStorage.setItem('kz_cliente', JSON.stringify(cliente));
-        localStorage.setItem('kz_token', token);
     },
     cliente() {
         try { return JSON.parse(localStorage.getItem('kz_cliente')); } catch { return null; }
     },
-    guardarUsuario(usuario, token) {
+    guardarUsuario(usuario) {
         localStorage.setItem('kz_usuario', JSON.stringify(usuario));
-        localStorage.setItem('kz_admin_token', token);
     },
     usuario() {
         try { return JSON.parse(localStorage.getItem('kz_usuario')); } catch { return null; }
     },
+    // Cierra la sesión también en el servidor (la cookie copiada deja de servir).
     cerrarSesionCliente() {
         localStorage.removeItem('kz_cliente');
-        localStorage.removeItem('kz_token');
+        return Sesion._salir('cliente');
     },
     cerrarSesionUsuario() {
         localStorage.removeItem('kz_usuario');
-        localStorage.removeItem('kz_admin_token');
-    }
+        return Sesion._salir('usuario');
+    },
+    _salir(tipo) {
+        return fetch(API_BASE + '/auth/logout', {
+            method: 'POST', credentials: 'same-origin', keepalive: true,
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipo }),
+        }).catch(() => {});
+    },
+};
+// Tokens de la versión anterior (Base64 en localStorage): ya no sirven.
+try { localStorage.removeItem('kz_token'); localStorage.removeItem('kz_admin_token'); } catch { /* sin almacenamiento */ }
+
+// ---- Política de contraseñas (las mismas reglas que valida el servidor
+// en seguridad.js → validarPassword) ----
+const ReglasPass = {
+    reglas: [
+        { k: 'len', t: '8 caracteres o más',              ok: (pw) => pw.length >= 8 },
+        { k: 'may', t: 'Mayúsculas y minúsculas',         ok: (pw) => /[a-z]/.test(pw) && /[A-Z]/.test(pw) },
+        { k: 'num', t: 'Al menos un número',              ok: (pw) => /\d/.test(pw) },
+        { k: 'sim', t: 'Al menos un símbolo (# ! $ % …)', ok: (pw) => /[^A-Za-z0-9]/.test(pw) },
+    ],
+    html(id) {
+        return `<ul class="pass-reglas" id="${id}" aria-live="polite">${ReglasPass.reglas.map((r) => `<li data-r="${r.k}">${r.t}</li>`).join('')}</ul>`;
+    },
+    // Marca en verde las reglas que ya se cumplen mientras se escribe.
+    enlazar(input, lista) {
+        const pintar = () => lista.querySelectorAll('li').forEach((li) => {
+            const r = ReglasPass.reglas.find((x) => x.k === li.dataset.r);
+            li.classList.toggle('ok', r.ok(input.value));
+        });
+        input.addEventListener('input', pintar);
+        pintar();
+    },
+    faltante(pw) {
+        const r = ReglasPass.reglas.find((x) => !x.ok(pw || ''));
+        return r ? `La contraseña necesita: ${r.t.toLowerCase()}.` : null;
+    },
 };
 
 // Manda al login guardando a dónde volver después
@@ -144,6 +177,21 @@ function precioHTML(p, { clase = '' } = {}) {
 function formatoFecha(fecha) {
     if (!fecha) return '—';
     return new Date(fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function formatoFechaHora(fecha) {
+    if (!fecha) return '—';
+    return new Date(fecha).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+// Escapa texto antes de meterlo en HTML (contra XSS al mostrar datos).
+function escHTML(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// Navegador legible a partir del User-Agent (para "sesiones abiertas").
+function navegadorDe(ua) {
+    ua = String(ua || '');
+    const nav = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : /curl|node|python|axios|Postman/i.test(ua) ? 'Script / API' : 'Navegador';
+    const so = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
+    return so ? `${nav} en ${so}` : nav;
 }
 
 // ---- Carrito sin sesión ----

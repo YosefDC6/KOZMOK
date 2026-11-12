@@ -39,11 +39,13 @@
                     <button type="button" class="btn btn-outline btn-sm" id="toggle-pass" aria-label="Mostrar u ocultar contraseña" data-ic="eye" data-ic-size="16"></button>
                 </div>
             </div>
-            <div id="login-error" style="color:var(--danger);font-size:.85rem;margin-bottom:12px;display:none"></div>
-            <button class="btn btn-primary" style="width:100%" type="submit">Entrar</button>
+            <div class="auth-olvide"><a href="/recuperar.html" id="link-olvide">¿Olvidaste tu contraseña?</a></div>
+            <div id="login-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="btn-entrar">Entrar</button>
         </form>
         <p style="margin-top:16px;text-align:center">¿No tienes cuenta? <a href="/registro.html">Crear cuenta</a></p>
         <p style="text-align:center;font-size:.78rem;color:var(--text-muted)">Demo: mariana@correo.com / Demo#KZ2026</p>
+        <p class="auth-nota"><span data-ic="lock" data-ic-size="13"></span> Tu sesión se guarda en una cookie protegida. Tras 5 intentos fallidos la cuenta se bloquea 15 minutos.</p>
     </div>
 </div>
 
@@ -69,8 +71,8 @@ if (sesion) {
     document.getElementById('auth-title').textContent = 'Ya tienes sesión';
     document.getElementById('auth-sub').textContent = 'Continúa a tu perfil o entra con otra cuenta.';
     document.getElementById('ya-nombre').textContent = sesion.nombre;
-    document.getElementById('btn-otra').addEventListener('click', () => {
-        Sesion.cerrarSesionCliente();
+    document.getElementById('btn-otra').addEventListener('click', async () => {
+        await Sesion.cerrarSesionCliente();
         location.reload();
     });
 }
@@ -85,17 +87,22 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     const correo = document.getElementById('correo').value;
     const password = document.getElementById('password').value;
     const errorBox = document.getElementById('login-error');
-    errorBox.style.display = 'none';
+    const btn = document.getElementById('btn-entrar');
+    errorBox.hidden = true;
+    btn.disabled = true; btn.textContent = 'Verificando…';
     try {
         const data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password } });
-        Sesion.guardarCliente(data.cliente, data.token);
+        Sesion.guardarCliente(data.cliente);
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));
         setTimeout(() => location.href = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext(), 500);
     } catch (err) {
         errorBox.textContent = err.message;
-        errorBox.style.display = 'block';
+        errorBox.classList.toggle('bloqueado', /bloquead/i.test(err.message));
+        errorBox.hidden = false;
+        document.getElementById('password').value = '';
+        btn.disabled = false; btn.textContent = 'Entrar';
     }
 });
 

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nueva contraseña · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="auth-wrap">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="lock" data-ic-size="28"></div>
+        <h1>Nueva contraseña</h1>
+        <p>Crea una contraseña nueva para tu cuenta. Al guardarla cerramos tus sesiones abiertas.</p>
+    </div>
+
+    <div class="card" id="form-card">
+        <form id="form-restablecer">
+            <div class="field">
+                <label for="nueva">Nueva contraseña</label>
+                <input type="password" id="nueva" required maxlength="72" autocomplete="new-password" />
+                <div id="reglas-slot"></div>
+            </div>
+            <div class="field">
+                <label for="rep">Repetir contraseña</label>
+                <input type="password" id="rep" required autocomplete="new-password" />
+            </div>
+            <div id="res-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="btn-guardar">Guardar contraseña</button>
+        </form>
+    </div>
+
+    <div class="card" id="sin-token" hidden>
+        <p style="margin-top:0;color:var(--text)">Este enlace no es válido. Pide uno nuevo desde "¿Olvidaste tu contraseña?".</p>
+        <a class="btn btn-primary" style="width:100%" href="/recuperar.html">Pedir un enlace nuevo</a>
+    </div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+// El token llega en la URL; se quita de la barra de direcciones para que
+// no quede en el historial ni se comparta por accidente.
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+if (TOKEN) history.replaceState(null, '', location.pathname);
+if (!/^[A-Za-z0-9_-]{30,60}$/.test(TOKEN)) {
+    document.getElementById('form-card').hidden = true;
+    document.getElementById('sin-token').hidden = false;
+}
+document.getElementById('reglas-slot').outerHTML = ReglasPass.html('pass-reglas');
+ReglasPass.enlazar(document.getElementById('nueva'), document.getElementById('pass-reglas'));
+
+document.getElementById('form-restablecer').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nueva = document.getElementById('nueva').value;
+    const err = document.getElementById('res-error');
+    const mostrar = (t) => { err.textContent = t; err.hidden = false; };
+    err.hidden = true;
+    const falta = ReglasPass.faltante(nueva);
+    if (falta) return mostrar(falta);
+    if (nueva !== document.getElementById('rep').value) return mostrar('Las contraseñas no coinciden.');
+    const btn = document.getElementById('btn-guardar');
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    try {
+        const r = await api('/auth/restablecer', { method: 'POST', body: { token: TOKEN, nueva } });
+        localStorage.removeItem('kz_cliente');
+        toast(r.message, 'ok');
+        setTimeout(() => location.href = '/login.html', 1200);
+    } catch (ex) {
+        mostrar(ex.message);
+        btn.disabled = false; btn.textContent = 'Guardar contraseña';
+    }
+});
+</script>
+</body>
+</html>

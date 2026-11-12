@@ -1,11 +1,12 @@
 // public/admin/js/admin-layout.js
 
 function requireAuthAdmin() {
+    // La sesión real es la cookie HttpOnly "kz_admin"; aquí solo se
+    // guardan los datos para pintar el menú y se confirman con el servidor.
     const usuario = Sesion.usuario();
-    const token = localStorage.getItem('kz_admin_token');
-    if (!usuario || !token) { window.location.href = '/admin/login.html'; return null; }
+    if (!usuario) { window.location.href = '/admin/login.html'; return null; }
     api('/admin/whoami')
-        .then((u) => { if (u && u.rol) Sesion.guardarUsuario(u, token); })
+        .then((u) => { if (u && u.rol) Sesion.guardarUsuario(u); })
         .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = '/admin/login.html'; });
     return usuario;
 }
@@ -49,6 +50,7 @@ const ADMIN_SECCIONES = [
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
         { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'lock',     label: 'Cuentas y equipo' },
+        { href: '/admin/seguridad.html',     key: 'seguridad',     ic: 'shield',   label: 'Seguridad' },
         { href: '/admin/configuracion.html', key: 'configuracion', ic: 'settings', label: 'Configuración' },
     ] },
 ];
@@ -195,8 +197,8 @@ function renderAdminSidebar(activo) {
     });
 }
 
-function cerrarSesionAdmin() {
-    Sesion.cerrarSesionUsuario();
+async function cerrarSesionAdmin() {
+    await Sesion.cerrarSesionUsuario();
     window.location.href = '/admin/login.html';
 }
 

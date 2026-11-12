@@ -38,7 +38,7 @@ document.getElementById('form-login-admin').addEventListener('submit', async (e)
     errorBox.style.display = 'none';
     try {
         const data = await api('/auth/login-usuario', { method: 'POST', body: { email, password } });
-        Sesion.guardarUsuario(data.usuario, data.token);
+        Sesion.guardarUsuario(data.usuario);
         window.location.href = homeDe(data.usuario.rol);
     } catch (err) {
         errorBox.textContent = err.message;

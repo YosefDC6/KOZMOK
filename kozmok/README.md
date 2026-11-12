@@ -16,13 +16,18 @@ autenticación con roles.
 > viven en `server.js` bajo `/api/admin/erp/*` y sus pantallas en
 > `public/admin/erp.html`, `ordenes-erp.html`, `orden-nueva.html`,
 > `nivel-erp.html` y `reportes-erp.html` (utilidades en `admin/js/erp.js`).
+> Etapa 4 = carrito y sus agregados. Etapa 5 = seguridad: `seguridad.js`,
+> las rutas `/api/auth/*` y `/api/admin/seguridad/*`, y la guía `../SEGURIDAD.md`.
 
 ## Estructura
 
 ```
 kozmok/
 ├── server.js              # API REST (Express)
-├── db.config.js           # credenciales de conexión a PostgreSQL
+├── db.config.js           # conexión a PostgreSQL (lee el .env)
+├── seguridad.js           # Etapa 5: sesiones, bloqueos, filtros SQL/XSS, CSP
+├── .env.example           # plantilla del .env (contraseña de la base y límites)
+├── pruebas-seguridad/     # ataques de prueba contra el servidor local (npm run prueba:seguridad)
 ├── db/
 │   └── database.sql       # TODO en un archivo: tablas, triggers, datos
 │                          #   de ejemplo y contraseñas (bcrypt vía pgcrypto)
@@ -64,7 +69,7 @@ npm install
    ```sql
    CREATE DATABASE kozmok;
    ```
-2. Edita `db.config.js` con tu usuario/contraseña de PostgreSQL.
+2. Copia `.env.example` como `.env` y pon tu usuario/contraseña de PostgreSQL (el `.env` no se sube a GitHub).
 3. Carga **todo** con un solo archivo (esquema + triggers + datos +
    contraseñas hasheadas con bcrypt vía `pgcrypto`):
    ```bash
@@ -117,8 +122,9 @@ npm start
   (`/api/auth/login-usuario` o `/api/auth/login`, roles `admin` /
   `ventas` / `logistica`, ver `public/admin/js/permisos.js`), con
   contraseñas hasheadas con bcrypt. Todas las rutas `/api/admin/*`
-  exigen el token del equipo interno (header `Authorization: Bearer
-  <token>`, que el front manda automáticamente); crear usuarios
+  exigen la sesión del equipo interno (cookie HttpOnly `kz_admin`, que
+  el navegador manda sola; desde Postman, `Authorization: Bearer <token>`
+  pidiendo el token con `{"modo":"token"}` en el login); crear usuarios
   internos requiere además rol `admin`.
 - **"Mi actividad"**: `/api/usuarios/:id/actividad` devuelve las
   interacciones registradas por ese usuario interno (visible en
@@ -183,12 +189,11 @@ texto libre.
 
 ## Notas para producción
 
-- Cambia `db.config.js` y usa variables de entorno reales.
-- El token de sesión es simplificado (Base64) y sin expiración,
-  pensado para el alcance del proyecto escolar. Ya hay un middleware
-  (`requireUsuario` / `requireAdmin` en `server.js`) que verifica el
-  token contra la tabla `usuarios` en cada ruta `/api/admin/*`. Para
-  producción real conviene cambiarlo por JWT firmado con expiración.
+- Usa variables de entorno reales (o el `.env`), sirve todo con HTTPS y pon `COOKIE_SEGURA=1`.
+- Las sesiones (Etapa 5) son tokens aleatorios en cookie HttpOnly con
+  vencimiento, inactividad y revocación; el límite de intentos por minuto
+  vive en memoria, así que con varios servidores habría que moverlo a la
+  base o a Redis. Detalle y limitaciones en `../SEGURIDAD.md`.
 - Las imágenes de producto son URLs externas de ejemplo; para un
   entorno real conviene subirlas a almacenamiento propio (S3, Cloud
   Storage, etc.).

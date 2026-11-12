@@ -20,6 +20,12 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS correos_salida          CASCADE;
+DROP TABLE IF EXISTS recuperaciones          CASCADE;
+DROP TABLE IF EXISTS eventos_seguridad       CASCADE;
+DROP TABLE IF EXISTS bloqueos                CASCADE;
+DROP TABLE IF EXISTS intentos_login          CASCADE;
+DROP TABLE IF EXISTS sesiones                CASCADE;
 DROP TABLE IF EXISTS movimientos_monedero    CASCADE;
 DROP TABLE IF EXISTS monederos               CASCADE;
 DROP TABLE IF EXISTS pagos                   CASCADE;
@@ -695,6 +701,107 @@ CREATE TABLE movimientos_monedero (
 );
 CREATE INDEX idx_movmonedero_monedero ON movimientos_monedero(monedero_id);
 CREATE INDEX idx_movmonedero_fecha ON movimientos_monedero(fecha);
+
+-- =========================================================
+-- SEGURIDAD (Etapa 5)
+-- =========================================================
+
+-- Sesiones abiertas (tienda y equipo interno). En la cookie solo viaja
+-- un token aleatorio de 256 bits; aquí se guarda su hash SHA-256, así
+-- que ni con una copia de la base se pueden usar las sesiones. Cada
+-- sesión vence, se puede revocar (logout, cambio de contraseña, robo)
+-- y queda atada a la huella del navegador que la abrió.
+CREATE TABLE sesiones (
+    id                SERIAL PRIMARY KEY,
+    token_hash        CHAR(64) UNIQUE NOT NULL,
+    tipo              VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    cliente_id        INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+    usuario_id        INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+    ip                VARCHAR(64),
+    user_agent        VARCHAR(300),
+    huella            CHAR(64),
+    creada            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ultimo_uso        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expira            TIMESTAMP NOT NULL,
+    revocada          TIMESTAMP,
+    motivo_revocacion VARCHAR(80),
+    CONSTRAINT sesiones_dueno_check CHECK (
+        (tipo = 'cliente' AND cliente_id IS NOT NULL AND usuario_id IS NULL) OR
+        (tipo = 'usuario' AND usuario_id IS NOT NULL AND cliente_id IS NULL))
+);
+CREATE INDEX idx_sesiones_cliente ON sesiones(cliente_id);
+CREATE INDEX idx_sesiones_usuario ON sesiones(usuario_id);
+
+-- Cada intento de inicio de sesión (bueno o malo): base para detectar
+-- fuerza bruta y relleno de credenciales.
+CREATE TABLE intentos_login (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+    correo      VARCHAR(150),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    exito       BOOLEAN NOT NULL,
+    motivo      VARCHAR(60),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_intentos_correo ON intentos_login(tipo, correo, fecha DESC);
+CREATE INDEX idx_intentos_ip     ON intentos_login(ip, fecha DESC);
+
+-- Bloqueos temporales: de una IP (demasiados intentos fallidos desde ahí)
+-- o de una cuenta (demasiadas contraseñas equivocadas seguidas).
+CREATE TABLE bloqueos (
+    id             SERIAL PRIMARY KEY,
+    tipo           VARCHAR(10) NOT NULL CHECK (tipo IN ('ip','cuenta')),
+    valor          VARCHAR(170) NOT NULL,      -- la IP, o "cliente:correo" / "usuario:correo"
+    motivo         VARCHAR(200),
+    hasta          TIMESTAMP NOT NULL,
+    creado         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    levantado      TIMESTAMP,
+    levantado_por  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_bloqueos_valor ON bloqueos(tipo, valor, hasta);
+
+-- Bitácora de seguridad: ataques detectados y acciones sensibles.
+CREATE TABLE eventos_seguridad (
+    id          SERIAL PRIMARY KEY,
+    tipo        VARCHAR(30) NOT NULL,          -- inyeccion_sql, xss, fuerza_bruta, sesion_robada, ...
+    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('baja','media','alta')),
+    ip          VARCHAR(64),
+    user_agent  VARCHAR(300),
+    metodo      VARCHAR(8),
+    ruta        VARCHAR(200),
+    detalle     VARCHAR(500),
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    usuario_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_eventos_fecha ON eventos_seguridad(fecha DESC);
+
+-- Recuperación de contraseña: enlace de un solo uso que vence en 30 min.
+-- Igual que en las sesiones, solo se guarda el hash del token.
+CREATE TABLE recuperaciones (
+    id          SERIAL PRIMARY KEY,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    token_hash  CHAR(64) UNIQUE NOT NULL,
+    expira      TIMESTAMP NOT NULL,
+    usado       TIMESTAMP,
+    ip          VARCHAR(64),
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Correos que envía el sistema (bienvenida, recuperación de contraseña,
+-- aviso de cambio de contraseña). Sin servidor SMTP se guardan aquí y se
+-- ven en el panel (Cuenta → Seguridad → Correos).
+CREATE TABLE correos_salida (
+    id          SERIAL PRIMARY KEY,
+    para        VARCHAR(150) NOT NULL,
+    asunto      VARCHAR(200) NOT NULL,
+    cuerpo      TEXT NOT NULL,
+    tipo        VARCHAR(20) NOT NULL DEFAULT 'general',
+    cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =========================================================
 -- TRIGGER: actualizar fecha_actualizacion automáticamente

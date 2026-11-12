@@ -185,7 +185,6 @@ async function renderNavbar() {
     document.addEventListener('click', () => dropdowns.forEach((dd) => dd.classList.remove('open')));
     document.querySelectorAll('#btn-logout, #btn-logout-drawer').forEach((b) =>
         b.addEventListener('click', () => {
-            api('/auth/logout', { method: 'POST' }).catch(() => {});
             Sesion.cerrarSesionCliente();
             if (window.toast) toast('Sesión cerrada', 'ok');
             setTimeout(() => location.href = '/index.html', 400);
@@ -226,6 +225,7 @@ async function renderNavbar() {
     renderBotonRegresar();
     montarVolverArriba();
     if (cliente) avisarPedidosEnCamino(cliente);
+    sincronizarSesion(cliente);
     // los contadores de la barra inferior copian a los de arriba
     ['cart-badge', 'fav-badge'].forEach((id) => {
         const src = document.getElementById(id);
@@ -267,6 +267,24 @@ async function armarMenuCategorias(dd, categorias) {
         </div>`;
     const actual = new URLSearchParams(location.search).get('categoria');
     if (actual) panel.querySelectorAll('.mega-cat').forEach((a) => { if (a.getAttribute('href') === u({ categoria: actual })) a.classList.add('active'); });
+}
+
+// La sesión real es la cookie HttpOnly. Si venció o se cerró desde otro
+// dispositivo, se limpian los datos del navegador; si la cookie sigue
+// viva (otra pestaña inició sesión), se recuperan. Recarga una sola vez.
+async function sincronizarSesion(local) {
+    if (/\/(login|registro|recuperar|restablecer)\.html$/.test(location.pathname)) return;
+    try {
+        const { cliente } = await api('/auth/estado');
+        if (local && !cliente) {
+            localStorage.removeItem('kz_cliente');
+            if (window.toast) toast('Tu sesión terminó. Vuelve a iniciar sesión.', 'info');
+            setTimeout(() => location.reload(), 900);
+        } else if (!local && cliente) {
+            Sesion.guardarCliente(cliente);
+            location.reload();
+        }
+    } catch { /* sin servidor: se deja como está */ }
 }
 
 // Pedidos en camino: punto en "Cuenta" (barra inferior) y aviso en "Mis pedidos"
@@ -702,6 +720,8 @@ const MIGAS = {
     '/ayuda.html': [['Centro de ayuda']],
     '/login.html': [['Iniciar sesión']],
     '/registro.html': [['Crear cuenta']],
+    '/recuperar.html': [['Iniciar sesión', '/login.html'], ['Recuperar contraseña']],
+    '/restablecer.html': [['Iniciar sesión', '/login.html'], ['Nueva contraseña']],
     '/perfil.html': [['Mi cuenta']],
     '/pedidos.html': [CUENTA_MIGA, ['Mis pedidos']],
     '/recibo.html': [CUENTA_MIGA, ['Mis pedidos', '/pedidos.html'], ['Comprobante']],

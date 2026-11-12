@@ -1,6 +1,6 @@
 # Kozmok
 
-Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), **ERP** (órdenes de clientes e integración de módulos), **carrito con pagos, monedero, promociones e impuestos configurables** (Etapa 4), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
+Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y periféricos) con **CRM**, **SCM** (cadena de suministro), **ERP** (órdenes de clientes e integración de módulos), **carrito con pagos, monedero, promociones e impuestos configurables** (Etapa 4), **seguridad contra fuerza bruta, robo de sesión e inyección SQL** (Etapa 5), panel de administración por roles, panel de cliente y un **chatbot asesor** que recomienda productos según uso, presupuesto e inventario disponible.
 
 Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front-end en HTML, CSS y JavaScript sin frameworks.
 
@@ -64,6 +64,16 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 - **Monedero**: saldo total en monederos, recargas y consumos del mes, gráfica de 6 meses, recargas por transferencia por confirmar o rechazar, ficha de cada cliente con su historial, **ajustes manuales** (abono o cargo con motivo, quedan a nombre de quien los hizo) y bloqueo del monedero.
 - **Pagos**: el pago de cada pedido (tienda y ERP) con método, monto, estado (pagado, pendiente, reembolsado, cancelado), referencia y fecha de cobro; filtros, totales por método y exportación a CSV. "Gestionar" abre el gestor del pedido para registrar el cobro.
 
+### Seguridad (Etapa 5)
+Detalle de cada ataque, cómo se prueba y qué lo detiene en [`SEGURIDAD.md`](SEGURIDAD.md).
+- **Fuerza bruta**: la cuenta se bloquea 15 min tras 5 contraseñas equivocadas y la IP 30 min tras 20 fallos; máximo 15 intentos por minuto, retraso progresivo y el mismo mensaje exista o no el correo.
+- **Robo de credenciales y de sesión**: la sesión va en una cookie `HttpOnly; SameSite=Strict` con un token aleatorio (en la base solo su hash), vence, se cierra por inactividad y queda atada al navegador: si alguien la copia a otro, se revoca. Contraseñas con bcrypt y política fuerte (8+ caracteres, mayúsculas, minúsculas, número y símbolo).
+- **Inyección SQL**: consultas parametrizadas en todo el servidor, filtro que bloquea y registra los intentos, ids numéricos validados y errores de la base ocultos.
+- **XSS, CSRF y datos ajenos**: limpieza de HTML en lo que entra y escape al mostrar, cabeceras CSP, rechazo de peticiones de otros sitios y cada cliente solo ve lo suyo.
+- **Tienda**: "¿Olvidaste tu contraseña?" con enlace de un solo uso (30 min) y *Mi cuenta → Seguridad* con sesiones abiertas (se pueden cerrar) y últimos intentos de acceso.
+- **Panel** (*Cuenta → Seguridad*, solo admin): eventos de seguridad, intentos de inicio de sesión, bloqueos (con "Desbloquear"), sesiones activas y correos enviados.
+- **Pruebas**: `npm run prueba:seguridad` ataca nuestro propio servidor local (fuerza bruta, inyección SQL, robo de sesión) y marca cada defensa como DEFENDIDO o VULNERABLE.
+
 ---
 
 ## Roles
@@ -98,7 +108,8 @@ npm install
 # 2. Crear la base de datos (en psql)
 #    CREATE DATABASE kozmok;
 
-# 3. Ajustar usuario y contraseña de PostgreSQL en db.config.js
+# 3. Copiar .env.example como .env y poner la contraseña de PostgreSQL
+#    (el .env no se sube a GitHub)
 
 # 4. Cargar esquema, triggers y datos de ejemplo (se puede volver a ejecutar)
 psql -U postgres -d kozmok -f db/database.sql
@@ -111,6 +122,8 @@ npm start        # o: npm run dev  (con nodemon)
 - **Panel interno:** http://localhost:3000/admin/login.html (a propósito, no hay enlace desde la tienda)
 
 Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, todo está listo.
+
+> **Actualizar a la Etapa 5:** al arrancar, el servidor crea solo las tablas de seguridad que falten. Las sesiones anteriores (token Base64 guardado en el navegador) ya no sirven: hay que volver a iniciar sesión. Las contraseñas nuevas deben cumplir la política; las cuentas de prueba ya la cumplen.
 
 > **Actualizar desde una versión anterior (Etapa 4):** vuelve a cargar `db/database.sql` (paso 4). Crea las tablas nuevas (`carrito`, `carrito_detalle`, `pagos`, `promociones`, `impuestos`, `monederos`, `movimientos_monedero`) y reemplaza `carrito_items`. Si faltan, la consola lo avisa al arrancar.
 
@@ -133,7 +146,10 @@ KOZMOK/
 ├── Manual_usuario.txt        # manual completo, sección por sección
 └── kozmok/
     ├── server.js             # API REST (Express): /api/...
-    ├── db.config.js          # conexión a PostgreSQL
+    ├── db.config.js          # conexión a PostgreSQL (lee el .env)
+    ├── seguridad.js          # Etapa 5: sesiones, bloqueos, filtros SQL/XSS, CSP
+    ├── .env.example          # plantilla de la configuración (contraseña de la base, límites)
+    ├── pruebas-seguridad/    # ataques de prueba contra el servidor local
     ├── db/database.sql       # esquema + triggers + datos de ejemplo
     └── public/               # front-end estático
         ├── index.html, carrito.html, monedero.html, armar-pc.html, comparar.html, 404.html, ...
@@ -143,11 +159,11 @@ KOZMOK/
         └── admin/            # panel CRM, SCM (productos, inventario, nivel-scm, ...)
                               #   ERP (erp, ordenes-erp, orden-nueva, nivel-erp,
                               #   reportes-erp, panel-roles) y TIENDA (promociones,
-                              #   impuestos, monedero, pagos)
+                              #   impuestos, monedero, pagos) y Seguridad
                               # admin/js/permisos.js: permisos por rol (menú + API)
 ```
 
-**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito y carrito_detalle, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa, expuestos en `GET/POST/PUT/DELETE /api/admin/erp/recursos`) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`. Propias de la Etapa 4: carrito (uno por cliente) y carrito_detalle, pagos (uno por pedido, lo mantiene el trigger `trg_pedido_pago`), promociones, impuestos, monederos (lo crea el trigger `trg_cliente_monedero` para cada cliente) y movimientos_monedero.
+**Tablas principales:** usuarios, clientes, productos, categorías, proveedores, pedidos (con `origen` en línea / ERP), pedido_items, carrito y carrito_detalle, interacciones, métricas_clientes, movimientos_inventario, órdenes_compra, garantías, reseñas, favoritos, direcciones, métodos_pago, movimientos_puntos, tickets, ticket_mensajes y chatbot_consultas. Propias del ERP: estado_erp (nivel de implementación), procesos_erp (procesos internos de cada orden), recursos_erp (recursos de la empresa, expuestos en `GET/POST/PUT/DELETE /api/admin/erp/recursos`) y reportes_erp (reportes guardados); las órdenes empresariales son filas de pedidos con `origen = 'erp'`. Propias de la Etapa 4: carrito (uno por cliente) y carrito_detalle, pagos (uno por pedido, lo mantiene el trigger `trg_pedido_pago`), promociones, impuestos, monederos (lo crea el trigger `trg_cliente_monedero` para cada cliente) y movimientos_monedero. Propias de la Etapa 5: sesiones, intentos_login, bloqueos, eventos_seguridad, recuperaciones y correos_salida.
 
 ### Rutas de la Etapa 4 (nombres del documento)
 
@@ -159,7 +175,8 @@ KOZMOK/
 | Promociones | `GET /api/promociones`, `POST /api/promociones`, `PUT /api/promociones/:id` (+ `/api/admin/promociones`, con `DELETE`) |
 | Impuestos | `GET /api/impuestos`, `POST /api/impuestos`, `PUT /api/impuestos/:id` (+ `/api/admin/impuestos`, con `DELETE`) |
 | Atención a clientes | `POST /api/atencion/ticket`, `GET /api/atencion/tickets`, `GET /api/atencion/ticket/:id`, `PUT /api/atencion/ticket/:id/respuesta` |
-| Autenticación | `POST /api/auth/registro`, `POST /api/auth/login` (con `correo` = cliente, con `email` = equipo), `POST /api/auth/logout`, `GET /api/auth/perfil`, `PUT /api/auth/perfil` |
+| Autenticación | `POST /api/auth/registro`, `POST /api/auth/login` (con `correo` = cliente, con `email` = equipo; o `tipo`), `POST /api/auth/logout`, `GET /api/auth/perfil`, `PUT /api/auth/perfil` |
+| Seguridad (Etapa 5) | `GET /api/auth/estado`, `POST /api/auth/recuperar`, `POST /api/auth/restablecer`, `GET /api/auth/sesiones`, `DELETE /api/auth/sesiones/:id`, `POST /api/auth/sesiones/cerrar-otras`, `GET /api/auth/actividad`, `GET /api/admin/seguridad/resumen`, `POST /api/admin/seguridad/bloqueos/:id/levantar`, `POST /api/admin/seguridad/sesiones/:id/revocar`, `GET /api/admin/correos[/:id]` |
 | Monedero | `GET /api/monedero`, `POST /api/monedero/recargar`, `GET /api/admin/monederos[/:clienteId]`, `POST /api/admin/monederos/:clienteId/ajuste`, `PUT /api/admin/monederos/:clienteId/estado`, `PUT /api/admin/monederos/movimientos/:id` |
 
 ---
@@ -167,5 +184,5 @@ KOZMOK/
 ## Notas
 
 - Es una **demo educativa**: no hay pasarela de pago ni se hacen cargos reales. Nunca se guarda el número completo de la tarjeta ni el CVV.
-- Las contraseñas se guardan con **bcrypt**. Los tokens de sesión están simplificados (Base64); para producción convendría usar JWT con expiración y variables de entorno.
+- Las contraseñas se guardan con **bcrypt** y las sesiones son tokens aleatorios en cookie HttpOnly (Etapa 5, ver [`SEGURIDAD.md`](SEGURIDAD.md)). En producción hay que servirlo con HTTPS y `COOKIE_SEGURA=1`.
 - Los detalles de cada pantalla están en [`Manual_usuario.txt`](Manual_usuario.txt), y en [`kozmok/README.md`](kozmok/README.md) hay notas técnicas adicionales.

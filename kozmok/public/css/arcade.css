@@ -245,3 +245,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
     .pm-grid { grid-template-columns: minmax(0, 1fr); }
     .pm-info .btn { white-space: normal; }
 }
+
+/* Etapa 5: avisos de seguridad con el mismo contorno firme */
+.auth-error, .seg-alerta { border-width: 2px; }
+.tag.ok, .tag.mal, .tag.aviso { border-radius: 0; transform: skewX(-10deg); border-width: 2px; font-family: var(--font-arcade); font-style: italic; font-weight: 800; text-transform: uppercase; }
+.cuenta-avatar { color: #0B0E14; font-family: var(--font-arcade); font-style: italic; font-weight: 900; }

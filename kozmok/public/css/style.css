@@ -2272,3 +2272,31 @@ tr.mov-off td { opacity: .7; }
     .cuenta-shell { grid-template-columns: minmax(0, 1fr); }
     .cuenta-nav, .cuenta-panel { min-width: 0; }
 }
+
+/* =========================================================
+   ETAPA 5 · SEGURIDAD (login, registro, recuperar, Mi cuenta → Seguridad
+   y el panel de Seguridad del equipo)
+========================================================= */
+.tag.ok { color: var(--success); border-color: var(--success); }
+.tag.mal { color: var(--danger); border-color: var(--danger); }
+.tag.aviso { color: var(--warning); border-color: var(--warning); }
+.auth-error { color: var(--danger); font-size: .86rem; margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-sm); background: rgba(232, 95, 90, .08); }
+.auth-error.bloqueado { color: var(--warning); border-color: var(--warning); background: rgba(232, 148, 74, .08); }
+.auth-olvide { text-align: right; margin: -6px 0 12px; font-size: .84rem; }
+.auth-nota { display: flex; align-items: flex-start; justify-content: center; gap: 6px; text-align: center; font-size: .78rem; color: var(--text-muted); margin: 12px 0 0; line-height: 1.45; }
+.auth-nota svg { flex-shrink: 0; margin-top: 2px; }
+.pass-reglas { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; font-size: .78rem; color: var(--text-muted); }
+.pass-reglas li { display: flex; align-items: center; gap: 6px; }
+.pass-reglas li::before { content: ''; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid currentColor; }
+.pass-reglas li.ok { color: var(--success); }
+.pass-reglas li.ok::before { background: currentColor; }
+.sesion-fila { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.sesion-fila:first-of-type { border-top: none; }
+.sesion-fila small { display: block; color: var(--text-muted); font-size: .78rem; margin-top: 2px; }
+.seg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; align-items: start; }
+.seg-tit { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.seg-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg-cab .seg-tit { margin: 0 0 6px; }
+.seg-alerta { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; margin-bottom: 18px; border: 1px solid var(--warning); border-radius: var(--radius); background: rgba(232, 148, 74, .08); color: var(--warning); }
+.seg-alerta span { display: block; color: var(--text-muted); font-size: .86rem; margin-top: 2px; }
+@media (max-width: 480px) { .pass-reglas { grid-template-columns: minmax(0, 1fr); } }

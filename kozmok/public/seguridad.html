@@ -27,28 +27,79 @@
 <script src="/js/cuenta.js"></script>
 <script>
 let CID = null;
+const MOTIVO = { credenciales: 'contraseña incorrecta', bloqueado: 'cuenta bloqueada por intentos', cuenta_inactiva: 'cuenta inactiva', registro: 'registro' };
 
 montarCuenta('seguridad', async (panel, P) => {
     CID = P.id;
+    const [sesiones, actividad] = await Promise.all([api('/auth/sesiones'), api('/auth/actividad')]);
+    const fallidos = actividad.filter((a) => !a.exito).length;
     panel.innerHTML = `
-        <div class="cuenta-head"><h1>Seguridad</h1><p>Cambia tu contraseña de acceso.</p></div>
-        <div class="card" style="max-width:440px">
-            <div class="field"><label>Contraseña actual</label><input type="password" id="s-actual" autocomplete="current-password" /></div>
-            <div class="field"><label>Nueva contraseña</label><input type="password" id="s-nueva" minlength="6" autocomplete="new-password" /></div>
-            <div class="field"><label>Repetir nueva contraseña</label><input type="password" id="s-rep" minlength="6" autocomplete="new-password" /></div>
-            <button class="btn btn-primary" onclick="cambiarPassword()">Actualizar contraseña</button>
-        </div>`;
+        <div class="cuenta-head"><h1>Seguridad</h1><p>Tu contraseña, los dispositivos con sesión abierta y los últimos intentos de entrar a tu cuenta.</p></div>
+        ${fallidos ? `<div class="seg-alerta" role="status">${icon('alert', 18)}<div><strong>${fallidos} intento(s) fallido(s) recientes</strong>
+            <span>Si no fuiste tú, cambia tu contraseña: al hacerlo se cierran tus otras sesiones.</span></div></div>` : ''}
+        <div class="seg-grid">
+            <section class="card">
+                <h3 class="seg-tit">${icon('lock', 18)} Cambiar contraseña</h3>
+                <div class="field"><label for="s-actual">Contraseña actual</label><input type="password" id="s-actual" autocomplete="current-password" /></div>
+                <div class="field"><label for="s-nueva">Nueva contraseña</label><input type="password" id="s-nueva" maxlength="72" autocomplete="new-password" />
+                    ${ReglasPass.html('pass-reglas')}</div>
+                <div class="field"><label for="s-rep">Repetir nueva contraseña</label><input type="password" id="s-rep" autocomplete="new-password" /></div>
+                <button class="btn btn-primary" id="btn-pass">Actualizar contraseña</button>
+            </section>
+            <section class="card">
+                <div class="seg-cab">
+                    <h3 class="seg-tit">${icon('user', 18)} Sesiones abiertas (${sesiones.length})</h3>
+                    ${sesiones.length > 1 ? '<button class="btn btn-outline btn-sm" id="btn-otras">Cerrar las demás</button>' : ''}
+                </div>
+                ${sesiones.map((x) => `
+                    <div class="sesion-fila">
+                        <div><strong>${escHTML(navegadorDe(x.user_agent))}</strong> ${x.actual ? '<span class="tag ok">Esta sesión</span>' : ''}
+                            <small>IP ${escHTML(x.ip || '—')} · inició ${formatoFechaHora(x.creada)} · último uso ${formatoFechaHora(x.ultimo_uso)} · vence ${formatoFecha(x.expira)}</small></div>
+                        ${x.actual ? '' : `<button class="btn btn-ghost btn-sm" onclick="cerrarSesion(${Number(x.id)})">Cerrar</button>`}
+                    </div>`).join('')}
+            </section>
+        </div>
+        <section class="card" style="margin-top:18px">
+            <h3 class="seg-tit">${icon('clock', 18)} Actividad de inicio de sesión</h3>
+            ${actividad.length === 0 ? '<p style="margin:0;color:var(--text-muted)">Sin registros todavía.</p>' : actividad.map((a) => `
+                <div class="sesion-fila">
+                    <div><strong>${a.exito ? (a.motivo === 'registro' ? 'Cuenta creada' : 'Acceso correcto') : 'Intento fallido'}</strong>${!a.exito && a.motivo ? ` · ${escHTML(MOTIVO[a.motivo] || a.motivo)}` : ''}
+                        <small>${formatoFechaHora(a.fecha)} · IP ${escHTML(a.ip || '—')} · ${escHTML(navegadorDe(a.user_agent))}</small></div>
+                    <span class="tag ${a.exito ? 'ok' : 'mal'}">${a.exito ? 'OK' : 'Fallido'}</span>
+                </div>`).join('')}
+        </section>
+        <p class="auth-nota" style="text-align:left">${icon('shield', 13)} Tu sesión vive en una cookie protegida que ningún script puede leer. Si alguien la copia a otro navegador, la cerramos automáticamente.</p>`;
+    ReglasPass.enlazar(document.getElementById('s-nueva'), document.getElementById('pass-reglas'));
+    document.getElementById('btn-pass').addEventListener('click', cambiarPassword);
+    const otras = document.getElementById('btn-otras');
+    if (otras) otras.addEventListener('click', async () => {
+        try { const r = await api('/auth/sesiones/cerrar-otras', { method: 'POST' }); toast(r.message, 'ok'); montarDeNuevo(); }
+        catch (e) { toast(e.message, 'error'); }
+    });
 });
 
+function montarDeNuevo() { setTimeout(() => location.reload(), 600); }
+
+async function cerrarSesion(id) {
+    try { await api(`/auth/sesiones/${id}`, { method: 'DELETE' }); toast('Sesión cerrada en ese dispositivo', 'ok'); montarDeNuevo(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
 async function cambiarPassword() {
-    const actual = val('s-actual'), nueva = val('s-nueva'), rep = val('s-rep');
-    if (nueva.length < 6) { toast('La nueva contraseña debe tener 6+ caracteres', 'warn'); return; }
+    const actual = val('s-actual'), nueva = document.getElementById('s-nueva').value, rep = document.getElementById('s-rep').value;
+    if (!actual) { toast('Escribe tu contraseña actual', 'warn'); return; }
+    const falta = ReglasPass.faltante(nueva);
+    if (falta) { toast(falta, 'warn'); return; }
     if (nueva !== rep) { toast('Las contraseñas nuevas no coinciden', 'warn'); return; }
+    const btn = document.getElementById('btn-pass');
+    btn.disabled = true;
     try {
-        await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
-        toast('Contraseña actualizada', 'ok');
+        const r = await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
+        toast(r.message || 'Contraseña actualizada', 'ok');
         ['s-actual', 's-nueva', 's-rep'].forEach((i) => document.getElementById(i).value = '');
+        if (r.sesiones_cerradas) montarDeNuevo();
     } catch (e) { toast(e.message, 'error'); }
+    btn.disabled = false;
 }
 </script>
 </body>

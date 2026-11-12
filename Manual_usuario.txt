@@ -26,10 +26,12 @@ Requisitos
    - PostgreSQL 16 o superior (se probo con 18).
 
 Configuracion de la base
-   - El archivo  kozmok/db.config.js  tiene usuario, host, base, password
-     y puerto. Ajustalo a tu instalacion local. Por defecto:
+   - Copia  kozmok/.env.example  como  kozmok/.env  y pon ahi la contrasena
+     de tu PostgreSQL (DB_PASSWORD). El .env no se sube a GitHub. Si no hay
+     .env se usan los valores por defecto:
         user: postgres   host: localhost   database: kozmok
         password: 12345678   port: 5432
+   - En el mismo .env se ajustan los limites de seguridad (ver 4.16).
 
 Crear y cargar la base (todo en un solo archivo, se puede repetir)
    1. Crear la base:              CREATE DATABASE kozmok;
@@ -40,9 +42,10 @@ Crear y cargar la base (todo en un solo archivo, se puede repetir)
 Levantar el servidor
    - Dentro de la carpeta  kozmok/  ejecutar:   npm install   (una vez)
    - Luego:   npm start
-   - Al arrancar, la consola muestra DOS lineas:
+   - Al arrancar, la consola muestra:
         Kozmok escuchando en http://localhost:3000
         Base de datos: conectada (kozmok@localhost:5432) - 73 productos
+        Seguridad: sesiones en cookie HttpOnly, bloqueo tras 5 intentos, ...
      Si en vez de "conectada" dice "SIN CONEXION" o "SIN TABLAS", revisa que
      PostgreSQL este encendido y que db.config.js sea correcto, o vuelve a
      cargar db/database.sql.
@@ -117,12 +120,21 @@ Cuentas de prueba (tras cargar db/database.sql)
    de la pagina, asi que no se puede quitar ni re-vestir con el tema de
    Kozmok; la solucion real es no usar contrasenas de ese tipo.
 
-Seguridad de sesion
-   - El token de cliente y el token de admin se guardan por separado en el
-     navegador y NUNCA se mezclan: la tienda usa el de cliente, /admin/* usa
-     el de admin.
-   - Si el token de admin vence o es invalido, cualquier pantalla del panel
-     regresa sola a /admin/login.html.
+Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
+   - La sesion vive en una cookie protegida (HttpOnly): ningun script de la
+     pagina la puede leer. La tienda usa la cookie kz_sesion y el panel
+     kz_admin; son independientes.
+   - La sesion de la tienda dura 7 dias (se cierra tras 2 dias sin uso) y la
+     del panel 8 horas (se cierra tras 2 horas sin uso).
+   - Si alguien copia la cookie a otro navegador, el servidor la rechaza y
+     cierra esa sesion.
+   - Tras 5 contrasenas equivocadas seguidas la cuenta se bloquea 15 minutos;
+     tras 20 fallos desde la misma conexion, la conexion se bloquea 30 minutos.
+   - Contrasenas nuevas: 8 caracteres o mas, mayusculas y minusculas, un
+     numero y un simbolo; no puede ser de las mas usadas ni contener el
+     correo o el nombre.
+   - Si la sesion del panel vence, cualquier pantalla regresa sola a
+     /admin/login.html.
    - "Cerrar sesion": en la tienda esta en el menu de la cuenta (arriba a la
      derecha); en el panel, al pie de la barra lateral.
 
@@ -442,7 +454,29 @@ Seguridad de sesion
    - Muestra un medidor de seguridad de la contrasena:
         Muy debil / Debil (rojo) -> Regular (naranja) -> Buena -> Fuerte (verde).
      Se calcula por longitud y por mezcla de mayusculas, minusculas, numeros y
-     simbolos. El minimo para registrarse son 6 caracteres.
+     simbolos. Debajo aparecen las 4 reglas obligatorias y se marcan en verde
+     al cumplirse: 8 caracteres o mas, mayusculas y minusculas, un numero y
+     un simbolo.
+
+3.7b INICIAR SESION Y RECUPERAR CONTRASENA  (login.html, recuperar.html)
+   - Si la contrasena es incorrecta se avisa cuantos intentos quedan antes
+     del bloqueo (cuando quedan 3 o menos). Al quinto, la cuenta se bloquea
+     15 minutos aunque despues se escriba la contrasena correcta.
+   - "¿Olvidaste tu contrasena?" pide el correo y manda un enlace que vence
+     en 30 minutos y solo sirve una vez. Siempre responde lo mismo, exista o
+     no el correo. Sin servidor de correo, el mensaje queda en el panel
+     (Cuenta -> Seguridad -> Correos enviados).
+   - El enlace abre restablecer.html: se escribe la nueva contrasena (mismas
+     reglas), se cierran todas las sesiones abiertas y se levanta el bloqueo
+     de la cuenta si lo tenia.
+
+3.7c MI CUENTA -> SEGURIDAD  (seguridad.html)
+   - Cambiar contrasena: pide la actual y la nueva (con las 4 reglas). Al
+     cambiarla se cierran las sesiones de otros dispositivos.
+   - Sesiones abiertas: navegador, IP, inicio, ultimo uso y vencimiento de
+     cada sesion. "Cerrar" termina una; "Cerrar las demas" deja solo la actual.
+   - Actividad de inicio de sesion: ultimos 15 accesos e intentos fallidos.
+     Si hubo fallos recientes aparece un aviso naranja arriba.
    - Al crear la cuenta se genera automaticamente el codigo de socio para la
      tarjeta virtual (ver 7).
 
@@ -1267,14 +1301,16 @@ R: No. El archivo empieza borrando tablas que en una base nueva todavia no
 
 P: npm start no dice nada sobre la base.
 R: Ahora si: la segunda linea de la consola indica "conectada" o el problema.
-   Si dice "SIN CONEXION", enciende PostgreSQL o corrige db.config.js.
+   Si dice "SIN CONEXION", enciende PostgreSQL o corrige la contrasena en .env.
    Si dice "SIN TABLAS", vuelve a cargar db/database.sql.
 
 P: Inicio sesion (o creo cuenta) y me regresa al login una y otra vez.
-R: Era un error ya corregido: el token de admin viejo se enviaba tambien en
-   la tienda. Solucion para el usuario: recarga dura del navegador
-   (Ctrl+Shift+R). Si persiste, en DevTools -> Application -> Local Storage,
-   borra la clave "kz_admin_token".
+R: Desde la Etapa 5 la sesion va en una cookie; las sesiones de versiones
+   anteriores ya no sirven. Recarga el navegador (Ctrl+Shift+R) y vuelve a
+   iniciar sesion. Si dice "bloqueada", espera 15 minutos, usa "¿Olvidaste tu
+   contrasena?" o pide a un admin que la desbloquee (Cuenta -> Seguridad ->
+   Bloqueos). Si la computadora quedo bloqueada tras una demo de ataques,
+   corre  npm run desbloquear  dentro de kozmok/.
 
 P: Las imagenes de producto no cargan / salen errores en la consola del
    navegador.
@@ -1365,9 +1401,13 @@ Tablas principales
    db/database.sql (la consola avisa al arrancar si faltan tablas).
 
 Autenticacion
-   - Cliente: token base64  cliente:<id>:<timestamp>  (localStorage kz_token).
-   - Interno: token base64  usuario:<id>:<timestamp>   (localStorage
-     kz_admin_token). El panel valida la sesion contra GET /api/admin/whoami.
+   - Sesiones (Etapa 5): token aleatorio de 256 bits en cookie HttpOnly +
+     SameSite=Strict (kz_sesion para la tienda, kz_admin para el panel). En la
+     tabla sesiones solo se guarda su hash SHA-256. En localStorage solo
+     quedan los datos para pintar la pantalla (kz_cliente, kz_usuario).
+     El panel valida la sesion contra GET /api/admin/whoami.
+   - Para Postman: POST /api/auth/login con {"modo":"token"} devuelve el
+     token, que se manda como  Authorization: Bearer <token>.
    - Middleware: requireCliente + mismoCliente en /api/clientes/:id ;
      requireUsuario (+ requireAdmin) en /api/admin/... .
 
@@ -1449,6 +1489,43 @@ Reglas de negocio embebidas
    - Orden ERP: stock validado y descontado, movimiento de inventario por
      producto y pedido de reposicion automatico si queda en stock critico, todo
      en una transaccion.
+
+===============================================================================
+4.16 SEGURIDAD  (admin/seguridad.html)  [CUENTA]  -- solo ADMIN  (Etapa 5)
+===============================================================================
+   Tablero de ataques y defensas. La guia de la demostracion, ataque por
+   ataque, esta en SEGURIDAD.md (raiz del repositorio).
+
+   Arriba: logins fallidos y exitosos (24 h), bloqueos activos, intentos de
+   inyeccion SQL y de XSS (7 dias), sesiones rechazadas y sesiones activas.
+   Debajo, tres tarjetas con las defensas y sus valores actuales.
+
+   Pestanas
+   - Eventos de seguridad: inyeccion SQL, XSS, fuerza bruta, sesion robada,
+     token falso, CSRF, acceso a datos ajenos, cambios de contrasena... con
+     fecha, severidad, IP, ruta y detalle.
+   - Intentos de inicio de sesion: cada intento (tienda o panel) con correo,
+     IP, navegador y resultado; arriba, las IPs con mas fallos en 24 h.
+   - Bloqueos: cuentas e IPs bloqueadas. "Desbloquear" lo levanta antes de
+     tiempo (queda registrado quien lo hizo).
+   - Sesiones activas: de la tienda y del panel. "Cerrar" obliga a esa
+     persona a iniciar sesion de nuevo (la propia no se puede cerrar aqui).
+   - Correos enviados: bienvenida, recuperacion y aviso de cambio de
+     contrasena. "Ver" muestra el mensaje completo.
+
+   Pruebas de ataque (solo contra el servidor local)
+   Dentro de kozmok/, con el servidor encendido:
+        npm run prueba:seguridad     las tres pruebas y al final desbloquea
+        npm run prueba:fuerza-bruta
+        npm run prueba:sqli
+        npm run prueba:sesion
+        npm run desbloquear          levanta bloqueos (-- --todo limpia la bitacora)
+   Cada linea dice DEFENDIDO o VULNERABLE.
+
+   Ajustes (archivo .env): MAX_FALLOS_CUENTA, MAX_FALLOS_IP,
+   BLOQUEO_CUENTA_MIN, BLOQUEO_IP_MIN, SESION_HORAS_CLIENTE,
+   SESION_HORAS_EQUIPO, INACTIVIDAD_MIN_*, BCRYPT_COSTO, COOKIE_SEGURA
+   (1 con HTTPS) y FILTRO_SQLI (bloquear | registrar).
 
 ===============================================================================
  Fin del manual.
