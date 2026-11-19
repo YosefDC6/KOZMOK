@@ -482,7 +482,7 @@ async function cargarProductos() {
         }
         abrirDesdeHash();
     } catch (e) {
-        grid.innerHTML = '<div class="empty-state">No se pudo conectar con el servidor. Verifica que el backend esté corriendo.</div>';
+        grid.innerHTML = '<div class="empty-state">No pudimos cargar los productos. Revisa tu conexión e intenta de nuevo en un momento.</div>';
     }
 }
 

@@ -185,11 +185,12 @@ async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', client
     if (!para) return;
     if (bajaUrl) cuerpo += `\n\n---\nRecibes este correo porque lo activaste en tus preferencias de Kozmok. Para dejar de recibirlo: ${bajaUrl}`;
     const html = htmlCorreo({ asunto, cuerpo: bajaUrl ? cuerpo.split('\n\n---\n')[0] : cuerpo, boton, bajaUrl, extraHtml });
-    await db.query(
+    const r = await db.query(
         `INSERT INTO correos_salida (para, asunto, cuerpo, html, tipo, cliente_id, pedido_id, estado)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
         [para, String(asunto).slice(0, 200), cuerpo, html, tipo, cliente_id, pedido_id, correo.configurado() ? 'pendiente' : 'sin_smtp']);
     programarDespacho();
+    return r.rows[0].id;
 }
 
 // Versión HTML del correo (los clientes de correo no aceptan CSS externo,
@@ -2557,6 +2558,24 @@ app.get('/api/admin/clientes/:id/pedidos', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
+// Correo del CRM (Interacciones -> Correo): se manda de verdad al cliente
+// por Gmail y queda en Seguridad -> Correos enviados.
+app.post('/api/admin/clientes/:id/correo', asyncRoute(async (req, res) => {
+    const asunto = String((req.body || {}).asunto || '').trim().slice(0, 150);
+    const cuerpo = String((req.body || {}).cuerpo || '').trim().slice(0, 5000);
+    if (!asunto) return res.status(400).json({ message: 'Escribe el asunto' });
+    if (!cuerpo) return res.status(400).json({ message: 'Escribe el mensaje' });
+    const c = await pool.query('SELECT id, correo FROM clientes WHERE id = $1', [req.params.id]);
+    if (!c.rows[0]) return res.status(404).json({ message: 'Cliente no encontrado' });
+    if (!c.rows[0].correo) return res.status(400).json({ message: 'El cliente no tiene correo registrado' });
+    const id = await enviarCorreo(pool, { para: c.rows[0].correo, asunto, cuerpo, tipo: 'crm', cliente_id: c.rows[0].id });
+    if (!correo.configurado()) return res.json({ estado: 'sin_smtp', message: 'Correo guardado. Para que salga de verdad falta configurar la cuenta de Gmail de la tienda.' });
+    await despacharCorreos();
+    const e = (await pool.query('SELECT estado, error FROM correos_salida WHERE id = $1', [id])).rows[0];
+    res.json({ estado: e.estado, message: e.estado === 'enviado' ? `Correo enviado a ${c.rows[0].correo}`
+        : e.estado === 'pendiente' ? 'Correo en cola: sale en unos segundos' : `No se pudo enviar: ${e.error || 'error desconocido'}` });
+}));
+
 app.put('/api/admin/clientes/:id/correo-confirmado', asyncRoute(async (req, res) => {
     const r = await pool.query(
         `UPDATE clientes SET correo_verificado = TRUE, verificacion_hash = NULL, verificacion_intentos = 0
@@ -4641,13 +4660,13 @@ app.get('/api/admin/correos', requireAdmin, asyncRoute(async (req, res) => {
 }));
 // ¿Está conectada la cuenta de Gmail? (para el aviso del panel)
 app.get('/api/admin/correos/estado', requireAdmin, asyncRoute(async (req, res) => {
-    if (!correo.configurado()) return res.json({ configurado: false, ok: false, motivo: 'Falta SMTP_USUARIO / SMTP_PASSWORD en el .env' });
+    if (!correo.configurado()) return res.json({ configurado: false, ok: false, motivo: 'Falta configurar la cuenta de Gmail de la tienda' });
     const v = await correo.verificar();
     res.json({ configurado: true, cuenta: correo.CFG.usuario, ...v });
 }));
 // Volver a mandar un correo (p. ej. tras corregir la contraseña de Gmail).
 app.post('/api/admin/correos/:id/reenviar', requireAdmin, asyncRoute(async (req, res) => {
-    if (!correo.configurado()) return res.status(400).json({ message: 'Configura primero la cuenta de Gmail en el .env' });
+    if (!correo.configurado()) return res.status(400).json({ message: 'Primero hay que configurar la cuenta de Gmail de la tienda' });
     const r = await pool.query(`UPDATE correos_salida SET estado = 'pendiente', intentos = 0, error = NULL, fecha = CURRENT_TIMESTAMP
                                 WHERE id = $1 RETURNING id`, [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ message: 'Correo no encontrado' });

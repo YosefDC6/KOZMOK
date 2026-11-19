@@ -157,7 +157,7 @@
     const PLANTILLAS = {
         '': { asunto: '', cuerpo: '' },
         seguimiento: { asunto: 'Seguimiento a tu compra en Kozmok', cuerpo: 'Hola {nombre},\n\nQueremos saber si todo salió bien con tu pedido y si necesitas ayuda con la instalación o configuración.\n\nQuedamos atentos.\nEquipo Kozmok' },
-        cotizacion: { asunto: 'Cotización solicitada', cuerpo: 'Hola {nombre},\n\nAdjuntamos la cotización con los equipos que revisamos, precios y tiempos de entrega. La cotización es válida por 15 días.\n\nSaludos,\nEquipo Kozmok' },
+        cotizacion: { asunto: 'Cotización solicitada', cuerpo: 'Hola {nombre},\n\nTe compartimos la cotización de los equipos que revisamos:\n\n- Producto: $0.00\n\nLos precios son válidos por 15 días y el envío es gratis en compras mayores a $10,000.\n\nSaludos,\nEquipo Kozmok' },
         bienvenida: { asunto: 'Bienvenido al Club Kozmok', cuerpo: 'Hola {nombre},\n\nTu cuenta ya está activa. Con cada compra acumulas puntos que valen dinero en la tienda y puedes seguir tus pedidos desde tu perfil.\n\n¡Gracias por elegirnos!' },
         recordatorio: { asunto: 'Recordatorio de pago pendiente', cuerpo: 'Hola {nombre},\n\nTu pedido está apartado y solo falta completar el pago con la referencia que te compartimos. Si ya lo realizaste, ignora este mensaje.\n\nGracias.' },
     };
@@ -176,7 +176,7 @@
                 </div>
                 <div class="field"><label>Asunto</label><input id="sm-asunto" /></div>
                 <div class="field"><label>Mensaje</label><textarea id="sm-cuerpo" rows="6"></textarea></div>
-                <button class="btn btn-primary" style="width:100%" onclick="__simMailSend()">${ic('chat', 15)} Enviar correo</button>
+                <button class="btn btn-primary" style="width:100%" onclick="__simMailSend(this)">${ic('chat', 15)} Enviar correo</button>
             </div>`;
     }
     window.__simPlantilla = () => {
@@ -185,13 +185,26 @@
         document.getElementById('sm-asunto').value = t.asunto;
         document.getElementById('sm-cuerpo').value = t.cuerpo.replace('{nombre}', nom);
     };
-    window.__simMailSend = () => {
+    // El correo se manda de verdad al cliente (Gmail de la tienda) y además
+    // queda registrado como interacción.
+    window.__simMailSend = async (btn) => {
         const asunto = document.getElementById('sm-asunto').value.trim();
         const cuerpo = document.getElementById('sm-cuerpo').value.trim();
+        if (!cliente) { toast('Elige un cliente', 'warn'); return; }
         if (!asunto) { toast('Escribe el asunto', 'warn'); return; }
-        toast('Correo enviado (simulado)', 'ok');
-        const resumen = cuerpo.replace(/\s+/g, ' ').slice(0, 140);
-        guardar(`Correo enviado a ${(cliente && cliente.correo) || ''} — Asunto: "${asunto}". ${resumen}`);
+        if (!cuerpo) { toast('Escribe el mensaje', 'warn'); return; }
+        if (btn) { btn.disabled = true; btn.dataset.txt = btn.textContent; btn.textContent = 'Enviando…'; }
+        try {
+            const r = await api(`/admin/clientes/${cliente.id}/correo`, { method: 'POST', body: { asunto, cuerpo } });
+            toast(r.message, r.estado === 'enviado' || r.estado === 'pendiente' ? 'ok' : 'warn');
+            if (r.estado === 'error') return;
+            const resumen = cuerpo.replace(/\s+/g, ' ').slice(0, 140);
+            await guardar(`Correo enviado a ${cliente.correo || ''} — Asunto: "${asunto}". ${resumen}`);
+        } catch (e) {
+            toast(e.message, 'error');
+        } finally {
+            if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btn.dataset.txt; }
+        }
     };
 
     /* ---------- REUNIÓN ---------- */

@@ -20,7 +20,7 @@
             if (!el.parentElement.querySelector('.grafica-sin-red')) {
                 const aviso = document.createElement('div');
                 aviso.className = 'grafica-sin-red';
-                aviso.textContent = 'No se pudo cargar la gráfica. Revisa la conexión a internet o ejecuta "npm install" en el servidor.';
+                aviso.textContent = 'No se pudo cargar la gráfica. Revisa la conexión a internet y vuelve a abrir la página.';
                 el.parentElement.appendChild(aviso);
             }
             this.data = { labels: [], datasets: [] };

@@ -129,7 +129,7 @@ function pintar() {
             const box = document.getElementById('smtp-estado');
             if (!box) return;
             box.innerHTML = !e.configurado
-                ? 'Sin cuenta de Gmail configurada: los correos (bienvenida, recuperación y aviso de cambio de contraseña) solo se guardan aquí. Para enviarlos de verdad pon <span class="mono">SMTP_USUARIO</span> y <span class="mono">SMTP_PASSWORD</span> en el <span class="mono">.env</span>.'
+                ? 'Todavía no hay cuenta de Gmail de la tienda configurada: los correos solo se guardan aquí y no llegan a los clientes.'
                 : e.ok ? `Los correos se envían de verdad desde <strong>${escHTML(e.cuenta)}</strong>.`
                 : `<span style="color:var(--danger)">No se pudo entrar a ${escHTML(e.cuenta)}: ${escHTML(e.motivo)}</span>`;
         }).catch(() => {});

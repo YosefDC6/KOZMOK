@@ -654,7 +654,10 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
                   (Contesto / No contesto / Buzon) y agregas notas.
         Correo  : "Para" con el correo del cliente, plantillas (seguimiento,
                   cotizacion, bienvenida, recordatorio de pago), asunto y
-                  cuerpo. "Enviar correo" (simulado).
+                  cuerpo. "Enviar correo" lo manda DE VERDAD al cliente desde
+                  la cuenta de Gmail de la tienda (queda tambien en
+                  Seguridad -> Correos enviados) y registra la interaccion.
+                  Sin Gmail configurado solo se guarda.
         Reunion : fecha, hora, modalidad (videollamada/presencial/telefono)
                   y agenda. "Agendar reunion".
         Chat    : mini conversacion con respuestas rapidas; "Cerrar chat".
@@ -844,7 +847,7 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      encenderlo se generan los que falten).
    - Entrega del proveedor:
         * Segun los dias de entrega del proveedor (lo real).
-        * Inmediata (para demostracion): el pedido se genera y se surte
+        * Inmediata (el pedido llega al momento): se genera y se surte
           al instante, para ver el ciclo completo en clase sin esperar.
    - Nunca se duplica: si el producto ya tiene un pedido Pendiente o En
      proceso no se genera otro; en Inventario la alerta muestra "OC-100x
