@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Confirma tu correo · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="auth-wrap">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="mail" data-ic-size="28"></div>
+        <h1>Confirma tu correo</h1>
+        <p id="ver-intro">Te enviamos un código de 6 dígitos. Escríbelo aquí para poder comprar.</p>
+    </div>
+
+    <div class="card" id="form-card">
+        <form id="form-verificar" autocomplete="off">
+            <div class="field">
+                <label for="codigo">Código de verificación</label>
+                <input type="text" id="codigo" class="codigo-verif" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                       placeholder="000000" autocomplete="one-time-code" required />
+            </div>
+            <div id="ver-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="btn-verificar">Confirmar correo</button>
+        </form>
+        <p style="margin:16px 0 0;text-align:center;font-size:.88rem">
+            ¿No te llegó? Revisa spam o promociones, o
+            <button type="button" class="btn-link" id="btn-reenviar">envíame otro código</button>
+        </p>
+        <p class="auth-nota">El código vence en 30 minutos. Mientras tanto puedes seguir viendo productos y llenando tu carrito.</p>
+    </div>
+
+    <div class="card" id="listo" hidden>
+        <p style="margin-top:0;color:var(--text)"><strong>¡Listo, tu correo quedó confirmado!</strong> Ya puedes comprar y recibirás aquí los avisos de tus pedidos.</p>
+        <a class="btn btn-primary" style="width:100%" id="btn-continuar" href="/index.html">Continuar</a>
+    </div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+// Destino al terminar: ?next=/carrito.html (solo rutas de esta tienda)
+function destino() {
+    const n = new URLSearchParams(location.search).get('next') || '';
+    return /^\/(?!\/)[\w\-./?=&%#]*$/.test(n) && !n.startsWith('/admin') ? n : '/perfil.html';
+}
+const sesion = Sesion.cliente();
+if (!sesion) location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
+else if (sesion.correo_verificado !== false) mostrarListo();
+else document.getElementById('ver-intro').innerHTML =
+    `Te enviamos un código de 6 dígitos a <strong>${escHTML(sesion.correo)}</strong>. Escríbelo aquí para poder comprar.`;
+
+function mostrarListo() {
+    document.getElementById('form-card').hidden = true;
+    document.getElementById('listo').hidden = false;
+    document.getElementById('btn-continuar').href = destino();
+}
+
+const inCodigo = document.getElementById('codigo');
+inCodigo.addEventListener('input', () => {
+    inCodigo.value = inCodigo.value.replace(/\D/g, '').slice(0, 6);
+    if (inCodigo.value.length === 6) document.getElementById('form-verificar').requestSubmit();
+});
+inCodigo.focus();
+
+document.getElementById('form-verificar').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btn-verificar');
+    const err = document.getElementById('ver-error');
+    err.hidden = true;
+    btn.disabled = true; btn.textContent = 'Comprobando…';
+    try {
+        const r = await api('/auth/verificar-correo', { method: 'POST', body: { codigo: inCodigo.value } });
+        Sesion.guardarCliente({ ...Sesion.cliente(), ...r.cliente });
+        toast('Correo confirmado', 'ok');
+        mostrarListo();
+    } catch (ex) {
+        err.textContent = ex.message; err.hidden = false;
+        inCodigo.value = ''; inCodigo.focus();
+        btn.disabled = false; btn.textContent = 'Confirmar correo';
+    }
+});
+
+const btnReenviar = document.getElementById('btn-reenviar');
+function esperar(seg) {
+    btnReenviar.disabled = true;
+    const tick = () => {
+        if (seg <= 0) { btnReenviar.disabled = false; btnReenviar.textContent = 'envíame otro código'; return; }
+        btnReenviar.textContent = `pide otro en ${seg} s`; seg--; setTimeout(tick, 1000);
+    };
+    tick();
+}
+btnReenviar.addEventListener('click', async () => {
+    try {
+        const r = await api('/auth/reenviar-verificacion', { method: 'POST' });
+        if (r.ya_verificado) { Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: true }); return mostrarListo(); }
+        toast(r.message, 'ok');
+        esperar(r.espera || 60);
+    } catch (ex) {
+        toast(ex.message, 'error');
+        if (ex.datos && ex.datos.espera) esperar(ex.datos.espera);
+    }
+});
+</script>
+</body>
+</html>

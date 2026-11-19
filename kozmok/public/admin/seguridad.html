@@ -113,15 +113,26 @@ function pintar() {
                 <td style="white-space:nowrap">${formatoFechaHora(b.creado)}</td><td style="white-space:nowrap">${formatoFechaHora(b.hasta)}</td>
                 <td>${b.activo ? `<button class="btn btn-outline btn-sm" onclick="levantar(${b.id})">Desbloquear</button>` : `<span class="tag">${b.levantado ? 'Levantado' + (b.levantado_por_nombre ? ' por ' + escHTML(b.levantado_por_nombre) : '') : 'Vencido'}</span>`}</td></tr>`).join('') || '<tr><td colspan="6">Sin bloqueos.</td></tr>'}</tbody></table></div>`;
     } else if (TAB === 'correos') {
-        el.innerHTML = `<p style="margin:0 0 10px;color:var(--text-muted);font-size:.86rem">Sin servidor de correo, los mensajes que manda el sistema (bienvenida, recuperación y aviso de cambio de contraseña) se guardan aquí.</p>
+        const ESTADO_CORREO = { enviado: ['ok', 'Enviado'], pendiente: ['aviso', 'En cola'], error: ['mal', 'No se envió'], sin_smtp: ['', 'Solo guardado'] };
+        el.innerHTML = `<div id="smtp-estado" style="margin:0 0 10px;font-size:.86rem;color:var(--text-muted)">Revisando la cuenta de correo…</div>
             <div class="table-wrap"><table>
-            <thead><tr><th>Fecha</th><th>Para</th><th>Asunto</th><th>Tipo</th><th></th></tr></thead>
-            <tbody>${(CORREOS || []).map((m) => `<tr>
+            <thead><tr><th>Fecha</th><th>Para</th><th>Asunto</th><th>Tipo</th><th>Estado</th><th></th></tr></thead>
+            <tbody>${(CORREOS || []).map((m) => { const [cls, txt] = ESTADO_CORREO[m.estado] || ['', m.estado || '—']; return `<tr>
                 <td style="white-space:nowrap">${formatoFechaHora(m.fecha)}</td><td>${escHTML(m.para)}</td>
                 <td>${escHTML(m.asunto)}<div style="font-size:.76rem;color:var(--text-muted)">${escHTML(m.vista)}…</div></td>
                 <td><span class="tag">${escHTML(m.tipo)}</span></td>
-                <td><button class="btn btn-ghost btn-sm" onclick="verCorreo(${Number(m.id)})">Ver</button></td></tr>`).join('') || '<tr><td colspan="5">Todavía no se ha enviado ningún correo.</td></tr>'}</tbody></table></div>
+                <td><span class="tag ${cls}" ${m.error ? `title="${escHTML(m.error)}"` : ''}>${txt}</span></td>
+                <td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="verCorreo(${Number(m.id)})">Ver</button>
+                    ${m.estado === 'error' || m.estado === 'sin_smtp' ? `<button class="btn btn-ghost btn-sm" onclick="reenviarCorreo(${Number(m.id)})">Reenviar</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="6">Todavía no se ha enviado ningún correo.</td></tr>'}</tbody></table></div>
             <div class="card" id="correo-abierto" hidden style="margin-top:14px"></div>`;
+        api('/admin/correos/estado').then((e) => {
+            const box = document.getElementById('smtp-estado');
+            if (!box) return;
+            box.innerHTML = !e.configurado
+                ? 'Sin cuenta de Gmail configurada: los correos (bienvenida, recuperación y aviso de cambio de contraseña) solo se guardan aquí. Para enviarlos de verdad pon <span class="mono">SMTP_USUARIO</span> y <span class="mono">SMTP_PASSWORD</span> en el <span class="mono">.env</span>.'
+                : e.ok ? `Los correos se envían de verdad desde <strong>${escHTML(e.cuenta)}</strong>.`
+                : `<span style="color:var(--danger)">No se pudo entrar a ${escHTML(e.cuenta)}: ${escHTML(e.motivo)}</span>`;
+        }).catch(() => {});
     } else {
         el.innerHTML = `<div class="table-wrap"><table>
             <thead><tr><th>Tipo</th><th>Dueño</th><th>IP / navegador</th><th>Inició</th><th>Último uso</th><th></th></tr></thead>
@@ -154,6 +165,10 @@ async function verCorreo(id) {
         box.hidden = false;
         box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (e) { toast(e.message, 'error'); }
+}
+async function reenviarCorreo(id) {
+    try { const r = await api(`/admin/correos/${id}/reenviar`, { method: 'POST' }); toast(r.message, r.estado === 'enviado' ? 'ok' : 'error'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
 }
 cargar();
 </script>

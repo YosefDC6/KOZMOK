@@ -26,7 +26,10 @@ async function api(path, options = {}) {
             localStorage.removeItem('kz_usuario');
             location.href = '/admin/login.html';
         }
-        throw new Error(data.message || data.error || 'Error en la solicitud');
+        const err = new Error(data.message || data.error || 'Error en la solicitud');
+        err.status = res.status;
+        err.datos = data;   // p. ej. { codigo: 'correo_no_verificado' } o { sugerencia }
+        throw err;
     }
     return data;
 }
@@ -72,6 +75,7 @@ const Sesion = {
     // Cierra la sesión también en el servidor (la cookie copiada deja de servir).
     cerrarSesionCliente() {
         localStorage.removeItem('kz_cliente');
+        if (window.Club) Club.olvidar();
         return Sesion._salir('cliente');
     },
     cerrarSesionUsuario() {
@@ -85,6 +89,51 @@ const Sesion = {
         }).catch(() => {});
     },
 };
+// ---- Cuentas recordadas ----
+// Al entrar con "Mantener sesión iniciada" el navegador recuerda el correo
+// y el nombre (nunca la contraseña). Después de cerrar sesión, el login
+// las muestra para volver a entrar con un clic. tipo: 'cliente' | 'usuario'.
+const CuentasRecordadas = {
+    _clave: (tipo) => (tipo === 'usuario' ? 'kz_cuentas_equipo' : 'kz_cuentas'),
+    lista(tipo = 'cliente') {
+        try { const l = JSON.parse(localStorage.getItem(this._clave(tipo)) || '[]'); return Array.isArray(l) ? l : []; }
+        catch { return []; }
+    },
+    guardar(tipo, { correo, nombre }) {
+        if (!correo) return;
+        const c = String(correo).trim().toLowerCase();
+        const l = this.lista(tipo).filter((x) => x.correo !== c);
+        l.unshift({ correo: c, nombre: String(nombre || '').split(' ')[0] || c });
+        try { localStorage.setItem(this._clave(tipo), JSON.stringify(l.slice(0, 3))); } catch { /* sin almacenamiento */ }
+    },
+    olvidar(tipo, correo) {
+        const l = this.lista(tipo).filter((x) => x.correo !== String(correo).toLowerCase());
+        try { localStorage.setItem(this._clave(tipo), JSON.stringify(l)); } catch { /* sin almacenamiento */ }
+    },
+    // Tarjetas "Continuar como…" dentro de `cont`. alElegir(cuenta) rellena el correo.
+    pintar(cont, tipo, alElegir) {
+        if (!cont) return;
+        const l = this.lista(tipo);
+        cont.hidden = !l.length;
+        if (!l.length) { cont.innerHTML = ''; return; }
+        const inicial = (n) => escHTML((n || '?').trim().charAt(0).toUpperCase());
+        cont.innerHTML = `<p class="cr-titulo">${l.length > 1 ? 'Elige una cuenta' : 'Continuar con tu cuenta'}</p>
+            ${l.map((c, i) => `<div class="cr-item">
+                <button type="button" class="cr-elegir" data-i="${i}">
+                    <span class="cr-avatar">${inicial(c.nombre)}</span>
+                    <span class="cr-datos"><strong>${escHTML(c.nombre)}</strong><small>${escHTML(c.correo)}</small></span>
+                </button>
+                <button type="button" class="cr-quitar" data-i="${i}" aria-label="Quitar ${escHTML(c.correo)} de este dispositivo" title="Quitar de este dispositivo">&times;</button>
+            </div>`).join('')}`;
+        cont.querySelectorAll('.cr-elegir').forEach((b) => b.addEventListener('click', () => alElegir(l[Number(b.dataset.i)])));
+        cont.querySelectorAll('.cr-quitar').forEach((b) => b.addEventListener('click', () => {
+            CuentasRecordadas.olvidar(tipo, l[Number(b.dataset.i)].correo);
+            CuentasRecordadas.pintar(cont, tipo, alElegir);
+        }));
+    },
+};
+window.CuentasRecordadas = CuentasRecordadas;
+
 // Tokens de la versión anterior (Base64 en localStorage): ya no sirven.
 try { localStorage.removeItem('kz_token'); localStorage.removeItem('kz_admin_token'); } catch { /* sin almacenamiento */ }
 
@@ -173,6 +222,43 @@ function precioHTML(p, { clase = '' } = {}) {
         ? `-${formatoMoneda(lista - final)}` : `-${Math.round((1 - final / lista) * 100)}%`;
     return `<span class="${clase} precio-promo">${formatoMoneda(final)}</span> <s class="precio-antes">${formatoMoneda(lista)}</s> <span class="tag-promo" title="${String(p.promocion.nombre || '').replace(/"/g, '')}">${etiqueta}</span>`;
 }
+
+// ---- Club Kozmok: puntos que se ganan ANTES de comprar ----
+// Misma regla que el servidor: (precio pagado / 20) x multiplicador del
+// nivel (Bronce x1 sin sesión). La regla se pide una vez por sesión de
+// navegación y se guarda; mientras llega se usa la última conocida.
+const Club = {
+    _defecto: { pesos_por_punto: 20, valor_punto: 0.1, con_sesion: false, nivel: { clave: 'bronce', nombre: 'Bronce', multiplicador: 1 } },
+    _quien() { const c = Sesion.cliente(); return c ? Number(c.id) : 0; },
+    regla() {
+        try {
+            const r = JSON.parse(sessionStorage.getItem('kz_club'));
+            return r && r.quien === this._quien() ? r : this._defecto;   // es de otra sesión
+        } catch { return this._defecto; }
+    },
+    async cargar() {
+        try {
+            const r = { ...(await api('/club/regla')), quien: this._quien() };
+            const antes = JSON.stringify(this.regla());
+            sessionStorage.setItem('kz_club', JSON.stringify(r));
+            if (antes !== JSON.stringify(r)) document.dispatchEvent(new CustomEvent('kz:club', { detail: r }));
+            return r;
+        } catch { return this.regla(); }
+    },
+    olvidar() { try { sessionStorage.removeItem('kz_club'); } catch { /* nada */ } },
+    puntos(monto) {
+        const r = this.regla();
+        return Math.max(0, Math.floor((Number(monto) || 0) / r.pesos_por_punto * Number(r.nivel.multiplicador || 1)));
+    },
+    valor(puntos) { return Math.round(puntos * this.regla().valor_punto * 100) / 100; },
+    // Etiqueta corta para tarjetas de producto: "+124 pts"
+    etiqueta(monto) {
+        const n = this.puntos(monto);
+        if (!n) return '';
+        return `<span class="pts-ganar" title="Ganas ${n.toLocaleString('es-MX')} puntos del Club Kozmok (valen ${formatoMoneda(this.valor(n))} en tu siguiente compra)">+${n.toLocaleString('es-MX')} pts</span>`;
+    },
+};
+window.Club = Club;
 
 function formatoFecha(fecha) {
     if (!fecha) return '—';

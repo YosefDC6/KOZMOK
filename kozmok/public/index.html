@@ -16,17 +16,17 @@
         <div class="hero-txt">
             <span class="arc-sticker">Cómputo y electrónica</span>
             <h1>El equipo correcto <span class="hl">para lo que vas</span> a hacer con&nbsp;él.</h1>
-            <p>Compara procesador, RAM y gráficos en cada ficha, revisa el stock antes de comprar, y si no sabes por dónde empezar, deja que el asistente te recomiende según tu presupuesto.</p>
+            <p>Compara procesador, RAM y gráficos en cada ficha, revisa el stock antes de comprar, y si no sabes por dónde empezar, deja que nuestro asesor te recomiende según tu presupuesto.</p>
             <div class="hero-actions">
                 <a href="/index.html?ver=todo" class="btn btn-primary btn-lg">Ver catálogo</a>
-                <a href="#" class="btn btn-outline btn-lg" onclick="document.getElementById('chatbot-toggle').click(); return false;">Preguntarle al asistente</a>
+                <a href="#" class="btn btn-outline btn-lg" onclick="document.getElementById('chatbot-toggle').click(); return false;">Preguntarle al asesor</a>
             </div>
         </div>
         <div class="hero-logo" aria-hidden="true">
             <span data-logo="150"></span>
             <div class="hero-sellos">
                 <span class="arc-sticker blanca">Arma tu PC</span>
-                <span class="arc-sticker blanca">Stock real</span>
+                <span class="arc-sticker blanca">Envío gratis desde $10,000</span>
                 <span class="arc-sticker blanca">Garantía directa</span>
             </div>
         </div>
@@ -92,15 +92,6 @@
                 <a href="/armar-pc.html" class="btn btn-outline btn-sm">Arma tu PC</a>
             </div>
         </div>
-    </div>
-</section>
-
-<section class="section container home-sec" id="como">
-    <h2 class="home-h2">Cómo funciona</h2>
-    <div class="como-func">
-        <div class="cf-paso"><span class="cf-num">1</span><strong>Explora o busca</strong><span>Filtra por categoría, uso o presupuesto, o busca por marca desde la barra de arriba.</span></div>
-        <div class="cf-paso"><span class="cf-num">2</span><strong>Pregunta al asesor</strong><span>El botón abajo a la derecha abre el asistente: te sugiere equipos según tu presupuesto y el stock real.</span></div>
-        <div class="cf-paso"><span class="cf-num">3</span><strong>Compra y gana puntos</strong><span>Cada compra suma puntos del Club que valen dinero en tu siguiente pedido.</span></div>
     </div>
 </section>
 
@@ -216,7 +207,7 @@ function modoResultados() {
     const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max') || q.get('promocion') || q.get('orden'));
     document.getElementById('catalogo').hidden = !enCatalogo;
     // hero + explorar: solo en la portada
-    ['hero', 'explorar', 'promos', 'como'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
+    ['hero', 'explorar', 'promos'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
     // destacados, novedades, banner y recientes: ocultos aquí; sus render() los muestran si hay contenido
     ['destacados', 'novedades', 'promo-banner', 'recientes'].forEach((id) => document.getElementById(id).hidden = true);
     return enCatalogo;
@@ -347,6 +338,7 @@ function tarjetasProducto(lista, { nuevo = false } = {}) {
                 <div class="pc-pie">
                     <div>
                         <span class="product-price">${precioHTML(p)}</span>
+                        ${agotado ? '' : Club.etiqueta(p.precio_final ?? p.precio)}
                         ${stockTexto(p)}
                     </div>
                     <button class="btn btn-primary btn-sm pc-agregar" ${agotado ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})" title="${agotado ? 'Sin stock' : 'Agregar al carrito'}" aria-label="Agregar al carrito">
@@ -362,6 +354,11 @@ function tarjetasProducto(lista, { nuevo = false } = {}) {
 const POR_PAGINA = 24;
 let LISTA_ACTUAL = [];
 let MOSTRADOS = POR_PAGINA;
+// Al conocer el nivel del cliente se actualizan los "+N pts".
+document.addEventListener('kz:club', () => {
+    if (LISTA_ACTUAL.length) renderProductos(LISTA_ACTUAL, { conservar: true });
+    puntosFicha();
+});
 
 function renderProductos(lista, { conservar = false } = {}) {
     const grid = document.getElementById('grid-productos');
@@ -576,6 +573,7 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
             ${stockTexto(p)}
         </div>
         ${p.promocion ? `<div class="pm-promo">${icon('star', 14)} <strong>${p.promocion.nombre}</strong> · ahorras ${formatoMoneda(p.descuento_unitario)} por pieza · válida hasta ${formatoFecha(p.promocion.fecha_fin)}</div>` : ''}
+        ${p.stock > 0 ? '<div class="pm-puntos" id="modal-puntos"></div>' : ''}
         ${urgencia}
         ${p.stock > 0 ? `
         <div class="modal-qty-row">
@@ -607,8 +605,28 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
         </div>
         <div class="modal-resenas" id="modal-resenas"><div style="color:var(--text-muted);font-size:.85rem">Cargando reseñas…</div></div>
     `;
+    FICHA = p;
+    document.getElementById('modal-garantia')?.addEventListener('change', puntosFicha);
+    puntosFicha();
     document.getElementById('modal-producto').classList.add('open');
     cargarResenas(id);
+}
+
+// "Con esta compra ganas N puntos": cambia con la cantidad y la garantía.
+let FICHA = null;
+function puntosFicha() {
+    const el = document.getElementById('modal-puntos');
+    if (!el || !FICHA) return;
+    const qty = Number(document.getElementById('modal-qty')?.textContent) || 1;
+    const gar = document.getElementById('modal-garantia')?.value;
+    const monto = Number(FICHA.precio_final ?? FICHA.precio) * qty + (gar ? costoGarantia(FICHA.precio, gar) * qty : 0);
+    const n = Club.puntos(monto);
+    const r = Club.regla();
+    el.innerHTML = `${icon('star', 15)} <div>Con esta compra ganas <strong>${n.toLocaleString('es-MX')} puntos</strong> del Club Kozmok
+        (valen ${formatoMoneda(Club.valor(n))} en tu siguiente compra).
+        <small>${r.con_sesion
+            ? `Tu nivel ${escHTML(r.nivel.nombre)} te da x${r.nivel.multiplicador} puntos. Se abonan cuando tu pago queda confirmado.`
+            : `<a href="/login.html?next=${encodeURIComponent(location.pathname + location.search + location.hash)}">Inicia sesión</a> o <a href="/registro.html">crea tu cuenta</a> para juntarlos. Cada $${r.pesos_por_punto} = 1 punto.`}</small></div>`;
 }
 
 // Cerrar la ficha: si se abrió desde aquí, "atrás" quita el #producto del
@@ -693,6 +711,7 @@ function ajustarQty(delta, max) {
     if (!el) return;
     let v = Math.max(1, Math.min(Number(el.textContent) + delta, max));
     el.textContent = v;
+    puntosFicha();
 }
 
 async function agregarAlCarrito(productoId, cerrarModal) {

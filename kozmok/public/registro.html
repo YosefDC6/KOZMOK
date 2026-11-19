@@ -27,7 +27,8 @@
     <div class="card" id="form-card" style="max-width:460px">
         <form id="form-registro">
             <div class="field"><label>Nombre completo</label><input type="text" id="nombre" required autocomplete="name" /></div>
-            <div class="field"><label>Correo electrónico</label><input type="email" id="correo" required autocomplete="email" /></div>
+            <div class="field"><label>Correo electrónico</label><input type="email" id="correo" required autocomplete="email" />
+                <div class="sugerencia-correo" id="sugerencia-correo" hidden></div></div>
 
             <div class="field">
                 <label>Contraseña</label>
@@ -47,15 +48,11 @@
                     <label>Confirmar contraseña</label>
                     <input type="password" id="password2" required autocomplete="new-password" oninput="medirPass()" />
                 </div>
-                <div class="field"><label>Teléfono</label><input type="tel" id="telefono" autocomplete="tel" /></div>
+                <div class="field"><label>Teléfono <small style="color:var(--text-muted)">(opcional)</small></label><input type="tel" id="telefono" autocomplete="tel" /></div>
             </div>
             <div class="pass-match" id="pass-match" hidden></div>
 
-            <div class="field"><label>Empresa (opcional)</label><input type="text" id="empresa" /></div>
-            <div class="field-row">
-                <div class="field"><label>Ciudad</label><input type="text" id="ciudad" /></div>
-                <div class="field"><label>Estado</label><input type="text" id="estado" /></div>
-            </div>
+            <label class="auth-recordar"><input type="checkbox" id="recordar" checked /> Mantener sesión iniciada en este dispositivo</label>
             <div id="registro-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-registrar">Crear cuenta</button>
         </form>
@@ -151,22 +148,32 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
         correo: document.getElementById('correo').value,
         password,
         telefono: document.getElementById('telefono').value,
-        empresa: document.getElementById('empresa').value,
-        ciudad: document.getElementById('ciudad').value,
-        estado: document.getElementById('estado').value,
+        recordar: document.getElementById('recordar').checked,
     };
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
-        Sesion.guardarCliente(data.cliente);
+        Sesion.guardarCliente({ ...data.cliente, recordar: body.recordar });
+        if (body.recordar) CuentasRecordadas.guardar('cliente', data.cliente);
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `¡Cuenta creada! Tu carrito (${r.pasados} producto(s)) ya está en tu cuenta.` : '¡Cuenta creada!', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));
         // Vuelve a donde iba (p. ej. el carrito); si tenía carrito guardado, al carrito.
         const next = new URLSearchParams(location.search).get('next');
         const destino = next && next.startsWith('/') && !next.startsWith('//') ? next : (r.pasados ? '/carrito.html' : '/perfil.html');
-        setTimeout(() => location.href = destino, 600);
+        // Con correo por confirmar, primero se escribe el código que le llegó.
+        const ir = data.cliente.correo_verificado === false ? `/verificar.html?next=${encodeURIComponent(destino)}` : destino;
+        setTimeout(() => location.href = ir, 600);
     } catch (err) {
         mostrar(err.message);
+        // "¿Quisiste decir …@gmail.com?" -> un clic lo corrige
+        const sug = err.datos && err.datos.sugerencia;
+        const caja = document.getElementById('sugerencia-correo');
+        if (sug) {
+            caja.innerHTML = `¿Quisiste decir <button type="button" class="btn-link">${escHTML(sug)}</button>?`;
+            caja.querySelector('button').onclick = () => { document.getElementById('correo').value = sug; caja.hidden = true; errorBox.hidden = true; };
+            caja.hidden = false;
+        } else caja.hidden = true;
+        if (err.datos && err.datos.campo === 'correo') document.getElementById('correo').focus();
         btn.disabled = false; btn.textContent = 'Crear cuenta';
     }
 });

@@ -10,6 +10,9 @@ const dbConfig = require('./db.config.js');   // lee el .env (contraseña de la 
 // Etapa 5: defensas contra fuerza bruta, robo de sesión/credenciales e
 // inyección SQL (ver SEGURIDAD.md).
 const seg = require('./seguridad.js');
+// Envío real de correos por Gmail (SMTP); sin configurar, solo se guardan.
+const correo = require('./correo.js');
+const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
@@ -168,13 +171,101 @@ async function clienteDeSesion(req) {
     catch { return null; }
 }
 
-// Correos que manda el sistema. Sin servidor SMTP quedan en la tabla
-// correos_salida (se ven en el panel: Cuenta → Seguridad → Correos).
-async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null }) {
+// Correos que manda el sistema. Siempre quedan en la tabla correos_salida
+// (se ven en el panel: Cuenta → Seguridad → Correos enviados). Si hay
+// cuenta de Gmail configurada en el .env (SMTP_USUARIO / SMTP_PASSWORD),
+// además se mandan de verdad: la fila queda "pendiente" y el despachador
+// la envía en cuanto se confirma la transacción (si la transacción se
+// deshace, el correo nunca sale). Si falla, se reintenta hasta 3 veces.
+//   boton: { texto, url } -> botón grande en la versión HTML del correo.
+async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null, boton = null }) {
     if (!para) return;
+    const html = htmlCorreo({ asunto, cuerpo, boton });
     await db.query(
-        `INSERT INTO correos_salida (para, asunto, cuerpo, tipo, cliente_id, pedido_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [para, String(asunto).slice(0, 200), cuerpo, tipo, cliente_id, pedido_id]);
+        `INSERT INTO correos_salida (para, asunto, cuerpo, html, tipo, cliente_id, pedido_id, estado)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [para, String(asunto).slice(0, 200), cuerpo, html, tipo, cliente_id, pedido_id, correo.configurado() ? 'pendiente' : 'sin_smtp']);
+    programarDespacho();
+}
+
+// Versión HTML del correo (los clientes de correo no aceptan CSS externo,
+// así que todo va en estilos en línea). El texto se escapa siempre.
+function htmlCorreo({ asunto, cuerpo, boton }) {
+    const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const texto = String(cuerpo || '');
+    const parrafos = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+        .map((p) => `<p style="margin:0 0 14px;line-height:1.55">${esc(p).replace(/\n/g, '<br>')
+            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</p>`).join('');
+    // El botón va donde estaba el enlace en el texto (o al final).
+    const i = boton && boton.url ? texto.indexOf(boton.url) : -1;
+    const antes = i >= 0 ? texto.slice(0, i) : texto;
+    const despues = i >= 0 ? texto.slice(i + boton.url.length) : '';
+    const btn = boton && boton.url ? `
+        <p style="margin:22px 0;text-align:center">
+          <a href="${esc(boton.url)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 26px;border-radius:10px">${esc(boton.texto || 'Abrir')}</a>
+        </p>
+        <p style="margin:0 0 14px;font-size:12px;color:#6b7280;line-height:1.5">Si el botón no funciona, copia este enlace en tu navegador:<br><span style="word-break:break-all">${esc(boton.url)}</span></p>` : '';
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${esc(asunto)}</title></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden">
+        <tr><td style="background:#111827;padding:18px 26px;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:.5px">Kozmok</td></tr>
+        <tr><td style="padding:26px;font-size:15px">
+          <h1 style="margin:0 0 16px;font-size:20px">${esc(asunto)}</h1>
+          ${parrafos(antes)}${btn}${parrafos(despues)}
+        </td></tr>
+        <tr><td style="padding:16px 26px;background:#f9fafb;color:#6b7280;font-size:12px;line-height:1.5">
+          Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+// Despachador de la bandeja de salida: manda los correos pendientes.
+let despachando = false;
+let despachoProgramado = null;
+function programarDespacho(ms = 400) {
+    if (!correo.configurado() || despachoProgramado) return;
+    despachoProgramado = setTimeout(() => { despachoProgramado = null; despacharCorreos(); }, ms);
+}
+async function despacharCorreos() {
+    if (!correo.configurado() || despachando) return;
+    despachando = true;
+    try {
+        // Lo que lleva más de un día sin salir ya no se manda (un enlace
+        // de recuperación de ayer ya venció, por ejemplo).
+        await pool.query(`UPDATE correos_salida SET estado = 'error', error = COALESCE(error, 'No se pudo enviar a tiempo')
+                          WHERE estado = 'pendiente' AND fecha < CURRENT_TIMESTAMP - INTERVAL '1 day'`);
+        const r = await pool.query(
+            `SELECT id, para, asunto, cuerpo, html, intentos FROM correos_salida
+             WHERE estado = 'pendiente' ORDER BY fecha ASC LIMIT 20`);
+        for (const c of r.rows) {
+            try {
+                await correo.enviar({ para: c.para, asunto: c.asunto, texto: c.cuerpo, html: c.html });
+                await pool.query(`UPDATE correos_salida SET estado = 'enviado', enviado = CURRENT_TIMESTAMP, intentos = intentos + 1, error = NULL WHERE id = $1`, [c.id]);
+            } catch (e) {
+                const intentos = Number(c.intentos || 0) + 1;
+                const msg = correo.explicarError(e);
+                await pool.query(`UPDATE correos_salida SET intentos = $2, error = $3, estado = $4 WHERE id = $1`,
+                    [c.id, intentos, msg.slice(0, 300), intentos >= 3 ? 'error' : 'pendiente']);
+                console.error(`Correo #${c.id} a ${c.para} no se envió (intento ${intentos}): ${msg}`);
+            }
+        }
+    } catch (e) {
+        console.error('Despachador de correos:', e.message);
+    } finally { despachando = false; }
+}
+
+// Dirección pública de la tienda para los enlaces de los correos. Si no se
+// define URL_PUBLICA en el .env se usa la dirección con la que se abrió la
+// página (ojo: "localhost" solo funciona en la misma computadora).
+function urlPublica(req) {
+    const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
+    if (/^https?:\/\/[^\s/]+/.test(base)) return base;
+    return `${req.protocol || 'http'}://${req.headers.host}`;
 }
 
 // =========================================================
@@ -199,6 +290,22 @@ function nivelRecompensas(valorTotal = 0, totalCompras = 0) {
     const actual = NIVELES[idx];
     const siguiente = NIVELES[idx + 1] || null;
     return { indice: idx, actual, siguiente };
+}
+
+// Puntos que da una compra: lo pagado por los productos y garantías (ya con
+// promociones, antes de impuestos y envío) / 20, por el multiplicador del
+// nivel. Es la misma regla para lo que se muestra ANTES de comprar
+// (catálogo, carrito, checkout) y lo que se abona al pagar.
+const PESOS_POR_PUNTO = 20;
+function puntosPorCompra(monto, nivel = NIVELES[0]) {
+    return Math.max(0, Math.floor((Number(monto) / PESOS_POR_PUNTO) * Number(nivel.multiplicador || 1)));
+}
+async function nivelDeCliente(clienteId, db = pool) {
+    if (!clienteId) return NIVELES[0];
+    const m = await db.query(
+        'SELECT COALESCE(valor_total_compras,0) AS gasto, COALESCE(total_compras,0) AS compras FROM metricas_clientes WHERE cliente_id = $1',
+        [clienteId]);
+    return nivelRecompensas(m.rows[0]?.gasto || 0, m.rows[0]?.compras || 0).actual;
 }
 
 // Código único de socio para el QR de la tarjeta virtual (formato KZMX-XXXXXX).
@@ -244,6 +351,7 @@ async function estadoRecompensas(clienteId) {
         siguiente_nivel: siguiente,
         progreso: Math.round(progreso * 100),
         niveles: NIVELES,
+        pesos_por_punto: PESOS_POR_PUNTO,
     };
 }
 
@@ -255,7 +363,51 @@ async function estadoRecompensas(clienteId) {
 // =========================================================
 
 const CAMPOS_CLIENTE = `id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
-                        etapa_crm, puntos, codigo_socio, fecha_registro`;
+                        etapa_crm, puntos, codigo_socio, fecha_registro, correo_verificado`;
+
+// ---------------------------------------------------------
+// Verificación de correo: al registrarse llega un código de 6 dígitos y,
+// hasta escribirlo, la cuenta puede navegar y llenar el carrito pero no
+// comprar. Sin Gmail configurado no hay cómo mandar el código, así que la
+// cuenta queda verificada de una vez (como antes).
+// ---------------------------------------------------------
+const VERIF_MINUTOS = 30;
+const VERIF_MAX_INTENTOS = 5;
+const VERIF_ESPERA_REENVIO_S = 60;
+function nuevoCodigoVerificacion() {
+    return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+const hashCodigo = (clienteId, codigo) => crypto.createHash('sha256').update(`${clienteId}:${codigo}`).digest('hex');
+
+// Guarda un código nuevo y manda el correo. db puede ser una transacción.
+async function enviarCodigoVerificacion(db, req, cliente, { bienvenida = false } = {}) {
+    const codigo = nuevoCodigoVerificacion();
+    await db.query(
+        `UPDATE clientes SET verificacion_hash = $2, verificacion_intentos = 0,
+                verificacion_expira = CURRENT_TIMESTAMP + ($3 || ' minutes')::interval,
+                verificacion_enviada = CURRENT_TIMESTAMP
+         WHERE id = $1`, [cliente.id, hashCodigo(cliente.id, codigo), String(VERIF_MINUTOS)]);
+    const enlace = `${urlPublica(req)}/verificar.html`;
+    await enviarCorreo(db, {
+        para: cliente.correo, tipo: bienvenida ? 'registro' : 'verificacion', cliente_id: cliente.id,
+        asunto: bienvenida ? `¡Bienvenido a Kozmok! Tu código es ${codigo}` : `Tu código de Kozmok es ${codigo}`,
+        cuerpo: (bienvenida
+            ? `Hola ${cliente.nombre}:\n\nTu cuenta en Kozmok quedó creada. Para confirmar que este correo es tuyo, escribe este código en la tienda:\n\n${codigo}\n\n`
+            : `Hola ${cliente.nombre}:\n\nEste es tu nuevo código para confirmar tu correo:\n\n${codigo}\n\n`)
+            + `Vence en ${VERIF_MINUTOS} minutos. Si cerraste la página, entra aquí y escríbelo:\n${enlace}\n\n`
+            + (bienvenida && cliente.codigo_socio ? `Tu código de socio del Club Kozmok es ${cliente.codigo_socio}.\n\n` : '')
+            + 'Si no creaste esta cuenta, ignora este mensaje.',
+        boton: { texto: 'Confirmar mi correo', url: enlace },
+    });
+}
+
+// Casilla "Mantener sesión iniciada" del login. Acepta true/false o "1"/"0";
+// si no viene (Postman, scripts), se usa el valor por defecto.
+function quiereRecordar(body, porDefecto) {
+    const v = body && body.recordar;
+    if (v === undefined || v === null || v === '') return porDefecto;
+    return v === true || v === 1 || v === '1' || v === 'true' || v === 'on';
+}
 
 // Mensaje de "cuenta / IP bloqueada" con los minutos que faltan.
 function respuestaBloqueo(res, bloqueo) {
@@ -296,7 +448,7 @@ const loginCliente = asyncRoute(async (req, res) => {
 
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true });
     await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
-    const s = await seg.crearSesion(req, res, 'cliente', cliente.id);
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(req.body, true) });
     const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
     // El token va en la cookie HttpOnly. Solo se devuelve en el cuerpo si
     // lo pide un cliente de API (Postman, pruebas): { "modo": "token" }.
@@ -312,6 +464,9 @@ const registrarCliente = asyncRoute(async (req, res) => {
     if (!nombre || !correo || !password) return res.status(400).json({ message: 'Nombre, correo y contraseña son obligatorios' });
     if (!seg.nombreValido(nombre)) return res.status(400).json({ message: 'Escribe tu nombre solo con letras (2 a 150 caracteres)' });
     if (!seg.correoValido(correo)) return res.status(400).json({ message: 'El correo no tiene un formato válido' });
+    // Cualquier terminación vale, siempre que el dominio exista y reciba correo.
+    const dom = await correo_.dominioRecibeCorreo(correo);
+    if (!dom.ok) return res.status(400).json({ message: dom.motivo, sugerencia: dom.sugerencia || null, campo: 'correo' });
     if (!seg.telefonoValido(b.telefono)) return res.status(400).json({ message: 'El teléfono no es válido' });
     const errPass = seg.validarPassword(password, { correo, nombre });
     if (errPass) return res.status(400).json({ message: errPass });
@@ -333,24 +488,30 @@ const registrarCliente = asyncRoute(async (req, res) => {
     try {
         await db.query('BEGIN');
         const result = await db.query(
-            `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigo_socio, estado_cliente, etapa_crm)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'activo','Prospecto')
+            `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigo_socio, estado_cliente, etapa_crm, correo_verificado)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'activo','Prospecto',$11)
              RETURNING ${CAMPOS_CLIENTE}`,
             [nombre.slice(0, 150), correo, hash, txt(b.telefono, 30), txt(b.empresa, 150), txt(b.ciudad, 100), txt(b.estado, 100),
-                txt(b.direccion, 200), txt(b.codigo_postal, 15), codigoSocio]
+                txt(b.direccion, 200), txt(b.codigo_postal, 15), codigoSocio, !correo_.configurado()]
         );
         cliente = result.rows[0];
         await db.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [cliente.id]);
-        await enviarCorreo(db, {
-            para: correo, tipo: 'registro', cliente_id: cliente.id,
-            asunto: '¡Bienvenido a Kozmok!',
-            cuerpo: `Hola ${nombre}:\n\nTu cuenta quedó creada. Ya puedes comprar, usar tu monedero y seguir tus pedidos.\nTu código de socio es ${codigoSocio}.\n\nSi no fuiste tú, responde este correo.`,
-        });
+        if (correo_.configurado()) {
+            // Bienvenida + código para confirmar que el correo es suyo
+            await enviarCodigoVerificacion(db, req, cliente, { bienvenida: true });
+        } else {
+            await enviarCorreo(db, {
+                para: correo, tipo: 'registro', cliente_id: cliente.id,
+                asunto: '¡Bienvenido a Kozmok!',
+                cuerpo: `Hola ${nombre}:\n\nTu cuenta en Kozmok quedó creada con este correo. Ya puedes comprar, guardar tus favoritos, seguir tus pedidos y juntar puntos del Club Kozmok.\n\nTu código de socio es ${codigoSocio}. Lo encuentras también en tu tarjeta virtual dentro de tu cuenta.\n\nSi no creaste esta cuenta, ignora este mensaje o escríbenos.`,
+                boton: { texto: 'Ir a mi cuenta', url: `${urlPublica(req)}/perfil.html` },
+            });
+        }
         await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
 
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true, motivo: 'registro' });
-    const s = await seg.crearSesion(req, res, 'cliente', cliente.id);
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(b, true) });
     res.status(201).json({ success: true, cliente, expira: s.expira, ...(b.modo === 'token' ? { token: s.token } : {}) });
 });
 
@@ -382,7 +543,9 @@ const loginUsuario = asyncRoute(async (req, res) => {
 
     await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: true });
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
-    const s = await seg.crearSesion(req, res, 'usuario', usuario.id);
+    // El panel nunca recuerda la sesión: se cierra al cerrar el navegador
+    // (y a las 8 h o tras 2 h sin uso).
+    const s = await seg.crearSesion(req, res, 'usuario', usuario.id, { recordar: false });
     const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo };
     res.json({ success: true, usuario: datos, permisos: PERMISOS[usuario.rol] || [], expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
 });
@@ -391,6 +554,47 @@ app.post('/api/auth/login-cliente', limiteAuth, loginCliente);
 app.post('/api/auth/registro-cliente', limiteAuth, registrarCliente);
 app.post('/api/auth/registro', limiteAuth, registrarCliente);
 app.post('/api/auth/login-usuario', limiteAuth, loginUsuario);
+
+// Confirmar el correo con el código de 6 dígitos.
+app.post('/api/auth/verificar-correo', limiteAuth, requireCliente, asyncRoute(async (req, res) => {
+    const codigo = String((req.body || {}).codigo || '').replace(/\D/g, '');
+    const r = await pool.query(
+        `SELECT id, correo_verificado, verificacion_hash, verificacion_intentos,
+                verificacion_expira < CURRENT_TIMESTAMP AS vencido
+         FROM clientes WHERE id = $1`, [req.cliente.id]);
+    const c = r.rows[0];
+    const datos = async () => (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [req.cliente.id])).rows[0];
+    if (c.correo_verificado) return res.json({ success: true, ya_verificado: true, cliente: await datos() });
+    if (codigo.length !== 6) return res.status(400).json({ message: 'Escribe los 6 dígitos del código' });
+    if (!c.verificacion_hash || c.vencido) return res.status(400).json({ message: 'El código ya venció. Pide uno nuevo.', vencido: true });
+    if (c.verificacion_intentos >= VERIF_MAX_INTENTOS) return res.status(429).json({ message: 'Demasiados intentos con este código. Pide uno nuevo.', vencido: true });
+    const ok = crypto.timingSafeEqual(Buffer.from(hashCodigo(c.id, codigo)), Buffer.from(c.verificacion_hash));
+    if (!ok) {
+        const n = c.verificacion_intentos + 1;
+        await pool.query('UPDATE clientes SET verificacion_intentos = $2 WHERE id = $1', [c.id, n]);
+        const quedan = VERIF_MAX_INTENTOS - n;
+        return res.status(400).json({ message: quedan > 0 ? `El código no coincide. Te quedan ${quedan} intento(s).` : 'El código no coincide. Pide uno nuevo.', vencido: quedan <= 0 });
+    }
+    await pool.query(
+        `UPDATE clientes SET correo_verificado = TRUE, verificacion_hash = NULL, verificacion_expira = NULL, verificacion_intentos = 0
+         WHERE id = $1`, [c.id]);
+    res.json({ success: true, cliente: await datos() });
+}));
+
+// Mandar otro código (uno por minuto).
+app.post('/api/auth/reenviar-verificacion', limiteAuth, requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT id, nombre, correo, codigo_socio, correo_verificado,
+                EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - verificacion_enviada))::int AS hace
+         FROM clientes WHERE id = $1`, [req.cliente.id]);
+    const c = r.rows[0];
+    if (c.correo_verificado) return res.json({ success: true, ya_verificado: true });
+    if (!correo_.configurado()) return res.status(503).json({ message: 'Por ahora no podemos enviar correos. Intenta más tarde.' });
+    if (c.hace != null && c.hace < VERIF_ESPERA_REENVIO_S)
+        return res.status(429).json({ message: `Espera ${VERIF_ESPERA_REENVIO_S - c.hace} segundos para pedir otro código.`, espera: VERIF_ESPERA_REENVIO_S - c.hace });
+    await enviarCodigoVerificacion(pool, req, c);
+    res.json({ success: true, message: `Te enviamos un código nuevo a ${c.correo}.`, espera: VERIF_ESPERA_REENVIO_S });
+}));
 // POST /api/auth/login sirve a los dos: con { "tipo": "cliente" | "usuario" };
 // sin tipo, "correo" = cliente de la tienda y "email" = equipo (ERP).
 app.post('/api/auth/login', limiteAuth, (req, res, next) => {
@@ -580,6 +784,15 @@ app.get('/api/catalogo/:id', asyncRoute(async (req, res) => {
     res.json(p);
 }));
 
+// Regla del Club para mostrar "Ganas X puntos" en el catálogo antes de
+// comprar: con sesión usa el nivel del cliente; sin sesión, Bronce.
+app.get('/api/club/regla', asyncRoute(async (req, res) => {
+    const cid = await clienteDeSesion(req);
+    const nivel = await nivelDeCliente(cid);
+    res.json({ pesos_por_punto: PESOS_POR_PUNTO, valor_punto: VALOR_PUNTO, con_sesion: !!cid,
+               nivel: { clave: nivel.clave, nombre: nivel.nombre, multiplicador: nivel.multiplicador } });
+}));
+
 // Cotización de una compra (lo que se va a cobrar, con promociones,
 // impuestos, envío y puntos). La usan el carrito y el resumen del checkout
 // para mostrar el mismo desglose que después guarda el pedido.
@@ -596,8 +809,13 @@ app.post('/api/checkout/cotizar', asyncRoute(async (req, res) => {
                  garantia_costo: costoGarantia(p.precio, planGarantia(i.garantia).clave) * cantidad };
     }).filter(Boolean);
     const puntos = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
-    const [promos, imps] = await Promise.all([promocionesVigentes(), impuestosActivos()]);
-    res.json(cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO }));
+    const cid = await clienteDeSesion(req);
+    const [promos, imps, nivel] = await Promise.all([promocionesVigentes(), impuestosActivos(), nivelDeCliente(cid)]);
+    const cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO });
+    // Puntos del Club que dará esta compra (sin sesión: nivel Bronce).
+    const ganar = puntosPorCompra(cot.base_impuestos, nivel);
+    res.json({ ...cot, puntos_a_ganar: ganar, puntos_a_ganar_valor: redondear(ganar * VALOR_PUNTO),
+               nivel_club: { clave: nivel.clave, nombre: nivel.nombre, multiplicador: nivel.multiplicador }, con_sesion: !!cid });
 }));
 
 // Planes de garantía para un producto (los usa el modal del catálogo)
@@ -959,7 +1177,7 @@ async function aplicarCobroPedido(client, pedido, opciones = {}) {
         [cliente_id]
     );
     const { actual: nivel } = nivelRecompensas(m.rows[0]?.gasto || 0, m.rows[0]?.compras || 0);
-    const puntos_ganados = Math.floor((subtotal / 20) * nivel.multiplicador);
+    const puntos_ganados = puntosPorCompra(subtotal, nivel);
     if (puntos_ganados > 0) {
         await client.query('UPDATE clientes SET puntos = puntos + $1 WHERE id = $2', [puntos_ganados, cliente_id]);
         await client.query(
@@ -1183,6 +1401,10 @@ const METODOS_TIENDA = {
 // También responde en POST /api/pagos/procesar (nombre del documento).
 const procesarCompra = asyncRoute(async (req, res) => {
     const cliente_id = req.cliente.id;
+    const verif = await pool.query('SELECT correo_verificado FROM clientes WHERE id = $1', [cliente_id]);
+    if (verif.rows[0] && verif.rows[0].correo_verificado === false) {
+        return res.status(403).json({ message: 'Confirma tu correo para poder comprar: escribe el código que te enviamos.', codigo: 'correo_no_verificado' });
+    }
     const { items, direccion_envio, notas } = req.body;
     let metodo_pago = req.body.metodo_pago;
     const metodo_tipo = METODOS_TIENDA[req.body.metodo_tipo] ? req.body.metodo_tipo : 'tarjeta';
@@ -2142,10 +2364,17 @@ app.get('/api/admin/clientes/:id/pedidos', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
+app.put('/api/admin/clientes/:id/correo-confirmado', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `UPDATE clientes SET correo_verificado = TRUE, verificacion_hash = NULL, verificacion_intentos = 0
+         WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ message: 'Cliente no encontrado' });
+    res.json({ success: true });
+}));
 app.get('/api/admin/clientes/:id', asyncRoute(async (req, res) => {
     const cliente = await pool.query(
         `SELECT id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
-                estado_cliente, etapa_crm, puntos, codigo_socio, fecha_registro, ultimo_login
+                estado_cliente, etapa_crm, puntos, codigo_socio, fecha_registro, ultimo_login, correo_verificado
          FROM clientes WHERE id = $1`, [req.params.id]);
     if (cliente.rows.length === 0) return res.status(404).json({ message: 'Cliente no encontrado' });
     const metricas = await pool.query('SELECT * FROM metricas_clientes WHERE cliente_id = $1', [req.params.id]);
@@ -4213,9 +4442,25 @@ app.post('/api/admin/seguridad/sesiones/:id/revocar', requireAdmin, asyncRoute(a
 // bienvenida, recuperación de contraseña y aviso de cambio de contraseña.
 app.get('/api/admin/correos', requireAdmin, asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `SELECT id, para, asunto, tipo, fecha, LEFT(cuerpo, 160) AS vista FROM correos_salida
+        `SELECT id, para, asunto, tipo, fecha, estado, error, enviado, LEFT(cuerpo, 160) AS vista FROM correos_salida
          ORDER BY fecha DESC LIMIT 100`);
     res.json(r.rows);
+}));
+// ¿Está conectada la cuenta de Gmail? (para el aviso del panel)
+app.get('/api/admin/correos/estado', requireAdmin, asyncRoute(async (req, res) => {
+    if (!correo.configurado()) return res.json({ configurado: false, ok: false, motivo: 'Falta SMTP_USUARIO / SMTP_PASSWORD en el .env' });
+    const v = await correo.verificar();
+    res.json({ configurado: true, cuenta: correo.CFG.usuario, ...v });
+}));
+// Volver a mandar un correo (p. ej. tras corregir la contraseña de Gmail).
+app.post('/api/admin/correos/:id/reenviar', requireAdmin, asyncRoute(async (req, res) => {
+    if (!correo.configurado()) return res.status(400).json({ message: 'Configura primero la cuenta de Gmail en el .env' });
+    const r = await pool.query(`UPDATE correos_salida SET estado = 'pendiente', intentos = 0, error = NULL, fecha = CURRENT_TIMESTAMP
+                                WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ message: 'Correo no encontrado' });
+    await despacharCorreos();
+    const e = await pool.query('SELECT estado, error FROM correos_salida WHERE id = $1', [req.params.id]);
+    res.json({ message: e.rows[0].estado === 'enviado' ? 'Correo enviado' : `No se pudo enviar: ${e.rows[0].error || 'error desconocido'}`, ...e.rows[0] });
 }));
 app.get('/api/admin/correos/:id', requireAdmin, asyncRoute(async (req, res) => {
     const r = await pool.query('SELECT * FROM correos_salida WHERE id = $1', [req.params.id]);
@@ -4890,11 +5135,12 @@ app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
     const token = crypto.randomBytes(32).toString('base64url');
     await pool.query(`INSERT INTO recuperaciones (cliente_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
         [c.rows[0].id, seg.sha256(token), seg.ipDe(req)]);
-    const enlace = `${req.protocol || 'http'}://${req.headers.host}/restablecer.html?token=${token}`;
+    const enlace = `${urlPublica(req)}/restablecer.html?token=${token}`;
     await enviarCorreo(pool, {
         para: c.rows[0].correo, tipo: 'recuperacion', cliente_id: c.rows[0].id,
         asunto: 'Restablece tu contraseña de Kozmok',
         cuerpo: `Hola ${c.rows[0].nombre}:\n\nRecibimos una solicitud para restablecer tu contraseña. Abre este enlace (vence en 30 minutos y solo sirve una vez):\n${enlace}\n\nSi no fuiste tú, ignora este correo: tu contraseña no cambia.`,
+        boton: { texto: 'Crear nueva contraseña', url: enlace },
     });
     res.json(generico);
 }));
@@ -4913,7 +5159,8 @@ app.post('/api/auth/restablecer', limiteAuth, asyncRoute(async (req, res) => {
     }
     const err = seg.validarPassword(nueva, { correo: rec.correo, nombre: rec.nombre });
     if (err) return res.status(400).json({ message: err });
-    await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [await seg.hashPassword(nueva), rec.cliente_id]);
+    // Abrir el enlace del correo también demuestra que el correo es suyo.
+    await pool.query('UPDATE clientes SET password = $1, correo_verificado = TRUE, verificacion_hash = NULL WHERE id = $2', [await seg.hashPassword(nueva), rec.cliente_id]);
     await pool.query('UPDATE recuperaciones SET usado = CURRENT_TIMESTAMP WHERE cliente_id = $1 AND usado IS NULL', [rec.cliente_id]);
     const cerradas = await seg.revocarSesionesDe('cliente', rec.cliente_id, 'contraseña restablecida');
     await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`cliente:${seg.normalizarCorreo(rec.correo)}`]);
@@ -5052,6 +5299,22 @@ async function migrarEsquema() {
     pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`);
+    // Verificación de correo. Las cuentas que ya existían quedan verificadas.
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS correo_verificado BOOLEAN NOT NULL DEFAULT TRUE');
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_hash VARCHAR(64)');
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_expira TIMESTAMP');
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_intentos INTEGER NOT NULL DEFAULT 0');
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_enviada TIMESTAMP');
+    // "Mantener sesión iniciada" y envío real de correos (Gmail).
+    await pool.query('ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS recordar BOOLEAN NOT NULL DEFAULT FALSE');
+    await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS html TEXT');
+    // Los correos que ya existían quedan como "sin_smtp" para no mandarlos
+    // de golpe al configurar Gmail; los nuevos nacen "pendiente".
+    await pool.query(`ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS estado VARCHAR(12) NOT NULL DEFAULT 'sin_smtp'`);
+    await pool.query(`ALTER TABLE correos_salida ALTER COLUMN estado SET DEFAULT 'pendiente'`);
+    await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS intentos INTEGER NOT NULL DEFAULT 0');
+    await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS error VARCHAR(300)');
+    await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS enviado TIMESTAMP');
     await pool.query('ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS direccion VARCHAR(200)');
     const costo = await pool.query(
         `SELECT 1 FROM information_schema.columns WHERE table_name = 'productos' AND column_name = 'costo_unitario'`
@@ -5131,6 +5394,16 @@ app.listen(PORT, HOST, async () => {
         console.log(`Seguridad: sesiones en cookie HttpOnly, bloqueo tras ${seg.CONFIG.maxFallosCuenta} intentos, filtro SQL "${seg.CONFIG.filtroSQL}".`);
         const e4 = await pool.query(`SELECT to_regclass('public.monederos') AS t`);
         if (!e4.rows[0].t) console.error('  Faltan las tablas de la Etapa 4 (carrito, pagos, promociones, impuestos, monedero): vuelve a cargar db/database.sql.');
+        if (correo.configurado()) {
+            const v = await correo.verificar();
+            console.log(v.ok
+                ? `Correo: Gmail conectado como ${correo.CFG.usuario}; los correos se envían de verdad.`
+                : `Correo: NO se pudo entrar a ${correo.CFG.usuario} — ${v.motivo} Los correos quedan en el panel (Seguridad → Correos enviados) y se reintentan.`);
+            despacharCorreos();
+            setInterval(despacharCorreos, 30 * 1000);
+        } else {
+            console.log('Correo: sin cuenta de Gmail en el .env (SMTP_USUARIO / SMTP_PASSWORD); los correos solo se guardan en el panel.');
+        }
         await tareasPeriodicas();
         setInterval(tareasPeriodicas, 60 * 1000);
     } catch (err) {

@@ -42,23 +42,18 @@ async function renderNavbar() {
         <div class="menu-dropdown" id="cuenta-dd">
             <button class="icon-btn menu-trigger" id="cuenta-trigger" aria-haspopup="true" aria-expanded="false">
                 <span class="avatar">${(nombreCorto[0] || 'U').toUpperCase()}</span>
-                <span class="hide-sm">${nombreCorto}</span> ${icon('chevron', 14)}
+                <span class="hide-sm">${escHTML(nombreCorto)}</span> ${icon('chevron', 14)}
             </button>
             <div class="menu-panel" role="menu">
                 <div class="menu-head">
-                    <strong>${cliente.nombre}</strong>
-                    <span>${cliente.correo}</span>
+                    <strong>${escHTML(cliente.nombre)}</strong>
+                    <span>${escHTML(cliente.correo)}</span>
                 </div>
-                ${M('home', 'Resumen', '/perfil.html')}
+                ${M('user', 'Mi cuenta', '/perfil.html')}
                 <a href="/pedidos.html" role="menuitem">${icon('package')} Mis pedidos <span class="menu-aviso" id="menu-en-camino" hidden></span></a>
                 ${M('star', 'Club de puntos', '/recompensas.html')}
                 ${M('wallet', 'Mi monedero', '/monedero.html')}
-                ${M('heart', 'Favoritos', '/favoritos.html')}
-                ${M('pin', 'Direcciones', '/direcciones.html')}
-                ${M('card', 'Métodos de pago', '/pagos.html')}
-                ${M('shield', 'Mis garantías', '/garantias.html')}
-                ${M('help', 'Soporte', '/soporte.html')}
-                ${M('settings', 'Preferencias', '/preferencias.html')}
+                ${M('help', 'Ayuda y soporte', '/soporte.html')}
                 <div class="menu-sep"></div>
                 <button class="menu-logout" id="btn-logout" role="menuitem">${icon('logout')} Cerrar sesión</button>
             </div>
@@ -70,13 +65,16 @@ async function renderNavbar() {
 
     el.innerHTML = `
         <div class="topbar">Envío gratis en compras mayores a $10,000 · Garantía directa con la tienda</div>
+        ${cliente && cliente.correo_verificado === false && !location.pathname.endsWith('/verificar.html') ? `
+        <div class="aviso-verificar">${icon('mail', 15)} Confirma tu correo para poder comprar: te enviamos un código a ${escHTML(cliente.correo)}.
+            <a href="/verificar.html?next=${encodeURIComponent(location.pathname + location.search)}">Escribir código</a></div>` : ''}
         <nav class="navbar">
             <div class="navbar-inner">
                 <button class="hamburger" id="hamburger" aria-label="Menú">${icon('menu', 22)}</button>
                 <a href="/index.html" class="brand" aria-label="Kozmok, ir al inicio"><span class="brand-mark">${logoKZK(26)}</span> <span class="hide-sm">Kozmok</span></a>
 
                 <form class="nav-search" id="nav-search" role="search" autocomplete="off">
-                    <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…  ( / )" aria-label="Buscar"
+                    <input type="search" id="nav-search-input" placeholder="Buscar productos, marcas…" aria-label="Buscar"
                            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sug-nav-search-input" />
                     <select id="nav-scope" aria-label="Categoría a buscar">${scopeOptions}</select>
                     <button type="submit">${icon('search', 16)}<span class="hide-sm">Buscar</span></button>
@@ -102,7 +100,7 @@ async function renderNavbar() {
         <div class="drawer-overlay" id="drawer-overlay"></div>
         <aside class="drawer" id="drawer">
             <div class="drawer-head">
-                <strong>${cliente ? 'Hola, ' + nombreCorto : 'Menú'}</strong>
+                <strong>${cliente ? 'Hola, ' + escHTML(nombreCorto) : 'Menú'}</strong>
                 <button class="modal-close" id="drawer-close" aria-label="Cerrar">${icon('x', 20)}</button>
             </div>
             <form class="drawer-search" id="drawer-search" autocomplete="off">
@@ -120,19 +118,12 @@ async function renderNavbar() {
             <div class="drawer-section">
                 <span class="drawer-label">${cliente ? 'Mi cuenta' : 'Cuenta'}</span>
                 ${cliente ? `
-                    <a href="/perfil.html">Resumen</a>
+                    <a href="/perfil.html">Mi cuenta</a>
                     <a href="/pedidos.html">Mis pedidos</a>
                     <a href="/recompensas.html">Club de puntos</a>
                     <a href="/monedero.html">Mi monedero</a>
                     <a href="/favoritos.html">Favoritos</a>
-                    <a href="/resenas.html">Mis reseñas</a>
-                    <a href="/garantias.html">Mis garantías</a>
-                    <a href="/direcciones.html">Direcciones</a>
-                    <a href="/pagos.html">Métodos de pago</a>
-                    <a href="/soporte.html">Soporte</a>
-                    <a href="/datos.html">Mis datos</a>
-                    <a href="/seguridad.html">Seguridad</a>
-                    <a href="/preferencias.html">Preferencias</a>
+                    <a href="/soporte.html">Ayuda y soporte</a>
                     <button class="menu-logout" id="btn-logout-drawer">Cerrar sesión</button>
                 ` : `
                     <a href="/login.html">Iniciar sesión</a>
@@ -278,10 +269,17 @@ async function sincronizarSesion(local) {
         const { cliente } = await api('/auth/estado');
         if (local && !cliente) {
             localStorage.removeItem('kz_cliente');
+            // Sin "Mantener sesión iniciada" es normal que al reabrir el
+            // navegador la sesión ya no exista: se limpia sin avisar.
+            if (local.recordar === false) { location.reload(); return; }
             if (window.toast) toast('Tu sesión terminó. Vuelve a iniciar sesión.', 'info');
             setTimeout(() => location.reload(), 900);
         } else if (!local && cliente) {
             Sesion.guardarCliente(cliente);
+            location.reload();
+        } else if (local && cliente && cliente.correo_verificado !== undefined && local.correo_verificado !== cliente.correo_verificado) {
+            // El correo se confirmó (o quedó pendiente) en otra pestaña
+            Sesion.guardarCliente({ ...local, correo_verificado: cliente.correo_verificado });
             location.reload();
         }
     } catch { /* sin servidor: se deja como está */ }
@@ -614,6 +612,7 @@ const MiniPanel = {
         foot.innerHTML = `
             <div class="mp-total"><span>Subtotal (${n} ${n === 1 ? 'pieza' : 'piezas'})</span><strong>${formatoMoneda(subtotal)}</strong></div>
             ${ahorro > 0 ? `<div class="mp-nota mp-ahorro">${icon('star', 13)} Ahorras ${formatoMoneda(ahorro)} con promociones</div>` : ''}
+            ${window.Club && Club.puntos(subtotal) ? `<div class="mp-nota mp-puntos">${icon('star', 13)} Ganas ${Club.puntos(subtotal).toLocaleString('es-MX')} puntos del Club (valen ${formatoMoneda(Club.valor(Club.puntos(subtotal)))})</div>` : ''}
             <div class="mp-nota">${faltaEnvio > 0 ? `Te faltan ${formatoMoneda(faltaEnvio)} para el envío gratis.` : 'Tu pedido ya tiene envío gratis.'} IVA y envío se calculan al pagar.</div>
             <a href="/carrito.html" class="btn btn-primary btn-block">${Sesion.cliente() ? 'Ir a pagar' : 'Ver carrito y pagar'} ${icon('arrow', 16)}</a>
             <button class="btn btn-ghost btn-block" id="mp-seguir">Seguir comprando</button>`;
@@ -783,11 +782,11 @@ function renderFooter() {
             <div class="container footer-grid">
                 <div>
                     <div class="brand" style="margin-bottom:10px"><span class="brand-mark">${logoKZK(26)}</span> Kozmok</div>
-                    <p style="font-size:.85rem">Cómputo y electrónica con stock real, comparador de especificaciones y asesor de compra.</p>
+                    <p style="font-size:.85rem">Cómputo y electrónica con existencias al día, comparador de especificaciones y asesor de compra.</p>
                 </div>
                 <div>
                     <h4>Comprar</h4>
-                    <a href="/index.html">Catálogo completo</a>
+                    <a href="/index.html?ver=todo">Catálogo completo</a>
                     <a href="/armar-pc.html">Arma tu PC</a>
                     <a href="/index.html?categoria=Laptops">Laptops</a>
                     <a href="/index.html?categoria=Componentes">Componentes</a>
@@ -867,4 +866,6 @@ document.addEventListener('DOMContentLoaded', () => {
     renderNavbar();
     renderFooter();
     renderCookieConsent();
+    // Regla de puntos del Club (nivel del cliente) para "+N pts" en el catálogo.
+    if (window.Club && !location.pathname.startsWith('/admin')) Club.cargar();
 });

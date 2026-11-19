@@ -44,6 +44,9 @@ const CONFIG = {
     horasSesionEquipo:  num(process.env.SESION_HORAS_EQUIPO, 8),
     minInactividadCliente: num(process.env.INACTIVIDAD_MIN_CLIENTE, 2880), // 2 días
     minInactividadEquipo:  num(process.env.INACTIVIDAD_MIN_EQUIPO, 120),   // 2 horas
+    // "Mantener sesión iniciada": la cookie sobrevive a cerrar el navegador
+    // y la sesión dura estos días (sin cierre por inactividad).
+    diasRecordarCliente: num(process.env.SESION_DIAS_RECORDAR_CLIENTE, 30),
     maxFallosCuenta: num(process.env.MAX_FALLOS_CUENTA, 5),
     maxFallosIp:     num(process.env.MAX_FALLOS_IP, 20),
     ventanaMin:      num(process.env.VENTANA_FALLOS_MIN, 15),
@@ -360,25 +363,34 @@ function leerCookies(req) {
     return out;
 }
 
+// segundos = null -> cookie de sesión del navegador: se borra al cerrarlo.
 function ponerCookie(req, res, nombre, valor, segundos) {
     const segura = req.secure || CONFIG.cookieSegura;
-    const partes = [`${nombre}=${encodeURIComponent(valor)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${segundos}`];
+    const partes = [`${nombre}=${encodeURIComponent(valor)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict'];
+    if (segundos != null) partes.push(`Max-Age=${segundos}`);
     if (segura) partes.push('Secure');
     const previas = res.getHeader('Set-Cookie');
     res.setHeader('Set-Cookie', [...(Array.isArray(previas) ? previas : previas ? [previas] : []), partes.join('; ')]);
 }
 const borrarCookie = (req, res, nombre) => ponerCookie(req, res, nombre, '', 0);
 
-async function crearSesion(req, res, tipo, id) {
+// recordar = true  -> "Mantener sesión iniciada": cookie persistente que
+//                    sobrevive a cerrar el navegador (30 días; configurable
+//                    en .env). Solo la tienda: el panel nunca recuerda.
+// recordar = false -> cookie de sesión: al cerrar el navegador se pierde y
+//                    hay que volver a entrar (como en una computadora pública).
+async function crearSesion(req, res, tipo, id, { recordar = false } = {}) {
     const token = crypto.randomBytes(32).toString('base64url');
-    const horas = tipo === 'cliente' ? CONFIG.horasSesionCliente : CONFIG.horasSesionEquipo;
+    const horas = recordar
+        ? 24 * CONFIG.diasRecordarCliente
+        : (tipo === 'cliente' ? CONFIG.horasSesionCliente : CONFIG.horasSesionEquipo);
     const r = await POOL.query(
-        `INSERT INTO sesiones (token_hash, tipo, cliente_id, usuario_id, ip, user_agent, huella, expira)
-         VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_TIMESTAMP + ($8 || ' hours')::interval) RETURNING id, expira`,
+        `INSERT INTO sesiones (token_hash, tipo, cliente_id, usuario_id, ip, user_agent, huella, expira, recordar)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_TIMESTAMP + ($8 || ' hours')::interval, $9) RETURNING id, expira`,
         [sha256(token), tipo, tipo === 'cliente' ? id : null, tipo === 'usuario' ? id : null,
-            ipDe(req), uaDe(req), huellaDe(req), String(horas)]);
-    ponerCookie(req, res, COOKIE[tipo], token, Math.round(horas * 3600));
-    return { token, id: r.rows[0].id, expira: r.rows[0].expira };
+            ipDe(req), uaDe(req), huellaDe(req), String(horas), !!recordar]);
+    ponerCookie(req, res, COOKIE[tipo], token, recordar ? Math.round(horas * 3600) : null);
+    return { token, id: r.rows[0].id, expira: r.rows[0].expira, recordar: !!recordar };
 }
 
 function tokenDe(req, tipo) {
@@ -411,7 +423,8 @@ async function leerSesion(req, tipo) {
     }
     if (new Date(s.expira) < new Date()) return null;
     const inactividad = tipo === 'cliente' ? CONFIG.minInactividadCliente : CONFIG.minInactividadEquipo;
-    if (Date.now() - new Date(s.ultimo_uso).getTime() > inactividad * 60000) {
+    // Las sesiones recordadas solo terminan al vencer o al cerrar sesión.
+    if (!s.recordar && Date.now() - new Date(s.ultimo_uso).getTime() > inactividad * 60000) {
         await revocarSesion(s.id, 'inactividad');
         return null;
     }

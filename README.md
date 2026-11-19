@@ -25,7 +25,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Carrito y checkout**: direcciones y métodos de pago guardados; desglose calculado por el servidor (productos, garantías, promociones, cada impuesto activo, envío de $199 —gratis desde $10,000— y puntos). Pago con **tarjeta, PayPal (simulado), monedero, SPEI o en tienda**.
 - **Mi monedero**: saldo en pesos para pagar en un clic. Recarga con tarjeta o PayPal (al instante) o por transferencia (se acredita cuando el equipo la confirma), historial con el saldo de cada movimiento y reembolso automático si se cancela una compra pagada con monedero.
 - **Mi cuenta**: pedidos con seguimiento y cancelación, favoritos, direcciones, métodos de pago, seguridad, preferencias y tickets de soporte.
-- **Club de puntos**: niveles Bronce, Plata, Oro y Platino; 100 puntos equivalen a $10 de descuento.
+- **Club de puntos**: niveles Bronce, Plata, Oro y Platino; 100 puntos equivalen a $10 de descuento. **Antes de comprar** se ve cuántos puntos da cada producto ("+N pts" en el catálogo y en la ficha, según cantidad y garantía), el carrito lateral y el resumen del checkout; el servidor los calcula con la misma regla con la que después los abona (`GET /api/club/regla` y `puntos_a_ganar` en `POST /api/checkout/cotizar`).
 - **Tarjeta virtual de socio** con código QR para verificación en tienda física.
 - **4 temas de color** (Índigo, Esmeralda, Grafito y Claro).
 
@@ -70,7 +70,10 @@ Detalle de cada ataque, cómo se prueba y qué lo detiene en [`SEGURIDAD.md`](SE
 - **Robo de credenciales y de sesión**: la sesión va en una cookie `HttpOnly; SameSite=Strict` con un token aleatorio (en la base solo su hash), vence, se cierra por inactividad y queda atada al navegador: si alguien la copia a otro, se revoca. Contraseñas con bcrypt y política fuerte (8+ caracteres, mayúsculas, minúsculas, número y símbolo).
 - **Inyección SQL**: consultas parametrizadas en todo el servidor, filtro que bloquea y registra los intentos, ids numéricos validados y errores de la base ocultos.
 - **XSS, CSRF y datos ajenos**: limpieza de HTML en lo que entra y escape al mostrar, cabeceras CSP, rechazo de peticiones de otros sitios y cada cliente solo ve lo suyo.
-- **Tienda**: "¿Olvidaste tu contraseña?" con enlace de un solo uso (30 min) y *Mi cuenta → Seguridad* con sesiones abiertas (se pueden cerrar) y últimos intentos de acceso.
+- **Tienda**: "¿Olvidaste tu contraseña?" con enlace de un solo uso (30 min) y *Mi cuenta → Seguridad* con los dispositivos conectados (se pueden cerrar) y los últimos inicios de sesión.
+- **Mantener sesión iniciada** (solo tienda): casilla en el login, marcada por defecto. Marcada, la sesión sobrevive a cerrar el navegador durante 30 días (`SESION_DIAS_RECORDAR_CLIENTE` en el `.env`); sin marcar, termina al cerrar el navegador. El panel interno no recuerda ni la cuenta ni la sesión: se cierra al cerrar el navegador. El navegador también **recuerda la cuenta** (nombre y correo, nunca la contraseña): al cerrar sesión, el login la ofrece con un clic y solo pide la contraseña; se puede quitar con la ×.
+- **Correo comprobado al registrarse**: se acepta cualquier terminación (gmail, hotmail, outlook, la de una escuela o empresa…) siempre que exista: el servidor revisa en el DNS que el dominio tenga servidor de correo (registro MX) y atrapa errores de dedo como `@gmial.com` o `@hotmail.con`, ofreciendo "¿Quisiste decir…?". Con Gmail configurado, además llega un **código de 6 dígitos** (vence en 30 min, 5 intentos, reenvío cada 60 s) y hasta escribirlo en `verificar.html` la cuenta puede navegar y llenar el carrito pero no comprar (`POST /api/pedidos` responde 403 `correo_no_verificado`). Restablecer la contraseña por el enlace del correo también lo confirma, y en la ficha del cliente del CRM se puede marcar como confirmado a mano. Sin Gmail configurado, o sin internet al registrarse, no se bloquea a nadie.
+- **Correos reales por Gmail**: bienvenida al crear la cuenta, enlace para recuperar la contraseña y aviso de cambio de contraseña, con diseño HTML. Se configuran en el `.env` (`SMTP_USUARIO` y `SMTP_PASSWORD` con una *contraseña de aplicación* de Google); sin configurar, solo se guardan en el panel. Cada correo queda en *Seguridad → Correos enviados* con su estado (enviado, en cola, no se envió) y un botón para reenviarlo; si Gmail falla se reintenta hasta 3 veces. El cliente SMTP (`correo.js`) no usa dependencias.
 - **Panel** (*Cuenta → Seguridad*, solo admin): eventos de seguridad, intentos de inicio de sesión, bloqueos (con "Desbloquear"), sesiones activas y correos enviados.
 - **Pruebas**: `npm run prueba:seguridad` ataca nuestro propio servidor (fuerza bruta, inyección SQL, robo de sesión) y marca cada defensa como DEFENDIDO o VULNERABLE. También se puede atacar por Wi-Fi desde otra computadora de la misma red (por ejemplo el hotspot de un celular): `node pruebas-seguridad/todas.js http://192.168.x.x:3000`.
 
@@ -109,7 +112,8 @@ npm install
 #    CREATE DATABASE kozmok;
 
 # 3. Copiar .env.example como .env y poner la contraseña de PostgreSQL
-#    (el .env no se sube a GitHub)
+#    (el .env no se sube a GitHub). Para que los correos salgan de verdad,
+#    pon también SMTP_USUARIO y SMTP_PASSWORD (ver "Correos por Gmail").
 
 # 4. Cargar esquema, triggers y datos de ejemplo (se puede volver a ejecutar)
 psql -U postgres -d kozmok -f db/database.sql
@@ -117,6 +121,22 @@ psql -U postgres -d kozmok -f db/database.sql
 # 5. Iniciar el servidor
 npm start        # o: npm run dev  (con nodemon)
 ```
+
+### Correos por Gmail
+
+1. En la cuenta de Gmail que enviará los correos activa la **verificación en dos pasos**.
+2. Entra a <https://myaccount.google.com/apppasswords>, crea una contraseña de aplicación (por ejemplo "Kozmok") y copia las 16 letras.
+3. En el `.env`:
+
+```
+SMTP_USUARIO=tucuenta@gmail.com
+SMTP_PASSWORD=abcd efgh ijkl mnop
+```
+
+4. Prueba la configuración sin encender la tienda: `npm run prueba:correo` (manda un correo de prueba a la misma cuenta) o `npm run prueba:correo -- otra@correo.com`.
+5. Reinicia el servidor. La consola dice `Correo: Gmail conectado como …` si todo está bien, o el motivo si Gmail lo rechazó.
+
+Si pruebas desde un celular, pon `URL_PUBLICA=http://192.168.x.x:3000` para que el enlace de recuperación abra desde ese celular (con `localhost` solo abre en la computadora del servidor).
 
 - **Tienda:** http://localhost:3000
 - **Panel interno:** http://localhost:3000/admin/login.html (a propósito, no hay enlace desde la tienda)

@@ -86,23 +86,16 @@ montarCuenta('perfil', async (panel, P) => {
     panel.innerHTML = `
         <div class="cuenta-head">
             <h1>Hola, ${P.nombre.split(' ')[0]}</h1>
-            <p>Resumen de tu cuenta.</p>
+            <p>Tu tarjeta de socio, tus puntos y tus últimos pedidos.</p>
         </div>
 
         ${tarjetaSocio(P, rec)}
 
         <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
-            <div class="stat-card"><div class="stat-label">Nivel del Club</div><div class="stat-value" style="font-size:1.05rem;display:flex;align-items:center;gap:6px">${nivelBadge(rec.nivel.clave, 20)} ${rec.nivel.nombre}</div><div class="stat-sub">${Number(rec.puntos).toLocaleString('es-MX')} pts · vale ${formatoMoneda(rec.valor_en_dinero)}</div></div>
-            <div class="stat-card"><div class="stat-label">Compras</div><div class="stat-value">${numCompras}</div></div>
-            <div class="stat-card"><div class="stat-label">Total gastado</div><div class="stat-value" style="font-size:1.25rem">${formatoMoneda(gastado)}</div></div>
-            <div class="stat-card"><div class="stat-label">Favoritos</div><div class="stat-value">${favs.length}</div></div>
+            <a class="stat-card" href="/recompensas.html" style="text-decoration:none"><div class="stat-label">Mis puntos</div><div class="stat-value" style="font-size:1.25rem">${Number(rec.puntos).toLocaleString('es-MX')}</div><div class="stat-sub">Valen ${formatoMoneda(rec.valor_en_dinero)} en tu próxima compra</div></a>
             <a class="stat-card" href="/monedero.html" style="text-decoration:none"><div class="stat-label">Mi monedero</div><div class="stat-value" style="font-size:1.25rem;color:var(--success)">${formatoMoneda(mon.saldo)}</div><div class="stat-sub">Recargar o ver movimientos</div></a>
-        </div>
-
-        <div class="cuenta-actions">
-            <a class="btn btn-outline btn-sm" href="/index.html?ver=todo">Seguir comprando</a>
-            <a class="btn btn-outline btn-sm" href="/pedidos.html">Ver mis pedidos</a>
-            <a class="btn btn-outline btn-sm" href="/direcciones.html">Administrar direcciones</a>
+            <a class="stat-card" href="/pedidos.html" style="text-decoration:none"><div class="stat-label">Mis pedidos</div><div class="stat-value">${numCompras}</div><div class="stat-sub">${formatoMoneda(gastado)} en compras</div></a>
+            <a class="stat-card" href="/favoritos.html" style="text-decoration:none"><div class="stat-label">Favoritos</div><div class="stat-value">${favs.length}</div><div class="stat-sub">Productos guardados</div></a>
         </div>
 
         <div class="card">

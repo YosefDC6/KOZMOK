@@ -191,7 +191,7 @@ async function cargarCarrito() {
                 <div id="box-monedero" class="pago-box" hidden></div>
                 <div id="box-paypal" class="pago-box" hidden>
                     <h4>${icon('wallet', 15)} PayPal</h4>
-                    <div class="pb-sub" style="margin:0">Al confirmar se simula el cobro en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
+                    <div class="pb-sub" style="margin:0">Al confirmar se cobra en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
                 </div>
                 <div id="tarjeta-nueva" class="card-nueva" hidden>
                     <div class="field"><label>Número de tarjeta</label>
@@ -204,7 +204,7 @@ async function cargarCarrito() {
                         <div class="field"><label>CVV</label><input id="tn-cvv" inputmode="numeric" maxlength="4" placeholder="123" /></div>
                     </div>
                     <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tn-guardar" style="width:auto" checked /> Guardar esta tarjeta para la próxima vez</label>
-                    <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Demo: no se procesa ningún cargo real. Solo se guardan marca y últimos 4 dígitos.</p>
+                    <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Pago protegido: solo guardamos la marca y los últimos 4 dígitos de tu tarjeta.</p>
                 </div>
                 ${bloquePuntos}
                 <div class="ck-acciones">
@@ -227,7 +227,6 @@ async function cargarCarrito() {
             <h3 class="cart-resumen-tit">Resumen del pedido</h3>
             ${shipHint}
             <div id="resumen-totales">${desgloseHTML(COT)}</div>
-            <button class="btn btn-primary" style="width:100%" id="ck-siguiente" onclick="irPaso(PASO + 1)"></button>
             <p class="ck-seguro">${icon('lock', 13)} Pago seguro · puedes cancelar mientras no se envíe</p>
         </div>
         </div>
@@ -342,6 +341,7 @@ function pintarRevision() {
                 <div class="ck-bloque-head"><strong>${icon('card', 15)} Pago</strong><button class="ck-cambiar" onclick="irPaso(3)">Cambiar</button></div>
                 <div>${metodo}</div>
                 ${pts ? `<div class="ck-sub">Canjeas ${pts.toLocaleString('es-MX')} puntos del Club</div>` : ''}
+                ${COT && COT.puntos_a_ganar ? `<div class="ck-sub">Ganas ${Number(COT.puntos_a_ganar).toLocaleString('es-MX')} puntos del Club${sel.value === 'spei' || sel.value === 'tienda' ? ' cuando se confirme tu pago' : ' al confirmar'}</div>` : ''}
                 ${sel.value === 'spei' || sel.value === 'tienda' ? '<div class="ck-sub">Recibirás una ficha de pago; el pedido se confirma al pagar.</div>' : ''}
             </div>`;
         const b = document.getElementById('btn-comprar');
@@ -391,7 +391,22 @@ function desgloseHTML(c) {
         fila('Envío', c.envio === 0 ? 'Gratis' : formatoMoneda2(c.envio)),
         c.descuento_puntos > 0 ? fila('Descuento por puntos', '-' + formatoMoneda2(c.descuento_puntos), 'color:var(--success)') : '',
         `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin:10px 0 16px"><span>Total</span><span class="mono" id="total-txt">${formatoMoneda2(c.total)}</span></div>`,
+        puntosGanarHTML(c),
     ].join('');
+}
+
+// Lo que el cliente gana en el Club con esta compra, antes de pagar.
+function puntosGanarHTML(c) {
+    const n = Number(c.puntos_a_ganar) || 0;
+    if (!n) return '';
+    const nivel = c.nivel_club || { nombre: 'Bronce', multiplicador: 1 };
+    return `<div class="ck-puntos">${icon('star', 16)}
+        <div>Con esta compra ganas <strong>${n.toLocaleString('es-MX')} puntos</strong> del Club Kozmok
+            <span>(valen ${formatoMoneda2(c.puntos_a_ganar_valor)} en tu siguiente compra)</span>
+            <small>${c.con_sesion
+                ? `Nivel ${escHTML(nivel.nombre)}: x${nivel.multiplicador} puntos por cada $20 de productos (sin IVA ni envío). Se abonan al confirmarse tu pago.`
+                : 'Se abonan a tu cuenta al pagar. Cada $20 de productos (sin IVA ni envío) = 1 punto; con más compras subes de nivel y ganas más.'}</small>
+        </div></div>`;
 }
 
 function puntosCanje() {
@@ -489,7 +504,14 @@ async function resolverMetodoPago() {
     return { texto: `Tarjeta ${marca} ****${numero.slice(-4)}`.replace(/\s+/g, ' '), tipo: 'tarjeta' };
 }
 
+// Sin correo confirmado no se puede pagar: a escribir el código y de vuelta.
+function irAVerificar() {
+    toast('Confirma tu correo para poder comprar. Tu carrito se queda guardado.', 'warn');
+    setTimeout(() => location.href = '/verificar.html?next=' + encodeURIComponent('/carrito.html'), 900);
+}
+
 async function confirmarCompra() {
+    if ((Sesion.cliente() || {}).correo_verificado === false) return irAVerificar();
     const items = await api(`/carrito/${cliente.id}`);
     const direccion = document.getElementById('direccion').value.trim();
     if (!direccion) { toast('Ingresa o elige una dirección de envío', 'warn'); return; }
@@ -516,10 +538,15 @@ async function confirmarCompra() {
             }
         });
         actualizarBadgeCarrito();
+        Club.olvidar();   // el nivel pudo subir con esta compra
         location.href = `/gracias.html?id=${pedido.id}`;
     } catch (e) {
-        toast(e.message, 'error');
         btn.disabled = false; btn.textContent = 'Confirmar pedido' + (COT ? ' · ' + formatoMoneda2(COT.total) : '');
+        if (e.datos && e.datos.codigo === 'correo_no_verificado') {
+            Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: false });
+            return irAVerificar();
+        }
+        toast(e.message, 'error');
     }
 }
 
@@ -585,7 +612,7 @@ async function cargarCarritoInvitado() {
             ${desgloseHTML(cot).replace('>Total<', '>Total estimado<')}
             <div class="pago-box" style="margin-bottom:14px">
                 <h4>${icon('lock', 15)} Inicia sesión para pagar</h4>
-                <div class="pb-sub" style="margin:0">Tu carrito se guarda: al entrar o crear tu cuenta lo encuentras aquí mismo, listo para confirmar. Además ganas puntos del Club con esta compra.</div>
+                <div class="pb-sub" style="margin:0">Tu carrito se guarda: al entrar o crear tu cuenta lo encuentras aquí mismo, listo para confirmar.</div>
             </div>
             <a class="btn btn-primary btn-lg" style="width:100%" href="/login.html?next=${next}">Iniciar sesión y pagar</a>
             <a class="btn btn-outline" style="width:100%;margin-top:8px" href="/registro.html?next=${next}">Crear cuenta</a>

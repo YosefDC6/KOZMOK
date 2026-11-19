@@ -188,6 +188,14 @@ CREATE TABLE clientes (
     puntos              INTEGER NOT NULL DEFAULT 0,
     -- código del socio para el QR de la tarjeta virtual (tienda física)
     codigo_socio        VARCHAR(14) UNIQUE,
+    -- Verificación de correo: código de 6 dígitos (solo se guarda su hash).
+    -- Las cuentas de ejemplo y las del CRM nacen verificadas; las que se
+    -- registran en la tienda con Gmail configurado, no.
+    correo_verificado     BOOLEAN NOT NULL DEFAULT TRUE,
+    verificacion_hash     VARCHAR(64),
+    verificacion_expira   TIMESTAMP,
+    verificacion_intentos INTEGER NOT NULL DEFAULT 0,
+    verificacion_enviada  TIMESTAMP,
     fecha_registro      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ultimo_login        TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -725,6 +733,7 @@ CREATE TABLE sesiones (
     expira            TIMESTAMP NOT NULL,
     revocada          TIMESTAMP,
     motivo_revocacion VARCHAR(80),
+    recordar          BOOLEAN NOT NULL DEFAULT FALSE,  -- "Mantener sesión iniciada"
     CONSTRAINT sesiones_dueno_check CHECK (
         (tipo = 'cliente' AND cliente_id IS NOT NULL AND usuario_id IS NULL) OR
         (tipo = 'usuario' AND usuario_id IS NOT NULL AND cliente_id IS NULL))
@@ -790,16 +799,24 @@ CREATE TABLE recuperaciones (
 );
 
 -- Correos que envía el sistema (bienvenida, recuperación de contraseña,
--- aviso de cambio de contraseña). Sin servidor SMTP se guardan aquí y se
--- ven en el panel (Cuenta → Seguridad → Correos).
+-- aviso de cambio de contraseña). Todos se guardan aquí y se ven en el
+-- panel (Cuenta → Seguridad → Correos enviados); con una cuenta de Gmail
+-- en el .env (SMTP_USUARIO / SMTP_PASSWORD) además se envían de verdad.
 CREATE TABLE correos_salida (
     id          SERIAL PRIMARY KEY,
     para        VARCHAR(150) NOT NULL,
     asunto      VARCHAR(200) NOT NULL,
     cuerpo      TEXT NOT NULL,
+    html        TEXT,                          -- versión con diseño (Gmail)
     tipo        VARCHAR(20) NOT NULL DEFAULT 'general',
     cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
     pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    -- pendiente -> enviado | error (tras 3 intentos); sin_smtp = no hay
+    -- cuenta de Gmail configurada y solo se guarda.
+    estado      VARCHAR(12) NOT NULL DEFAULT 'pendiente',
+    intentos    INTEGER NOT NULL DEFAULT 0,
+    error       VARCHAR(300),
+    enviado     TIMESTAMP,
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

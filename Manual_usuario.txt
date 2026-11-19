@@ -145,8 +145,20 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    - La sesion vive en una cookie protegida (HttpOnly): ningun script de la
      pagina la puede leer. La tienda usa la cookie kz_sesion y el panel
      kz_admin; son independientes.
-   - La sesion de la tienda dura 7 dias (se cierra tras 2 dias sin uso) y la
-     del panel 8 horas (se cierra tras 2 horas sin uso).
+   - Casilla "Mantener sesion iniciada" en el login de la tienda (viene
+     marcada):
+        Marcada    -> la sesion sigue abierta 30 dias aunque se cierre el
+                      navegador.
+        Sin marcar -> la sesion termina al cerrar el navegador; mientras
+                      tanto dura 7 dias (se cierra tras 2 dias sin uso).
+   - El panel interno NO recuerda nada: ni la cuenta ni la sesion. Su sesion
+     termina al cerrar el navegador, a las 8 horas o tras 2 horas sin uso.
+   - Cuentas recordadas (solo tienda): al entrar con la casilla marcada, el navegador
+     guarda el nombre y el correo (nunca la contrasena). Al volver al login,
+     aunque se haya cerrado sesion, aparece "Continuar con tu cuenta": se
+     elige la cuenta y solo se escribe la contrasena. "Usar otra cuenta"
+     muestra el campo de correo vacio y la x quita la cuenta del dispositivo.
+     Si se entra sin la casilla, esa cuenta se olvida.
    - Si alguien copia la cookie a otro navegador, el servidor la rechaza y
      cierra esa sesion.
    - Tras 5 contrasenas equivocadas seguidas la cuenta se bloquea 15 minutos;
@@ -471,7 +483,28 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
       - Tarjeta de socio: diseno KZK o Clasico, con vista previa (ver 7).
 
 3.7  REGISTRO DE CUENTA  (registro.html)
-   - Pide nombre, correo, contrasena y CONFIRMAR contrasena (deben coincidir).
+   - Pide nombre, correo, contrasena y CONFIRMAR contrasena (deben coincidir);
+     el telefono es opcional. Ciudad, estado y empresa se capturan despues en
+     Mi cuenta -> Mis datos o al pagar.
+   - El correo puede tener cualquier terminacion (gmail, hotmail, outlook, de
+     escuela o empresa), pero debe EXISTIR: se revisa que el dominio reciba
+     correo. Si esta mal escrito (p. ej. @gmial.com) sale "¿Quisiste decir
+     ...@gmail.com?" y con un clic se corrige.
+   - Con Gmail configurado (ver 3.7d) llega un correo de bienvenida con un
+     CODIGO DE 6 DIGITOS y la tienda abre "Confirma tu correo"
+     (verificar.html). Mientras no se escriba:
+        - se puede navegar, guardar favoritos y llenar el carrito, pero NO
+          comprar; arriba de cada pagina aparece "Confirma tu correo ...
+          Escribir codigo";
+        - el codigo vence en 30 minutos y admite 5 intentos; "envíame otro
+          codigo" manda uno nuevo (uno por minuto).
+     Al escribirlo bien la cuenta queda confirmada. Restablecer la contrasena
+     con el enlace del correo tambien la confirma.
+   - En el panel, la ficha del cliente (CRM) muestra "Correo: Confirmado /
+     Sin confirmar" y el boton "Marcar como confirmado" por si al cliente no
+     le llega el codigo.
+   - Sin Gmail configurado no hay codigo: la cuenta queda confirmada de una
+     vez y llega (al panel) la bienvenida normal.
    - Muestra un medidor de seguridad de la contrasena:
         Muy debil / Debil (rojo) -> Regular (naranja) -> Buena -> Fuerte (verde).
      Se calcula por longitud y por mezcla de mayusculas, minusculas, numeros y
@@ -485,8 +518,11 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      15 minutos aunque despues se escriba la contrasena correcta.
    - "¿Olvidaste tu contrasena?" pide el correo y manda un enlace que vence
      en 30 minutos y solo sirve una vez. Siempre responde lo mismo, exista o
-     no el correo. Sin servidor de correo, el mensaje queda en el panel
-     (Cuenta -> Seguridad -> Correos enviados).
+     no el correo. Con Gmail configurado el enlace llega al correo del
+     cliente con un boton "Crear nueva contrasena"; sin Gmail, el mensaje
+     queda en el panel (Cuenta -> Seguridad -> Correos enviados).
+   - Si el login tenia una cuenta recordada, "¿Olvidaste tu contrasena?"
+     abre recuperar.html con ese correo ya escrito.
    - El enlace abre restablecer.html: se escribe la nueva contrasena (mismas
      reglas), se cierran todas las sesiones abiertas y se levanta el bloqueo
      de la cuenta si lo tenia.
@@ -494,12 +530,25 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 3.7c MI CUENTA -> SEGURIDAD  (seguridad.html)
    - Cambiar contrasena: pide la actual y la nueva (con las 4 reglas). Al
      cambiarla se cierran las sesiones de otros dispositivos.
-   - Sesiones abiertas: navegador, IP, inicio, ultimo uso y vencimiento de
-     cada sesion. "Cerrar" termina una; "Cerrar las demas" deja solo la actual.
-   - Actividad de inicio de sesion: ultimos 15 accesos e intentos fallidos.
+   - Dispositivos conectados: navegador, desde cuando y ultima vez de cada
+     sesion. "Cerrar" termina una; "Cerrar sesion en los demas" deja solo la
+     actual. (La IP y la huella se ven solo en el panel del equipo.)
+   - Inicios de sesion recientes: ultimos 15 accesos e intentos fallidos.
      Si hubo fallos recientes aparece un aviso naranja arriba.
    - Al crear la cuenta se genera automaticamente el codigo de socio para la
      tarjeta virtual (ver 7).
+
+3.7d CORREOS POR GMAIL
+   - Correos que manda la tienda: bienvenida (al crear cuenta), recuperar
+     contrasena y aviso de "Tu contrasena cambio".
+   - Se configuran en el .env: SMTP_USUARIO (la cuenta de Gmail) y
+     SMTP_PASSWORD (contrasena de aplicacion de Google, no la normal; se
+     crea en myaccount.google.com/apppasswords con la verificacion en dos
+     pasos activada). Al arrancar, la consola dice si Gmail acepto la cuenta.
+   - Todos quedan en el panel (Cuenta -> Seguridad -> Correos enviados) con
+     su estado: Enviado, En cola, No se envio (tras 3 intentos; al pasar el
+     cursor se ve el motivo) o Solo guardado (sin Gmail). "Reenviar" lo
+     vuelve a mandar.
 
 3.8  MENSAJES EN PANTALLA
    - La tienda no usa ventanas del navegador. Todo aviso sale como un "toast"
@@ -1181,7 +1230,21 @@ Valor
 
 Como se ganan
    - Al confirmar un pedido:  puntos = (subtotal / 20) * multiplicador del nivel
-     redondeado hacia abajo.
+     redondeado hacia abajo. El subtotal es lo pagado por productos y
+     garantias ya con promociones, sin IVA ni envio. Con SPEI o pago en
+     tienda los puntos se abonan cuando se confirma el pago.
+
+Cuantos puntos gana ANTES de comprar (transparencia)
+   - Catalogo: cada tarjeta de producto muestra "+N pts" (al pasar el cursor
+     dice cuanto valen).
+   - Ficha del producto: "Con esta compra ganas N puntos (valen $X)"; cambia
+     al mover la cantidad o elegir garantia. Sin sesion se calcula con nivel
+     Bronce e invita a iniciar sesion o crear cuenta para juntarlos.
+   - Carrito lateral: "Ganas N puntos del Club" junto al subtotal.
+   - Finalizar compra: el resumen muestra los puntos exactos que da el
+     pedido con el nivel del cliente (calculados por el servidor con la misma
+     regla con la que despues se abonan) y el paso "Revisar" lo repite junto
+     a la forma de pago.
 
 Niveles (insignia de escudo con color propio y 1 a 4 puntos)
    - Bronce  x1     desde $0         o  0 compras
@@ -1192,7 +1255,7 @@ Niveles (insignia de escudo con color propio y 1 a 4 puntos)
    la frecuencia (numero de compras). Sube solo; no baja por inactividad.
 
 Donde se ve el nivel
-   - Tarjeta de socio y tarjeta "Nivel del Club" en Resumen.
+   - Tarjeta de socio y tarjeta "Mis puntos" en Resumen.
    - Pagina Club de puntos (barra de avance + tabla de niveles).
    - Ficha del cliente en el panel (tarjeta "Club" y pestana Informacion).
    - Pantalla de verificacion de socio (ver 7).

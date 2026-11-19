@@ -27,8 +27,8 @@ async function montarCuenta(key, render) {
         <div class="cuenta-user">
             <span class="cuenta-avatar">${(sesion.nombre[0] || 'U').toUpperCase()}</span>
             <div>
-                <strong id="cn-nombre">${sesion.nombre}</strong>
-                <span id="cn-correo">${sesion.correo}</span>
+                <strong id="cn-nombre">${escHTML(sesion.nombre)}</strong>
+                <span id="cn-correo">${escHTML(sesion.correo)}</span>
             </div>
         </div>
         <div class="cuenta-links">

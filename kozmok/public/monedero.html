@@ -100,7 +100,7 @@ function pintarRecarga() {
         </div>
         <p class="mon-nota" id="mon-nota"></p>
         <button class="btn btn-primary btn-block" id="mon-btn" onclick="recargar()">${icon('wallet', 16)} Recargar ${formatoMoneda(MONTO)}</button>
-        <p class="mon-nota">Demo: no se hace ningún cargo real.</p>`;
+        <p class="mon-nota">Tu saldo se usa como forma de pago al finalizar tu compra.</p>`;
     notaMetodo();
 }
 
@@ -124,8 +124,8 @@ function notaMetodo() {
     const n = document.getElementById('mon-nota');
     if (!n) return;
     n.textContent = METODO === 'transferencia'
-        ? 'Te damos una referencia para transferir. El saldo se acredita cuando el equipo confirma el depósito.'
-        : METODO === 'paypal' ? 'Se simula el cobro en PayPal y el saldo queda disponible al momento.'
+        ? 'Te damos una referencia para transferir. El saldo aparece en cuanto confirmamos tu depósito.'
+        : METODO === 'paypal' ? 'Pagas con tu cuenta de PayPal y el saldo queda disponible al momento.'
         : 'Se usa tu tarjeta predeterminada y el saldo queda disponible al momento.';
 }
 function actualizarBoton() {

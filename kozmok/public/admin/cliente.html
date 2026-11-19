@@ -143,6 +143,9 @@ function tabInfo() {
                 <div class="cd-item"><span>Estado</span><strong style="text-transform:capitalize">${C.estado_cliente}</strong></div>
                 <div class="cd-item"><span>Club de puntos</span><strong style="display:inline-flex;align-items:center;gap:6px">${nivelBadge(C.nivel.clave, 18)} ${C.nivel.nombre} · ${C.puntos} pts</strong></div>
                 <div class="cd-item"><span>Código de socio</span><strong class="mono">${C.codigo_socio || '—'}</strong></div>
+                <div class="cd-item"><span>Correo</span><strong>${C.correo_verificado === false
+                    ? `<span class="tag aviso">Sin confirmar</span> <button class="btn btn-ghost btn-sm" onclick="confirmarCorreoCliente()">Marcar como confirmado</button>`
+                    : '<span class="tag ok">Confirmado</span>'}</strong></div>
             </div>
         </div>`;
 }
@@ -255,6 +258,12 @@ function nuevaInteraccion() {
 }
 
 const v = (id) => document.getElementById(id).value.trim();
+// Si al cliente no le llega el código (p. ej. lo confirmó por teléfono).
+async function confirmarCorreoCliente() {
+    if (!(await confirmar(`¿Marcar el correo ${C.correo} como confirmado? El cliente podrá comprar sin escribir el código.`, { okText: 'Marcar confirmado' }))) return;
+    try { await api(`/admin/clientes/${C.id}/correo-confirmado`, { method: 'PUT' }); toast('Correo marcado como confirmado', 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
 cargar();
 </script>
 </body>

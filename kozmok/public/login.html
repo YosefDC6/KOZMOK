@@ -27,25 +27,28 @@
 
     <!-- Formulario de acceso -->
     <div class="card" id="form-card">
+        <div class="cuentas-recordadas" id="cuentas" hidden></div>
         <form id="form-login">
-            <div class="field">
-                <label>Correo electrónico</label>
+            <div class="field" id="campo-correo">
+                <label for="correo">Correo electrónico</label>
                 <input type="email" id="correo" required placeholder="tucorreo@ejemplo.com" autocomplete="email" />
             </div>
             <div class="field">
-                <label>Contraseña</label>
+                <label for="password">Contraseña</label>
                 <div style="display:flex;gap:8px">
                     <input type="password" id="password" required placeholder="••••••••" autocomplete="current-password" />
                     <button type="button" class="btn btn-outline btn-sm" id="toggle-pass" aria-label="Mostrar u ocultar contraseña" data-ic="eye" data-ic-size="16"></button>
                 </div>
             </div>
-            <div class="auth-olvide"><a href="/recuperar.html" id="link-olvide">¿Olvidaste tu contraseña?</a></div>
+            <div class="auth-fila">
+                <label class="auth-recordar"><input type="checkbox" id="recordar" checked /> Mantener sesión iniciada</label>
+                <div class="auth-olvide"><a href="/recuperar.html" id="link-olvide">¿Olvidaste tu contraseña?</a></div>
+            </div>
             <div id="login-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-entrar">Entrar</button>
         </form>
         <p style="margin-top:16px;text-align:center">¿No tienes cuenta? <a href="/registro.html">Crear cuenta</a></p>
-        <p style="text-align:center;font-size:.78rem;color:var(--text-muted)">Demo: mariana@correo.com / Demo#KZ2026</p>
-        <p class="auth-nota"><span data-ic="lock" data-ic-size="13"></span> Tu sesión se guarda en una cookie protegida. Tras 5 intentos fallidos la cuenta se bloquea 15 minutos.</p>
+        <p class="auth-nota">Si usas una computadora compartida, desmarca «Mantener sesión iniciada».</p>
     </div>
 </div>
 
@@ -82,17 +85,53 @@ document.getElementById('toggle-pass').addEventListener('click', () => {
     i.type = i.type === 'password' ? 'text' : 'password';
 });
 
+// Si la cookie de sesión sigue viva (sesión recordada) pero el navegador
+// perdió los datos de pantalla, se recupera la sesión sin pedir contraseña.
+if (!sesion) {
+    api('/auth/estado').then(({ cliente }) => {
+        if (cliente) { Sesion.guardarCliente(cliente); location.replace(destinoNext()); }
+    }).catch(() => {});
+}
+
+// Cuentas que este navegador recuerda: un clic y solo falta la contraseña.
+const inCorreo = document.getElementById('correo');
+const campoCorreo = document.getElementById('campo-correo');
+const contCuentas = document.getElementById('cuentas');
+function elegirCuenta(c) {
+    inCorreo.value = c ? c.correo : '';
+    document.getElementById('link-olvide').href = '/recuperar.html' + (c ? '?correo=' + encodeURIComponent(c.correo) : '');
+    campoCorreo.hidden = !!c;
+    contCuentas.querySelectorAll('.cr-elegir').forEach((b, i) => b.classList.toggle('activa', !!c && CuentasRecordadas.lista('cliente')[i]?.correo === c.correo));
+    document.getElementById(c ? 'password' : 'correo').focus();
+}
+function pintarCuentas() {
+    CuentasRecordadas.pintar(contCuentas, 'cliente', elegirCuenta);
+    const l = CuentasRecordadas.lista('cliente');
+    if (!l.length) { campoCorreo.hidden = false; return; }
+    const otra = document.createElement('a');
+    otra.href = '#'; otra.className = 'cr-otra'; otra.textContent = 'Usar otra cuenta';
+    otra.addEventListener('click', (ev) => { ev.preventDefault(); elegirCuenta(null); });
+    contCuentas.appendChild(otra);
+    // Al quitar una cuenta se vuelve a pintar la lista
+    contCuentas.querySelectorAll('.cr-quitar').forEach((b) => b.addEventListener('click', () => setTimeout(pintarCuentas)));
+    if (!sesion) elegirCuenta(l.find((c) => c.correo === inCorreo.value) || l[0]);
+}
+pintarCuentas();
+
 document.getElementById('form-login').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const correo = document.getElementById('correo').value;
+    const correo = inCorreo.value;
     const password = document.getElementById('password').value;
+    const recordar = document.getElementById('recordar').checked;
     const errorBox = document.getElementById('login-error');
     const btn = document.getElementById('btn-entrar');
     errorBox.hidden = true;
     btn.disabled = true; btn.textContent = 'Verificando…';
     try {
-        const data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password } });
-        Sesion.guardarCliente(data.cliente);
+        const data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password, recordar } });
+        Sesion.guardarCliente({ ...data.cliente, recordar });
+        if (recordar) CuentasRecordadas.guardar('cliente', data.cliente);
+        else CuentasRecordadas.olvidar('cliente', data.cliente.correo);
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));

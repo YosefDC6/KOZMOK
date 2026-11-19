@@ -34,7 +34,7 @@ montarCuenta('seguridad', async (panel, P) => {
     const [sesiones, actividad] = await Promise.all([api('/auth/sesiones'), api('/auth/actividad')]);
     const fallidos = actividad.filter((a) => !a.exito).length;
     panel.innerHTML = `
-        <div class="cuenta-head"><h1>Seguridad</h1><p>Tu contraseña, los dispositivos con sesión abierta y los últimos intentos de entrar a tu cuenta.</p></div>
+        <div class="cuenta-head"><h1>Seguridad</h1><p>Cambia tu contraseña y revisa dónde está abierta tu cuenta.</p></div>
         ${fallidos ? `<div class="seg-alerta" role="status">${icon('alert', 18)}<div><strong>${fallidos} intento(s) fallido(s) recientes</strong>
             <span>Si no fuiste tú, cambia tu contraseña: al hacerlo se cierran tus otras sesiones.</span></div></div>` : ''}
         <div class="seg-grid">
@@ -48,27 +48,25 @@ montarCuenta('seguridad', async (panel, P) => {
             </section>
             <section class="card">
                 <div class="seg-cab">
-                    <h3 class="seg-tit">${icon('user', 18)} Sesiones abiertas (${sesiones.length})</h3>
-                    ${sesiones.length > 1 ? '<button class="btn btn-outline btn-sm" id="btn-otras">Cerrar las demás</button>' : ''}
+                    <h3 class="seg-tit">${icon('user', 18)} Dispositivos conectados (${sesiones.length})</h3>
+                    ${sesiones.length > 1 ? '<button class="btn btn-outline btn-sm" id="btn-otras">Cerrar sesión en los demás</button>' : ''}
                 </div>
                 ${sesiones.map((x) => `
                     <div class="sesion-fila">
-                        <div><strong>${escHTML(navegadorDe(x.user_agent))}</strong> ${x.actual ? '<span class="tag ok">Esta sesión</span>' : ''}
-                            <small>IP ${escHTML(x.ip || '—')} · inició ${formatoFechaHora(x.creada)} · último uso ${formatoFechaHora(x.ultimo_uso)} · vence ${formatoFecha(x.expira)}</small></div>
+                        <div><strong>${escHTML(navegadorDe(x.user_agent))}</strong> ${x.actual ? '<span class="tag ok">Este dispositivo</span>' : ''}
+                            <small>Desde ${formatoFecha(x.creada)} · última vez ${formatoFechaHora(x.ultimo_uso)}</small></div>
                         ${x.actual ? '' : `<button class="btn btn-ghost btn-sm" onclick="cerrarSesion(${Number(x.id)})">Cerrar</button>`}
                     </div>`).join('')}
             </section>
         </div>
         <section class="card" style="margin-top:18px">
-            <h3 class="seg-tit">${icon('clock', 18)} Actividad de inicio de sesión</h3>
+            <h3 class="seg-tit">${icon('clock', 18)} Inicios de sesión recientes</h3>
             ${actividad.length === 0 ? '<p style="margin:0;color:var(--text-muted)">Sin registros todavía.</p>' : actividad.map((a) => `
                 <div class="sesion-fila">
                     <div><strong>${a.exito ? (a.motivo === 'registro' ? 'Cuenta creada' : 'Acceso correcto') : 'Intento fallido'}</strong>${!a.exito && a.motivo ? ` · ${escHTML(MOTIVO[a.motivo] || a.motivo)}` : ''}
-                        <small>${formatoFechaHora(a.fecha)} · IP ${escHTML(a.ip || '—')} · ${escHTML(navegadorDe(a.user_agent))}</small></div>
-                    <span class="tag ${a.exito ? 'ok' : 'mal'}">${a.exito ? 'OK' : 'Fallido'}</span>
+                        <small>${formatoFechaHora(a.fecha)} · ${escHTML(navegadorDe(a.user_agent))}</small></div>
                 </div>`).join('')}
-        </section>
-        <p class="auth-nota" style="text-align:left">${icon('shield', 13)} Tu sesión vive en una cookie protegida que ningún script puede leer. Si alguien la copia a otro navegador, la cerramos automáticamente.</p>`;
+        </section>`;
     ReglasPass.enlazar(document.getElementById('s-nueva'), document.getElementById('pass-reglas'));
     document.getElementById('btn-pass').addEventListener('click', cambiarPassword);
     const otras = document.getElementById('btn-otras');

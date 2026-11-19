@@ -99,7 +99,7 @@ montarCuenta('pedidos', async (panel, P) => {
             <div class="empty-state">Todavía no has hecho ningún pedido.<br><a href="/index.html?ver=todo">Explorar el catálogo</a></div>`;
         return;
     }
-    panel.innerHTML = `<div class="cuenta-head"><h1>Mis pedidos</h1><p>${pedidos.length} pedido(s).</p></div><div id="lista-pedidos"></div>`;
+    panel.innerHTML = `<div class="cuenta-head"><h1>Mis pedidos</h1><p>${pedidos.length === 1 ? '1 pedido' : pedidos.length + ' pedidos'}. Toca «Ver detalle» para ver productos, envío y pago.</p></div><div id="lista-pedidos"></div>`;
     document.getElementById('lista-pedidos').innerHTML = pedidos.map((p) => {
         const pendientePago = p.pago_estado === 'pendiente';
         return `
@@ -112,7 +112,7 @@ montarCuenta('pedidos', async (panel, P) => {
             <div style="font-weight:700;margin-top:6px">${formatoMoneda(p.total)}</div>
             ${rastreoPedido(p)}
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-                <button class="btn btn-outline btn-sm" onclick="detallePedido(${p.id})">Ver detalle</button>
+                <button class="btn btn-outline btn-sm" id="btn-det-${p.id}" onclick="detallePedido(${p.id})">Ver detalle</button>
                 <a class="btn btn-ghost btn-sm" href="/recibo.html?id=${p.id}">${pendientePago ? 'Ficha de pago' : 'Comprobante'}</a>
                 ${pendientePago && !p.pago_reportado ? `<button class="btn btn-primary btn-sm" onclick="reportarPago(${p.id})">Ya realicé el pago</button>` : ''}
                 ${p.estado === 'entregado' ? `<button class="btn btn-primary btn-sm" onclick="detallePedido(${p.id}, true)">Dejar reseña</button>` : ''}
@@ -129,7 +129,9 @@ montarCuenta('pedidos', async (panel, P) => {
 
 async function detallePedido(id, irAResenas) {
     const cont = document.getElementById('det-' + id);
-    if (cont.dataset.open && !irAResenas) { cont.innerHTML = ''; delete cont.dataset.open; return; }
+    const btnDet = document.getElementById('btn-det-' + id);
+    if (cont.dataset.open && !irAResenas) { cont.innerHTML = ''; delete cont.dataset.open; if (btnDet) btnDet.textContent = 'Ver detalle'; return; }
+    if (btnDet) btnDet.textContent = 'Ocultar detalle';
     const [d, mias] = await Promise.all([
         api(`/pedidos/${id}/detalle`),
         api(`/clientes/${CID}/resenas`).catch(() => []),

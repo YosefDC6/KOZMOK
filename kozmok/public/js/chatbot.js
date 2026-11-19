@@ -147,7 +147,7 @@
         toggle.id = 'chatbot-toggle';
         toggle.innerHTML = window.icon ? icon('chat', 24) : '';
         toggle.title = 'Asistente de compra';
-        toggle.setAttribute('aria-label', 'Abrir asistente de compra');
+        toggle.setAttribute('aria-label', 'Abrir asesor de compra');
 
         const panel = document.createElement('div');
         panel.id = 'chatbot-panel';

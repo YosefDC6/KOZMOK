@@ -10,7 +10,8 @@
     "prueba:sqli": "node pruebas-seguridad/2-inyeccion-sql.js",
     "prueba:sesion": "node pruebas-seguridad/3-robo-de-sesion.js",
     "prueba:seguridad": "node pruebas-seguridad/todas.js",
-    "desbloquear": "node pruebas-seguridad/desbloquear.js"
+    "desbloquear": "node pruebas-seguridad/desbloquear.js",
+    "prueba:correo": "node prueba-correo.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
