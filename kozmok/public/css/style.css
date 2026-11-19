@@ -2334,3 +2334,6 @@ tr.mov-off td { opacity: .7; }
 .aviso-verificar { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 9px 16px; background: var(--accent-glow); border-bottom: 1px solid var(--line); font-size: .88rem; color: var(--text); text-align: center; }
 .aviso-verificar a { font-weight: 600; }
 .sugerencia-correo { margin-top: 6px; font-size: .85rem; }
+
+/* Aviso cuando Chart.js no se pudo cargar (ver js/graficas.js) */
+.grafica-sin-red { display: flex; align-items: center; justify-content: center; min-height: 140px; padding: 16px; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--text-muted); font-size: .85rem; text-align: center; }

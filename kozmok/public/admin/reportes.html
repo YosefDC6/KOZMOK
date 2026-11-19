@@ -6,7 +6,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Reportes · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<!-- Chart.js: primero la copia local (npm install), si no la de internet; graficas.js evita errores si ninguna carga -->
+<script src="/vendor/chart.js/chart.umd.js"></script>
+<script>window.Chart || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"><\/script>')</script>
+<script src="/js/graficas.js"></script>
 </head>
 <body>
 <div class="admin-shell">

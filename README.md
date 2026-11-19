@@ -140,7 +140,8 @@ SMTP_PASSWORD=abcd efgh ijkl mnop
 Si pruebas desde un celular, pon `URL_PUBLICA=http://192.168.x.x:3000` para que el enlace de recuperación abra desde ese celular (con `localhost` solo abre en la computadora del servidor).
 
 - **Tienda:** http://localhost:3000
-- **Panel interno:** http://localhost:3000/admin/login.html (a propósito, no hay enlace desde la tienda)
+- **Panel interno:** http://localhost:3000/admin/login.html
+- Las gráficas del panel usan Chart.js instalado con `npm install` (se sirve en `/vendor/chart.js/`), así funcionan sin internet; si falta, se intenta desde cdnjs y, si tampoco carga, cada gráfica muestra un aviso en vez de un error. (a propósito, no hay enlace desde la tienda)
 - **Desde un celular de prueba:** conéctalo a la misma red Wi-Fi que la computadora y abre la dirección que muestra la consola al arrancar (`Desde un celular en la misma red Wi-Fi abre: http://192.168.x.x:3000`). En Windows, la primera vez que corre `npm start` sale un aviso del Firewall: marca **Redes privadas** y dale **Permitir acceso** (y que la red Wi-Fi esté como *Privada*). Si la red es de la escuela y no conecta, puede bloquear la comunicación entre equipos: usa el hotspot de un celular. Con `HOST=127.0.0.1` en el `.env` solo se abre desde la computadora.
 
 Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, todo está listo.

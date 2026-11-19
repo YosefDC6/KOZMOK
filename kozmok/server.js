@@ -40,6 +40,9 @@ const pool = new Pool(configPg);
 // que ningún otro sitio puede llamar a la API con la sesión del usuario.
 seg.instalar(app, pool);
 app.use(express.static(path.join(__dirname, 'public')));
+// Chart.js servido desde node_modules: las gráficas del panel funcionan sin
+// internet (antes venía solo de cdnjs y sin conexión salía "Chart is not defined").
+app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist'), { fallthrough: false }));
 // Cuerpos JSON de máximo 100 KB (evita peticiones gigantes).
 app.use(express.json({ limit: '100kb' }));
 
