@@ -153,6 +153,18 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
                       tanto dura 7 dias (se cierra tras 2 dias sin uso).
    - El panel interno NO recuerda nada: ni la cuenta ni la sesion. Su sesion
      termina al cerrar el navegador, a las 8 horas o tras 2 horas sin uso.
+   - Contrasenas sencillas de antes: al iniciar sesion se revisa la
+     contrasena contra las reglas actuales (8+ caracteres, mayusculas,
+     minusculas, numero y simbolo). Si no las cumple (cuentas creadas antes
+     de la actualizacion de seguridad):
+        Tienda -> lleva a Mi cuenta -> Seguridad con el aviso "Tu contrasena
+                  es muy sencilla" ("Ahora no" sigue a donde iba) y muestra
+                  una franja arriba en la tienda hasta que la cambie.
+        Panel  -> se abre "Cambiar mi contrasena" (una vez por sesion; con
+                  "Ahora no" se cierra) y el menu marca "!" junto a
+                  "Cambiar contrasena".
+   - Cualquier persona del equipo cambia su contrasena desde el menu del
+     panel (abajo, "Cambiar contrasena"); se cierran sus otras sesiones.
    - Cuentas recordadas (solo tienda): al entrar con la casilla marcada, el navegador
      guarda el nombre y el correo (nunca la contrasena). Al volver al login,
      aunque se haya cerrado sesion, aparece "Continuar con tu cuenta": se

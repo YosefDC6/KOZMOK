@@ -81,6 +81,8 @@ CREATE TABLE usuarios (
     nombre              VARCHAR(150) NOT NULL,
     email               VARCHAR(150) UNIQUE NOT NULL,
     password_hash       VARCHAR(200) NOT NULL,
+    -- TRUE si al entrar la contraseña no cumplió la política actual
+    password_debil      BOOLEAN NOT NULL DEFAULT FALSE,
     telefono            VARCHAR(30),
     -- Roles empresariales (ERP): administrador, ventas y logística.
     -- Para agregar uno nuevo: añádelo aquí, en ROLES_INTERNOS y
@@ -192,6 +194,8 @@ CREATE TABLE clientes (
     -- Las cuentas de ejemplo y las del CRM nacen verificadas; las que se
     -- registran en la tienda con Gmail configurado, no.
     correo_verificado     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- TRUE si al entrar la contraseña no cumplió la política actual
+    password_debil        BOOLEAN NOT NULL DEFAULT FALSE,
     verificacion_hash     VARCHAR(64),
     verificacion_expira   TIMESTAMP,
     verificacion_intentos INTEGER NOT NULL DEFAULT 0,

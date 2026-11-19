@@ -35,6 +35,9 @@ montarCuenta('seguridad', async (panel, P) => {
     const fallidos = actividad.filter((a) => !a.exito).length;
     panel.innerHTML = `
         <div class="cuenta-head"><h1>Seguridad</h1><p>Cambia tu contraseña y revisa dónde está abierta tu cuenta.</p></div>
+        ${P.password_debil ? `<div class="seg-alerta" role="status" id="aviso-debil">${icon('lock', 18)}<div><strong>Tu contraseña es muy sencilla</strong>
+            <span>Tu cuenta se creó antes de que pidiéramos contraseñas más seguras. Cámbiala aquí abajo: debe tener al menos 8 caracteres, mayúsculas, minúsculas, un número y un símbolo.
+            ${new URLSearchParams(location.search).get('next') ? `<a href="${escHTML(destinoSeg())}">Ahora no</a>` : ''}</span></div></div>` : ''}
         ${fallidos ? `<div class="seg-alerta" role="status">${icon('alert', 18)}<div><strong>${fallidos} intento(s) fallido(s) recientes</strong>
             <span>Si no fuiste tú, cambia tu contraseña: al hacerlo se cierran tus otras sesiones.</span></div></div>` : ''}
         <div class="seg-grid">
@@ -83,6 +86,12 @@ async function cerrarSesion(id) {
     catch (e) { toast(e.message, 'error'); }
 }
 
+// Destino tras cambiar la contraseña (?next=…), solo rutas de la tienda
+function destinoSeg() {
+    const n = new URLSearchParams(location.search).get('next') || '';
+    return /^\/(?!\/)[\w\-./?=&%#]*$/.test(n) && !n.startsWith('/admin') ? n : '/perfil.html';
+}
+
 async function cambiarPassword() {
     const actual = val('s-actual'), nueva = document.getElementById('s-nueva').value, rep = document.getElementById('s-rep').value;
     if (!actual) { toast('Escribe tu contraseña actual', 'warn'); return; }
@@ -95,6 +104,10 @@ async function cambiarPassword() {
         const r = await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
         toast(r.message || 'Contraseña actualizada', 'ok');
         ['s-actual', 's-nueva', 's-rep'].forEach((i) => document.getElementById(i).value = '');
+        Sesion.guardarCliente({ ...Sesion.cliente(), password_debil: false });
+        document.getElementById('aviso-debil')?.remove();
+        // Si llegó aquí al entrar (contraseña débil), sigue a donde iba
+        if (new URLSearchParams(location.search).get('next')) { setTimeout(() => location.href = destinoSeg(), 900); return; }
         if (r.sesiones_cerradas) montarDeNuevo();
     } catch (e) { toast(e.message, 'error'); }
     btn.disabled = false;

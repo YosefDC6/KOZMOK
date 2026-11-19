@@ -2337,3 +2337,7 @@ tr.mov-off td { opacity: .7; }
 
 /* Aviso cuando Chart.js no se pudo cargar (ver js/graficas.js) */
 .grafica-sin-red { display: flex; align-items: center; justify-content: center; min-height: 140px; padding: 16px; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--text-muted); font-size: .85rem; text-align: center; }
+.aviso-pass { background: color-mix(in srgb, var(--warning, #f59e0b) 16%, transparent); }
+/* Cambiar mi contraseña (panel) */
+.au-alerta { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 4px; border-radius: 50%; background: var(--warning); color: #fff; font-size: .7rem; font-weight: 700; }
+.mp-aviso { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); font-size: .86rem; line-height: 1.45; }

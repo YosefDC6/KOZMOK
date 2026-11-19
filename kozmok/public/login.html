@@ -135,7 +135,10 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));
-        setTimeout(() => location.href = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext(), 500);
+        const destino = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext();
+        // Contraseña de antes de la política actual: primero se le pide cambiarla.
+        const ir = data.cliente.password_debil ? `/seguridad.html?debil=1&next=${encodeURIComponent(destino)}` : destino;
+        setTimeout(() => location.href = ir, 500);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.classList.toggle('bloqueado', /bloquead/i.test(err.message));

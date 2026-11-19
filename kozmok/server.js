@@ -92,7 +92,7 @@ async function requireUsuario(req, res, next) {
     try {
         const s = await seg.leerSesion(req, 'usuario');
         if (!s) return res.status(401).json({ message: 'Sesión no encontrada o vencida. Inicia sesión de nuevo.' });
-        const result = await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [s.usuario_id]);
+        const result = await pool.query('SELECT id, nombre, email, rol, activo, password_debil FROM usuarios WHERE id = $1', [s.usuario_id]);
         if (result.rows.length === 0 || !result.rows[0].activo) {
             await seg.revocarSesion(s.id, 'cuenta inactiva');
             return res.status(403).json({ message: 'Cuenta inactiva o inexistente' });
@@ -377,7 +377,7 @@ async function estadoRecompensas(clienteId) {
 // =========================================================
 
 const CAMPOS_CLIENTE = `id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
-                        etapa_crm, puntos, codigo_socio, fecha_registro, correo_verificado`;
+                        etapa_crm, puntos, codigo_socio, fecha_registro, correo_verificado, password_debil`;
 
 // ---------------------------------------------------------
 // Verificación de correo: al registrarse llega un código de 6 dígitos y,
@@ -461,7 +461,10 @@ const loginCliente = asyncRoute(async (req, res) => {
     }
 
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true });
-    await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
+    // Las contraseñas solo se ven al entrar: si no cumple las reglas actuales
+    // (cuentas creadas antes de la política), se le pide cambiarla.
+    const debil = !!seg.validarPassword(password, { correo: cliente.correo, nombre: cliente.nombre });
+    await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP, password_debil = $2 WHERE id = $1', [cliente.id, debil]);
     const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(req.body, true) });
     const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
     // El token va en la cookie HttpOnly. Solo se devuelve en el cuerpo si
@@ -560,11 +563,12 @@ const loginUsuario = asyncRoute(async (req, res) => {
     }
 
     await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: true });
-    await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
+    const debil = !!seg.validarPassword(password, { correo: usuario.email, nombre: usuario.nombre });
+    await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP, password_debil = $2 WHERE id = $1', [usuario.id, debil]);
     // El panel nunca recuerda la sesión: se cierra al cerrar el navegador
     // (y a las 8 h o tras 2 h sin uso).
     const s = await seg.crearSesion(req, res, 'usuario', usuario.id, { recordar: false });
-    const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo };
+    const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo, password_debil: debil };
     res.json({ success: true, usuario: datos, permisos: PERMISOS[usuario.rol] || [], expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
 });
 
@@ -1847,7 +1851,7 @@ app.use('/api/clientes/:id', requireCliente, mismoCliente);
 app.get('/api/clientes/:id', asyncRoute(async (req, res) => {
     const result = await pool.query(
         `SELECT id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
-                etapa_crm, preferencias, puntos, codigo_socio, fecha_registro, correo_verificado
+                etapa_crm, preferencias, puntos, codigo_socio, fecha_registro, correo_verificado, password_debil
          FROM clientes WHERE id = $1`,
         [req.params.id]
     );
@@ -1922,7 +1926,7 @@ app.put('/api/clientes/:id/password', limiteAuth, asyncRoute(async (req, res) =>
     }
     if (await seg.compararPassword(nueva, c.password)) return res.status(400).json({ message: 'La nueva contraseña debe ser distinta de la actual' });
 
-    await pool.query('UPDATE clientes SET password = $1 WHERE id = $2', [await seg.hashPassword(nueva), req.params.id]);
+    await pool.query('UPDATE clientes SET password = $1, password_debil = FALSE WHERE id = $2', [await seg.hashPassword(nueva), req.params.id]);
     const cerradas = await seg.revocarSesionesDe('cliente', req.cliente.id, 'cambio de contraseña', req.sesion.id);
     await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: req.cliente.id, detalle: `Cambio de contraseña; ${cerradas} sesión(es) cerradas` });
     await enviarCorreo(pool, { para: c.correo, tipo: 'seguridad', cliente_id: req.cliente.id, asunto: 'Tu contraseña cambió',
@@ -2380,6 +2384,7 @@ const TODO = ['GET', 'POST', 'PUT', 'DELETE'];
 const PERMISOS_API = [
     // Cualquier usuario interno
     { ruta: /^\/(whoami|roles)$/,                     metodos: LEER, permisos: ['*'] },
+    { ruta: /^\/mi-password$/,                         metodos: ['PUT'], permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
     { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
@@ -2454,6 +2459,25 @@ app.use('/api/admin', (req, res, next) => {
 // Identidad del usuario interno autenticado (para que el panel valide
 // la sesión contra el servidor y no confíe solo en localStorage).
 app.get('/api/admin/whoami', (req, res) => res.json(req.usuario));
+
+// Cada persona del equipo cambia su propia contraseña (menú del panel).
+app.put('/api/admin/mi-password', limiteAuth, asyncRoute(async (req, res) => {
+    const actual = String(req.body.actual || '');
+    const nueva = String(req.body.nueva || '');
+    if (!actual || !nueva) return res.status(400).json({ message: 'Escribe tu contraseña actual y la nueva' });
+    const u = (await pool.query('SELECT id, nombre, email, password_hash FROM usuarios WHERE id = $1', [req.usuario.id])).rows[0];
+    const err = seg.validarPassword(nueva, { correo: u.email, nombre: u.nombre });
+    if (err) return res.status(400).json({ message: err });
+    if (!(await seg.compararPassword(actual, u.password_hash))) {
+        const r = await seg.registrarFallo(req, { ambito: 'usuario', correo: seg.normalizarCorreo(u.email) });
+        return res.status(400).json({ message: 'La contraseña actual no es correcta.' + (r.restantes <= 3 ? ` Quedan ${r.restantes} intento(s).` : '') });
+    }
+    if (await seg.compararPassword(nueva, u.password_hash)) return res.status(400).json({ message: 'La nueva contraseña debe ser distinta de la actual' });
+    await pool.query('UPDATE usuarios SET password_hash = $1, password_debil = FALSE WHERE id = $2', [await seg.hashPassword(nueva), u.id]);
+    const cerradas = await seg.revocarSesionesDe('usuario', u.id, 'cambio de contraseña', req.sesion.id);
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', usuario_id: u.id, detalle: `Cambio de contraseña del equipo; ${cerradas} sesión(es) cerradas` });
+    res.json({ message: cerradas ? `Contraseña actualizada. Cerramos ${cerradas} sesión(es) en otros equipos.` : 'Contraseña actualizada' });
+}));
 
 // =========================================================
 // ADMIN: CLIENTES / CRM
@@ -5414,7 +5438,7 @@ app.post('/api/auth/restablecer', limiteAuth, asyncRoute(async (req, res) => {
     const err = seg.validarPassword(nueva, { correo: rec.correo, nombre: rec.nombre });
     if (err) return res.status(400).json({ message: err });
     // Abrir el enlace del correo también demuestra que el correo es suyo.
-    await pool.query('UPDATE clientes SET password = $1, correo_verificado = TRUE, verificacion_hash = NULL WHERE id = $2', [await seg.hashPassword(nueva), rec.cliente_id]);
+    await pool.query('UPDATE clientes SET password = $1, password_debil = FALSE, correo_verificado = TRUE, verificacion_hash = NULL WHERE id = $2', [await seg.hashPassword(nueva), rec.cliente_id]);
     await pool.query('UPDATE recuperaciones SET usado = CURRENT_TIMESTAMP WHERE cliente_id = $1 AND usado IS NULL', [rec.cliente_id]);
     const cerradas = await seg.revocarSesionesDe('cliente', rec.cliente_id, 'contraseña restablecida');
     await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`cliente:${seg.normalizarCorreo(rec.correo)}`]);
@@ -5553,6 +5577,9 @@ async function migrarEsquema() {
     pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`);
+    // Contraseñas que no cumplen la política actual (se detecta al entrar).
+    await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS password_debil BOOLEAN NOT NULL DEFAULT FALSE');
+    await pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_debil BOOLEAN NOT NULL DEFAULT FALSE');
     // Verificación de correo. Las cuentas que ya existían quedan verificadas.
     await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS correo_verificado BOOLEAN NOT NULL DEFAULT TRUE');
     await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_hash VARCHAR(64)');

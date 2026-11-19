@@ -65,6 +65,9 @@ async function renderNavbar() {
 
     el.innerHTML = `
         <div class="topbar">Envío gratis en compras mayores a $10,000 · Garantía directa con la tienda</div>
+        ${cliente && cliente.password_debil && !location.pathname.endsWith('/seguridad.html') ? `
+        <div class="aviso-verificar aviso-pass">${icon('lock', 15)} Tu contraseña es muy sencilla. Por tu seguridad, cámbiala por una más segura.
+            <a href="/seguridad.html?debil=1">Cambiar ahora</a></div>` : ''}
         ${cliente && cliente.correo_verificado === false && !location.pathname.endsWith('/verificar.html') ? `
         <div class="aviso-verificar">${icon('mail', 15)} Confirma tu correo para poder comprar: te enviamos un código a ${escHTML(cliente.correo)}.
             <a href="/verificar.html?next=${encodeURIComponent(location.pathname + location.search)}">Escribir código</a></div>` : ''}
@@ -277,9 +280,9 @@ async function sincronizarSesion(local) {
         } else if (!local && cliente) {
             Sesion.guardarCliente(cliente);
             location.reload();
-        } else if (local && cliente && cliente.correo_verificado !== undefined && local.correo_verificado !== cliente.correo_verificado) {
-            // El correo se confirmó (o quedó pendiente) en otra pestaña
-            Sesion.guardarCliente({ ...local, correo_verificado: cliente.correo_verificado });
+        } else if (local && cliente && (local.correo_verificado !== cliente.correo_verificado || !!local.password_debil !== !!cliente.password_debil)) {
+            // El correo se confirmó o la contraseña cambió (p. ej. en otra pestaña)
+            Sesion.guardarCliente({ ...local, correo_verificado: cliente.correo_verificado, password_debil: !!cliente.password_debil });
             location.reload();
         }
     } catch { /* sin servidor: se deja como está */ }

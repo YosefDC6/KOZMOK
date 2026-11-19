@@ -6,7 +6,18 @@ function requireAuthAdmin() {
     const usuario = Sesion.usuario();
     if (!usuario) { window.location.href = '/admin/login.html'; return null; }
     api('/admin/whoami')
-        .then((u) => { if (u && u.rol) Sesion.guardarUsuario(u); })
+        .then((u) => {
+            if (!u || !u.rol) return;
+            Sesion.guardarUsuario(u);
+            // Contraseña de antes de la política actual: se pide cambiarla
+            // (una vez por sesión; el botón del menú siempre está a la mano).
+            let avisado = false;
+            try { avisado = sessionStorage.getItem('kz_pass_aviso') === '1'; } catch { /* nada */ }
+            if (u.password_debil && !avisado) {
+                try { sessionStorage.setItem('kz_pass_aviso', '1'); } catch { /* nada */ }
+                abrirCambioPassword(true);
+            }
+        })
         .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = '/admin/login.html'; });
     return usuario;
 }
@@ -182,6 +193,7 @@ function renderAdminSidebar(activo) {
                     <div class="au-rol">${ROL_LABEL[rol] || rol}</div>
                 </div>
             </div>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="abrirCambioPassword()" title="Cambiar mi contraseña">${ic('lock', 15)} <span>Cambiar contraseña${usuario && usuario.password_debil ? ' <span class="au-alerta" title="Tu contraseña es muy sencilla">!</span>' : ''}</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
     `;
@@ -196,6 +208,51 @@ function renderAdminSidebar(activo) {
         });
     });
 }
+
+// Ventana "Cambiar mi contraseña" (cualquier rol). aviso = true cuando se
+// abre sola porque la contraseña actual no cumple las reglas.
+function abrirCambioPassword(aviso = false) {
+    let m = document.getElementById('modal-mi-pass');
+    if (!m) {
+        m = document.createElement('div');
+        m.className = 'modal-overlay';
+        m.id = 'modal-mi-pass';
+        document.body.appendChild(m);
+        m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('open'); });
+    }
+    m.innerHTML = `<div class="modal" style="max-width:440px">
+        <h3 style="margin-top:0">Cambiar mi contraseña</h3>
+        ${aviso ? `<p class="mp-aviso">${window.icon ? icon('lock', 15) : ''} Tu contraseña es muy sencilla: se creó antes de que pidiéramos contraseñas más seguras. Cámbiala para proteger el panel.</p>` : ''}
+        <div class="field"><label for="mp-actual">Contraseña actual</label><input type="password" id="mp-actual" autocomplete="current-password" /></div>
+        <div class="field"><label for="mp-nueva">Nueva contraseña</label><input type="password" id="mp-nueva" maxlength="72" autocomplete="new-password" />${ReglasPass.html('mp-reglas')}</div>
+        <div class="field"><label for="mp-rep">Repetir nueva contraseña</label><input type="password" id="mp-rep" autocomplete="new-password" /></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:6px">
+            <button class="btn btn-ghost" type="button" id="mp-cancelar">${aviso ? 'Ahora no' : 'Cancelar'}</button>
+            <button class="btn btn-primary" type="button" id="mp-guardar">Guardar contraseña</button>
+        </div></div>`;
+    ReglasPass.enlazar(document.getElementById('mp-nueva'), document.getElementById('mp-reglas'));
+    document.getElementById('mp-cancelar').onclick = () => m.classList.remove('open');
+    document.getElementById('mp-guardar').onclick = async () => {
+        const actual = document.getElementById('mp-actual').value;
+        const nueva = document.getElementById('mp-nueva').value;
+        if (!actual) return toast('Escribe tu contraseña actual', 'warn');
+        const falta = ReglasPass.faltante(nueva);
+        if (falta) return toast(falta, 'warn');
+        if (nueva !== document.getElementById('mp-rep').value) return toast('Las contraseñas nuevas no coinciden', 'warn');
+        const btn = document.getElementById('mp-guardar');
+        btn.disabled = true;
+        try {
+            const r = await api('/admin/mi-password', { method: 'PUT', body: { actual, nueva } });
+            Sesion.guardarUsuario({ ...Sesion.usuario(), password_debil: false });
+            document.querySelectorAll('.au-alerta').forEach((x) => x.remove());
+            m.classList.remove('open');
+            toast(r.message, 'ok');
+        } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+    };
+    m.classList.add('open');
+    setTimeout(() => document.getElementById('mp-actual').focus(), 50);
+}
+window.abrirCambioPassword = abrirCambioPassword;
 
 async function cerrarSesionAdmin() {
     await Sesion.cerrarSesionUsuario();
