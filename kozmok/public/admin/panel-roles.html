@@ -112,15 +112,6 @@
 .pr-no { display: inline-block; width: 10px; height: 2px; border-radius: 2px; background: var(--line); vertical-align: middle; }
 .pr-accion { font-size: .68rem; color: var(--text-muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
 
-/* Pasos para agregar un rol */
-.pr-pasos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-.pr-paso { display: flex; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-elev); }
-.pr-num {
-    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-family: var(--font-mono);
-    font-weight: 700; font-size: .85rem; color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent);
-}
-.pr-paso code { font-size: .78rem; }
-.pr-paso p { margin: 4px 0 0; font-size: .8rem; color: var(--text-muted); line-height: 1.45; }
 </style>
 </head>
 <body>
@@ -152,7 +143,7 @@
             <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:10px">
                 <div>
                     <h3 style="margin:0">Matriz de permisos</h3>
-                    <p style="color:var(--text-muted);font-size:.84rem;margin:4px 0 0">Cada sección contra cada rol. Se genera de los mismos permisos que arman el menú y que valida el servidor, así que siempre coincide con lo que de verdad ve cada quien.</p>
+                    <p style="color:var(--text-muted);font-size:.84rem;margin:4px 0 0">Qué secciones puede ver y usar cada rol. Siempre coincide con lo que de verdad aparece en su menú.</p>
                 </div>
             </div>
             <div class="table-wrap">
@@ -163,14 +154,6 @@
             </div>
         </div>
 
-        <div class="card">
-            <h3 style="margin-top:0">Agregar un rol nuevo</h3>
-            <div class="pr-pasos">
-                <div class="pr-paso"><span class="pr-num">1</span><div><code>db/database.sql</code><p>Agregarlo al CHECK <code>(rol IN (...))</code> de la tabla usuarios.</p></div></div>
-                <div class="pr-paso"><span class="pr-num">2</span><div><code>server.js</code><p>Agregarlo a <code>ROLES_INTERNOS</code> con su nombre y descripción.</p></div></div>
-                <div class="pr-paso"><span class="pr-num">3</span><div><code>admin/js/permisos.js</code><p>Agregarlo a <code>PERMISOS</code> con las secciones que verá. El servidor valida cada llamada con ese mismo archivo.</p></div></div>
-            </div>
-        </div>
     </main>
 </div>
 

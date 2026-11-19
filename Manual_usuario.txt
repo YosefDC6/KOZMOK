@@ -1122,7 +1122,6 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         agrupadas por modulo (CRM, SCM, ERP, Tienda, Cuenta), incluido el permiso
         de "Capturar ordenes".
       - Matriz de permisos: cada seccion contra cada rol.
-      - Recordatorio de los 3 lugares a tocar para agregar un rol nuevo.
       - Se genera de los mismos permisos que arman el menu lateral, asi
         que siempre coincide con lo que de verdad ve cada quien.
 
