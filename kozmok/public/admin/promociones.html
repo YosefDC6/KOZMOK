@@ -87,7 +87,7 @@ function pintar() {
     const lista = PROMOS.filter((p) => (!sit || p.situacion === sit) && (!q || `${p.nombre} ${p.descripcion || ''}`.toLowerCase().includes(q)));
     document.getElementById('tabla').innerHTML = lista.length ? lista.map((p) => `
         <tr>
-            <td><strong>${p.nombre}</strong>${p.mostrar_banner ? ` <span class="tag" title="Se muestra en el banner de la portada">Banner</span>` : ''}
+            <td><strong>${p.nombre}</strong>${p.mostrar_banner ? ` <span class="tag" title="Se muestra en el banner de la portada">Banner</span>` : ''}${p.boletin_enviado ? ` <span class="tag ok" title="Anunciada por correo a los clientes suscritos al boletín">Boletín enviado</span>` : ''}
                 <div style="color:var(--text-muted);font-size:.78rem">${p.descripcion || ''}</div></td>
             <td class="mono">${valorTxt(p)}</td>
             <td>${alcanceTxt(p)}</td>

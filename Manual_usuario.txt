@@ -545,6 +545,23 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      SMTP_PASSWORD (contrasena de aplicacion de Google, no la normal; se
      crea en myaccount.google.com/apppasswords con la verificacion en dos
      pasos activada). Al arrancar, la consola dice si Gmail acepto la cuenta.
+   - Boletin y avisos (el cliente los elige en Mi cuenta -> Preferencias,
+     con la casilla "Quiero recibir por correo las promociones..." al
+     registrarse, o con "Si, avisarme" en Favoritos):
+        Boletin de promociones  -> cuando EMPIEZA una promocion (al crearla
+                                   ya vigente, o al llegar su fecha de
+                                   inicio) se anuncia una sola vez con hasta
+                                   4 productos rebajados. En Promociones del
+                                   panel aparece la etiqueta "Boletin enviado".
+        Bajas de precio         -> un favorito bajo de precio o entro en
+                                   promocion (precio antes / ahora).
+        Favoritos disponibles   -> un favorito agotado volvio a tener stock.
+        Avisos de mis pedidos   -> "Recibimos tu pedido" y cada cambio de
+                                   estado (confirmado, enviado, entregado,
+                                   cancelado). Activado por defecto.
+     Se revisan cada minuto (o a los pocos segundos de crear una promocion o
+     un pedido). Solo llegan a correos confirmados. Cada correo trae "Dejar
+     de recibir estos correos", que pide confirmar antes de dar de baja.
    - Todos quedan en el panel (Cuenta -> Seguridad -> Correos enviados) con
      su estado: Enviado, En cola, No se envio (tras 3 intentos; al pasar el
      cursor se ve el motivo) o Solo guardado (sin Gmail). "Reenviar" lo

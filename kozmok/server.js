@@ -178,9 +178,10 @@ async function clienteDeSesion(req) {
 // la envía en cuanto se confirma la transacción (si la transacción se
 // deshace, el correo nunca sale). Si falla, se reintenta hasta 3 veces.
 //   boton: { texto, url } -> botón grande en la versión HTML del correo.
-async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null, boton = null }) {
+async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null, boton = null, bajaUrl = null, extraHtml = '' }) {
     if (!para) return;
-    const html = htmlCorreo({ asunto, cuerpo, boton });
+    if (bajaUrl) cuerpo += `\n\n---\nRecibes este correo porque lo activaste en tus preferencias de Kozmok. Para dejar de recibirlo: ${bajaUrl}`;
+    const html = htmlCorreo({ asunto, cuerpo: bajaUrl ? cuerpo.split('\n\n---\n')[0] : cuerpo, boton, bajaUrl, extraHtml });
     await db.query(
         `INSERT INTO correos_salida (para, asunto, cuerpo, html, tipo, cliente_id, pedido_id, estado)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -190,11 +191,18 @@ async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', client
 
 // Versión HTML del correo (los clientes de correo no aceptan CSS externo,
 // así que todo va en estilos en línea). El texto se escapa siempre.
-function htmlCorreo({ asunto, cuerpo, boton }) {
+function htmlCorreo({ asunto, cuerpo, boton, bajaUrl = null, extraHtml = '' }) {
     const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    const texto = String(cuerpo || '');
+    let texto = String(cuerpo || '');
+    // La tabla de productos (extraHtml) va en lugar de la lista "- …" del texto plano.
+    const MARCA = '\u0001';
+    let tablaPuesta = false;
+    if (extraHtml && /(^|\n)- /.test(texto)) {
+        texto = texto.replace(/(^|\n)(- [^\n]*(\n|$))+/, `$1\n${MARCA}\n\n`);
+        tablaPuesta = true;
+    }
     const parrafos = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
-        .map((p) => `<p style="margin:0 0 14px;line-height:1.55">${esc(p).replace(/\n/g, '<br>')
+        .map((p) => p === MARCA ? extraHtml : `<p style="margin:0 0 14px;line-height:1.55">${esc(p).replace(/\n/g, '<br>')
             .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</p>`).join('');
     // El botón va donde estaba el enlace en el texto (o al final).
     const i = boton && boton.url ? texto.indexOf(boton.url) : -1;
@@ -213,10 +221,12 @@ function htmlCorreo({ asunto, cuerpo, boton }) {
         <tr><td style="background:#111827;padding:18px 26px;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:.5px">Kozmok</td></tr>
         <tr><td style="padding:26px;font-size:15px">
           <h1 style="margin:0 0 16px;font-size:20px">${esc(asunto)}</h1>
-          ${parrafos(antes)}${btn}${parrafos(despues)}
+          ${parrafos(antes)}${tablaPuesta ? '' : extraHtml}${btn}${parrafos(despues)}
         </td></tr>
         <tr><td style="padding:16px 26px;background:#f9fafb;color:#6b7280;font-size:12px;line-height:1.5">
-          Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.
+          ${bajaUrl
+            ? `Recibes este correo porque lo activaste en tus preferencias de Kozmok. <a href="${esc(bajaUrl)}" style="color:#6b7280">Dejar de recibir estos correos</a>.`
+            : 'Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.'}
         </td></tr>
       </table>
     </td></tr>
@@ -496,6 +506,10 @@ const registrarCliente = asyncRoute(async (req, res) => {
         );
         cliente = result.rows[0];
         await db.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [cliente.id]);
+        // Casilla "Quiero recibir promociones y avisos de mis favoritos"
+        if (b.boletin === true || b.boletin === 'true' || b.boletin === 1) {
+            await db.query(`UPDATE clientes SET preferencias = COALESCE(preferencias, '{}'::jsonb) || '{"boletin":true,"ofertas":true,"stock_favoritos":true}'::jsonb WHERE id = $1`, [cliente.id]);
+        }
         if (correo_.configurado()) {
             // Bienvenida + código para confirmar que el correo es suyo
             await enviarCodigoVerificacion(db, req, cliente, { bienvenida: true });
@@ -1319,9 +1333,185 @@ async function cancelarPagosVencidos() {
 }
 
 // Tareas que corren cada minuto: reabasto automático y pagos vencidos.
+// =========================================================
+// AVISOS POR CORREO (según las preferencias del cliente)
+//   boletin          -> promociones nuevas (una vez por promoción, al empezar)
+//   ofertas          -> un favorito bajó de precio o entró en promoción
+//   stock_favoritos  -> un favorito agotado volvió a tener existencias
+//   estado_pedidos   -> pedido recibido y cada cambio de estado (activado
+//                       por defecto; el cliente lo puede apagar)
+// Se revisan cada minuto, así cubren cualquier forma en que cambie un
+// precio, el stock o un pedido (panel, ERP, SCM, reabasto…). Solo se
+// mandan con Gmail configurado y a correos confirmados.
+// =========================================================
+const PREF_TEXTO = {
+    boletin: 'el boletín de promociones', ofertas: 'los avisos de bajas de precio de tus favoritos',
+    stock_favoritos: 'los avisos de favoritos disponibles', estado_pedidos: 'los avisos de tus pedidos',
+    todo: 'todos los correos de promociones y avisos',
+};
+const bajaUrlDe = (req0, token, tipo) => `${urlBase(req0)}/baja?t=${encodeURIComponent(token)}&tipo=${tipo}`;
+// En tareas periódicas no hay petición: se usa URL_PUBLICA o localhost.
+function urlBase(req0) {
+    if (req0) return urlPublica(req0);
+    const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
+    return /^https?:\/\/[^\s/]+/.test(base) ? base : `http://localhost:${process.env.PORT || 3000}`;
+}
+const precioTxt = (n) => { const v = Number(n); return '$' + v.toLocaleString('es-MX', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
+const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Tabla de productos dentro del correo (nombre, precio antes / ahora, enlace)
+function tablaProductosCorreo(items) {
+    const base = urlBase(null);
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 16px;border-collapse:collapse">${items.map((p) => `
+        <tr><td style="padding:9px 0;border-bottom:1px solid #e5e7eb">
+            <a href="${base}/index.html#producto-${Number(p.id)}" style="color:#111827;font-weight:bold;text-decoration:none">${escH(p.nombre)}</a>
+            ${p.nota ? `<div style="font-size:12px;color:#059669">${escH(p.nota)}</div>` : ''}
+        </td><td align="right" style="padding:9px 0;border-bottom:1px solid #e5e7eb;white-space:nowrap">
+            ${p.antes && Number(p.antes) > Number(p.ahora) ? `<span style="color:#9ca3af;text-decoration:line-through;font-size:13px">${precioTxt(p.antes)}</span><br>` : ''}
+            <strong style="color:#4f46e5">${precioTxt(p.ahora)}</strong>
+        </td></tr>`).join('')}</table>`;
+}
+// Clientes que pueden recibir avisos: correo confirmado y cuenta activa.
+const CLIENTE_AVISABLE = `c.estado_cliente = 'activo' AND c.correo IS NOT NULL AND c.correo_verificado = TRUE`;
+
+// --- Boletín: cada promoción se anuncia una sola vez, cuando empieza ---
+async function avisarPromocionesNuevas() {
+    const promos = await promocionesVigentes();
+    const nuevas = promos.filter((p) => !p.boletin_enviado);
+    if (!nuevas.length) return;
+    const subs = await pool.query(
+        `SELECT c.id, c.nombre, c.correo, c.token_baja FROM clientes c
+         WHERE ${CLIENTE_AVISABLE} AND COALESCE((c.preferencias->>'boletin')::boolean, FALSE)`);
+    const prods = await pool.query('SELECT id, nombre, precio, categoria_id FROM productos WHERE activo = TRUE AND stock > 0 ORDER BY destacado DESC, precio DESC');
+    for (const pr of nuevas) {
+        // Se marca primero: si el envío falla, el despachador lo reintenta,
+        // pero la promoción no se vuelve a anunciar.
+        const marca = await pool.query('UPDATE promociones SET boletin_enviado = CURRENT_TIMESTAMP WHERE id = $1 AND boletin_enviado IS NULL RETURNING id', [pr.id]);
+        if (!marca.rows[0] || !subs.rows.length) continue;
+        const aplica = prods.rows.filter((p) => pr.alcance === 'todos'
+            || (pr.alcance === 'categoria' && Number(p.categoria_id) === Number(pr.categoria_id))
+            || (pr.alcance === 'producto' && Number(p.id) === Number(pr.producto_id))).slice(0, 4)
+            .map((p) => ({ id: p.id, nombre: p.nombre, antes: p.precio, ahora: redondear(Number(p.precio) - descuentoPromo(pr, p.precio)) }));
+        const desc = pr.tipo_descuento === 'porcentaje' ? `${Number(pr.valor)}% de descuento` : `${precioTxt(pr.valor)} de descuento`;
+        const donde = pr.alcance === 'todos' ? 'en toda la tienda' : pr.alcance === 'categoria' ? `en ${pr.categoria_nombre}` : `en ${pr.producto_nombre}`;
+        const hasta = new Date(pr.fecha_fin).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' });
+        const url = pr.alcance === 'producto' ? `${urlBase(null)}/index.html#producto-${pr.producto_id}` : `${urlBase(null)}/index.html?ver=todo`;
+        for (const c of subs.rows) {
+            await enviarCorreo(pool, {
+                para: c.correo, tipo: 'boletin', cliente_id: c.id,
+                asunto: `${pr.nombre}: ${desc} ${donde}`,
+                cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\nEmpezó la promoción ${pr.nombre}: ${desc} ${donde}, hasta el ${hasta}.`
+                    + (pr.descripcion ? `\n\n${pr.descripcion}` : '')
+                    + (aplica.length ? `\n\nAlgunos productos:\n${aplica.map((p) => `- ${p.nombre}: ${precioTxt(p.ahora)} (antes ${precioTxt(p.antes)})`).join('\n')}` : ''),
+                extraHtml: aplica.length ? tablaProductosCorreo(aplica) : '',
+                boton: { texto: 'Ver la promoción', url },
+                bajaUrl: bajaUrlDe(null, c.token_baja, 'boletin'),
+            });
+        }
+        console.log(`Boletín: promoción "${pr.nombre}" anunciada a ${subs.rows.length} cliente(s).`);
+    }
+}
+
+// --- Favoritos: bajas de precio y vuelta de existencias ---
+async function avisarFavoritos() {
+    const r = await pool.query(
+        `SELECT f.id AS fav_id, f.precio_aviso, f.agotado_aviso, c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo, c.token_baja,
+                COALESCE((c.preferencias->>'ofertas')::boolean, FALSE) AS quiere_ofertas,
+                COALESCE((c.preferencias->>'stock_favoritos')::boolean, FALSE) AS quiere_stock,
+                p.id, p.nombre, p.precio, p.categoria_id, p.stock
+         FROM favoritos f JOIN clientes c ON c.id = f.cliente_id JOIN productos p ON p.id = f.producto_id
+         WHERE ${CLIENTE_AVISABLE} AND p.activo = TRUE`);
+    if (!r.rows.length) return;
+    const promos = await promocionesVigentes();
+    const porCliente = new Map();
+    for (const f of decorarPrecios(r.rows, promos)) {
+        const ahora = Number(f.precio_final);
+        const cambios = [];
+        // Precio: la primera vez solo se toma de referencia
+        if (f.precio_aviso == null || ahora > Number(f.precio_aviso)) {
+            await pool.query('UPDATE favoritos SET precio_aviso = $2 WHERE id = $1', [f.fav_id, ahora]);
+        } else if (ahora < Number(f.precio_aviso) - 0.009) {
+            await pool.query('UPDATE favoritos SET precio_aviso = $2 WHERE id = $1', [f.fav_id, ahora]);
+            if (f.quiere_ofertas && f.stock > 0) cambios.push({ tipo: 'precio', id: f.id, nombre: f.nombre, antes: f.precio_aviso, ahora,
+                nota: f.promocion ? `Promoción ${f.promocion.nombre}` : 'Bajó de precio' });
+        }
+        // Existencias: se recuerda que estaba agotado y se avisa al volver
+        if (f.stock <= 0 && !f.agotado_aviso) await pool.query('UPDATE favoritos SET agotado_aviso = TRUE WHERE id = $1', [f.fav_id]);
+        else if (f.stock > 0 && f.agotado_aviso) {
+            await pool.query('UPDATE favoritos SET agotado_aviso = FALSE WHERE id = $1', [f.fav_id]);
+            if (f.quiere_stock) cambios.push({ tipo: 'stock', id: f.id, nombre: f.nombre, ahora, nota: `De nuevo disponible (${f.stock} en existencia)` });
+        }
+        if (!cambios.length) continue;
+        if (!porCliente.has(f.cliente_id)) porCliente.set(f.cliente_id, { c: f, items: [] });
+        porCliente.get(f.cliente_id).items.push(...cambios);
+    }
+    for (const { c, items } of porCliente.values()) {
+        const precio = items.filter((i) => i.tipo === 'precio');
+        const stock = items.filter((i) => i.tipo === 'stock');
+        const asunto = precio.length && !stock.length
+            ? (precio.length === 1 ? `Bajó de precio: ${precio[0].nombre}` : `${precio.length} de tus favoritos bajaron de precio`)
+            : !precio.length ? (stock.length === 1 ? `Ya hay existencias: ${stock[0].nombre}` : `${stock.length} de tus favoritos ya están disponibles`)
+            : 'Novedades en tus favoritos';
+        await enviarCorreo(pool, {
+            para: c.correo, tipo: 'favoritos', cliente_id: c.cliente_id, asunto,
+            cuerpo: `Hola ${c.cliente_nombre.split(' ')[0]}:\n\nHay novedades en productos que guardaste en tus favoritos:\n\n`
+                + items.map((i) => `- ${i.nombre}: ${precioTxt(i.ahora)}${i.antes ? ` (antes ${precioTxt(i.antes)})` : ''} · ${i.nota}`).join('\n')
+                + '\n\nLos precios y existencias pueden cambiar; se respetan los del momento de tu compra.',
+            extraHtml: tablaProductosCorreo(items),
+            boton: { texto: 'Ver mis favoritos', url: `${urlBase(null)}/favoritos.html` },
+            bajaUrl: bajaUrlDe(null, c.token_baja, precio.length ? 'ofertas' : 'stock_favoritos'),
+        });
+    }
+}
+
+// --- Pedidos: recibido y cada cambio de estado ---
+const TEXTO_ESTADO_PEDIDO = {
+    pendiente: ['Recibimos tu pedido', 'Lo apartamos y queda esperando tu pago. En cuanto se confirme lo preparamos.'],
+    confirmado: ['Tu pedido está confirmado', 'Ya quedó pagado y lo estamos preparando.'],
+    procesando: ['Estamos preparando tu pedido', 'Lo estamos empacando para enviarlo.'],
+    enviado: ['Tu pedido va en camino', 'Ya salió de nuestro almacén rumbo a tu dirección.'],
+    entregado: ['Tu pedido fue entregado', '¡Gracias por tu compra! Si algo no está bien, escríbenos desde Soporte.'],
+    cancelado: ['Tu pedido se canceló', 'Si ya lo habías pagado, el reembolso se procesa por el mismo medio de pago.'],
+};
+async function avisarEstadoPedidos() {
+    const r = await pool.query(
+        `SELECT pe.id, pe.numero_orden, pe.estado, pe.estado_notificado, pe.total, c.id AS cliente_id, c.nombre, c.correo, c.token_baja,
+                COALESCE((c.preferencias->>'estado_pedidos')::boolean, TRUE) AS quiere
+         FROM pedidos pe JOIN clientes c ON c.id = pe.cliente_id
+         WHERE pe.estado IS DISTINCT FROM pe.estado_notificado AND ${CLIENTE_AVISABLE}
+         ORDER BY pe.id LIMIT 50`);
+    for (const p of r.rows) {
+        await pool.query('UPDATE pedidos SET estado_notificado = $2 WHERE id = $1', [p.id, p.estado]);
+        const t = TEXTO_ESTADO_PEDIDO[p.estado];
+        if (!p.quiere || !t) continue;
+        // Al crearse confirmado (pago con tarjeta) se dice "Recibimos tu pedido"
+        const titulo = p.estado_notificado == null && p.estado === 'confirmado' ? 'Recibimos tu pedido' : t[0];
+        await enviarCorreo(pool, {
+            para: p.correo, tipo: 'pedido', cliente_id: p.cliente_id, pedido_id: p.id,
+            asunto: `${titulo} · ${p.numero_orden}`,
+            cuerpo: `Hola ${p.nombre.split(' ')[0]}:\n\n${titulo}: ${p.numero_orden} por ${precioTxt(p.total)}.\n${t[1]}`,
+            boton: { texto: 'Ver mi pedido', url: `${urlBase(null)}/pedidos.html` },
+            bajaUrl: bajaUrlDe(null, p.token_baja, 'estado_pedidos'),
+        });
+    }
+}
+
+let avisando = false;   // una sola revisión a la vez (evita correos repetidos)
+async function enviarAvisos() {
+    if (!correo.configurado() || avisando) return;
+    avisando = true;
+    try {
+        await avisarPromocionesNuevas().catch((e) => console.error('Boletín:', e.message));
+        await avisarFavoritos().catch((e) => console.error('Avisos de favoritos:', e.message));
+        await avisarEstadoPedidos().catch((e) => console.error('Avisos de pedidos:', e.message));
+    } finally { avisando = false; }
+}
+// Revisa en unos segundos (tras crear una promoción, un pedido, etc.)
+const avisarPronto = () => setTimeout(() => enviarAvisos().catch(() => {}), 3000);
+
 async function tareasPeriodicas() {
     await procesarReabastoAutomatico().catch((e) => console.error('Reabasto:', e.message));
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
+    await enviarAvisos();
 }
 
 function generarReferenciaPago(tipo) {
@@ -1543,7 +1733,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
         client.release();
     }
 });
-app.post('/api/pedidos', limiteDinero, requireCliente, procesarCompra);
+app.post('/api/pedidos', limiteDinero, requireCliente, (req, res, next) => { res.on('finish', avisarPronto); next(); }, procesarCompra);
 app.post('/api/pagos/procesar', limiteDinero, requireCliente, procesarCompra);
 
 app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
@@ -1653,7 +1843,7 @@ app.use('/api/clientes/:id', requireCliente, mismoCliente);
 app.get('/api/clientes/:id', asyncRoute(async (req, res) => {
     const result = await pool.query(
         `SELECT id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
-                etapa_crm, preferencias, puntos, codigo_socio, fecha_registro
+                etapa_crm, preferencias, puntos, codigo_socio, fecha_registro, correo_verificado
          FROM clientes WHERE id = $1`,
         [req.params.id]
     );
@@ -4794,6 +4984,7 @@ const crearPromocion = asyncRoute(async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
         [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.usuario.id]);
     const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [r.rows[0].id]);
+    avisarPronto();   // si ya empezó, el boletín sale en unos segundos
     res.status(201).json({ message: 'Promoción creada', promocion: full.rows[0] });
 });
 const editarPromocion = asyncRoute(async (req, res) => {
@@ -4805,6 +4996,7 @@ const editarPromocion = asyncRoute(async (req, res) => {
              fecha_inicio=$8, fecha_fin=$9, estado=$10, mostrar_banner=$11 WHERE id=$12`,
         [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.params.id]);
     const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [req.params.id]);
+    avisarPronto();
     res.json({ message: 'Promoción actualizada', promocion: full.rows[0] });
 });
 app.get('/api/promociones', listarPromociones);
@@ -5115,6 +5307,46 @@ app.post('/api/auth/logout', asyncRoute(async (req, res) => {
 
 // Estado de la sesión de la tienda sin dar 401: lo usa la barra de
 // navegación para limpiar los datos del navegador si la sesión venció.
+// "Dejar de recibir estos correos" (enlace al pie del boletín y los avisos).
+// GET solo muestra la confirmación: los lectores de correo abren enlaces
+// por su cuenta y no deben dar de baja a nadie sin que lo pida.
+function paginaBaja(titulo, cuerpo) {
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escH(titulo)} · Kozmok</title><link rel="icon" type="image/svg+xml" href="/img/kzk.svg"><link rel="stylesheet" href="/css/style.css"></head>
+<body><div class="auth-wrap" style="padding-top:60px"><div class="page-hero"><h1>${escH(titulo)}</h1></div>
+<div class="card">${cuerpo}</div></div><script src="/js/theme.js"></script></body></html>`;
+}
+app.get('/baja', asyncRoute(async (req, res) => {
+    const t = String(req.query.t || '');
+    const tipo = PREF_TEXTO[req.query.tipo] ? String(req.query.tipo) : 'todo';
+    const r = /^[a-f0-9]{32}$/.test(t) ? await pool.query('SELECT correo FROM clientes WHERE token_baja = $1', [t]) : { rows: [] };
+    if (!r.rows[0]) return res.status(404).send(paginaBaja('Enlace no válido', '<p>Este enlace no es válido. Puedes cambiar qué correos recibes desde <a href="/preferencias.html">Mi cuenta → Preferencias</a>.</p>'));
+    res.send(paginaBaja('Dejar de recibir correos', `
+        <p style="margin-top:0">¿Quieres que <strong>${escH(r.rows[0].correo)}</strong> deje de recibir ${escH(PREF_TEXTO[tipo])}?</p>
+        <form method="POST" action="/baja">
+            <input type="hidden" name="t" value="${escH(t)}"><input type="hidden" name="tipo" value="${escH(tipo)}">
+            <button class="btn btn-primary" style="width:100%" type="submit">Sí, ya no los quiero</button>
+        </form>
+        ${tipo !== 'todo' ? `<form method="POST" action="/baja" style="margin-top:10px"><input type="hidden" name="t" value="${escH(t)}"><input type="hidden" name="tipo" value="todo">
+            <button class="btn btn-outline" style="width:100%" type="submit">Darme de baja de todos los correos de promociones y avisos</button></form>` : ''}
+        <p style="margin-bottom:0;font-size:.85rem;color:var(--text-muted)">Los correos de tu cuenta (código de verificación y contraseña) siempre te llegan.</p>`));
+}));
+app.post('/baja', express.urlencoded({ extended: false, limit: '2kb' }), asyncRoute(async (req, res) => {
+    const t = String((req.body || {}).t || '');
+    const tipo = PREF_TEXTO[(req.body || {}).tipo] ? String(req.body.tipo) : 'todo';
+    if (!/^[a-f0-9]{32}$/.test(t)) return res.status(400).send(paginaBaja('Enlace no válido', '<p>Este enlace no es válido.</p>'));
+    const apagar = tipo === 'todo'
+        ? { boletin: false, ofertas: false, stock_favoritos: false, estado_pedidos: false }
+        : { [tipo]: false };
+    const r = await pool.query(
+        `UPDATE clientes SET preferencias = COALESCE(preferencias, '{}'::jsonb) || $2::jsonb WHERE token_baja = $1 RETURNING correo`,
+        [t, JSON.stringify(apagar)]);
+    if (!r.rows[0]) return res.status(404).send(paginaBaja('Enlace no válido', '<p>Este enlace no es válido.</p>'));
+    res.send(paginaBaja('Listo', `<p style="margin-top:0">${escH(r.rows[0].correo)} ya no recibirá ${escH(PREF_TEXTO[tipo])}.</p>
+        <p>Si cambias de opinión, actívalos en <a href="/preferencias.html">Mi cuenta → Preferencias</a>.</p>
+        <a class="btn btn-outline" style="width:100%" href="/index.html">Volver a la tienda</a>`));
+}));
+
 app.get('/api/auth/estado', asyncRoute(async (req, res) => {
     const id = await clienteDeSesion(req);
     if (!id) return res.json({ cliente: null });
@@ -5305,6 +5537,18 @@ async function migrarEsquema() {
     await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_expira TIMESTAMP');
     await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_intentos INTEGER NOT NULL DEFAULT 0');
     await pool.query('ALTER TABLE clientes ADD COLUMN IF NOT EXISTS verificacion_enviada TIMESTAMP');
+    // Avisos por correo (boletín, favoritos y pedidos). Lo que ya existía
+    // queda como "ya avisado" para no mandar correos viejos de golpe.
+    await pool.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS token_baja VARCHAR(40) DEFAULT md5(random()::text || clock_timestamp()::text)`);
+    await pool.query(`UPDATE clientes SET token_baja = md5(random()::text || clock_timestamp()::text || id) WHERE token_baja IS NULL`);
+    const yaHabia = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'pedidos' AND column_name = 'estado_notificado'`);
+    await pool.query('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS estado_notificado VARCHAR(20)');
+    if (!yaHabia.rows.length) await pool.query('UPDATE pedidos SET estado_notificado = estado');
+    const yaHabiaPromo = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'promociones' AND column_name = 'boletin_enviado'`);
+    await pool.query('ALTER TABLE promociones ADD COLUMN IF NOT EXISTS boletin_enviado TIMESTAMP');
+    if (!yaHabiaPromo.rows.length) await pool.query('UPDATE promociones SET boletin_enviado = CURRENT_TIMESTAMP');
+    await pool.query('ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS precio_aviso NUMERIC(12,2)');
+    await pool.query('ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS agotado_aviso BOOLEAN NOT NULL DEFAULT FALSE');
     // "Mantener sesión iniciada" y envío real de correos (Gmail).
     await pool.query('ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS recordar BOOLEAN NOT NULL DEFAULT FALSE');
     await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS html TEXT');

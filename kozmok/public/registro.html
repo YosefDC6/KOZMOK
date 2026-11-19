@@ -53,6 +53,7 @@
             <div class="pass-match" id="pass-match" hidden></div>
 
             <label class="auth-recordar"><input type="checkbox" id="recordar" checked /> Mantener sesión iniciada en este dispositivo</label>
+            <label class="auth-recordar"><input type="checkbox" id="boletin" /> Quiero recibir por correo las promociones y avisos de mis favoritos</label>
             <div id="registro-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-registrar">Crear cuenta</button>
         </form>
@@ -149,6 +150,7 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
         password,
         telefono: document.getElementById('telefono').value,
         recordar: document.getElementById('recordar').checked,
+        boletin: document.getElementById('boletin').checked,
     };
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });

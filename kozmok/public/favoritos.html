@@ -28,6 +28,16 @@
 <script>
 let CID = null;
 
+// Activa los avisos de favoritos (bajas de precio y existencias)
+document.addEventListener('click', async (e) => {
+    if (e.target.id !== 'btn-fav-avisos') return;
+    try {
+        const actuales = (await api(`/clientes/${Sesion.cliente().id}`)).preferencias || {};
+        await api(`/clientes/${Sesion.cliente().id}/preferencias`, { method: 'PUT', body: { ...actuales, ofertas: true, stock_favoritos: true } });
+        document.getElementById('fav-avisos').innerHTML = `${icon('check', 16)} Listo: te avisaremos por correo. Puedes cambiarlo en Preferencias.`;
+    } catch (ex) { toast(ex.message, 'error'); }
+});
+
 montarCuenta('favoritos', async (panel, P) => {
     CID = P.id;
     const favs = await api(`/clientes/${P.id}/favoritos`);
@@ -36,7 +46,12 @@ montarCuenta('favoritos', async (panel, P) => {
             <div class="empty-state">No has guardado productos.<br>Usa el corazón en cualquier producto para guardarlo aquí.</div>`;
         return;
     }
+    const prefs = P.preferencias || {};
+    const avisos = prefs.ofertas && prefs.stock_favoritos;
     panel.innerHTML = `<div class="cuenta-head"><h1>Favoritos</h1><p>${favs.length} producto(s) guardados.</p></div>
+        ${avisos ? '' : `<div class="card fav-avisos" id="fav-avisos" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+            <span style="flex:1;min-width:200px">${icon('mail', 16)} ¿Te avisamos por correo cuando alguno baje de precio o vuelva a estar disponible?</span>
+            <button class="btn btn-outline btn-sm" id="btn-fav-avisos">Sí, avisarme</button></div>`}
         <div class="grid-products" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
         ${favs.map((p) => `
             <div class="product-card">

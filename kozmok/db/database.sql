@@ -196,6 +196,8 @@ CREATE TABLE clientes (
     verificacion_expira   TIMESTAMP,
     verificacion_intentos INTEGER NOT NULL DEFAULT 0,
     verificacion_enviada  TIMESTAMP,
+    -- enlace "dejar de recibir estos correos" (boletín y avisos)
+    token_baja            VARCHAR(40) DEFAULT md5(random()::text || clock_timestamp()::text),
     fecha_registro      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ultimo_login        TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -297,6 +299,8 @@ CREATE TABLE promociones (
     estado          VARCHAR(10) NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
     -- se muestra en el banner de promociones de la portada
     mostrar_banner  BOOLEAN NOT NULL DEFAULT TRUE,
+    -- cuándo se anunció a los suscritos del boletín (una sola vez)
+    boletin_enviado TIMESTAMP,
     usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
     fecha_creacion  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT promociones_vigencia CHECK (fecha_fin > fecha_inicio),
@@ -350,6 +354,8 @@ CREATE TABLE pedidos (
     numero_guia           VARCHAR(50),
     transportista         VARCHAR(100),
     fecha_pedido          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- último estado que ya se avisó por correo al cliente
+    estado_notificado     VARCHAR(20),
     fecha_confirmacion    TIMESTAMP,
     fecha_envio           TIMESTAMP,
     fecha_entrega         TIMESTAMP,
@@ -605,6 +611,9 @@ CREATE TABLE favoritos (
     cliente_id   INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
     producto_id  INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
     fecha        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- avisos por correo: último precio avisado y si estaba agotado
+    precio_aviso  NUMERIC(12,2),
+    agotado_aviso BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (cliente_id, producto_id)
 );
 
@@ -1572,3 +1581,8 @@ UPDATE monederos SET saldo =  500.00 WHERE cliente_id = 2;
 --    paola.logistica@kozmok.mx / Logistica#KZ2026  (Logística)
 --    mariana@correo.com           / Demo#KZ2026   (y diego / sofia / carlos)
 -- =========================================================
+
+-- Los datos de ejemplo cuentan como "ya avisados": al configurar Gmail no
+-- se mandan correos de pedidos ni promociones que ya existían.
+UPDATE pedidos SET estado_notificado = estado;
+UPDATE promociones SET boletin_enviado = CURRENT_TIMESTAMP;
