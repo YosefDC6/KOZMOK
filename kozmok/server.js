@@ -39,10 +39,43 @@ const pool = new Pool(configPg);
 // Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
 // que ningún otro sitio puede llamar a la API con la sesión del usuario.
 seg.instalar(app, pool);
-app.use(express.static(path.join(__dirname, 'public')));
+// Compresión gzip de lo que más pesa (JSON de la API, HTML, JS y CSS).
+// El catálogo completo baja de cientos de KB a una fracción: menos
+// transferencia del servidor y páginas que cargan antes en el celular.
+const zlib = require('zlib');
+const COMPRIMIBLE = /^(application\/json|text\/(html|css|javascript|plain)|application\/javascript|image\/svg)/;
+app.use((req, res, next) => {
+    if (!/\bgzip\b/.test(req.headers['accept-encoding'] || '') || req.method === 'HEAD') return next();
+    const write = res.write.bind(res), end = res.end.bind(res);
+    let gz = null, decidido = false;
+    const decidir = () => {
+        if (decidido) return; decidido = true;
+        const tipo = String(res.getHeader('Content-Type') || '');
+        if (res.statusCode === 204 || res.statusCode === 304 || res.getHeader('Content-Encoding') || !COMPRIMIBLE.test(tipo)) return;
+        gz = zlib.createGzip({ level: 6 });
+        res.removeHeader('Content-Length');
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        gz.on('data', (c) => write(c));
+        gz.on('end', () => end());
+    };
+    res.write = (chunk, enc, cb) => { decidir(); return gz ? gz.write(chunk, enc, cb) : write(chunk, enc, cb); };
+    res.end = (chunk, enc, cb) => {
+        decidir();
+        if (!gz) return end(chunk, enc, cb);
+        if (chunk && typeof chunk !== 'function') gz.end(chunk, typeof enc === 'string' ? enc : undefined); else gz.end();
+        return res;
+    };
+    next();
+});
+// Imágenes y librerías casi no cambian: el navegador las guarda un día.
+// HTML/JS/CSS se revalidan (ETag), así una actualización se ve al momento.
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders(res, ruta) { if (/\.(png|jpe?g|webp|gif|svg|ico|woff2?)$/i.test(ruta)) res.setHeader('Cache-Control', 'public, max-age=86400'); },
+}));
 // Chart.js servido desde node_modules: las gráficas del panel funcionan sin
 // internet (antes venía solo de cdnjs y sin conexión salía "Chart is not defined").
-app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist'), { fallthrough: false }));
+app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist'), { fallthrough: false, maxAge: '7d' }));
 // Cuerpos JSON de máximo 100 KB (evita peticiones gigantes).
 app.use(express.json({ limit: '100kb' }));
 
@@ -700,8 +733,9 @@ app.post('/api/auth/login', limiteAuth, (req, res, next) => {
 // =========================================================
 
 app.get('/api/categorias', asyncRoute(async (req, res) => {
-    const result = await pool.query('SELECT * FROM categorias ORDER BY id ASC');
-    res.json(result.rows);
+    const filas = await enCache('categorias', async () => (await pool.query('SELECT * FROM categorias ORDER BY id ASC')).rows, 5 * 60 * 1000);
+    cachePublica(res, 60);
+    res.json(filas);
 }));
 
 // =========================================================
@@ -713,7 +747,44 @@ app.get('/api/categorias', asyncRoute(async (req, res) => {
 const redondear = (n) => Math.round(Number(n || 0) * 100) / 100;
 
 // Promociones activas y dentro de su vigencia en este momento.
+// ---------------------------------------------------------
+// CACHÉ EN MEMORIA de lecturas públicas (catálogo, categorías, promociones).
+// Cada visita a la tienda pedía el catálogo completo varias veces; ahora
+// la misma respuesta se reutiliza unos segundos y se tira en cuanto el
+// equipo cambia algo en el panel o alguien compra (el stock cambió).
+// El checkout siempre vuelve a leer stock y precios de la base.
+// ---------------------------------------------------------
+const CACHE = new Map();
+const CACHE_TTL_MS = 30 * 1000;
+async function enCache(clave, fn, ttl = CACHE_TTL_MS) {
+    const c = CACHE.get(clave);
+    if (c && c.hasta > Date.now()) return c.valor;
+    const valor = await fn();
+    CACHE.set(clave, { valor, hasta: Date.now() + ttl });
+    if (CACHE.size > 300) CACHE.delete(CACHE.keys().next().value);   // tope de memoria
+    return valor;
+}
+function invalidarCache() { CACHE.clear(); versionCatalogo++; }
+let versionCatalogo = 0;
+const cachePublica = (res, s = 20) => res.set('Cache-Control', `public, max-age=${s}`);
+// Cualquier cambio que sí toque catálogo, precios o stock (panel, compras,
+// cancelaciones, devoluciones) tira la caché al terminar bien. Las acciones
+// frecuentes del cliente que no los tocan (carrito, favoritos, sesión,
+// chatbot) no la tiran, para que siga sirviendo.
+const NO_TOCA_CATALOGO = /^\/api\/(carrito|auth|chatbot|eventos|clientes\/\d+\/(favoritos|preferencias|direcciones|metodos-pago)|soporte|tickets)/;
+app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.path.startsWith('/api/') && !NO_TOCA_CATALOGO.test(req.path)) {
+        res.on('finish', () => { if (res.statusCode < 400) invalidarCache(); });
+    }
+    next();
+});
+
 async function promocionesVigentes(db = pool) {
+    // Dentro de una transacción (checkout) se lee directo de la base.
+    if (db === pool) return enCache('promos', () => leerPromocionesVigentes(pool));
+    return leerPromocionesVigentes(db);
+}
+async function leerPromocionesVigentes(db) {
     const r = await db.query(
         `SELECT pr.*, c.nombre AS categoria_nombre, p.nombre AS producto_nombre
          FROM promociones pr
@@ -816,7 +887,19 @@ function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) 
 // Consulta del catálogo (la usan GET /api/productos y GET /api/catalogo).
 // Filtros: categoria (nombre o id), uso, marca, precio_min, precio_max,
 // busqueda / buscar, destacado=1, promocion=1, orden=novedades.
-async function consultarCatalogo(q) {
+// Campos internos que el público no debe ver (costos, proveedor, estrategia)
+const CAMPOS_INTERNOS_PRODUCTO = ['costo_unitario', 'proveedor_id', 'vendedor_id', 'restock'];
+function productoPublico(p) {
+    if (!p) return p;
+    const out = { ...p };
+    for (const k of CAMPOS_INTERNOS_PRODUCTO) delete out[k];
+    return out;
+}
+function consultarCatalogo(q) {
+    const clave = 'cat:' + JSON.stringify(Object.keys(q).sort().map((k) => [k, q[k]]));
+    return enCache(clave, async () => (await leerCatalogo(q)).map(productoPublico));
+}
+async function leerCatalogo(q) {
     if (q.ids) {   // atajo para el comparador: ?ids=1,2,3 (máximo 4)
         const ids = String(q.ids).split(',').map(Number).filter((n) => n > 0).slice(0, 4);
         if (ids.length === 0) return [];
@@ -861,20 +944,22 @@ async function productoDelCatalogo(id) {
     return { ...p, garantias: planesParaProducto(p.precio) };
 }
 
-app.get('/api/productos', asyncRoute(async (req, res) => res.json(await consultarCatalogo(req.query))));
+app.get('/api/productos', asyncRoute(async (req, res) => { cachePublica(res); res.json(await consultarCatalogo(req.query)); }));
 app.get('/api/productos/:id', asyncRoute(async (req, res) => {
-    const p = await productoDelCatalogo(req.params.id);
+    const p = await enCache('prod:' + Number(req.params.id), () => productoDelCatalogo(req.params.id));
     if (!p) return res.status(404).json({ message: 'Producto no encontrado' });
-    res.json(p);
+    cachePublica(res);
+    res.json(productoPublico(p));
 }));
 
 // Etapa 4 · 4.1.1 Catálogo de artículos (nombres del documento):
 //   GET /catalogo, /catalogo/{id}, /catalogo?categoria=..., /catalogo?buscar=...
-app.get('/api/catalogo', asyncRoute(async (req, res) => res.json(await consultarCatalogo(req.query))));
+app.get('/api/catalogo', asyncRoute(async (req, res) => { cachePublica(res); res.json(await consultarCatalogo(req.query)); }));
 app.get('/api/catalogo/:id', asyncRoute(async (req, res) => {
-    const p = await productoDelCatalogo(req.params.id);
+    const p = await enCache('prod:' + Number(req.params.id), () => productoDelCatalogo(req.params.id));
     if (!p || !p.activo) return res.status(404).json({ message: 'Producto no encontrado' });
-    res.json(p);
+    cachePublica(res);
+    res.json(productoPublico(p));
 }));
 
 // Regla del Club para mostrar "Ganas X puntos" en el catálogo antes de
@@ -1494,7 +1579,15 @@ async function avisarPromocionesNuevas() {
 }
 
 // --- Favoritos: bajas de precio y vuelta de existencias ---
+// Solo se revisan los favoritos cuando algo pudo cambiar: el catálogo
+// (precio, stock, una compra) o las promociones vigentes. Antes se
+// recorrían todos los favoritos cada minuto aunque nada hubiera pasado.
+let huellaFavoritos = null;
 async function avisarFavoritos() {
+    const promosAhora = await promocionesVigentes();
+    const huella = versionCatalogo + '|' + promosAhora.map((x) => x.id).join(',');
+    if (huella === huellaFavoritos) return;
+    huellaFavoritos = huella;
     const r = await pool.query(
         `SELECT f.id AS fav_id, f.precio_aviso, f.agotado_aviso, c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo, c.token_baja,
                 COALESCE((c.preferencias->>'ofertas')::boolean, FALSE) AS quiere_ofertas,
@@ -1503,29 +1596,34 @@ async function avisarFavoritos() {
          FROM favoritos f JOIN clientes c ON c.id = f.cliente_id JOIN productos p ON p.id = f.producto_id
          WHERE ${CLIENTE_AVISABLE} AND p.activo = TRUE`);
     if (!r.rows.length) return;
-    const promos = await promocionesVigentes();
     const porCliente = new Map();
-    for (const f of decorarPrecios(r.rows, promos)) {
+    const precios = [], agotados = [], disponibles = [];   // cambios que se guardan de una sola vez
+    for (const f of decorarPrecios(r.rows, promosAhora)) {
         const ahora = Number(f.precio_final);
         const cambios = [];
         // Precio: la primera vez solo se toma de referencia
         if (f.precio_aviso == null || ahora > Number(f.precio_aviso)) {
-            await pool.query('UPDATE favoritos SET precio_aviso = $2 WHERE id = $1', [f.fav_id, ahora]);
+            precios.push([f.fav_id, ahora]);
         } else if (ahora < Number(f.precio_aviso) - 0.009) {
-            await pool.query('UPDATE favoritos SET precio_aviso = $2 WHERE id = $1', [f.fav_id, ahora]);
+            precios.push([f.fav_id, ahora]);
             if (f.quiere_ofertas && f.stock > 0) cambios.push({ tipo: 'precio', id: f.id, nombre: f.nombre, antes: f.precio_aviso, ahora,
                 nota: f.promocion ? `Promoción ${f.promocion.nombre}` : 'Bajó de precio' });
         }
         // Existencias: se recuerda que estaba agotado y se avisa al volver
-        if (f.stock <= 0 && !f.agotado_aviso) await pool.query('UPDATE favoritos SET agotado_aviso = TRUE WHERE id = $1', [f.fav_id]);
+        if (f.stock <= 0 && !f.agotado_aviso) agotados.push(f.fav_id);
         else if (f.stock > 0 && f.agotado_aviso) {
-            await pool.query('UPDATE favoritos SET agotado_aviso = FALSE WHERE id = $1', [f.fav_id]);
+            disponibles.push(f.fav_id);
             if (f.quiere_stock) cambios.push({ tipo: 'stock', id: f.id, nombre: f.nombre, ahora, nota: `De nuevo disponible (${f.stock} en existencia)` });
         }
         if (!cambios.length) continue;
         if (!porCliente.has(f.cliente_id)) porCliente.set(f.cliente_id, { c: f, items: [] });
         porCliente.get(f.cliente_id).items.push(...cambios);
     }
+    if (precios.length) await pool.query(
+        `UPDATE favoritos f SET precio_aviso = v.precio FROM unnest($1::int[], $2::numeric[]) AS v(id, precio) WHERE f.id = v.id`,
+        [precios.map((x) => x[0]), precios.map((x) => x[1])]);
+    if (agotados.length) await pool.query('UPDATE favoritos SET agotado_aviso = TRUE WHERE id = ANY($1)', [agotados]);
+    if (disponibles.length) await pool.query('UPDATE favoritos SET agotado_aviso = FALSE WHERE id = ANY($1)', [disponibles]);
     for (const { c, items } of porCliente.values()) {
         const precio = items.filter((i) => i.tipo === 'precio');
         const stock = items.filter((i) => i.tipo === 'stock');
@@ -3085,34 +3183,35 @@ app.get('/api/admin/reportes', asyncRoute(async (req, res) => {
         return { where: parts.length ? 'WHERE ' + parts.join(' AND ') : '', vals };
     };
 
-    const cli = await pool.query(`
+    const q_cli = pool.query(`
         SELECT COUNT(*) AS total,
                COUNT(*) FILTER (WHERE estado_cliente = 'activo')   AS activos,
                COUNT(*) FILTER (WHERE estado_cliente = 'inactivo') AS inactivos
         FROM clientes`);
 
     const ri = rango('fecha');
-    const interTipo = await pool.query(
+    const q_interTipo = pool.query(
         `SELECT tipo, COUNT(*) AS total FROM interacciones ${ri.where} GROUP BY tipo ORDER BY total DESC`, ri.vals);
-    const interTotal = await pool.query(
+    const q_interTotal = pool.query(
         `SELECT COUNT(*) AS total FROM interacciones ${ri.where}`, ri.vals);
 
-    const porEtapa = await pool.query('SELECT etapa_crm, COUNT(*) AS total FROM clientes GROUP BY etapa_crm');
+    const q_porEtapa = pool.query('SELECT etapa_crm, COUNT(*) AS total FROM clientes GROUP BY etapa_crm');
 
     const rp = rango('fecha_pedido');
-    const ventas = await pool.query(
+    const q_ventas = pool.query(
         `SELECT COUNT(*) AS pedidos, COALESCE(SUM(total),0) AS ingresos
          FROM pedidos ${rp.where ? rp.where + " AND estado <> 'cancelado'" : "WHERE estado <> 'cancelado'"}`,
         rp.vals);
 
     const rc = rango('fecha_registro');
-    const nuevos = await pool.query(`SELECT COUNT(*) AS total FROM clientes ${rc.where}`, rc.vals);
+    const q_nuevos = pool.query(`SELECT COUNT(*) AS total FROM clientes ${rc.where}`, rc.vals);
 
-    const sinInteraccion = await pool.query(`
+    const q_sinInteraccion = pool.query(`
         SELECT COUNT(*) AS total FROM clientes c
         LEFT JOIN metricas_clientes m ON c.id = m.cliente_id
         WHERE COALESCE(m.ultima_interaccion, c.fecha_registro) < CURRENT_TIMESTAMP - INTERVAL '30 days'`);
 
+    const [cli, interTipo, interTotal, porEtapa, ventas, nuevos, sinInteraccion] = await Promise.all([q_cli, q_interTipo, q_interTotal, q_porEtapa, q_ventas, q_nuevos, q_sinInteraccion]);
     res.json({
         rango: { desde, hasta },
         clientes: {
@@ -3139,7 +3238,8 @@ app.get('/api/admin/reportes', asyncRoute(async (req, res) => {
 // =========================================================
 
 app.get('/api/admin/dashboard', asyncRoute(async (req, res) => {
-    const totales = await pool.query(`
+    const datos = await enCache('dash', async () => {
+    const q_totales = pool.query(`
         SELECT
             COUNT(*) AS total_clientes,
             COUNT(*) FILTER (WHERE estado_cliente = 'activo') AS activos,
@@ -3147,12 +3247,12 @@ app.get('/api/admin/dashboard', asyncRoute(async (req, res) => {
         FROM clientes
     `);
 
-    const interaccionesMes = await pool.query(`
+    const q_interaccionesMes = pool.query(`
         SELECT COUNT(*) AS total FROM interacciones
         WHERE fecha >= DATE_TRUNC('month', CURRENT_DATE)
     `);
 
-    const sinInteraccion = await pool.query(`
+    const q_sinInteraccion = pool.query(`
         SELECT c.id, c.nombre, c.correo,
                COALESCE(m.ultima_interaccion, c.fecha_registro) AS ultima_referencia,
                COALESCE(EXTRACT(DAY FROM (CURRENT_TIMESTAMP - COALESCE(m.ultima_interaccion, c.fecha_registro)))::int, 9999) AS dias_sin_contacto
@@ -3163,21 +3263,25 @@ app.get('/api/admin/dashboard', asyncRoute(async (req, res) => {
         LIMIT 10
     `);
 
-    const porEtapa = await pool.query(`
+    const q_porEtapa = pool.query(`
         SELECT etapa_crm, COUNT(*) AS total FROM clientes GROUP BY etapa_crm
     `);
 
-    const porTipoInteraccion = await pool.query(`
+    const q_porTipoInteraccion = pool.query(`
         SELECT tipo, COUNT(*) AS total FROM interacciones GROUP BY tipo
     `);
 
-    const tickets = await pool.query(`
+    const q_tickets = pool.query(`
         SELECT
             COUNT(*) FILTER (WHERE estado IN ('abierto', 'en_proceso')) AS activos,
             COUNT(*) FILTER (WHERE estado = 'abierto') AS abiertos
         FROM tickets
     `);
 
+    const [totales, interaccionesMes, sinInteraccion, porEtapa, porTipoInteraccion, tickets] = await Promise.all([q_totales, q_interaccionesMes, q_sinInteraccion, q_porEtapa, q_porTipoInteraccion, q_tickets]);
+    return { totales, interaccionesMes, sinInteraccion, porEtapa, porTipoInteraccion, tickets };
+    }, 15000);
+    const { totales, interaccionesMes, sinInteraccion, porEtapa, porTipoInteraccion, tickets } = datos;
     res.json({
         total_clientes: Number(totales.rows[0].total_clientes),
         activos: Number(totales.rows[0].activos),
@@ -3192,7 +3296,7 @@ app.get('/api/admin/dashboard', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/admin/metricas-productos', asyncRoute(async (req, res) => {
-    const masVendidos = await pool.query(`
+    const q_masVendidos = pool.query(`
         SELECT p.id, p.nombre, p.marca, p.stock, p.precio,
                COALESCE(SUM(pi.cantidad) FILTER (WHERE pe.estado <> 'cancelado'), 0) AS unidades_vendidas
         FROM productos p
@@ -3200,7 +3304,7 @@ app.get('/api/admin/metricas-productos', asyncRoute(async (req, res) => {
         LEFT JOIN pedidos pe ON pi.pedido_id = pe.id
         GROUP BY p.id ORDER BY unidades_vendidas DESC LIMIT 10
     `);
-    const inventarioCritico = await pool.query(`
+    const q_inventarioCritico = pool.query(`
         SELECT p.id, p.nombre, p.marca, p.stock, p.stock_minimo, p.restock,
                pr.nombre AS proveedor_nombre, pr.tiempo_entrega_dias,
                oc.folio AS orden_abierta_folio
@@ -3213,12 +3317,13 @@ app.get('/api/admin/metricas-productos', asyncRoute(async (req, res) => {
         ) oc ON true
         WHERE p.stock <= p.stock_minimo AND p.activo = true ORDER BY p.stock ASC
     `);
-    const stats = await pool.query(`
+    const q_stats = pool.query(`
         SELECT COUNT(*) AS total_productos, COALESCE(SUM(stock),0) AS stock_total,
                COUNT(*) FILTER (WHERE stock = 0) AS agotados,
                COUNT(*) FILTER (WHERE stock > 0 AND stock <= stock_minimo) AS criticos
         FROM productos WHERE activo = true
     `);
+    const [masVendidos, inventarioCritico, stats] = await Promise.all([q_masVendidos, q_inventarioCritico, q_stats]);
     res.json({ mas_vendidos: masVendidos.rows, inventario_critico: inventarioCritico.rows, stats: stats.rows[0] });
 }));
 
@@ -4806,13 +4911,14 @@ async function metricasERP() {
 // Reportes ERP (dashboard empresarial) con rango de fechas opcional.
 const fechaISO = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
 app.get('/api/admin/erp/reportes', asyncRoute(async (req, res) => {
-    res.json(await reporteERP(fechaISO(req.query.desde), fechaISO(req.query.hasta)));
+    const d = fechaISO(req.query.desde), h = fechaISO(req.query.hasta);
+    res.json(await enCache(`erp:${d}:${h}`, () => reporteERP(d, h), 15000));
 }));
 
 async function reporteERP(desde, hasta) {
     const rango = `($1::date IS NULL OR p.fecha_pedido >= $1::date) AND ($2::date IS NULL OR p.fecha_pedido < $2::date + INTERVAL '1 day')`;
 
-    const k = await pool.query(`
+    const q_k = pool.query(`
         SELECT
             COALESCE(SUM(p.total) FILTER (WHERE p.pago_estado = 'pagado'), 0) AS ventas_totales,
             COUNT(*)::int AS ordenes,
@@ -4824,24 +4930,25 @@ async function reporteERP(desde, hasta) {
             COALESCE(AVG(p.total) FILTER (WHERE p.pago_estado = 'pagado'), 0) AS ticket_promedio
         FROM pedidos p WHERE p.estado <> 'cancelado' AND ${rango}
     `, [desde, hasta]);
-    const piezas = await pool.query(`
+    const q_piezas = pool.query(`
         SELECT COALESCE(SUM(pi.cantidad),0)::int AS n FROM pedido_items pi JOIN pedidos p ON pi.pedido_id = p.id
         WHERE p.estado <> 'cancelado' AND ${rango}
     `, [desde, hasta]);
-    const activos = await pool.query(`SELECT COUNT(*)::int AS n FROM clientes WHERE estado_cliente = 'activo' AND etapa_crm IN ('Activo','Frecuente')`);
-    const porEstado = await pool.query(`
+    const q_activos = pool.query(`SELECT COUNT(*)::int AS n FROM clientes WHERE estado_cliente = 'activo' AND etapa_crm IN ('Activo','Frecuente')`);
+    const q_porEstado = pool.query(`
         SELECT p.estado, COUNT(*)::int AS total FROM pedidos p WHERE ${rango} GROUP BY p.estado
     `, [desde, hasta]);
 
     // Inventario disponible por rotación (unidades vendidas en 90 días
     // contra el stock actual de cada producto).
-    const inv = await pool.query(`
+    const q_inv = pool.query(`
         SELECT p.id, p.nombre, p.stock, p.precio,
                COALESCE((SELECT SUM(pi.cantidad) FROM pedido_items pi JOIN pedidos pe ON pi.pedido_id = pe.id
                           WHERE pi.producto_id = p.id AND pe.estado <> 'cancelado'
                             AND pe.fecha_pedido >= CURRENT_DATE - INTERVAL '90 days'), 0)::int AS vendidas_90
         FROM productos p WHERE p.activo = true
     `);
+    const [k, piezas, activos, porEstado, inv] = await Promise.all([q_k, q_piezas, q_activos, q_porEstado, q_inv]);
     const rot = { alta: { productos: 0, unidades: 0, valor: 0 }, media: { productos: 0, unidades: 0, valor: 0 }, baja: { productos: 0, unidades: 0, valor: 0 } };
     inv.rows.forEach((p) => {
         const indice = p.stock + p.vendidas_90 > 0 ? p.vendidas_90 / (p.stock + p.vendidas_90) : 0;

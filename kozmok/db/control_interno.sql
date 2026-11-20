@@ -220,3 +220,24 @@ ALTER TABLE monederos ADD COLUMN IF NOT EXISTS fecha_estado TIMESTAMP;
 ALTER TABLE movimientos_monedero ADD COLUMN IF NOT EXISTS aprobado_por INTEGER REFERENCES usuarios(id);
 ALTER TABLE movimientos_monedero ADD COLUMN IF NOT EXISTS comprobante VARCHAR(60);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_movmon_comprobante ON movimientos_monedero (comprobante) WHERE comprobante IS NOT NULL;
+
+-- =========================================================
+-- RENDIMIENTO: índices para las consultas que más se repiten
+-- (historial del cliente, reportes por fecha, tareas cada minuto).
+-- Sin ellos PostgreSQL recorre la tabla completa en cada consulta.
+-- =========================================================
+CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_fecha ON pedidos (cliente_id, fecha_pedido DESC);
+CREATE INDEX IF NOT EXISTS idx_pedidos_fecha         ON pedidos (fecha_pedido DESC);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estado        ON pedidos (estado);
+CREATE INDEX IF NOT EXISTS idx_pedidos_por_avisar    ON pedidos (id) WHERE estado IS DISTINCT FROM estado_notificado;
+CREATE INDEX IF NOT EXISTS idx_pedidos_pago_vence    ON pedidos (pago_vence) WHERE estado = 'pendiente' AND pago_estado = 'pendiente';
+CREATE INDEX IF NOT EXISTS idx_pedido_items_pedido   ON pedido_items (pedido_id);
+CREATE INDEX IF NOT EXISTS idx_pedido_items_producto ON pedido_items (producto_id);
+CREATE INDEX IF NOT EXISTS idx_movinv_producto_fecha ON movimientos_inventario (producto_id, fecha DESC);
+CREATE INDEX IF NOT EXISTS idx_movinv_pendientes     ON movimientos_inventario (fecha) WHERE estado = 'pendiente';
+CREATE INDEX IF NOT EXISTS idx_movmon_pendientes     ON movimientos_monedero (fecha) WHERE estado = 'pendiente';
+CREATE INDEX IF NOT EXISTS idx_correos_por_enviar    ON correos_salida (id) WHERE estado IN ('pendiente', 'error');
+CREATE INDEX IF NOT EXISTS idx_favoritos_producto    ON favoritos (producto_id);
+CREATE INDEX IF NOT EXISTS idx_auditoria_entidad     ON auditoria (entidad, entidad_id);
+CREATE INDEX IF NOT EXISTS idx_productos_activos     ON productos (nombre) WHERE activo = TRUE;
+ANALYZE;

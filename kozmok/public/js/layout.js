@@ -233,7 +233,7 @@ async function renderNavbar() {
 
 async function armarMenuCategorias(dd, categorias) {
     let prods = [];
-    try { prods = await api('/catalogo'); } catch { return; }   // sin datos se queda el menú simple
+    try { prods = await api('/productos'); } catch { return; }   // sin datos se queda el menú simple
     const porCat = categorias.map((c) => {
         const lista = prods.filter((p) => p.categoria_nombre === c.nombre);
         const marcas = {};
