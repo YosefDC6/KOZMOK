@@ -196,7 +196,7 @@ async function verDetalle(id) {
         document.getElementById('det-movs').innerHTML = movs.length ? `
             <table style="width:100%"><tbody>${movs.map((m) => `
                 <tr>
-                    <td>${new Date(m.fecha_movimiento || m.fecha).toLocaleDateString('es-MX')}</td>
+                    <td>${new Date(m.fecha).toLocaleDateString('es-MX')}</td>
                     <td style="color:${m.tipo === 'entrada' ? 'var(--success)' : 'var(--danger)'}">${m.tipo === 'entrada' ? 'Entrada' : 'Salida'}</td>
                     <td class="mono">${m.tipo === 'entrada' ? '+' : '−'}${m.cantidad}</td>
                     <td>${m.motivo || ''}</td>

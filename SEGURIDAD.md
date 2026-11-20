@@ -154,6 +154,24 @@ que se cumplan aunque alguien llame a la API directo o tenga acceso a la base:
   corregir con motivo). Cada corrección queda en `movimientos_inventario_fechas` (anterior,
   nueva, quién, por qué, hora real), tabla de solo agregar. No se aceptan fechas futuras ni
   de más de un año. Un empleado solo corrige sus propios movimientos.
+  **La hora real y el historial no se muestran en el panel ni salen por la API**: quedan
+  solo en la base para revisar incoherencias, por ejemplo:
+
+  ```sql
+  -- Movimientos capturados 1 día o más después de la fecha que dicen, o con fecha corregida
+  SELECT m.id, p.nombre, m.tipo, m.cantidad, m.fecha_movimiento, m.fecha AS registrado,
+         u.nombre AS registro, uc.nombre AS corrigio_fecha, m.fecha_cambiada_en
+  FROM movimientos_inventario m
+  JOIN productos p ON p.id = m.producto_id
+  LEFT JOIN usuarios u ON u.id = m.usuario_id
+  LEFT JOIN usuarios uc ON uc.id = m.fecha_cambiada_por
+  WHERE m.fecha - m.fecha_movimiento >= INTERVAL '1 day' OR m.fecha_cambiada_por IS NOT NULL
+  ORDER BY m.fecha DESC;
+
+  -- Historial de correcciones de fecha
+  SELECT f.*, u.nombre FROM movimientos_inventario_fechas f
+  LEFT JOIN usuarios u ON u.id = f.usuario_id ORDER BY f.fecha DESC;
+  ```
 - **Solo agregar**: los movimientos no se editan ni se borran; un error se corrige con
   un movimiento compensatorio. Solo cambia el estado de un pendiente.
 - **Pedidos sellados**: folio, fecha y montos inmutables; estados solo hacia adelante;

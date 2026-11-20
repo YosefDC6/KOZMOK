@@ -1656,10 +1656,8 @@ Reglas de negocio embebidas
  - Las fechas de pedidos y pagos las pone el servidor; no se pueden cambiar.
  - Movimientos de inventario: al registrar puedes indicar cuándo pasó (por
    ejemplo, una merma de ayer) y después corregirla con "Corregir fecha"
-   explicando el motivo. El sistema guarda aparte la hora real del registro y
-   quién lo hizo; en la tabla se marca "N días después" y "Fecha corregida"
-   (clic para ver el historial). Cada quien corrige solo sus movimientos; los
-   demás, un administrador.
+   explicando el motivo. Cada quien corrige solo sus movimientos; los demás,
+   un administrador.
  - Los movimientos de inventario no se editan ni se borran. Para corregir un
    error se registra otro movimiento que lo compense.
  - Bajas de inventario: si son de 3 piezas o más, de $3,000 o más, o por robo,

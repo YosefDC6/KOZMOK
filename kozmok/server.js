@@ -2661,7 +2661,7 @@ const PERMISOS_API = [
     { ruta: /^\/productos(\/|$)/,                      metodos: TODO, permisos: ['productos-editar'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: LEER, permisos: ['proveedores', 'productos', 'inventario', 'ordenes-compra', 'scm'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: TODO, permisos: ['proveedores'] },
-    { ruta: /^\/movimientos-inventario(\/(motivos|pendientes|\d+\/fechas?))?$/, metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
+    { ruta: /^\/movimientos-inventario(\/(motivos|pendientes|\d+\/fecha))?$/, metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
     { ruta: /^\/(ordenes-compra|pedidos-scm)(\/|$)/,   metodos: TODO, permisos: ['ordenes-compra', 'inventario', 'scm'] },
     { ruta: /^\/scm\/nivel$/,                            metodos: ['PUT'], permisos: ['nivel-scm'] },
     { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
@@ -3539,21 +3539,24 @@ app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     if (tipo) { cond.push(`m.tipo = $${i++}`); values.push(tipo); }
     if (producto_id) { cond.push(`m.producto_id = $${i++}`); values.push(producto_id); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
-    // fecha = hora real del registro (servidor); fecha_movimiento = la que
-    // indicó el empleado; cambios_fecha = cuántas veces se corrigió.
+    // El panel solo recibe la fecha del movimiento. La hora real del registro,
+    // quién corrigió la fecha y el historial de correcciones se quedan en la
+    // base (columnas fecha, fecha_cambiada_* y movimientos_inventario_fechas)
+    // para revisar incoherencias; no se mandan al navegador.
     const result = await pool.query(`
-        SELECT m.*, COALESCE(m.fecha_movimiento, m.fecha) AS fecha_movimiento, m.fecha AS fecha_registro,
-               p.nombre AS producto_nombre, u.nombre AS usuario_nombre, uc.nombre AS fecha_cambiada_por_nombre,
-               (SELECT COUNT(*)::int FROM movimientos_inventario_fechas f WHERE f.movimiento_id = m.id) AS cambios_fecha
+        SELECT ${COLS_MOVINV_PANEL}, p.nombre AS producto_nombre, u.nombre AS usuario_nombre
         FROM movimientos_inventario m
         LEFT JOIN productos p ON m.producto_id = p.id
         LEFT JOIN usuarios u ON m.usuario_id = u.id
-        LEFT JOIN usuarios uc ON m.fecha_cambiada_por = uc.id
         ${where}
-        ORDER BY m.fecha DESC LIMIT 200
+        ORDER BY COALESCE(m.fecha_movimiento, m.fecha) DESC, m.id DESC LIMIT 200
     `, values);
     res.json(result.rows);
 }));
+
+const COLS_MOVINV_PANEL = `m.id, m.producto_id, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.usuario_id, m.estado, m.valor,
+       m.aprobado_por, m.nota_resolucion, COALESCE(m.fecha_movimiento, m.fecha) AS fecha, COALESCE(m.fecha_movimiento, m.fecha) AS fecha_movimiento`;
+const movPanel = (m) => { const { fecha, fecha_movimiento, fecha_cambiada_por, fecha_cambiada_en, resuelto_fecha, ...resto } = m; return { ...resto, fecha: fecha_movimiento || fecha, fecha_movimiento: fecha_movimiento || fecha }; };
 
 // Fecha que escribe el empleado (input datetime-local o YYYY-MM-DD).
 // null = no mandó fecha; Error = fecha no válida o futura.
@@ -3567,7 +3570,6 @@ function fechaDeclarada(v) {
     if (d.getTime() < Date.now() - 366 * 86400000) return new Error('La fecha del movimiento no puede tener más de un año');
     return d;
 }
-const diasEntre = (a, b) => Math.round(Math.abs(new Date(a) - new Date(b)) / 86400000);
 
 // Corregir la fecha de un movimiento: la fecha de registro no cambia y la
 // corrección queda en el historial (anterior, nueva, quién, por qué, cuándo).
@@ -3594,20 +3596,15 @@ app.put('/api/admin/movimientos-inventario/:id/fecha', asyncRoute(async (req, re
             [nueva, req.usuario.id, m.id])).rows[0];
         await auditar(db, req, {
             accion: 'fecha_movimiento_corregida', entidad: 'movimiento_inventario', entidad_id: m.id,
-            antes: { fecha_movimiento: anterior }, despues: { fecha_movimiento: r.fecha_movimiento, fecha_registro: m.fecha }, motivo,
+            antes: { fecha_movimiento: anterior }, despues: { fecha_movimiento: r.fecha_movimiento }, motivo,
         });
         await db.query('COMMIT');
-        res.json({ ...r, message: 'Fecha corregida. La fecha real de registro y el cambio quedan en el historial.' });
+        res.json({ ...movPanel(r), message: 'Fecha del movimiento actualizada' });
     } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
 }));
 
-// Historial de correcciones de fecha de un movimiento
-app.get('/api/admin/movimientos-inventario/:id/fechas', asyncRoute(async (req, res) => {
-    const r = await pool.query(
-        `SELECT f.*, u.nombre AS usuario_nombre FROM movimientos_inventario_fechas f
-         LEFT JOIN usuarios u ON u.id = f.usuario_id WHERE f.movimiento_id = $1 ORDER BY f.id`, [req.params.id]);
-    res.json(r.rows);
-}));
+// El historial de correcciones (movimientos_inventario_fechas) no tiene
+// ruta en la API a propósito: solo se consulta en la base de datos.
 
 // Registrar un movimiento manual (ajuste, merma, conteo físico, etc.) —
 // a diferencia del restock rápido, aquí también se puede registrar una
@@ -3664,14 +3661,13 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
             accion: necesitaFirma ? 'baja_solicitada' : (tipo === 'entrada' ? 'entrada_inventario' : 'baja_inventario'),
             entidad: 'producto', entidad_id: producto_id,
             antes: { stock: prod.stock }, despues: { stock: necesitaFirma ? prod.stock : prod.stock + (tipo === 'entrada' ? cantidad : -cantidad), movimiento: mov.id, valor,
-                fecha_movimiento: mov.fecha_movimiento, fecha_registro: mov.fecha,
-                ...(diasEntre(mov.fecha_movimiento, mov.fecha) >= 1 ? { registrado_despues_dias: diasEntre(mov.fecha_movimiento, mov.fecha) } : {}) },
+                fecha_movimiento: mov.fecha_movimiento },
             motivo,
         });
         await db.query('COMMIT');
         if (!necesitaFirma && tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id, 'demanda');
         res.status(201).json({
-            ...mov,
+            ...movPanel(mov),
             message: necesitaFirma
                 ? `La baja de ${cantidad} × ${prod.nombre} (${precioTxt(valor)}) quedó pendiente: un administrador debe aprobarla antes de que salga del inventario.`
                 : `Movimiento registrado (${tipo === 'entrada' ? '+' : '−'}${cantidad})`,
@@ -3682,10 +3678,10 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
 // Bajas pendientes de aprobación (las ve quien puede aprobar: administrador)
 app.get('/api/admin/movimientos-inventario/pendientes', asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `SELECT m.id, m.fecha, COALESCE(m.fecha_movimiento, m.fecha) AS fecha_movimiento, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.valor, p.nombre AS producto_nombre, p.stock,
+        `SELECT m.id, COALESCE(m.fecha_movimiento, m.fecha) AS fecha, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.valor, p.nombre AS producto_nombre, p.stock,
                 u.nombre AS usuario_nombre
          FROM movimientos_inventario m JOIN productos p ON p.id = m.producto_id LEFT JOIN usuarios u ON u.id = m.usuario_id
-         WHERE m.estado = 'pendiente' ORDER BY m.fecha`);
+         WHERE m.estado = 'pendiente' ORDER BY m.id`);
     res.json(r.rows);
 }));
 app.post('/api/admin/movimientos-inventario/:id/resolver', requireAdmin, asyncRoute(async (req, res) => {
@@ -4301,12 +4297,12 @@ const detallePedido = asyncRoute(async (req, res) => {
     // Movimientos que este pedido generó (la venta lleva el folio en el
     // motivo; las de la tienda antiguas dicen solo "Venta en línea").
     const movimientos = await pool.query(`
-        SELECT m.fecha, m.tipo, m.cantidad, m.motivo, pr.nombre AS producto_nombre, us.nombre AS usuario_nombre
+        SELECT COALESCE(m.fecha_movimiento, m.fecha) AS fecha, m.tipo, m.cantidad, m.motivo, pr.nombre AS producto_nombre, us.nombre AS usuario_nombre
         FROM movimientos_inventario m
         JOIN productos pr ON pr.id = m.producto_id
         LEFT JOIN usuarios us ON us.id = m.usuario_id
         WHERE m.motivo LIKE '%' || $1 || '%'
-        ORDER BY m.fecha, m.id`, [pedido.numero_orden]);
+        ORDER BY COALESCE(m.fecha_movimiento, m.fecha), m.id`, [pedido.numero_orden]);
     const procesos = await pool.query(`
         SELECT pe.fecha, pe.paso, pe.descripcion, pe.automatico, us.nombre AS usuario_nombre
         FROM procesos_erp pe LEFT JOIN usuarios us ON us.id = pe.usuario_id
@@ -4703,8 +4699,8 @@ app.get('/api/admin/erp/productos-consulta/:id', asyncRoute(async (req, res) => 
             LEFT JOIN clientes c ON c.id = pe.cliente_id
             WHERE pi.producto_id = $1 ORDER BY pe.fecha_pedido DESC LIMIT 30`, [req.params.id]),
         pool.query(`
-            SELECT m.fecha, m.tipo, m.cantidad, m.motivo FROM movimientos_inventario m
-            WHERE m.producto_id = $1 ORDER BY m.fecha DESC LIMIT 8`, [req.params.id]),
+            SELECT COALESCE(m.fecha_movimiento, m.fecha) AS fecha, m.tipo, m.cantidad, m.motivo FROM movimientos_inventario m
+            WHERE m.producto_id = $1 ORDER BY COALESCE(m.fecha_movimiento, m.fecha) DESC, m.id DESC LIMIT 8`, [req.params.id]),
     ]);
     const x = p.rows[0];
     const activas = ordenes.rows.filter((o) => o.estado !== 'cancelado');

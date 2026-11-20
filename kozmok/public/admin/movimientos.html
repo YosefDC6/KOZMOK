@@ -24,7 +24,7 @@
 
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Fecha del movimiento</th><th>Registrado</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Motivo</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Motivo</th><th>Usuario</th><th></th></tr></thead>
                 <tbody id="tabla-movimientos"><tr><td colspan="7">Cargando…</td></tr></tbody>
             </table>
         </div>
@@ -64,19 +64,15 @@ function renderTabla() {
 
     const yo = Sesion.usuario() || {};
     document.getElementById('tabla-movimientos').innerHTML = lista.length ? lista.map((m) => {
-        const dias = Math.round(Math.abs(new Date(m.fecha_registro) - new Date(m.fecha_movimiento)) / 86400000);
         const puede = m.usuario_id && (yo.rol === 'admin' || Number(m.usuario_id) === Number(yo.id));
         return `
         <tr>
-            <td class="mono" style="font-size:.8rem">${fechaCorta(m.fecha_movimiento)}
-                ${m.cambios_fecha ? `<div><button class="link-btn mv-aviso" onclick="verCambiosFecha(${m.id})">Fecha corregida ${m.cambios_fecha === 1 ? '1 vez' : m.cambios_fecha + ' veces'}</button></div>` : ''}</td>
-            <td style="font-size:.8rem"><span class="mono">${fechaCorta(m.fecha_registro)}</span>
-                <div style="color:var(--text-muted)">${escHTML(m.usuario_nombre || 'sistema')}</div>
-                ${dias >= 1 ? `<div class="mv-aviso">${dias === 1 ? '1 día' : dias + ' días'} después</div>` : ''}</td>
+            <td class="mono" style="font-size:.8rem">${fechaCorta(m.fecha)}</td>
             <td>${escHTML(m.producto_nombre || '—')}</td>
             <td><span class="estado-pill ${m.tipo === 'entrada' ? 'e-entregado' : 'e-cancelado'}">${m.tipo}</span>${m.estado && m.estado !== 'aplicado' ? ` <span class="tag">${m.estado}</span>` : ''}</td>
             <td class="mono">${m.tipo === 'entrada' ? '+' : '−'}${m.cantidad}</td>
             <td style="color:var(--text-muted);font-size:.85rem">${escHTML(m.motivo || '—')}</td>
+            <td>${m.usuario_nombre ? escHTML(m.usuario_nombre) : '<span style="color:var(--text-muted)">sistema</span>'}</td>
             <td>${puede ? `<button class="btn btn-ghost btn-sm" onclick="corregirFecha(${m.id})">Corregir fecha</button>` : ''}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="7" style="color:var(--text-muted)">No hay movimientos con este filtro.</td></tr>`;
@@ -90,11 +86,10 @@ function corregirFecha(id) {
         <h3 style="margin-bottom:2px">Corregir fecha del movimiento</h3>
         <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${escHTML(m.producto_nombre || '')} · ${m.tipo === 'entrada' ? '+' : '−'}${m.cantidad}</p>
         <div class="field-row">
-            <div class="field"><label>Fecha actual del movimiento</label><input value="${fechaCorta(m.fecha_movimiento)}" disabled /></div>
-            <div class="field"><label>Nueva fecha</label><input type="datetime-local" id="cf-fecha" value="${aLocal(m.fecha_movimiento)}" max="${aLocal(new Date())}" /></div>
+            <div class="field"><label>Fecha actual</label><input value="${fechaCorta(m.fecha)}" disabled /></div>
+            <div class="field"><label>Nueva fecha</label><input type="datetime-local" id="cf-fecha" value="${aLocal(m.fecha)}" max="${aLocal(new Date())}" /></div>
         </div>
         <div class="field"><label>Motivo del cambio (obligatorio)</label><textarea id="cf-motivo" rows="2" maxlength="300" placeholder="Ej. La merma se detectó en el conteo del lunes y se capturó hoy"></textarea></div>
-        <p style="font-size:.76rem;color:var(--text-muted);margin:0">La fecha real de registro (${fechaCorta(m.fecha_registro)}, ${escHTML(m.usuario_nombre || 'sistema')}) no cambia. Este cambio queda en el historial con tu nombre, la hora real y el motivo.</p>
         <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="guardarFecha(${id})">Guardar fecha</button>`);
 }
 async function guardarFecha(id) {
@@ -104,20 +99,6 @@ async function guardarFecha(id) {
     try { const r = await api(`/admin/movimientos-inventario/${id}/fecha`, { method: 'PUT', body: { fecha, motivo } }); cerrarModal(); toast(r.message, 'ok'); cargarMovimientos(); }
     catch (e) { toast(e.message, 'error'); }
 }
-async function verCambiosFecha(id) {
-    const m = MOVIMIENTOS.find((x) => x.id === id);
-    let h = [];
-    try { h = await api(`/admin/movimientos-inventario/${id}/fechas`); } catch (e) { return toast(e.message, 'error'); }
-    abrirModal(`
-        <h3 style="margin-bottom:2px">Historial de la fecha</h3>
-        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${escHTML(m.producto_nombre || '')} · registrado el ${fechaCorta(m.fecha_registro)} por ${escHTML(m.usuario_nombre || 'sistema')}</p>
-        <div class="table-wrap"><table>
-            <thead><tr><th>Cuándo se cambió</th><th>De</th><th>A</th><th>Quién y por qué</th></tr></thead>
-            <tbody>${h.map((c) => `<tr><td class="mono" style="font-size:.8rem">${fechaCorta(c.fecha)}</td><td class="mono" style="font-size:.8rem">${fechaCorta(c.fecha_anterior)}</td>
-                <td class="mono" style="font-size:.8rem">${fechaCorta(c.fecha_nueva)}</td><td style="font-size:.84rem"><strong>${escHTML(c.usuario_nombre || '—')}</strong><div style="color:var(--text-muted)">${escHTML(c.motivo)}</div></td></tr>`).join('')}</tbody>
-        </table></div>`);
-}
-
 function aplicarFiltro() {
     cargarMovimientos();
 }

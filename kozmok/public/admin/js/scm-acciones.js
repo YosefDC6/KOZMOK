@@ -149,8 +149,8 @@
                 <div class="field"><label>Fecha del movimiento</label><input type="datetime-local" id="msa-fecha-mov" value="${ahoraLocal()}" max="${ahoraLocal()}" /></div>
                 <div class="field"><label>Usuario</label><input value="${(Sesion.usuario() || {}).nombre || ''}" disabled /></div>
             </div>
-            <p style="font-size:.76rem;color:var(--text-muted);margin:0">Si pasó antes (por ejemplo, una merma de ayer), cambia la fecha del movimiento: además se guarda la hora real en que lo registras y tu nombre.
-                El movimiento no se puede borrar; un error se corrige con un movimiento contrario.
+            <p style="font-size:.76rem;color:var(--text-muted);margin:0">Si pasó antes (por ejemplo, una merma de ayer), cambia la fecha del movimiento.
+                El movimiento queda con tu nombre y no se puede borrar; un error se corrige con un movimiento contrario.
                 ${esAdmin ? '' : `Las salidas de ${UMBRAL.umbral_piezas} piezas o más, de ${formatoMoneda(UMBRAL.umbral_valor)} o más, o por robo, necesitan la aprobación de un administrador.`}</p>
             <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="ScmAcciones._guardarMovimiento()">Registrar movimiento</button>`);
         motivos();
