@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="referrer" content="no-referrer" />
+<title>Nueva contraseña · Panel Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh">
+<div class="container" style="max-width:420px">
+    <div style="text-align:center;margin-bottom:20px">
+        <span class="auth-marca"><span class="brand-mark" style="display:inline-flex" data-logo="44"></span><span class="auth-mascota" data-mascota="52"></span></span>
+        <h2 style="margin-top:12px">Nueva contraseña</h2>
+        <p id="act-sub">Crea una contraseña nueva para el panel.</p>
+    </div>
+
+    <div class="card" id="act-cargando"><p style="margin:0;color:var(--text-muted)">Revisando el enlace…</p></div>
+
+    <div class="card" id="act-form-card" hidden>
+        <form id="act-form">
+            <input type="email" id="act-correo" autocomplete="username" readonly class="campo-oculto" tabindex="-1" aria-hidden="true" />
+            <div class="field">
+                <label for="act-nueva">Nueva contraseña</label>
+                <input type="password" id="act-nueva" required maxlength="72" autocomplete="new-password" />
+                <div id="reglas-slot"></div>
+            </div>
+            <div class="field">
+                <label for="act-rep">Repetir contraseña</label>
+                <input type="password" id="act-rep" required maxlength="72" autocomplete="new-password" />
+            </div>
+            <div id="act-error" class="auth-error" role="alert" hidden></div>
+            <button class="btn btn-primary" style="width:100%" type="submit" id="act-btn">Guardar contraseña</button>
+        </form>
+    </div>
+
+    <div class="card" id="act-listo" hidden>
+        <p style="margin-top:0;color:var(--text)" id="act-listo-txt"></p>
+        <a class="btn btn-primary" style="width:100%" href="/admin/login.html">Entrar al panel</a>
+    </div>
+
+    <div class="card" id="act-malo" hidden>
+        <p style="margin:0 0 12px;color:var(--text)" id="act-malo-txt"></p>
+        <a class="btn btn-primary" style="width:100%" href="/admin/recuperar.html">Pedir un enlace nuevo</a>
+    </div>
+</div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script>
+// El token va en la URL del correo; se quita de la barra para que no quede
+// en el historial ni se comparta por error.
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+if (TOKEN) history.replaceState(null, '', location.pathname);
+const $ = (id) => document.getElementById(id);
+const mostrar = (id) => ['act-cargando', 'act-form-card', 'act-listo', 'act-malo'].forEach((x) => { $(x).hidden = x !== id; });
+
+(async () => {
+    if (!TOKEN) { $('act-malo-txt').textContent = 'Este enlace no es válido. Pide uno nuevo desde ¿Olvidaste tu contraseña?'; mostrar('act-malo'); return; }
+    try {
+        const d = await api('/auth/restablecer-usuario?token=' + encodeURIComponent(TOKEN));
+        $('act-sub').textContent = `Hola ${d.nombre}: crea una contraseña nueva. Al guardarla cerramos tus sesiones abiertas.`;
+        $('act-correo').value = d.correo;
+        mostrar('act-form-card');
+        $('reglas-slot').outerHTML = ReglasPass.html('act-reglas');
+        ReglasPass.enlazar($('act-nueva'), $('act-reglas'));
+        $('act-nueva').focus();
+    } catch (e) { $('act-malo-txt').textContent = e.message; mostrar('act-malo'); }
+})();
+
+$('act-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const nueva = $('act-nueva').value, rep = $('act-rep').value;
+    const err = $('act-error');
+    const falla = ReglasPass.faltante(nueva) || (nueva !== rep ? 'Las contraseñas no coinciden.' : null);
+    if (falla) { err.textContent = falla; err.hidden = false; return; }
+    err.hidden = true;
+    const btn = $('act-btn'); btn.disabled = true; btn.textContent = 'Guardando…';
+    try {
+        const r = await api('/auth/restablecer-usuario', { method: 'POST', body: { token: TOKEN, nueva } });
+        $('act-listo-txt').textContent = r.message;
+        mostrar('act-listo');
+    } catch (e) {
+        err.textContent = e.message; err.hidden = false;
+        btn.disabled = false; btn.textContent = 'Guardar contraseña';
+    }
+});
+</script>
+</body>
+</html>

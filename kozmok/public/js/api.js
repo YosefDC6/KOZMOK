@@ -296,7 +296,7 @@ const ReglasPass = {
 window.addEventListener('pageshow', (ev) => {
     if (!ev.persisted) return;   // carga normal: cada página revisa su sesión
     const p = location.pathname;
-    if (p.startsWith('/admin/') && !p.endsWith('/login.html') && !p.endsWith('/activar.html')) {
+    if (p.startsWith('/admin/') && !/\/(login|activar|recuperar|restablecer)\.html$/.test(p)) {
         if (!Sesion.usuario()) { location.replace('/admin/login.html'); return; }
         api('/admin/whoami').catch(() => {});   // si la sesión ya no existe, api() manda al login
         return;

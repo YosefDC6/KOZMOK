@@ -7654,6 +7654,72 @@ app.post('/api/auth/recuperar', limiteAuth, captchaMw, asyncRoute(async (req, re
     res.json(generico);
 }));
 
+// ---------------------------------------------------------
+// Recuperar contraseña del equipo (login del panel). Igual que en la tienda:
+// siempre responde lo mismo (no revela si el correo existe), el enlace dura
+// 30 minutos y sirve una vez. Después del cambio se sigue pidiendo el
+// código de dos pasos al entrar.
+// ---------------------------------------------------------
+app.post('/api/auth/recuperar-usuario', limiteAuth, captchaMw, asyncRoute(async (req, res) => {
+    const correo = seg.normalizarCorreo(req.body.correo || req.body.email);
+    const generico = { message: 'Si el correo pertenece a una cuenta activa del panel, te enviamos un enlace para crear una contraseña nueva. Revisa tu bandeja (y spam).' };
+    if (!seg.correoValido(correo)) return res.status(400).json({ message: 'Escribe un correo válido' });
+    const u = (await pool.query('SELECT id, nombre, email FROM usuarios WHERE LOWER(email) = $1 AND activo', [correo])).rows[0];
+    if (!u) {
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', detalle: `Recuperación del panel pedida para un correo sin cuenta activa: ${correo}` });
+        return res.json(generico);
+    }
+    const recientes = await pool.query(`SELECT COUNT(*)::int AS n FROM recuperaciones_usuario WHERE usuario_id = $1 AND creado > CURRENT_TIMESTAMP - INTERVAL '1 hour'`, [u.id]);
+    if (recientes.rows[0].n >= RECUPERACION_MAX_HORA) {
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', usuario_id: u.id,
+            detalle: `No se mandó el enlace de recuperación del panel a ${u.email}: ya se pidieron ${RECUPERACION_MAX_HORA} en la última hora` });
+        return res.json(generico);
+    }
+    await pool.query('UPDATE recuperaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [u.id]);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await pool.query(`INSERT INTO recuperaciones_usuario (usuario_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
+        [u.id, seg.sha256(token), seg.ipDe(req)]);
+    const enlace = `${urlPublica(req)}/admin/restablecer.html?token=${token}`;
+    await enviarCorreo(pool, {
+        para: u.email, tipo: 'recuperacion',
+        asunto: 'Restablece tu contraseña del panel de Kozmok',
+        cuerpo: `Hola ${u.nombre}:\n\nRecibimos una solicitud para restablecer tu contraseña del panel. Abre este enlace (vence en 30 minutos y solo sirve una vez):\n${enlace}\n\nSi no fuiste tú, ignora este correo: tu contraseña no cambia. Si te llegan varios sin pedirlos, avisa a un administrador.`,
+        boton: { texto: 'Crear nueva contraseña', url: enlace },
+    });
+    await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', usuario_id: u.id, detalle: `Se mandó enlace de recuperación del panel a ${u.email}` });
+    res.json(generico);
+}));
+async function recuperacionUsuarioDeToken(token) {
+    if (!/^[A-Za-z0-9_-]{30,60}$/.test(String(token || ''))) return null;
+    const r = await pool.query(
+        `SELECT r.id, r.usuario_id, u.nombre, u.email FROM recuperaciones_usuario r JOIN usuarios u ON u.id = r.usuario_id
+         WHERE r.token_hash = $1 AND r.usado IS NULL AND r.expira > CURRENT_TIMESTAMP AND u.activo`, [seg.sha256(String(token))]);
+    return r.rows[0] || null;
+}
+app.get('/api/auth/restablecer-usuario', limiteAuth, asyncRoute(async (req, res) => {
+    const r = await recuperacionUsuarioDeToken(req.query.token);
+    if (!r) return res.status(400).json({ message: 'El enlace ya venció o ya se usó. Pide uno nuevo.' });
+    res.json({ nombre: r.nombre, correo: r.email });
+}));
+app.post('/api/auth/restablecer-usuario', limiteAuth, asyncRoute(async (req, res) => {
+    const r = await recuperacionUsuarioDeToken(req.body.token);
+    if (!r) {
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'media', detalle: 'Se usó un enlace de recuperación del panel inválido, vencido o ya usado' });
+        return res.status(400).json({ message: 'El enlace ya venció o ya se usó. Pide uno nuevo.' });
+    }
+    const nueva = String(req.body.nueva || req.body.password || '');
+    const err = seg.validarPassword(nueva, { correo: r.email, nombre: r.nombre });
+    if (err) return res.status(400).json({ message: err });
+    await pool.query('UPDATE usuarios SET password_hash = $1, cambiar_password = FALSE, password_debil = FALSE WHERE id = $2', [await seg.hashPassword(nueva), r.usuario_id]);
+    await pool.query('UPDATE recuperaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [r.usuario_id]);
+    const cerradas = await seg.revocarSesionesDe('usuario', r.usuario_id, 'contraseña restablecida');
+    await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`usuario:${seg.normalizarCorreo(r.email)}`]);
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'media', usuario_id: r.usuario_id, detalle: `Contraseña del panel restablecida por enlace; ${cerradas} sesión(es) cerradas` });
+    await enviarCorreo(pool, { para: r.email, tipo: 'seguridad', asunto: 'Tu contraseña del panel cambió',
+        cuerpo: `Hola ${r.nombre}:\n\nTu contraseña del panel de Kozmok se restableció y cerramos tus sesiones abiertas. Si no fuiste tú, avisa de inmediato a un administrador.` });
+    res.json({ message: 'Contraseña actualizada. Entra al panel con tu nueva contraseña.' });
+}));
+
 // Activación de cuentas del equipo (enlace del correo "Activa tu cuenta").
 async function activacionDeToken(token) {
     if (!/^[A-Za-z0-9_-]{30,60}$/.test(String(token || ''))) return null;
@@ -7963,6 +8029,16 @@ async function migrarEsquema() {
         ip VARCHAR(64),
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activaciones_usuario ON activaciones_usuario(usuario_id)');
+    // Enlaces de "¿Olvidaste tu contraseña?" del panel.
+    await pool.query(`CREATE TABLE IF NOT EXISTS recuperaciones_usuario (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        token_hash CHAR(64) UNIQUE NOT NULL,
+        expira TIMESTAMP NOT NULL,
+        usado TIMESTAMP,
+        ip VARCHAR(64),
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_recuperaciones_usuario ON recuperaciones_usuario(usuario_id)');
 
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).

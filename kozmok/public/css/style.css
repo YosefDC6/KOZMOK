@@ -2680,3 +2680,10 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { cursor: 
 .op-tarjeta { display: block; flex: 1; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
 .op-tarjeta > input { margin-right: 6px; }
 .op-tarjeta:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Logo + fantasmita en las pantallas de acceso del panel */
+.auth-marca { display: inline-flex; align-items: flex-end; gap: 2px; }
+.auth-mascota { margin-bottom: 6px; animation: kz-flotar-sm 3.2s ease-in-out infinite; }
+.auth-mascota .kzk-mascota { display: block; }
+@keyframes kz-flotar-sm { 0%, 100% { transform: translateY(0) rotate(6deg); } 50% { transform: translateY(-5px) rotate(2deg); } }
+@media (prefers-reduced-motion: reduce) { .auth-mascota { animation: none; } }
