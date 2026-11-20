@@ -70,7 +70,7 @@ function pintarSaldo() {
         <span class="ms-label">Saldo disponible</span>
         <strong class="ms-valor">${formatoMoneda2(MON.saldo)}</strong>
         ${MON.saldo_pendiente > 0 ? `<span class="ms-pend">${icon('clock', 13)} ${formatoMoneda2(MON.saldo_pendiente)} por acreditar (transferencia)</span>` : ''}
-        ${bloqueado ? `<span class="ms-pend" style="color:var(--danger)">${icon('lock', 13)} Monedero bloqueado. Escríbenos en Soporte.</span>` : ''}
+        ${bloqueado ? `<span class="ms-pend" style="color:var(--danger)">${icon('lock', 13)} ${escHTML(MON.aviso_estado || 'Monedero no disponible. Escríbenos en Soporte.')}</span>` : ''}
         <div class="ms-acciones">
             <a class="btn btn-outline btn-sm" href="/carrito.html">${icon('cart', 15)} Pagar con monedero</a>
             <a class="btn btn-ghost btn-sm" href="#mon-historial">Ver historial</a>
@@ -79,16 +79,27 @@ function pintarSaldo() {
 
 function pintarRecarga() {
     const cont = document.getElementById('mon-recarga');
-    if (MON.estado !== 'activo') { cont.innerHTML = '<h3>Recargar monedero</h3><p>Tu monedero está bloqueado, no se puede recargar.</p>'; return; }
+    if (MON.estado !== 'activo') {
+        cont.innerHTML = `<h3>Recargar monedero</h3><p>${escHTML(MON.aviso_estado || 'Tu monedero no está disponible por ahora.')}</p>
+            <a class="btn btn-outline btn-sm" href="/soporte.html">Ir a Soporte</a> <a class="btn btn-ghost btn-sm" href="/terminos.html#monedero">Ver reglamento</a>`;
+        return;
+    }
+    const L = MON.limites || {};
+    const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
     cont.innerHTML = `
         <h3>Recargar monedero</h3>
+        <div class="mon-limites">
+            <span>Hoy puedes recargar hasta <strong>${formatoMoneda(MON.disponible_hoy ?? MON.recarga_max)}</strong></span>
+            <small>Límites: ${formatoMoneda(L.por_operacion)} por recarga · ${formatoMoneda(L.por_dia)} y ${L.operaciones_dia} recargas en 24 h · ${formatoMoneda(L.por_mes)} al mes · saldo máximo ${formatoMoneda(L.saldo_maximo)}.
+                <a href="/terminos.html#monedero">Reglamento del monedero</a></small>
+        </div>
         <label>Monto de recarga</label>
         <div class="mon-montos">
-            ${MONTOS.map((m) => `<button type="button" class="mon-monto ${m === MONTO ? 'on' : ''}" onclick="elegirMonto(${m})">${formatoMoneda(m)}</button>`).join('')}
+            ${MONTOS.map((m) => `<button type="button" class="mon-monto ${m === MONTO ? 'on' : ''}" onclick="elegirMonto(${m})" ${m > tope ? 'disabled title="Pasa tu límite disponible"' : ''}>${formatoMoneda(m)}</button>`).join('')}
         </div>
         <div class="field">
-            <label for="mon-otro">Otro monto (${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(MON.recarga_max)})</label>
-            <input id="mon-otro" type="number" min="${MON.recarga_min}" max="${MON.recarga_max}" step="50" placeholder="$" oninput="otroMonto(this.value)" />
+            <label for="mon-otro">Otro monto (${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)})</label>
+            <input id="mon-otro" type="number" min="${MON.recarga_min}" max="${tope}" step="50" placeholder="$" oninput="otroMonto(this.value)" />
         </div>
         <label>Método de pago</label>
         <div class="mon-metodos">
@@ -134,8 +145,9 @@ function actualizarBoton() {
 }
 
 async function recargar() {
-    if (!(MONTO >= MON.recarga_min && MONTO <= MON.recarga_max)) {
-        toast(`La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(MON.recarga_max)}`, 'warn');
+    const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+    if (!(MONTO >= MON.recarga_min && MONTO <= tope)) {
+        toast(tope < MON.recarga_min ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero.' : `La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)}`, 'warn');
         return;
     }
     const b = document.getElementById('mon-btn');

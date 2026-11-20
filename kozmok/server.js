@@ -1338,14 +1338,17 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
             [pedido.cliente_id, canjeados, `Devolución por cancelar ${pedido.numero_orden}`, pedido.id]
         );
     }
-    // Puntos ganados con este pedido: se retiran (sin dejar el saldo en negativo).
+    // Puntos ganados con este pedido: se retiran COMPLETOS aunque el saldo
+    // quede en negativo. Si no, alguien podría comprar, gastar esos puntos
+    // en otra compra y luego cancelar la primera para quedárselos. Un saldo
+    // negativo no se puede canjear y se compensa con las siguientes compras.
     const g = await client.query(
         `SELECT COALESCE(SUM(puntos),0)::int AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`,
         [pedido.id]
     );
     const ganados = g.rows[0].n;
     if (ganados > 0) {
-        await client.query('UPDATE clientes SET puntos = GREATEST(puntos - $1, 0) WHERE id = $2', [ganados, pedido.cliente_id]);
+        await client.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [ganados, pedido.cliente_id]);
         await client.query(
             `INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
             [pedido.cliente_id, -ganados, `Puntos retirados por cancelar ${pedido.numero_orden}`, pedido.id]
@@ -1651,6 +1654,10 @@ async function tareasPeriodicas() {
     await procesarReabastoAutomatico().catch((e) => console.error('Reabasto:', e.message));
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
+    // Transferencias al monedero que nadie confirmó en 3 días: se cancelan
+    await pool.query(`UPDATE movimientos_monedero SET estado = 'cancelado'
+                      WHERE tipo = 'recarga' AND estado = 'pendiente' AND fecha < CURRENT_TIMESTAMP - ($1 || ' days')::interval`, [String(MON.pendienteDias)])
+        .catch((e) => console.error('Recargas vencidas:', e.message));
 }
 
 function generarReferenciaPago(tipo) {
@@ -1728,6 +1735,8 @@ const METODOS_TIENDA = {
 // 4.1.2 Procesos de pago: validar stock -> generar pedido -> registrar
 // pago -> actualizar inventario -> guardar estado. Todo en una transacción.
 // También responde en POST /api/pagos/procesar (nombre del documento).
+const MAX_PIEZAS_POR_PRODUCTO = Number(process.env.MAX_PIEZAS_POR_PRODUCTO) || 10;
+const MAX_PEDIDOS_SIN_PAGAR = Number(process.env.MAX_PEDIDOS_SIN_PAGAR) || 3;
 const procesarCompra = asyncRoute(async (req, res) => {
     const cliente_id = req.cliente.id;
     const verif = await pool.query('SELECT correo_verificado FROM clientes WHERE id = $1', [cliente_id]);
@@ -1744,6 +1753,20 @@ const procesarCompra = asyncRoute(async (req, res) => {
     }
     if (metodo_tipo === 'paypal' && !metodo_pago) metodo_pago = 'PayPal';
     if (metodo_tipo === 'monedero') metodo_pago = 'Monedero Kozmok';
+    // Antifraude de clientes:
+    //  - Piezas por producto: evita acaparar existencias (sobre todo en promoción) para revender.
+    const porProducto = {};
+    for (const it of items) porProducto[it.producto_id] = (porProducto[it.producto_id] || 0) + Math.floor(Number(it.cantidad) || 0);
+    if (Object.values(porProducto).some((n) => n > MAX_PIEZAS_POR_PRODUCTO)) {
+        return res.status(400).json({ message: `Puedes llevar hasta ${MAX_PIEZAS_POR_PRODUCTO} piezas de cada producto por pedido. Para compras por volumen escríbenos desde Soporte.` });
+    }
+    //  - Pedidos sin pagar (SPEI / tienda): apartan stock; se limita cuántos puede tener abiertos.
+    if (!metodo.inmediato) {
+        const abiertos = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos WHERE cliente_id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente'`, [cliente_id]);
+        if (abiertos.rows[0].n >= MAX_PEDIDOS_SIN_PAGAR) {
+            return res.status(400).json({ message: `Ya tienes ${abiertos.rows[0].n} pedidos esperando pago. Págalos o cancélalos antes de hacer otro con transferencia o pago en tienda.` });
+        }
+    }
 
     const client = await pool.connect();
     try {
@@ -1772,7 +1795,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
         let descuento = 0;
         if (puntos_canjear > 0) {
             const cli = await client.query('SELECT puntos FROM clientes WHERE id = $1 FOR UPDATE', [cliente_id]);
-            const saldo = cli.rows[0].puntos;
+            const saldo = Math.max(0, Number(cli.rows[0].puntos) || 0);   // un saldo negativo no se canjea
             puntos_canjear = Math.min(puntos_canjear, saldo);
             puntos_canjear = puntos_canjear - (puntos_canjear % 100);                    // solo múltiplos de 100
             descuento = Math.min(puntos_canjear * VALOR_PUNTO, cot.base_impuestos);      // nunca deja la base en negativo
@@ -1792,7 +1815,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
         let monedero = null;
         if (metodo_tipo === 'monedero') {
             monedero = await monederoDe(client, cliente_id, { bloquear: true });
-            if (monedero.estado !== 'activo') throw new Error('Tu monedero está bloqueado. Contacta a soporte.');
+            if (monedero.estado !== 'activo') throw new Error(MENSAJE_ESTADO_MONEDERO[monedero.estado] || 'Tu monedero no está disponible. Contacta a soporte.');
             if (monedero.saldo < total) throw new Error(`Saldo insuficiente en el monedero: tienes ${formatoMXN(monedero.saldo)} y el total es ${formatoMXN(total)}`);
         }
 
@@ -5491,28 +5514,86 @@ app.delete('/api/admin/impuestos/:id', asyncRoute(async (req, res) => {
 //   GET  /monedero              saldo + movimientos
 //   POST /monedero/recargar     { monto, metodo: tarjeta | paypal | transferencia }
 // ---------------------------------------------------------
-const RECARGA_MIN = 50, RECARGA_MAX = 20000;
+// Límites del monedero (reglamento en terminos.html#monedero). Sirven
+// contra el lavado de dinero y el uso de tarjetas robadas: topes por
+// operación, por día y por mes, saldo máximo y pocas recargas pendientes.
+const MON = {
+    recargaMin: Number(process.env.MONEDERO_RECARGA_MIN) || 50,
+    recargaMax: Number(process.env.MONEDERO_RECARGA_MAX) || 10000,     // por operación
+    diaMax: Number(process.env.MONEDERO_DIA_MAX) || 15000,              // suma de recargas en 24 h
+    diaOps: Number(process.env.MONEDERO_DIA_OPERACIONES) || 3,          // recargas en 24 h
+    mesMax: Number(process.env.MONEDERO_MES_MAX) || 30000,              // suma de recargas del mes
+    saldoMax: Number(process.env.MONEDERO_SALDO_MAX) || 30000,          // saldo + recargas en camino
+    pendientesMax: 2,                                                    // transferencias sin confirmar
+    pendienteDias: 3,                                                    // después se cancelan solas
+    ajusteUmbral: Number(process.env.MONEDERO_AJUSTE_UMBRAL) || 500,    // arriba de esto, segunda firma
+};
+const MOTIVOS_ESTADO_MONEDERO = {
+    revision: 'Revisión de movimientos inusuales', contracargo: 'Contracargo o desconocimiento de un cargo',
+    fraude: 'Fraude comprobado', titular: 'A solicitud del titular', autoridad: 'Requerimiento de autoridad',
+    terminos: 'Incumplimiento de los términos', aclaracion: 'Aclaración resuelta',
+};
+const MENSAJE_ESTADO_MONEDERO = {
+    congelado: 'Tu monedero está en revisión temporal: tu saldo está seguro, pero mientras tanto no se puede recargar ni usar. Escríbenos desde Soporte si tienes dudas.',
+    bloqueado: 'Tu monedero está bloqueado. Escríbenos desde Soporte para aclararlo.',
+};
+// Cuánto ha recargado el cliente (aplicado + en camino) en 24 h y en el mes.
+async function usoRecargas(db, monederoId) {
+    const r = await db.query(`
+        SELECT COALESCE(SUM(monto) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '24 hours'), 0) AS dia,
+               COUNT(*) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '24 hours')::int AS dia_ops,
+               COALESCE(SUM(monto) FILTER (WHERE fecha >= date_trunc('month', CURRENT_DATE)), 0) AS mes,
+               COALESCE(SUM(monto) FILTER (WHERE estado = 'pendiente'), 0) AS pendiente,
+               COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes
+        FROM movimientos_monedero WHERE monedero_id = $1 AND tipo = 'recarga' AND estado IN ('aplicado','pendiente')`, [monederoId]);
+    const u = r.rows[0];
+    return { dia: Number(u.dia), dia_ops: u.dia_ops, mes: Number(u.mes), pendiente: Number(u.pendiente), pendientes: u.pendientes };
+}
+// Cuánto más puede recargar hoy sin pasar ningún límite.
+function disponibleRecarga(m, u) {
+    return Math.max(0, Math.min(MON.recargaMax, MON.diaMax - u.dia, MON.mesMax - u.mes, MON.saldoMax - Number(m.saldo) - u.pendiente));
+}
+
 app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
     const m = await monederoDe(pool, req.cliente.id);
-    const movs = await pool.query(
-        `SELECT mm.*, p.numero_orden FROM movimientos_monedero mm
-         LEFT JOIN pedidos p ON p.id = mm.pedido_id
-         WHERE mm.monedero_id = $1 ORDER BY mm.fecha DESC, mm.id DESC LIMIT 100`, [m.id]);
-    const pend = movs.rows.filter((x) => x.estado === 'pendiente').reduce((a, x) => a + Number(x.monto), 0);
-    res.json({ ...m, saldo_pendiente: redondear(pend), recarga_min: RECARGA_MIN, recarga_max: RECARGA_MAX, movimientos: movs.rows });
+    const [movs, uso] = await Promise.all([pool.query(
+        `SELECT mm.id, mm.tipo, mm.monto, mm.saldo_resultante, mm.concepto, mm.metodo, mm.referencia, mm.estado, mm.fecha, p.numero_orden
+         FROM movimientos_monedero mm LEFT JOIN pedidos p ON p.id = mm.pedido_id
+         WHERE mm.monedero_id = $1 AND NOT (mm.tipo = 'ajuste' AND mm.estado <> 'aplicado')
+         ORDER BY mm.fecha DESC, mm.id DESC LIMIT 100`, [m.id]), usoRecargas(pool, m.id)]);
+    res.json({
+        id: m.id, saldo: m.saldo, estado: m.estado, aviso_estado: MENSAJE_ESTADO_MONEDERO[m.estado] || null,
+        saldo_pendiente: redondear(uso.pendiente), recarga_min: MON.recargaMin, recarga_max: MON.recargaMax,
+        limites: { por_operacion: MON.recargaMax, por_dia: MON.diaMax, operaciones_dia: MON.diaOps, por_mes: MON.mesMax, saldo_maximo: MON.saldoMax },
+        uso: { dia: uso.dia, mes: uso.mes, operaciones_dia: uso.dia_ops }, disponible_hoy: redondear(disponibleRecarga(m, uso)),
+        movimientos: movs.rows,
+    });
 }));
 app.post('/api/monedero/recargar', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
     const monto = redondear(req.body.monto);
     const metodo = ['tarjeta', 'paypal', 'transferencia'].includes(req.body.metodo) ? req.body.metodo : null;
     if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres recargar' });
-    if (!(monto >= RECARGA_MIN && monto <= RECARGA_MAX)) {
-        return res.status(400).json({ message: `La recarga debe ser de ${formatoMXN(RECARGA_MIN)} a ${formatoMXN(RECARGA_MAX)}` });
+    if (!(monto >= MON.recargaMin && monto <= MON.recargaMax)) {
+        return res.status(400).json({ message: `Cada recarga debe ser de ${formatoMXN(MON.recargaMin)} a ${formatoMXN(MON.recargaMax)}` });
+    }
+    const verif = await pool.query('SELECT correo_verificado FROM clientes WHERE id = $1', [req.cliente.id]);
+    if (verif.rows[0] && verif.rows[0].correo_verificado === false) {
+        return res.status(403).json({ message: 'Confirma tu correo antes de recargar tu monedero.', codigo: 'correo_no_verificado' });
     }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         const m = await monederoDe(client, req.cliente.id, { bloquear: true });
-        if (m.estado !== 'activo') throw new Error('Tu monedero está bloqueado. Contacta a soporte.');
+        if (m.estado !== 'activo') throw new Error(MENSAJE_ESTADO_MONEDERO[m.estado] || 'Tu monedero no está disponible. Contacta a soporte.');
+        const uso = await usoRecargas(client, m.id);
+        if (uso.dia_ops >= MON.diaOps) throw new Error(`Ya hiciste ${uso.dia_ops} recargas en las últimas 24 horas (máximo ${MON.diaOps}). Intenta mañana.`);
+        if (metodo === 'transferencia' && uso.pendientes >= MON.pendientesMax) throw new Error(`Tienes ${uso.pendientes} transferencias esperando confirmación. Espera a que se acrediten antes de registrar otra.`);
+        const disponible = disponibleRecarga(m, uso);
+        if (monto > disponible) {
+            throw new Error(disponible < MON.recargaMin
+                ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero. Revisa los límites en "Mi monedero".'
+                : `Por los límites del monedero hoy puedes recargar hasta ${formatoMXN(disponible)}.`);
+        }
         const referencia = 'REC-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
         const etiqueta = { tarjeta: 'tarjeta', paypal: 'PayPal', transferencia: 'transferencia' }[metodo];
         let mov;
@@ -5571,8 +5652,9 @@ app.get('/api/admin/monederos', asyncRoute(async (req, res) => {
                    COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS recargas_pendientes
             FROM movimientos_monedero`),
         pool.query(`
-            SELECT mm.*, c.nombre, c.correo, m.cliente_id FROM movimientos_monedero mm
+            SELECT mm.*, c.nombre, c.correo, m.cliente_id, u.nombre AS solicitante FROM movimientos_monedero mm
             JOIN monederos m ON m.id = mm.monedero_id JOIN clientes c ON c.id = m.cliente_id
+            LEFT JOIN usuarios u ON u.id = mm.usuario_id
             WHERE mm.estado = 'pendiente' ORDER BY mm.fecha ASC`),
         pool.query(`
             SELECT to_char(date_trunc('month', g), 'YYYY-MM') AS mes,
@@ -5584,65 +5666,111 @@ app.get('/api/admin/monederos', asyncRoute(async (req, res) => {
     ]);
     res.json({ resumen: resumen.rows[0], pendientes: pendientes.rows, por_mes: porMes.rows, monederos: lista.rows });
 }));
+app.get('/api/admin/monederos/motivos', (req, res) => res.json({ motivos: MOTIVOS_ESTADO_MONEDERO, limites: MON }));
 app.get('/api/admin/monederos/:clienteId', asyncRoute(async (req, res) => {
     const c = await pool.query('SELECT id, nombre, correo, telefono FROM clientes WHERE id = $1', [req.params.clienteId]);
     if (!c.rows.length) return res.status(404).json({ message: 'Cliente no encontrado' });
     const m = await monederoDe(pool, req.params.clienteId);
     const movs = await pool.query(
-        `SELECT mm.*, p.numero_orden, u.nombre AS usuario_nombre FROM movimientos_monedero mm
+        `SELECT mm.*, p.numero_orden, u.nombre AS usuario_nombre, a.nombre AS aprobador_nombre FROM movimientos_monedero mm
          LEFT JOIN pedidos p ON p.id = mm.pedido_id LEFT JOIN usuarios u ON u.id = mm.usuario_id
+         LEFT JOIN usuarios a ON a.id = mm.aprobado_por
          WHERE mm.monedero_id = $1 ORDER BY mm.fecha DESC, mm.id DESC`, [m.id]);
     res.json({ cliente: c.rows[0], ...m, movimientos: movs.rows });
 }));
 app.post('/api/admin/monederos/:clienteId/ajuste', asyncRoute(async (req, res) => {
     const monto = redondear(req.body.monto);
-    const motivo = String(req.body.motivo || '').trim();
+    const motivo = String(req.body.motivo || '').trim().slice(0, 180);
     if (!monto) return res.status(400).json({ message: 'Indica un monto distinto de cero (positivo abona, negativo descuenta)' });
     if (Math.abs(monto) > 50000) return res.status(400).json({ message: 'Un ajuste no puede pasar de $50,000' });
-    if (motivo.length < 4) return res.status(400).json({ message: 'Escribe el motivo del ajuste' });
+    if (motivo.length < 10) return res.status(400).json({ message: 'Explica el motivo del ajuste (al menos 10 caracteres; queda en la auditoría)' });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const c = await client.query('SELECT id FROM clientes WHERE id = $1', [req.params.clienteId]);
-        if (!c.rows.length) throw new Error('Cliente no encontrado');
+        const c = (await client.query('SELECT id, nombre, correo FROM clientes WHERE id = $1', [req.params.clienteId])).rows[0];
+        if (!c) throw new Error('Cliente no encontrado');
+        // Nadie del equipo ajusta su propio monedero
+        if (seg.normalizarCorreo(c.correo) === seg.normalizarCorreo(req.usuario.email || '')) {
+            throw Object.assign(new Error('No puedes ajustar tu propio monedero'), { status: 403 });
+        }
         const m = await monederoDe(client, req.params.clienteId, { bloquear: true });
+        // Arriba del umbral se necesita la firma de otra persona: queda pendiente.
+        if (Math.abs(monto) > MON.ajusteUmbral) {
+            const mov = (await client.query(
+                `INSERT INTO movimientos_monedero (monedero_id, tipo, monto, concepto, estado, usuario_id)
+                 VALUES ($1,'ajuste',$2,$3,'pendiente',$4) RETURNING *`,
+                [m.id, monto, `Ajuste: ${motivo}`, req.usuario.id])).rows[0];
+            await auditar(client, req, { accion: 'monedero_ajuste_solicitado', entidad: 'monedero', entidad_id: c.id,
+                antes: { saldo: m.saldo }, despues: { monto, movimiento: mov.id }, motivo });
+            await client.query('COMMIT');
+            return res.status(201).json({ message: `El ajuste de ${formatoMXN(monto)} pasa de ${formatoMXN(MON.ajusteUmbral)}: quedó pendiente hasta que otra persona lo apruebe.`, pendiente: true, movimiento: mov });
+        }
+        const antes = m.saldo;
         const mov = await moverMonedero(client, m, { tipo: 'ajuste', monto, concepto: `Ajuste: ${motivo}`, usuarioId: req.usuario.id });
+        await auditar(client, req, { accion: 'monedero_ajuste', entidad: 'monedero', entidad_id: c.id, antes: { saldo: antes }, despues: { saldo: m.saldo, monto }, motivo });
         await client.query('COMMIT');
         res.status(201).json({ message: 'Ajuste aplicado', saldo: m.saldo, movimiento: mov });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
-        res.status(400).json({ message: seg.mensajeSeguro(e) });
+        res.status(e.status || 400).json({ message: seg.mensajeSeguro(e) });
     } finally { client.release(); }
 }));
 app.put('/api/admin/monederos/:clienteId/estado', asyncRoute(async (req, res) => {
-    const estado = req.body.estado === 'bloqueado' ? 'bloqueado' : 'activo';
-    await monederoDe(pool, req.params.clienteId);
-    await pool.query('UPDATE monederos SET estado = $1 WHERE cliente_id = $2', [estado, req.params.clienteId]);
-    res.json({ message: estado === 'bloqueado' ? 'Monedero bloqueado' : 'Monedero activado' });
+    const estado = ['activo', 'congelado', 'bloqueado'].includes(req.body.estado) ? req.body.estado : null;
+    const motivoClave = String(req.body.motivo || '');
+    const detalle = String(req.body.detalle || '').trim().slice(0, 500);
+    if (!estado) return res.status(400).json({ message: 'Estado no válido' });
+    if (!MOTIVOS_ESTADO_MONEDERO[motivoClave]) return res.status(400).json({ message: 'Elige el motivo' });
+    if (detalle.length < 10) return res.status(400).json({ message: 'Describe el caso (al menos 10 caracteres): folio de soporte, movimientos involucrados…' });
+    const previo = await monederoDe(pool, req.params.clienteId);
+    if (previo.estado === estado) return res.status(400).json({ message: `El monedero ya está ${estado}` });
+    await pool.query(`UPDATE monederos SET estado = $1, motivo_estado = $2, detalle_estado = $3, fecha_estado = CURRENT_TIMESTAMP WHERE cliente_id = $4`,
+        [estado, motivoClave, detalle, req.params.clienteId]);
+    await auditar(pool, req, { accion: 'monedero_estado', entidad: 'monedero', entidad_id: req.params.clienteId,
+        antes: { estado: previo.estado, saldo: previo.saldo }, despues: { estado, motivo: MOTIVOS_ESTADO_MONEDERO[motivoClave] }, motivo: detalle });
+    res.json({ message: { activo: 'Monedero activado', congelado: 'Monedero congelado mientras se revisa', bloqueado: 'Monedero bloqueado' }[estado] });
 }));
+// Resolver una recarga por transferencia o un ajuste pendiente.
 app.put('/api/admin/monederos/movimientos/:id', asyncRoute(async (req, res) => {
     const accion = req.body.accion === 'rechazar' ? 'rechazar' : 'confirmar';
+    const comprobante = String(req.body.comprobante || '').trim().slice(0, 60);
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         const r = await client.query(`SELECT * FROM movimientos_monedero WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`, [req.params.id]);
-        if (!r.rows.length) throw new Error('La recarga ya no está pendiente');
+        if (!r.rows.length) throw new Error('El movimiento ya no está pendiente');
         const mov = r.rows[0];
+        const esAjuste = mov.tipo === 'ajuste';
+        // Segunda firma: quien pidió el ajuste no lo aprueba.
+        if (esAjuste && Number(mov.usuario_id) === Number(req.usuario.id)) throw Object.assign(new Error('Otra persona debe aprobar tu propio ajuste'), { status: 403 });
+        const m = (await client.query('SELECT * FROM monederos WHERE id = $1 FOR UPDATE', [mov.monedero_id])).rows[0];
+        const cli = (await client.query('SELECT correo FROM clientes WHERE id = $1', [m.cliente_id])).rows[0];
+        if (esAjuste && cli && seg.normalizarCorreo(cli.correo) === seg.normalizarCorreo(req.usuario.email || '')) throw Object.assign(new Error('No puedes aprobar ajustes de tu propio monedero'), { status: 403 });
         if (accion === 'rechazar') {
-            await client.query(`UPDATE movimientos_monedero SET estado = 'cancelado', usuario_id = $1 WHERE id = $2`, [req.usuario.id, mov.id]);
+            await client.query(`UPDATE movimientos_monedero SET estado = 'cancelado', aprobado_por = $1 WHERE id = $2`, [req.usuario.id, mov.id]);
         } else {
-            const m = (await client.query('SELECT * FROM monederos WHERE id = $1 FOR UPDATE', [mov.monedero_id])).rows[0];
+            if (!esAjuste && comprobante.length < 4) throw new Error('Escribe el folio de la transferencia (aparece en el estado de cuenta)');
             const nuevo = redondear(Number(m.saldo) + Number(mov.monto));
+            if (nuevo < 0) throw new Error(`El saldo no alcanza para este ajuste (saldo: ${formatoMXN(m.saldo)})`);
             await client.query('UPDATE monederos SET saldo = $1 WHERE id = $2', [nuevo, m.id]);
             await client.query(
-                `UPDATE movimientos_monedero SET estado = 'aplicado', saldo_resultante = $1, usuario_id = $2, fecha = CURRENT_TIMESTAMP,
-                     concepto = 'Recarga por transferencia (confirmada)' WHERE id = $3`, [nuevo, req.usuario.id, mov.id]);
+                `UPDATE movimientos_monedero SET estado = 'aplicado', saldo_resultante = $1, aprobado_por = $2, comprobante = $3,
+                     concepto = CASE WHEN tipo = 'recarga' THEN 'Recarga por transferencia (confirmada)' ELSE concepto END WHERE id = $4`,
+                [nuevo, req.usuario.id, esAjuste ? null : comprobante, mov.id]);
         }
+        await auditar(client, req, {
+            accion: esAjuste ? (accion === 'rechazar' ? 'monedero_ajuste_rechazado' : 'monedero_ajuste_aprobado') : (accion === 'rechazar' ? 'recarga_cancelada' : 'recarga_confirmada'),
+            entidad: 'monedero', entidad_id: m.cliente_id, antes: { saldo: Number(m.saldo), movimiento: mov.id, solicitado_por: mov.usuario_id },
+            despues: { monto: Number(mov.monto), ...(accion === 'confirmar' ? { saldo: redondear(Number(m.saldo) + Number(mov.monto)) } : {}), ...(comprobante ? { comprobante } : {}) },
+            motivo: mov.concepto });
         await client.query('COMMIT');
-        res.json({ message: accion === 'rechazar' ? 'Recarga rechazada' : 'Recarga confirmada y saldo acreditado' });
+        res.json({ message: esAjuste
+            ? (accion === 'rechazar' ? 'Ajuste rechazado' : 'Ajuste aprobado y aplicado')
+            : (accion === 'rechazar' ? 'Recarga rechazada' : 'Recarga confirmada y saldo acreditado') });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
-        res.status(400).json({ message: seg.mensajeSeguro(e) });
+        if (e.code === '23505') return res.status(400).json({ message: 'Ese folio de transferencia ya se usó en otra recarga' });
+        res.status(e.status || 400).json({ message: seg.mensajeSeguro(e) });
     } finally { client.release(); }
 }));
 

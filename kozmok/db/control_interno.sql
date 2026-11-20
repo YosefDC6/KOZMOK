@@ -205,3 +205,18 @@ DROP TRIGGER IF EXISTS trg_pedidos_cambios ON pedidos;
 CREATE TRIGGER trg_pedidos_cambios BEFORE UPDATE ON pedidos FOR EACH ROW EXECUTE FUNCTION kz_pedidos_cambios();
 DROP TRIGGER IF EXISTS trg_items_cambios ON pedido_items;
 CREATE TRIGGER trg_items_cambios BEFORE UPDATE OR DELETE ON pedido_items FOR EACH ROW EXECUTE FUNCTION kz_solo_agregar();
+
+-- ---------- Monedero electrónico endurecido ----------
+-- activo    = se usa normal
+-- congelado = temporal mientras se revisa algo (no recarga ni paga; el
+--             saldo se conserva y se puede ver)
+-- bloqueado = por fraude comprobado, contracargo u orden de autoridad
+ALTER TABLE monederos DROP CONSTRAINT IF EXISTS monederos_estado_check;
+ALTER TABLE monederos ADD CONSTRAINT monederos_estado_check CHECK (estado IN ('activo','congelado','bloqueado'));
+ALTER TABLE monederos ADD COLUMN IF NOT EXISTS motivo_estado VARCHAR(40);
+ALTER TABLE monederos ADD COLUMN IF NOT EXISTS detalle_estado TEXT;
+ALTER TABLE monederos ADD COLUMN IF NOT EXISTS fecha_estado TIMESTAMP;
+-- Quién aprobó un ajuste o confirmó una recarga (usuario_id = quien la pidió)
+ALTER TABLE movimientos_monedero ADD COLUMN IF NOT EXISTS aprobado_por INTEGER REFERENCES usuarios(id);
+ALTER TABLE movimientos_monedero ADD COLUMN IF NOT EXISTS comprobante VARCHAR(60);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_movmon_comprobante ON movimientos_monedero (comprobante) WHERE comprobante IS NOT NULL;

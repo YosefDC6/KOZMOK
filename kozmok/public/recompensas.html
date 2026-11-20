@@ -35,6 +35,8 @@ montarCuenta('recompensas', async (panel, P) => {
             <h1>Club de puntos</h1>
             <p>Gana puntos con cada compra y canjéalos como descuento. 100 puntos = ${formatoMoneda(100 * r.valor_punto)}.</p>
         </div>
+        ${Number(r.puntos) < 0 ? `<div class="seg-alerta" role="status" style="margin-bottom:14px">${icon('alert', 18)}<div><strong>Tienes ${Number(r.puntos).toLocaleString('es-MX')} puntos</strong>
+            <span>Se cancelaron pedidos cuyos puntos ya habías usado. El saldo se compensa con tus siguientes compras; mientras sea negativo no se puede canjear. <a href="/terminos.html#puntos">Ver reglas</a></span></div></div>` : ''}
 
         <div class="club-hero">
             <div class="club-card tj-card diseno-${DisenoTarjeta.actual(P)} lv-${r.nivel.clave}">

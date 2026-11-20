@@ -2387,3 +2387,8 @@ tr.mov-off td { opacity: .7; }
 .pedido-det-grid .pedido-resenas { margin-top: 12px; }
 @media (max-width: 900px) { .pedido-det-grid { grid-template-columns: 1fr; } .pedido-det-grid .pedido-resenas { margin-top: 0; } }
 @media (min-width: 901px) { .pedido-det-grid .pedido-resenas { border-top: none; border-left: 1px solid var(--line); padding: 0 0 0 20px; } }
+
+/* Límites del monedero */
+.mon-limites { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-panel-2); border-left: 3px solid var(--accent); font-size: .86rem; }
+.mon-limites small { display: block; margin-top: 4px; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
+.mon-monto:disabled { opacity: .4; cursor: not-allowed; }

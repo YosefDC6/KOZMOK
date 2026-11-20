@@ -57,6 +57,14 @@ const money2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency'
 const TIPO = { recarga: 'Recarga', compra: 'Compra', reembolso: 'Reembolso', ajuste: 'Ajuste' };
 const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
+const ETIQ_ESTADO = {
+    activo: '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>',
+    congelado: '<span class="tag" style="color:var(--warning);border-color:var(--warning)">Congelado</span>',
+    bloqueado: '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Bloqueado</span>',
+};
+let MOTIVOS = {}, LIM = null;
+api('/admin/monederos/motivos').then((r) => { MOTIVOS = r.motivos; LIM = r.limites; }).catch(() => {});
+
 async function cargar() {
     const q = document.getElementById('f-buscar').value.trim();
     DATA = await api('/admin/monederos' + (q ? '?busqueda=' + encodeURIComponent(q) : ''));
@@ -69,14 +77,16 @@ async function cargar() {
 
     document.getElementById('pendientes').innerHTML = DATA.pendientes.length ? `
         <div class="card" style="margin-top:18px;border-color:var(--warning)">
-            <h3 style="margin-top:0">${icon('clock', 17)} Recargas por transferencia pendientes</h3>
+            <h3 style="margin-top:0">${icon('clock', 17)} Por resolver: transferencias y ajustes</h3>
+            <p style="font-size:.8rem;color:var(--text-muted);margin:2px 0 10px">Las transferencias piden el folio del depósito; los ajustes grandes necesitan la aprobación de otra persona. Las transferencias sin confirmar se cancelan solas a los ${LIM ? LIM.pendienteDias : 3} días.</p>
             <div class="table-wrap"><table>
-                <thead><tr><th>Fecha</th><th>Cliente</th><th>Referencia</th><th style="text-align:right">Monto</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Cliente</th><th>Qué es</th><th style="text-align:right">Monto</th><th></th></tr></thead>
                 <tbody>${DATA.pendientes.map((m) => `<tr>
-                    <td>${formatoFecha(m.fecha)}</td><td>${m.nombre}<div style="color:var(--text-muted);font-size:.78rem">${m.correo}</div></td>
-                    <td class="mono">${m.referencia || '—'}</td><td class="mono" style="text-align:right">${money2(m.monto)}</td>
-                    <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="resolver(${m.id}, 'confirmar')">Confirmar depósito</button>
-                        <button class="btn btn-ghost btn-sm" onclick="resolver(${m.id}, 'rechazar')">Rechazar</button></td></tr>`).join('')}</tbody>
+                    <td>${formatoFecha(m.fecha)}</td><td>${escHTML(m.nombre)}<div style="color:var(--text-muted);font-size:.78rem">${escHTML(m.correo)}</div></td>
+                    <td>${m.tipo === 'ajuste' ? `<strong>Ajuste</strong> · ${escHTML(m.concepto || '')}<div style="color:var(--text-muted);font-size:.76rem">pedido por ${escHTML(m.solicitante || '—')}</div>` : `Transferencia · <span class="mono">${escHTML(m.referencia || '—')}</span>`}</td>
+                    <td class="mono" style="text-align:right">${money2(m.monto)}</td>
+                    <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="resolver(${m.id}, 'confirmar', '${m.tipo}')" ${m.tipo === 'ajuste' && Number(m.usuario_id) === Number((Sesion.usuario() || {}).id) ? 'disabled title="Otra persona debe aprobar tu ajuste"' : ''}>${m.tipo === 'ajuste' ? 'Aprobar ajuste' : 'Confirmar depósito'}</button>
+                        <button class="btn btn-ghost btn-sm" onclick="resolver(${m.id}, 'rechazar', '${m.tipo}')">Rechazar</button></td></tr>`).join('')}</tbody>
             </table></div>
         </div>` : '';
 
@@ -99,7 +109,7 @@ async function cargar() {
             <td class="mono" style="text-align:right;color:var(--text-muted)">${money2(m.recargado)}</td>
             <td class="mono" style="text-align:right;color:var(--text-muted)">${money2(m.consumido)}</td>
             <td style="font-size:.84rem">${m.ultimo_movimiento ? formatoFecha(m.ultimo_movimiento) : '—'}</td>
-            <td>${m.estado === 'activo' ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>' : '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Bloqueado</span>'}</td>
+            <td>${ETIQ_ESTADO[m.estado] || m.estado}</td>
             <td><button class="btn btn-outline btn-sm" onclick="abrir(${m.cliente_id})">Ver</button></td>
         </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-muted)">Sin resultados.</td></tr>';
 }
@@ -112,14 +122,26 @@ async function abrir(clienteId) {
         <div style="color:var(--text-muted);font-size:.84rem;margin-bottom:14px">${d.cliente.correo}${d.cliente.telefono ? ' · ' + d.cliente.telefono : ''}</div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
             <div><span style="font-size:.8rem;color:var(--text-muted)">Saldo actual</span><div class="mono" style="font-size:1.8rem;color:var(--success)">${money2(d.saldo)}</div></div>
-            <button class="btn btn-outline btn-sm" onclick="cambiarEstado(${clienteId}, '${d.estado === 'activo' ? 'bloqueado' : 'activo'}')">${icon('lock', 14)} ${d.estado === 'activo' ? 'Bloquear monedero' : 'Desbloquear monedero'}</button>
+            <div>${ETIQ_ESTADO[d.estado] || d.estado}</div>
+        </div>
+        ${d.estado !== 'activo' && d.motivo_estado ? `<div class="card" style="padding:10px 14px;margin-bottom:12px;border-left:3px solid var(--danger);font-size:.82rem">
+            <strong>${escHTML((LIM && MOTIVOS[d.motivo_estado]) || d.motivo_estado)}</strong> · ${d.fecha_estado ? formatoFechaHora(d.fecha_estado) : ''}<div style="color:var(--text-muted)">${escHTML(d.detalle_estado || '')}</div></div>` : ''}
+        <div class="card" style="padding:14px;margin-bottom:14px">
+            <strong style="font-size:.9rem">Estado del monedero</strong>
+            <p style="font-size:.78rem;color:var(--text-muted);margin:2px 0 8px"><b>Congelar</b> mientras se revisa algo (el saldo se conserva); <b>bloquear</b> solo por fraude comprobado, contracargo u orden de autoridad. Siempre con motivo; queda en la auditoría.</p>
+            <div class="field-row">
+                <div class="field"><label>Nuevo estado</label><select id="es-estado">${['activo', 'congelado', 'bloqueado'].filter((e) => e !== d.estado).map((e) => `<option value="${e}">${{ activo: 'Activar', congelado: 'Congelar', bloqueado: 'Bloquear' }[e]}</option>`).join('')}</select></div>
+                <div class="field"><label>Motivo</label><select id="es-motivo">${Object.entries(MOTIVOS).map(([k, v]) => `<option value="${k}">${escHTML(v)}</option>`).join('')}</select></div>
+            </div>
+            <div class="field"><label>Detalle del caso</label><input id="es-detalle" placeholder="Folio de soporte, movimientos involucrados, quién lo pidió…" /></div>
+            <button class="btn btn-outline btn-sm" onclick="cambiarEstado(${clienteId})">${icon('lock', 14)} Cambiar estado</button>
         </div>
         <div class="card" style="padding:14px;margin-bottom:14px">
             <strong style="font-size:.9rem">Ajuste manual</strong>
-            <p style="font-size:.78rem;color:var(--text-muted);margin:2px 0 8px">Positivo abona saldo, negativo lo descuenta. Queda registrado con tu nombre.</p>
+            <p style="font-size:.78rem;color:var(--text-muted);margin:2px 0 8px">Positivo abona saldo, negativo lo descuenta. Queda registrado con tu nombre; arriba de ${money2(LIM ? LIM.ajusteUmbral : 500)} necesita la aprobación de otra persona.</p>
             <div class="field-row">
                 <div class="field"><label>Monto ($)</label><input type="number" id="aj-monto" step="0.01" placeholder="Ej. 200 o -150" /></div>
-                <div class="field" style="flex:2"><label>Motivo</label><input id="aj-motivo" placeholder="Ej. Compensación por retraso" /></div>
+                <div class="field" style="flex:2"><label>Motivo</label><input id="aj-motivo" placeholder="Ej. Compensación por retraso del pedido ORD-123, ticket TK-1042" /></div>
             </div>
             <button class="btn btn-primary btn-sm" onclick="ajustar(${clienteId})">Aplicar ajuste</button>
         </div>
@@ -127,7 +149,7 @@ async function abrir(clienteId) {
             <thead><tr><th>Fecha</th><th>Movimiento</th><th style="text-align:right">Monto</th><th style="text-align:right">Saldo</th></tr></thead>
             <tbody>${d.movimientos.length ? d.movimientos.map((m) => `<tr style="${m.estado !== 'aplicado' ? 'opacity:.65' : ''}">
                 <td style="font-size:.82rem">${formatoFecha(m.fecha)}</td>
-                <td style="font-size:.84rem"><strong>${TIPO[m.tipo] || m.tipo}</strong> · ${m.concepto || ''}${m.numero_orden ? ' · ' + m.numero_orden : ''}${m.usuario_nombre ? `<div style="color:var(--text-muted);font-size:.76rem">por ${m.usuario_nombre}</div>` : ''}${m.estado !== 'aplicado' ? ` <span class="tag">${m.estado}</span>` : ''}</td>
+                <td style="font-size:.84rem"><strong>${TIPO[m.tipo] || m.tipo}</strong> · ${escHTML(m.concepto || '')}${m.numero_orden ? ' · ' + m.numero_orden : ''}${m.usuario_nombre ? `<div style="color:var(--text-muted);font-size:.76rem">por ${escHTML(m.usuario_nombre)}${m.aprobador_nombre ? ' · aprobó ' + escHTML(m.aprobador_nombre) : ''}${m.comprobante ? ' · folio ' + escHTML(m.comprobante) : ''}</div>` : ''}${m.estado !== 'aplicado' ? ` <span class="tag">${m.estado}</span>` : ''}</td>
                 <td class="mono" style="text-align:right;color:${Number(m.monto) >= 0 ? 'var(--success)' : 'var(--danger)'}">${Number(m.monto) >= 0 ? '+' : ''}${money2(m.monto)}</td>
                 <td class="mono" style="text-align:right">${m.saldo_resultante !== null ? money2(m.saldo_resultante) : '—'}</td></tr>`).join('') : '<tr><td colspan="4">Sin movimientos.</td></tr>'}</tbody>
         </table></div>`;
@@ -141,18 +163,30 @@ async function ajustar(clienteId) {
     if (!monto) { toast('Escribe un monto distinto de cero', 'warn'); return; }
     if (!(await confirmar(`¿${monto > 0 ? 'Abonar' : 'Descontar'} ${money2(Math.abs(monto))} al monedero?`, { okText: 'Aplicar' }))) return;
     try {
+        if (motivo.length < 10) { toast('Explica el motivo (al menos 10 caracteres)', 'warn'); return; }
         const r = await api(`/admin/monederos/${clienteId}/ajuste`, { method: 'POST', body: { monto, motivo } });
-        toast(`${r.message}. Nuevo saldo: ${money2(r.saldo)}`, 'ok');
+        toast(r.pendiente ? r.message : `${r.message}. Nuevo saldo: ${money2(r.saldo)}`, 'ok');
         await cargar(); abrir(clienteId);
     } catch (e) { toast(e.message, 'error'); }
 }
-async function cambiarEstado(clienteId, estado) {
-    try { const r = await api(`/admin/monederos/${clienteId}/estado`, { method: 'PUT', body: { estado } }); toast(r.message, 'ok'); await cargar(); abrir(clienteId); }
+async function cambiarEstado(clienteId) {
+    const body = { estado: document.getElementById('es-estado').value, motivo: document.getElementById('es-motivo').value, detalle: document.getElementById('es-detalle').value.trim() };
+    if (body.detalle.length < 10) { toast('Describe el caso (al menos 10 caracteres)', 'warn'); return; }
+    if (body.estado === 'bloqueado' && !(await confirmar('Bloquear es para fraude comprobado, contracargo u orden de autoridad. ¿Continuar?', { okText: 'Bloquear', peligro: true }))) return;
+    try { const r = await api(`/admin/monederos/${clienteId}/estado`, { method: 'PUT', body }); toast(r.message, 'ok'); await cargar(); abrir(clienteId); }
     catch (e) { toast(e.message, 'error'); }
 }
-async function resolver(id, accion) {
-    if (accion === 'rechazar' && !(await confirmar('¿Rechazar esta recarga? No se acreditará el saldo.', { okText: 'Rechazar', peligro: true }))) return;
-    try { const r = await api(`/admin/monederos/movimientos/${id}`, { method: 'PUT', body: { accion } }); toast(r.message, 'ok'); cargar(); }
+async function resolver(id, accion, tipo) {
+    const body = { accion };
+    if (accion === 'rechazar') {
+        if (!(await confirmar(tipo === 'ajuste' ? '¿Rechazar este ajuste? El saldo no cambia.' : '¿Rechazar esta recarga? No se acreditará el saldo.', { okText: 'Rechazar', peligro: true }))) return;
+    } else if (tipo !== 'ajuste') {
+        const folio = await pedirDato('Folio de la transferencia (aparece en el estado de cuenta del banco):', { placeholder: 'Ej. 0099812374', okText: 'Confirmar depósito' });
+        if (folio === null) return;
+        if (folio.trim().length < 4) return toast('Escribe el folio de la transferencia', 'warn');
+        body.comprobante = folio.trim();
+    } else if (!(await confirmar('Al aprobarlo el ajuste se aplica al saldo y quedas como quien lo autorizó.', { okText: 'Aprobar ajuste' }))) return;
+    try { const r = await api(`/admin/monederos/movimientos/${id}`, { method: 'PUT', body }); toast(r.message, 'ok'); cargar(); }
     catch (e) { toast(e.message, 'error'); }
 }
 function exportar() {
