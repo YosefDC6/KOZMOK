@@ -7159,7 +7159,14 @@ app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
     const c = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE LOWER(correo) = $1 AND estado_cliente = 'activo'`, [correo]);
     if (!c.rows[0]) { await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', detalle: `Recuperación pedida para un correo no registrado: ${correo}` }); return res.json(generico); }
     const recientes = await pool.query(`SELECT COUNT(*)::int AS n FROM recuperaciones WHERE cliente_id = $1 AND fecha > CURRENT_TIMESTAMP - INTERVAL '1 hour'`, [c.rows[0].id]);
-    if (recientes.rows[0].n >= 3) return res.json(generico);
+    if (recientes.rows[0].n >= 3) {
+        // Máximo 3 enlaces por hora por cuenta (contra abuso). Al cliente se le
+        // responde lo mismo de siempre; en el panel queda registrado por qué
+        // no salió el correo.
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', cliente_id: c.rows[0].id,
+            detalle: `No se mandó el enlace de recuperación a ${c.rows[0].correo}: ya se pidieron 3 en la última hora` });
+        return res.json(generico);
+    }
     const token = crypto.randomBytes(32).toString('base64url');
     await pool.query(`INSERT INTO recuperaciones (cliente_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
         [c.rows[0].id, seg.sha256(token), seg.ipDe(req)]);
