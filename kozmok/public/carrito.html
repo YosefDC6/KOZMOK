@@ -483,26 +483,41 @@ function irAVerificar() {
     setTimeout(() => location.href = '/verificar.html?next=' + encodeURIComponent('/carrito.html'), 900);
 }
 
+let COMPRANDO = false;   // evita que un doble clic mande la compra dos veces
 async function confirmarCompra() {
+    if (COMPRANDO) return;
     if ((Sesion.cliente() || {}).correo_verificado === false) return irAVerificar();
-    const todos = await api(`/carrito/${cliente.id}`);
+    const btn = document.getElementById('btn-comprar');
+    COMPRANDO = true;
+    btn.disabled = true; btn.textContent = 'Procesando…';
+    const soltar = () => { COMPRANDO = false; btn.disabled = false; btn.textContent = textoBotonComprar(); };
+
+    const todos = await api(`/carrito/${cliente.id}`).catch(() => null);
+    if (!todos) { soltar(); toast('No pudimos leer tu carrito. Intenta de nuevo.', 'error'); return; }
+    if (todos.length === 0) {
+        // El carrito ya se vació: lo normal es que el pedido ya se creó (p. ej.
+        // la página no alcanzó a cambiar). Si es un PayPal sin pagar, a pagarlo.
+        const peds = await api(`/pedidos/cliente/${cliente.id}`).catch(() => []);
+        const reciente = peds.find((p) => p.metodo_tipo === 'paypal' && p.estado === 'pendiente' && p.pago_estado === 'pendiente'
+            && Date.now() - new Date(p.fecha_pedido).getTime() < 60 * 60000);
+        if (reciente) { toast(`Tu pedido ${reciente.numero_orden} ya está creado; te llevamos a pagarlo.`, 'ok'); location.href = `/pagar.html?id=${reciente.id}`; return; }
+        COMPRANDO = false; toast('Tu carrito está vacío. Si ya hiciste tu pedido, lo ves en Mis pedidos.', 'warn'); cargarCarrito(); return;
+    }
     const fuera = todos.filter((i) => i.activo === false);
-    if (fuera.length) { toast(`"${fuera[0].nombre}" ya no está a la venta. Quítalo de tu carrito para continuar.`, 'warn'); cargarCarrito(); return; }
+    if (fuera.length) { soltar(); toast(`"${fuera[0].nombre}" ya no está a la venta. Quítalo de tu carrito para continuar.`, 'warn'); cargarCarrito(); return; }
     const items = todos;
     const direccion = document.getElementById('direccion').value.trim();
-    if (!direccion) { toast('Ingresa o elige una dirección de envío', 'warn'); return; }
+    if (!direccion) { soltar(); toast('Ingresa o elige una dirección de envío', 'warn'); return; }
 
     const mp = resolverMetodoPago();
-    if (!mp) { toast('Elige cómo quieres pagar', 'warn'); irPaso(3, { sinValidar: true }); return; }
+    if (!mp) { soltar(); toast('Elige cómo quieres pagar', 'warn'); irPaso(3, { sinValidar: true }); return; }
     // Pago con monedero: validación y confirmación (saldo antes y después)
     if (mp.tipo === 'monedero') {
-        if (MONEDERO.saldo < COT.total) { toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza para el total de ${formatoMoneda2(COT.total)}. Recarga tu monedero o elige otro método.`, 'warn'); return; }
+        if (MONEDERO.saldo < COT.total) { soltar(); toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza para el total de ${formatoMoneda2(COT.total)}. Recarga tu monedero o elige otro método.`, 'warn'); return; }
         const ok = await confirmar(`Se descontarán ${formatoMoneda2(COT.total)} de tu monedero. Saldo disponible: ${formatoMoneda2(MONEDERO.saldo)} · saldo después del pago: ${formatoMoneda2(MONEDERO.saldo - COT.total)}.`, { okText: 'Confirmar pago' });
-        if (!ok) return;
+        if (!ok) { soltar(); return; }
     }
 
-    const btn = document.getElementById('btn-comprar');
-    btn.disabled = true; btn.textContent = 'Procesando…';
     try {
         const pedido = await api('/pedidos', {
             method: 'POST',
@@ -518,7 +533,7 @@ async function confirmarCompra() {
         // PayPal: el pedido ya está apartado; falta pagarlo en la ventana de PayPal
         location.href = mp.tipo === 'paypal' ? `/pagar.html?id=${pedido.id}` : `/gracias.html?id=${pedido.id}`;
     } catch (e) {
-        btn.disabled = false; btn.textContent = textoBotonComprar();
+        soltar();
         if (e.datos && e.datos.codigo === 'correo_no_verificado') {
             Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: false });
             return irAVerificar();
