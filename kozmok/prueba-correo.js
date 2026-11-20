@@ -9,7 +9,19 @@ const correo = require('./correo.js');
 (async () => {
     const { CFG } = correo;
     if (!correo.configurado()) {
-        console.log('\n✗ Falta configurar el correo en el archivo .env (junto a server.js):\n');
+        // Qué falta exactamente
+        const fs = require('fs');
+        const path = require('path');
+        const env = path.join(__dirname, '.env');
+        if (!fs.existsSync(env)) {
+            const txt = fs.existsSync(env + '.txt');
+            console.log(`\n✗ No existe el archivo ${env}` + (txt ? '\n  Hay un ".env.txt": Windows le agregó ".txt". Renómbralo a ".env" (en PowerShell: ren .env.txt .env).' : ''));
+        } else if (!CFG.usuario) {
+            console.log(`\n✗ El archivo .env existe pero SMTP_USUARIO está vacío o no está escrito.`);
+        } else {
+            console.log(`\n✗ SMTP_USUARIO es ${CFG.usuario}, pero SMTP_PASSWORD está vacío.`);
+        }
+        console.log('\n  En el archivo .env (junto a server.js) debe haber:\n');
         console.log('   SMTP_USUARIO=tucuenta@gmail.com');
         console.log('   SMTP_PASSWORD=abcd efgh ijkl mnop   (contraseña de aplicación de Google)\n');
         console.log('   Crea la contraseña de aplicación en https://myaccount.google.com/apppasswords');
