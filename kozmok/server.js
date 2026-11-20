@@ -12,6 +12,7 @@ const dbConfig = require('./db.config.js');   // lee el .env (contraseña de la 
 const seg = require('./seguridad.js');
 // Envío real de correos por Gmail (SMTP); sin configurar, solo se guardan.
 const correo = require('./correo.js');
+const paypal = require('./paypal.js');   // pagos con PayPal / tarjeta (sandbox por defecto)
 const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
@@ -1421,6 +1422,18 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
     if (['enviado', 'entregado'].includes(pedido.estado)) {
         throw new Error('El pedido ya salió del almacén; regístralo como devolución (movimiento de entrada) en lugar de cancelarlo');
     }
+    // Pagado con PayPal (cuenta o tarjeta): primero se hace el reembolso real
+    // en PayPal. Si PayPal no lo acepta, no se cancela nada.
+    let reembolso_paypal = null;
+    if (pedido.metodo_tipo === 'paypal' && pedido.pago_estado === 'pagado') {
+        const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' FOR UPDATE`, [pedido.id])).rows[0];
+        if (pp) {
+            if (!paypal.configurado()) throw new Error('No se puede reembolsar: PayPal no está configurado en el servidor');
+            const r = await paypal.reembolsar(pp.captura_id, { nota: `Cancelación del pedido ${pedido.numero_orden}`, requestId: `kz-ref-${pp.id}` });
+            await client.query(`UPDATE pagos_paypal SET estado = 'reembolsada', reembolso_id = $2 WHERE id = $1`, [pp.id, r.id]);
+            reembolso_paypal = { monto: Number(pp.monto), id: r.id };
+        }
+    }
     const items = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [pedido.id]);
     for (const it of items.rows) {
         await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
@@ -1483,7 +1496,9 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
         reembolso_monedero = Number(pedido.total);
     }
     await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedido.id]);
-    return { canjeados, ganados, productos: items.rows.length, reembolso_monedero };
+    // Órdenes de PayPal que se crearon y nadie pagó: ya no se pueden cobrar
+    await client.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE pedido_id = $1 AND estado = 'creada'`, [pedido.id]);
+    return { canjeados, ganados, productos: items.rows.length, reembolso_monedero, reembolso_paypal };
 }
 
 // Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
@@ -1728,15 +1743,19 @@ async function avisarEstadoPedidos() {
          WHERE pe.estado IS DISTINCT FROM pe.estado_notificado AND ${CLIENTE_AVISABLE}
          ORDER BY pe.id LIMIT 50`);
     for (const p of r.rows) {
+        // PayPal pendiente: el cliente está pagando en ese momento; no se le
+        // manda "esperando tu pago". Se avisa cuando se confirma (o si vence).
+        if (p.metodo_tipo === 'paypal' && p.estado === 'pendiente') continue;
         await pool.query('UPDATE pedidos SET estado_notificado = $2 WHERE id = $1', [p.id, p.estado]);
         const t = TEXTO_ESTADO_PEDIDO[p.estado];
         if (!p.quiere || !t) continue;
         // Al crearse confirmado (pago con tarjeta) se dice "Recibimos tu pedido"
-        const titulo = p.estado_notificado == null && p.estado === 'confirmado' ? 'Recibimos tu pedido' : t[0];
+        const titulo = p.estado_notificado == null && p.estado === 'confirmado' ? 'Recibimos tu pago y tu pedido' : t[0];
         let extra = t[1];
         if (p.estado === 'cancelado') {
             extra = p.pago_estado === 'pendiente' ? 'Como no se había pagado, no hay ningún cargo.'
                 : p.metodo_tipo === 'monedero' ? 'El importe regresó a tu monedero Kozmok.'
+                : p.metodo_tipo === 'paypal' ? 'Te devolvimos el pago por PayPal; si pagaste con tarjeta, tu banco puede tardar de 5 a 10 días hábiles en reflejarlo.'
                 : 'El reembolso se hace por el mismo medio con el que pagaste; puede tardar de 5 a 10 días hábiles según tu banco.';
             extra += ' Los puntos que ganaste con este pedido se descontaron y los que canjeaste se te devolvieron.';
         }
@@ -1766,6 +1785,9 @@ async function enviarAvisos() {
 const avisarPronto = () => setTimeout(() => enviarAvisos().catch(() => {}), 3000);
 
 async function tareasPeriodicas() {
+    // Recargas con PayPal que se iniciaron y no se pagaron en 3 horas
+    await pool.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE tipo = 'recarga' AND estado = 'creada' AND fecha < CURRENT_TIMESTAMP - INTERVAL '3 hours'`)
+        .catch((e) => console.error('PayPal vencidas:', e.message));
     await procesarReabastoAutomatico().catch((e) => console.error('Reabasto:', e.message));
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
@@ -1839,9 +1861,12 @@ function formatoMXN(n) {
 }
 
 // Métodos de pago de la tienda en línea. inmediato = se cobra al confirmar.
+// PayPal (cuenta o tarjeta) se cobra de verdad en PayPal: el pedido nace
+// pendiente y se confirma cuando el servidor captura el pago (ver
+// /api/pagos/paypal/*). Si el cliente no paga en 60 minutos se cancela solo.
+// Ya no existe la "tarjeta" que se daba por cobrada sin pasar por un banco.
 const METODOS_TIENDA = {
-    tarjeta:  { inmediato: true },
-    paypal:   { inmediato: true },
+    paypal:   { inmediato: false, minutos: Number(process.env.PAYPAL_MINUTOS_PARA_PAGAR) || 60 },
     monedero: { inmediato: true },
     spei:     { inmediato: false, dias: 3 },
     tienda:   { inmediato: false, dias: 5 },
@@ -1860,13 +1885,17 @@ const procesarCompra = asyncRoute(async (req, res) => {
     }
     const { items, direccion_envio, notas } = req.body;
     let metodo_pago = req.body.metodo_pago;
-    const metodo_tipo = METODOS_TIENDA[req.body.metodo_tipo] ? req.body.metodo_tipo : 'tarjeta';
+    const metodo_tipo = req.body.metodo_tipo === 'tarjeta' ? 'paypal' : req.body.metodo_tipo;   // la tarjeta se cobra por PayPal
     const metodo = METODOS_TIENDA[metodo_tipo];
+    if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres pagar' });
+    if (metodo_tipo === 'paypal' && !paypal.configurado()) {
+        return res.status(503).json({ message: 'El pago con PayPal o tarjeta no está disponible por ahora. Elige transferencia, pago en tienda o monedero.' });
+    }
     let puntos_canjear = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
     if (!items || items.length === 0) {
         return res.status(400).json({ message: 'El carrito no tiene productos' });
     }
-    if (metodo_tipo === 'paypal' && !metodo_pago) metodo_pago = 'PayPal';
+    if (metodo_tipo === 'paypal') metodo_pago = 'PayPal o tarjeta (PayPal)';
     if (metodo_tipo === 'monedero') metodo_pago = 'Monedero Kozmok';
     // Antifraude de clientes:
     //  - Piezas por producto: evita acaparar existencias (sobre todo en promoción) para revender.
@@ -1919,14 +1948,14 @@ const procesarCompra = asyncRoute(async (req, res) => {
         }
         const { subtotal, envio, total } = cot;
 
-        // 3) Pago: tarjeta / PayPal / monedero se cobran al instante.
-        //    SPEI / pago en tienda quedan pendientes con referencia y plazo.
+        // 3) Pago: el monedero se cobra al instante. PayPal queda pendiente
+        //    hasta que PayPal confirma el cobro; SPEI / pago en tienda quedan
+        //    pendientes con referencia y plazo.
         const inmediato = metodo.inmediato;
         const pago_estado = inmediato ? 'pagado' : 'pendiente';
         const estado = inmediato ? 'confirmado' : 'pendiente';
-        const pago_referencia = inmediato ? (metodo_tipo === 'paypal' ? 'PAYPAL-' + String(Math.floor(Math.random() * 1e10)).padStart(10, '0') : null)
-                                          : generarReferenciaPago(metodo_tipo);
-        const pago_vence = inmediato ? null : new Date(Date.now() + metodo.dias * 86400000);
+        const pago_referencia = inmediato || metodo_tipo === 'paypal' ? null : generarReferenciaPago(metodo_tipo);
+        const pago_vence = inmediato ? null : new Date(Date.now() + (metodo.minutos ? metodo.minutos * 60000 : metodo.dias * 86400000));
         let monedero = null;
         if (metodo_tipo === 'monedero') {
             monedero = await monederoDe(client, cliente_id, { bloquear: true });
@@ -1939,7 +1968,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
                                   metodo_pago, metodo_tipo, pago_estado, pago_referencia, pago_vence, direccion_envio, notas, fecha_confirmacion)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
             [numero_orden, cliente_id, subtotal, cot.impuestos_total, JSON.stringify(cot.impuestos), envio, descuento, cot.descuento_promocion, total, estado,
-                metodo_pago || 'Tarjeta', metodo_tipo, pago_estado, pago_referencia, pago_vence, direccion_envio, notas,
+                metodo_pago || metodo_tipo, metodo_tipo, pago_estado, pago_referencia, pago_vence, direccion_envio, notas,
                 inmediato ? new Date() : null]
         );
         const pedidoId = pedido.rows[0].id;
@@ -2012,6 +2041,110 @@ const procesarCompra = asyncRoute(async (req, res) => {
 });
 app.post('/api/pedidos', limiteDinero, requireCliente, (req, res, next) => { res.on('finish', avisarPronto); next(); }, procesarCompra);
 app.post('/api/pagos/procesar', limiteDinero, requireCliente, procesarCompra);
+
+// =========================================================
+// PAYPAL (cuenta PayPal o tarjeta) — sandbox: sin dinero real
+//   GET  /api/pagos/paypal/config            si está activo y el client-id público
+//   POST /api/pagos/paypal/orden   {pedido_id}           crea la orden en PayPal
+//   POST /api/pagos/paypal/capturar {pedido_id, orden_id} cobra y confirma el pedido
+//   POST /api/monedero/paypal/orden {monto}               recarga del monedero
+//   POST /api/monedero/paypal/capturar {orden_id}
+// El monto SIEMPRE lo calcula el servidor; al cobrar se compara con lo que
+// PayPal dice que cobró (monto, moneda y referencia) antes de dar nada.
+// =========================================================
+app.get('/api/pagos/paypal/config', (req, res) => {
+    res.json({ activo: paypal.configurado(), client_id: paypal.configurado() ? paypal.CFG.clientId : null,
+               moneda: paypal.CFG.moneda, modo: paypal.CFG.modo, minutos_para_pagar: METODOS_TIENDA.paypal.minutos });
+});
+// Historial de pagos con PayPal / tarjeta del cliente (para "Formas de pago")
+app.get('/api/pagos/paypal/mios', requireCliente, asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT pp.tipo, pp.estado, pp.monto, pp.moneda, pp.modo, pp.captura_id, pp.fecha, pp.fecha_captura, pp.fecha_reembolso, p.numero_orden
+         FROM pagos_paypal pp LEFT JOIN pedidos p ON p.id = pp.pedido_id
+         WHERE pp.cliente_id = $1 AND pp.estado IN ('capturada','reembolsada','pendiente','fallida')
+         ORDER BY pp.id DESC LIMIT 100`, [req.cliente.id]);
+    res.json(r.rows);
+}));
+const sinPayPal = (res) => res.status(503).json({ message: 'El pago con PayPal o tarjeta no está disponible por ahora.' });
+const errorPago = (res, e) => res.status(e.status && e.status < 600 ? e.status : 502).json({ message: e.publico ? e.message : 'No se pudo completar el pago con PayPal', reintentar: !!e.reintentar });
+
+app.post('/api/pagos/paypal/orden', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    if (!paypal.configurado()) return sinPayPal(res);
+    const p = (await pool.query('SELECT * FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(req.body.pedido_id), req.cliente.id])).rows[0];
+    if (!p) return res.status(404).json({ message: 'Pedido no encontrado' });
+    if (p.metodo_tipo !== 'paypal') return res.status(400).json({ message: 'Este pedido no se paga con PayPal' });
+    if (p.estado === 'cancelado') return res.status(400).json({ message: 'El pedido se canceló (venció el tiempo para pagar). Vuelve a hacer tu compra.' });
+    if (p.pago_estado === 'pagado') return res.status(400).json({ message: 'Este pedido ya está pagado' });
+    // Reutiliza la orden que ya se había creado si sigue abierta y por el mismo monto
+    const previa = (await pool.query(
+        `SELECT orden_id FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'creada' AND monto = $2 ORDER BY id DESC LIMIT 1`, [p.id, p.total])).rows[0];
+    if (previa) {
+        try {
+            const o = await paypal.verOrden(previa.orden_id);
+            if (['CREATED', 'SAVED', 'APPROVED', 'PAYER_ACTION_REQUIRED'].includes(o.status)) return res.json({ id: previa.orden_id });
+        } catch { /* se crea otra */ }
+    }
+    try {
+        const n = (await pool.query('SELECT COUNT(*)::int AS n FROM pagos_paypal WHERE pedido_id = $1', [p.id])).rows[0].n;
+        const o = await paypal.crearOrden({ monto: p.total, referencia: `pedido-${p.id}`, factura: n ? `${p.numero_orden}-${n}` : p.numero_orden,
+            descripcion: `Pedido ${p.numero_orden} en Kozmok`, requestId: `kz-ped-${p.id}-${n}` });
+        await pool.query(
+            `INSERT INTO pagos_paypal (orden_id, tipo, cliente_id, pedido_id, monto, moneda, modo) VALUES ($1,'pedido',$2,$3,$4,$5,$6)
+             ON CONFLICT (orden_id) DO NOTHING`, [o.id, req.cliente.id, p.id, p.total, paypal.CFG.moneda, paypal.CFG.modo]);
+        res.json({ id: o.id });
+    } catch (e) { errorPago(res, e); }
+}));
+
+app.post('/api/pagos/paypal/capturar', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    if (!paypal.configurado()) return sinPayPal(res);
+    const ordenId = String(req.body.orden_id || '');
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Se bloquea el pedido mientras se cobra: si en ese momento vencía, la
+        // tarea de pagos vencidos espera y no lo cancela a medio cobro.
+        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1 AND cliente_id = $2 FOR UPDATE', [Number(req.body.pedido_id), req.cliente.id])).rows[0];
+        const pp = (await client.query('SELECT * FROM pagos_paypal WHERE orden_id = $1 FOR UPDATE', [ordenId])).rows[0];
+        if (!p || !pp || Number(pp.pedido_id) !== Number(p.id)) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pago no encontrado' }); }
+        if (p.pago_estado === 'pagado') { await client.query('ROLLBACK'); return res.json({ message: 'El pedido ya estaba pagado', pedido: p }); }
+        if (p.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido se canceló antes de pagarse (venció el tiempo). No se hizo ningún cargo.' }); }
+
+        const cap = await paypal.capturarOrden(ordenId, { requestId: `kz-cap-${pp.id}` });
+        const coincide = cap.referencia === `pedido-${p.id}` && cap.moneda === paypal.CFG.moneda
+            && Math.abs(Number(cap.monto) - Number(p.total)) < 0.005;
+        if (cap.estado === 'COMPLETED' && !coincide) {
+            // No debería pasar nunca (el monto lo fija el servidor); si pasa, se devuelve.
+            await paypal.reembolsar(cap.captura_id, { nota: 'Monto distinto al del pedido', requestId: `kz-ref-cap-${pp.id}` }).catch(() => {});
+            await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'fallida', detalle = $3 WHERE id = $1`, [pp.id, cap.captura_id, JSON.stringify({ motivo: 'monto_distinto', cap: { monto: cap.monto, moneda: cap.moneda, ref: cap.referencia } })]);
+            await client.query('COMMIT');
+            seg.registrarEvento(req, { tipo: 'pago_inconsistente', severidad: 'alta', detalle: `PayPal ${ordenId} cobró ${cap.monto} ${cap.moneda} para ${p.numero_orden} (${p.total})`, cliente_id: req.cliente.id });
+            return res.status(409).json({ message: 'El cobro de PayPal no coincidió con el pedido y se devolvió. Intenta de nuevo.' });
+        }
+        if (cap.estado !== 'COMPLETED') {
+            await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = $3, detalle = $4 WHERE id = $1`,
+                [pp.id, cap.captura_id, cap.estado === 'PENDING' ? 'pendiente' : 'fallida', JSON.stringify({ estado: cap.estado, motivo: cap.motivo_pendiente })]);
+            await client.query('COMMIT');
+            return res.status(402).json({ message: cap.estado === 'PENDING'
+                ? 'PayPal dejó el pago en revisión. Te avisaremos cuando se confirme; tu pedido sigue apartado.'
+                : 'PayPal no aprobó el pago. Intenta con otra tarjeta o cuenta.' });
+        }
+        await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = $3 WHERE id = $1`,
+            [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
+        await client.query(
+            `UPDATE pedidos SET pago_estado = 'pagado', estado = 'confirmado', fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP),
+                 pago_referencia = $2, pago_comprobante = $2, pago_vence = NULL
+             WHERE id = $1`, [p.id, cap.captura_id]);
+        const puntos_ganados = await aplicarCobroPedido(client, p, { metricas: false });
+        await registrarProceso(client, p.id, 'pago', `Pago con PayPal confirmado (${cap.captura_id})${puntos_ganados ? `, +${puntos_ganados} puntos` : ''}`, { automatico: true });
+        await client.query('COMMIT');
+        avisarPronto();
+        res.json({ message: 'Pago confirmado', pedido_id: p.id, numero_orden: p.numero_orden, puntos_ganados, captura_id: cap.captura_id, modo: paypal.CFG.modo });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (e.paypal || e.publico) return errorPago(res, e);
+        throw e;
+    } finally { client.release(); }
+}));
 
 app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
     const result = await pool.query(
@@ -2487,6 +2620,10 @@ app.get('/api/clientes/:id/metodos-pago', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/clientes/:id/metodos-pago', asyncRoute(async (req, res) => {
+    // Kozmok ya no recibe números de tarjeta: los cobros con tarjeta se hacen
+    // en la ventana de PayPal y los datos nunca pasan por este servidor.
+    return res.status(410).json({ message: 'Ya no guardamos tarjetas: al pagar elige "PayPal o tarjeta" y captura tu tarjeta en la ventana segura de PayPal.' });
+    // eslint-disable-next-line no-unreachable
     const { tipo = 'tarjeta', numero, titular, expira_mes, expira_anio, predeterminada } = req.body;
     let marca = null, ultimos4 = null, mes = null, anio = null;
 
@@ -2629,9 +2766,13 @@ app.put('/api/pedidos/:id/cancelar', requireCliente, asyncRoute(async (req, res)
             throw new Error('Este pedido ya está en preparación y no se puede cancelar en línea');
         }
 
-        const { canjeados } = await cancelarPedido(client, pedido);
+        const { canjeados, reembolso_paypal, reembolso_monedero } = await cancelarPedido(client, pedido);
         await client.query('COMMIT');
-        res.json({ message: canjeados > 0 ? `Pedido cancelado. Se devolvieron ${canjeados} puntos y el stock.` : 'Pedido cancelado y stock restaurado' });
+        const partes = ['Pedido cancelado'];
+        if (reembolso_paypal) partes.push(`te devolvimos ${formatoMXN(reembolso_paypal.monto)} por PayPal (puede tardar unos días en verse en tu tarjeta)`);
+        if (reembolso_monedero) partes.push(`${formatoMXN(reembolso_monedero)} regresaron a tu monedero`);
+        if (canjeados > 0) partes.push(`se devolvieron ${canjeados} puntos`);
+        res.json({ message: partes.join('; ') + '.' });
     } catch (error) {
         await client.query('ROLLBACK');
         res.status(400).json({ message: seg.mensajeSeguro(error) });
@@ -4444,7 +4585,8 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
             await client.query('COMMIT');
             return res.json({
                 message: `Pedido cancelado: stock regresado (${r.productos} producto${r.productos === 1 ? '' : 's'})` +
-                    (r.canjeados ? `, ${r.canjeados} puntos devueltos` : '') + (r.ganados ? `, ${r.ganados} puntos retirados` : ''),
+                    (r.canjeados ? `, ${r.canjeados} puntos devueltos` : '') + (r.ganados ? `, ${r.ganados} puntos retirados` : '') +
+                    (r.reembolso_paypal ? `, ${formatoMXN(r.reembolso_paypal.monto)} reembolsados en PayPal` : ''),
             });
         }
         // "Pendiente" significa esperando pago: no se regresa ahí, y no se
@@ -5806,7 +5948,7 @@ app.get('/api/reglamento', (req, res) => {
                     mes_max: MON.mesMax, saldo_max: MON.saldoMax, transferencias_max: MON.pendientesMax, transferencia_dias: MON.pendienteDias },
         puntos: { pesos_por_punto: PESOS_POR_PUNTO, valor_punto: VALOR_PUNTO, niveles: NIVELES },
         compras: { piezas_por_producto: MAX_PIEZAS_POR_PRODUCTO, pedidos_sin_pagar: MAX_PEDIDOS_SIN_PAGAR,
-                   plazo_spei_dias: METODOS_TIENDA.spei.dias, plazo_tienda_dias: METODOS_TIENDA.tienda.dias },
+                   plazo_spei_dias: METODOS_TIENDA.spei.dias, plazo_tienda_dias: METODOS_TIENDA.tienda.dias, plazo_paypal_min: METODOS_TIENDA.paypal.minutos },
     });
 });
 const MOTIVOS_ESTADO_MONEDERO = {
@@ -5850,9 +5992,84 @@ app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
         movimientos: movs.rows,
     });
 }));
+// Revisa si el cliente puede recargar ese monto (correo, estado y límites).
+async function validarRecarga(client, clienteId, monto, metodo) {
+    if (!(monto >= MON.recargaMin && monto <= MON.recargaMax)) throw new Error(`Cada recarga debe ser de ${formatoMXN(MON.recargaMin)} a ${formatoMXN(MON.recargaMax)}`);
+    const verif = await client.query('SELECT correo_verificado FROM clientes WHERE id = $1', [clienteId]);
+    if (verif.rows[0] && verif.rows[0].correo_verificado === false) throw new Error('Confirma tu correo antes de recargar tu monedero.');
+    const m = await monederoDe(client, clienteId, { bloquear: true });
+    if (m.estado !== 'activo') throw new Error(MENSAJE_ESTADO_MONEDERO[m.estado] || 'Tu monedero no está disponible. Contacta a soporte.');
+    const uso = await usoRecargas(client, m.id);
+    if (uso.dia_ops >= MON.diaOps) throw new Error(`Ya hiciste ${uso.dia_ops} recargas en las últimas 24 horas (máximo ${MON.diaOps}). Intenta mañana.`);
+    if (metodo === 'transferencia' && uso.pendientes >= MON.pendientesMax) throw new Error(`Tienes ${uso.pendientes} transferencias esperando confirmación. Espera a que se acrediten antes de registrar otra.`);
+    const disponible = disponibleRecarga(m, uso);
+    if (monto > disponible) {
+        throw new Error(disponible < MON.recargaMin
+            ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero. Revisa los límites en "Mi monedero".'
+            : `Por los límites del monedero hoy puedes recargar hasta ${formatoMXN(disponible)}.`);
+    }
+    return m;
+}
+
+app.post('/api/monedero/paypal/orden', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    if (!paypal.configurado()) return sinPayPal(res);
+    const monto = redondear(req.body.monto);
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await validarRecarga(client, req.cliente.id, monto, 'paypal');
+        await client.query('ROLLBACK');   // solo se validó; el saldo sube al cobrar
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); client.release(); return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
+    client.release();
+    try {
+        const ref = `recarga-${req.cliente.id}-${Date.now()}`;
+        const o = await paypal.crearOrden({ monto, referencia: ref, descripcion: 'Recarga de monedero Kozmok', requestId: `kz-${ref}` });
+        await pool.query(`INSERT INTO pagos_paypal (orden_id, tipo, cliente_id, monto, moneda, modo, detalle) VALUES ($1,'recarga',$2,$3,$4,$5,$6)`,
+            [o.id, req.cliente.id, monto, paypal.CFG.moneda, paypal.CFG.modo, JSON.stringify({ referencia: ref })]);
+        res.json({ id: o.id });
+    } catch (e) { errorPago(res, e); }
+}));
+
+app.post('/api/monedero/paypal/capturar', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    if (!paypal.configurado()) return sinPayPal(res);
+    const ordenId = String(req.body.orden_id || '');
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE orden_id = $1 AND tipo = 'recarga' AND cliente_id = $2 FOR UPDATE`, [ordenId, req.cliente.id])).rows[0];
+        if (!pp) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Recarga no encontrada' }); }
+        if (pp.estado === 'capturada') { await client.query('ROLLBACK'); return res.json({ message: 'Esta recarga ya se había aplicado' }); }
+        if (pp.estado !== 'creada') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Esta recarga ya no está disponible. Inicia otra.' }); }
+        // Se vuelven a revisar los límites justo antes de cobrar
+        const m = await validarRecarga(client, req.cliente.id, Number(pp.monto), 'paypal');
+        const cap = await paypal.capturarOrden(ordenId, { requestId: `kz-cap-${pp.id}` });
+        const ref = (pp.detalle || {}).referencia;
+        const coincide = cap.referencia === ref && cap.moneda === paypal.CFG.moneda && Math.abs(Number(cap.monto) - Number(pp.monto)) < 0.005;
+        if (cap.estado !== 'COMPLETED' || !coincide) {
+            if (cap.estado === 'COMPLETED') await paypal.reembolsar(cap.captura_id, { nota: 'Recarga no coincidió', requestId: `kz-ref-cap-${pp.id}` }).catch(() => {});
+            await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'fallida', detalle = detalle || $3 WHERE id = $1`,
+                [pp.id, cap.captura_id, JSON.stringify({ estado: cap.estado, coincide })]);
+            await client.query('COMMIT');
+            return res.status(402).json({ message: cap.estado === 'PENDING' ? 'PayPal dejó el pago en revisión; la recarga se aplica al confirmarse.' : 'PayPal no aprobó el pago. No se hizo ningún cargo.' });
+        }
+        await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = $3 WHERE id = $1`,
+            [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
+        const mov = await moverMonedero(client, m, { tipo: 'recarga', monto: Number(pp.monto), concepto: 'Recarga con PayPal', metodo: 'paypal', referencia: cap.captura_id });
+        await client.query('COMMIT');
+        res.json({ message: `Recarga de ${formatoMXN(pp.monto)} aplicada`, saldo: m.saldo, movimiento: mov, modo: paypal.CFG.modo });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (e.paypal || e.publico) return errorPago(res, e);
+        res.status(400).json({ message: seg.mensajeSeguro(e) });
+    } finally { client.release(); }
+}));
+
 app.post('/api/monedero/recargar', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
     const monto = redondear(req.body.monto);
-    const metodo = ['tarjeta', 'paypal', 'transferencia'].includes(req.body.metodo) ? req.body.metodo : null;
+    // Con tarjeta o PayPal se recarga con los botones de PayPal
+    // (/api/monedero/paypal/*); aquí solo queda la transferencia.
+    if (['tarjeta', 'paypal'].includes(req.body.metodo)) return res.status(400).json({ message: 'Para recargar con tarjeta o PayPal usa el botón de PayPal.' });
+    const metodo = req.body.metodo === 'transferencia' ? 'transferencia' : null;
     if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres recargar' });
     if (!(monto >= MON.recargaMin && monto <= MON.recargaMax)) {
         return res.status(400).json({ message: `Cada recarga debe ser de ${formatoMXN(MON.recargaMin)} a ${formatoMXN(MON.recargaMax)}` });

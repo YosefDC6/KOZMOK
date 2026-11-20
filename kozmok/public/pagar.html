@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pagar pedido · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="container pagar-wrap">
+    <div class="card pagar-card" id="pagar">
+        <div class="empty-state">Cargando tu pedido…</div>
+    </div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/paypal-botones.js"></script>
+<script>
+// Pago de un pedido con PayPal (cuenta o tarjeta). El monto lo fija el
+// servidor; aquí solo se muestran los botones de PayPal y, cuando el
+// cliente aprueba, el servidor cobra y confirma el pedido.
+const cliente = Sesion.cliente();
+if (!cliente) irALogin();
+const ID = Number(new URLSearchParams(location.search).get('id'));
+const caja = document.getElementById('pagar');
+let P = null, reloj = null;
+const formatoMoneda2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+
+function venceTxt(f) {
+    return new Date(f).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+}
+function restante() {
+    const el = document.getElementById('pg-reloj');
+    if (!el || !P || !P.pago_vence) return;
+    const ms = new Date(P.pago_vence) - Date.now();
+    if (ms <= 0) { el.textContent = 'El tiempo para pagar terminó'; clearInterval(reloj); setTimeout(cargar, 2000); return; }
+    const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+    el.textContent = `Tu pedido está apartado ${m}:${String(s).padStart(2, '0')} min más`;
+}
+
+async function cargar() {
+    if (!ID) { caja.innerHTML = '<div class="empty-state">Pedido no encontrado.</div>'; return; }
+    try { P = await api(`/pedidos/${ID}/detalle`); } catch { caja.innerHTML = '<div class="empty-state">Pedido no encontrado.</div>'; return; }
+    if (P.pago_estado === 'pagado') { location.replace(`/gracias.html?id=${ID}`); return; }
+    if (P.estado === 'cancelado') {
+        caja.innerHTML = `<h1 class="pagar-tit">${icon('x', 22)} Pedido ${escHTML(P.numero_orden)} cancelado</h1>
+            <p>Se canceló porque terminó el tiempo para pagarlo. No se hizo ningún cargo y los productos regresaron al inventario.</p>
+            <a class="btn btn-primary" href="/index.html?ver=todo">Volver a la tienda</a>`;
+        return;
+    }
+    if (P.metodo_tipo !== 'paypal') { location.replace(`/gracias.html?id=${ID}`); return; }
+    const cfg = await PayPalKZ.config();
+    caja.innerHTML = `
+        <h1 class="pagar-tit">${icon('lock', 22)} Paga tu pedido</h1>
+        <div class="pagar-resumen">
+            <div><span>Pedido</span><strong>${escHTML(P.numero_orden)}</strong></div>
+            <div><span>${P.items.length === 1 ? '1 producto' : P.items.length + ' productos'}</span><strong>${P.items.map((i) => escHTML(i.nombre)).slice(0, 2).join(', ')}${P.items.length > 2 ? '…' : ''}</strong></div>
+            <div class="pagar-total"><span>Total a pagar</span><strong>${formatoMoneda2(P.total)}</strong></div>
+        </div>
+        <p class="pagar-reloj" id="pg-reloj"></p>
+        ${cfg.modo === 'sandbox' ? `<div class="pago-prueba">${icon('alert', 14)} Modo de prueba de PayPal: no se cobra dinero real. Usa una cuenta o tarjeta de prueba del sandbox.</div>` : ''}
+        <div id="paypal-botones" class="pagar-botones"><div class="empty-state" style="padding:20px">Cargando PayPal…</div></div>
+        <p class="pagar-nota">Puedes pagar con tu cuenta PayPal o con tarjeta de débito o crédito sin crear cuenta. Los datos de tu tarjeta los captura PayPal; Kozmok nunca los ve ni los guarda.</p>
+        <p class="pagar-nota">Si cierras esta página, puedes terminar de pagar desde <a href="/pedidos.html">Mis pedidos</a> antes de las ${venceTxt(P.pago_vence)}</p>`;
+    restante(); clearInterval(reloj); reloj = setInterval(restante, 1000);
+
+    PayPalKZ.botones('#paypal-botones', {
+        crearOrden: async () => (await api('/pagos/paypal/orden', { method: 'POST', body: { pedido_id: ID } })).id,
+        alAprobar: async (ordenId) => {
+            const r = await api('/pagos/paypal/capturar', { method: 'POST', body: { pedido_id: ID, orden_id: ordenId } });
+            Club.olvidar();
+            toast(r.message || 'Pago confirmado', 'ok');
+            location.replace(`/gracias.html?id=${ID}`);
+        },
+        alCancelar: () => toast(`No se hizo ningún cargo. Tu pedido sigue apartado hasta las ${venceTxt(P.pago_vence)}.`, 'warn'),
+    });
+}
+cargar();
+</script>
+</body>
+</html>

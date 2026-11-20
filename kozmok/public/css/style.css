@@ -2453,3 +2453,24 @@ tr.mov-off td { opacity: .7; }
 @supports (-moz-appearance: none) {
     html, * { scrollbar-color: color-mix(in srgb, var(--accent) 45%, var(--line)) transparent; scrollbar-width: thin; }
 }
+
+/* Pago con PayPal */
+.pagar-wrap { max-width: 560px; padding-top: 36px; padding-bottom: 60px; }
+.pagar-card { padding: 26px; }
+.pagar-tit { display: flex; align-items: center; gap: 10px; font-size: 1.4rem; margin: 0 0 16px; }
+.pagar-resumen { display: grid; gap: 8px; padding: 14px; border-radius: var(--radius-sm); background: var(--bg-panel-2); margin-bottom: 12px; }
+.pagar-resumen > div { display: flex; justify-content: space-between; gap: 12px; font-size: .9rem; }
+.pagar-resumen span { color: var(--text-muted); }
+.pagar-resumen strong { text-align: right; }
+.pagar-total { padding-top: 8px; border-top: 1px solid var(--line); font-size: 1.05rem !important; }
+.pagar-total strong { color: var(--accent-light); font-size: 1.25rem; }
+.pagar-reloj { font-size: .85rem; color: var(--warning); margin: 0 0 12px; }
+.pagar-botones { background: #fff; border-radius: var(--radius-sm); padding: 14px 14px 4px; margin: 10px 0 14px; min-height: 120px; }
+.pagar-nota { font-size: .78rem; color: var(--text-muted); line-height: 1.5; margin: 6px 0; }
+.pago-prueba { margin: 8px 0; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px dashed var(--warning); color: var(--warning); font-size: .8rem; }
+.aviso-pago { color: #333; padding: 18px; text-align: center; font-size: .9rem; }
+.mon-metodo.off { opacity: .45; cursor: not-allowed; }
+.formas-pago { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.forma-pago { display: flex; gap: 12px; padding: 14px; }
+.forma-pago p { margin: 4px 0 0; font-size: .82rem; color: var(--text-muted); line-height: 1.45; }
+.fp-ico { color: var(--accent-light); flex: none; margin-top: 2px; }

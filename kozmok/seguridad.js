@@ -92,11 +92,13 @@ async function registrarEvento(req, { tipo, severidad = 'media', detalle = '', c
 // ---------------------------------------------------------
 const CSP = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+    // PayPal: su SDK (botones) y las ventanas/iframes donde el cliente paga.
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    "font-src 'self' data: https://fonts.gstatic.com https://*.paypalobjects.com",
     "img-src 'self' data: https:",
-    "connect-src 'self'",          // un script inyectado no puede mandar datos a otro servidor
+    "frame-src https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",
+    "connect-src 'self' https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",   // solo PayPal además del propio servidor
     "frame-ancestors 'none'",      // nadie puede meter la tienda en un iframe (clickjacking)
     "base-uri 'self'",
     "form-action 'self'",
@@ -108,8 +110,10 @@ function cabeceras(req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(self "https://www.paypal.com" "https://www.sandbox.paypal.com")');
+    // allow-popups: la ventana de pago de PayPal necesita avisarle a la tienda
+    // cuando el cliente aprueba (con 'same-origin' se rompe esa comunicación).
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     if (req.secure || CONFIG.cookieSegura) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
     next();

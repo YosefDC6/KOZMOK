@@ -11,7 +11,7 @@ const CUENTA_LINKS = [
     { href: '/resenas.html', key: 'resenas', label: 'Mis reseñas', ic: 'chat' },
     { href: '/garantias.html', key: 'garantias', label: 'Mis garantías', ic: 'shield' },
     { href: '/direcciones.html', key: 'direcciones', label: 'Direcciones', ic: 'pin' },
-    { href: '/pagos.html', key: 'pagos', label: 'Métodos de pago', ic: 'card' },
+    { href: '/pagos.html', key: 'pagos', label: 'Formas de pago', ic: 'card' },
     { href: '/soporte.html', key: 'soporte', label: 'Soporte', ic: 'help' },
     { href: '/datos.html', key: 'datos', label: 'Mis datos', ic: 'id' },
     { href: '/seguridad.html', key: 'seguridad', label: 'Seguridad', ic: 'lock' },

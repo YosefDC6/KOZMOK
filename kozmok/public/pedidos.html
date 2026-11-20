@@ -48,6 +48,14 @@ function rastreoPedido(p) {
     if (p.estado === 'cancelado') {
         return `<div class="rastreo-cancelado">${icon('x', 15)} Pedido cancelado${Number(p.descuento) > 0 ? ' · puntos devueltos' : ''}</div>`;
     }
+    if (p.pago_estado === 'pendiente' && p.metodo_tipo === 'paypal') {
+        const hora = p.pago_vence ? new Date(p.pago_vence).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '';
+        return `
+            <div class="rastreo-aviso">
+                ${icon('clock', 16)}
+                <div><strong>Falta pagar con PayPal o tarjeta.</strong> Tu pedido está apartado${hora ? ` hasta las ${hora}` : ''}; si no se paga, se cancela solo sin ningún cargo.</div>
+            </div>`;
+    }
     if (p.pago_estado === 'pendiente') {
         const esSPEI = /spei/i.test(p.metodo_pago || '');
         return `
@@ -101,7 +109,7 @@ montarCuenta('pedidos', async (panel, P) => {
     }
     panel.innerHTML = `<div class="cuenta-head"><h1>Mis pedidos</h1><p>${pedidos.length === 1 ? '1 pedido' : pedidos.length + ' pedidos'}. Toca «Ver detalle» para ver productos, envío y pago.</p></div><div id="lista-pedidos"></div>`;
     document.getElementById('lista-pedidos').innerHTML = pedidos.map((p) => {
-        const pendientePago = p.pago_estado === 'pendiente';
+        const pendientePago = p.pago_estado === 'pendiente' && p.estado !== 'cancelado';
         return `
         <div class="order-row">
             <div class="order-top">
@@ -113,8 +121,8 @@ montarCuenta('pedidos', async (panel, P) => {
             ${rastreoPedido(p)}
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
                 <button class="btn btn-outline btn-sm" id="btn-det-${p.id}" onclick="detallePedido(${p.id})">Ver detalle</button>
-                <a class="btn btn-ghost btn-sm" href="/recibo.html?id=${p.id}">${pendientePago ? 'Ficha de pago' : 'Comprobante'}</a>
-                ${pendientePago && !p.pago_reportado ? `<button class="btn btn-primary btn-sm" onclick="reportarPago(${p.id})">Ya realicé el pago</button>` : ''}
+                ${pendientePago && p.metodo_tipo === 'paypal' && p.estado !== 'cancelado' ? `<a class="btn btn-primary btn-sm" href="/pagar.html?id=${p.id}">Pagar ahora</a>` : `<a class="btn btn-ghost btn-sm" href="/recibo.html?id=${p.id}">${pendientePago ? 'Ficha de pago' : 'Comprobante'}</a>`}
+                ${pendientePago && p.metodo_tipo !== 'paypal' && !p.pago_reportado ? `<button class="btn btn-primary btn-sm" onclick="reportarPago(${p.id})">Ya realicé el pago</button>` : ''}
                 ${p.estado === 'entregado' ? `<button class="btn btn-primary btn-sm" onclick="detallePedido(${p.id}, true)">Dejar reseña</button>` : ''}
                 ${CANCELABLES.includes(p.estado) ? `<button class="btn btn-ghost btn-sm" onclick="cancelarPedido(${p.id})">Cancelar</button>` : ''}
             </div>

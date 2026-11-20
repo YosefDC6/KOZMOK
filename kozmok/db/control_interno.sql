@@ -364,3 +364,58 @@ CREATE INDEX IF NOT EXISTS idx_interacciones_fecha ON interacciones (fecha DESC)
 -- Contraseña conocida por otra persona (la inicial del admin o la que puso
 -- quien dio de alta la cuenta): el panel pide cambiarla al entrar.
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cambiar_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- =========================================================
+-- PAGOS CON PAYPAL (sandbox = sin dinero real)
+--   Una fila por orden creada en PayPal. El cobro se confirma solo cuando
+--   PayPal responde COMPLETED con el mismo monto y la misma referencia; la
+--   orden y el cobro (capture) no se repiten. No se edita salvo el estado:
+--   creada -> capturada | fallida | vencida, capturada -> reembolsada.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS pagos_paypal (
+    id              SERIAL PRIMARY KEY,
+    orden_id        VARCHAR(40) NOT NULL UNIQUE,
+    captura_id      VARCHAR(40) UNIQUE,
+    reembolso_id    VARCHAR(40),
+    tipo            VARCHAR(10) NOT NULL CHECK (tipo IN ('pedido','recarga')),
+    cliente_id      INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    pedido_id       INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    monto           NUMERIC(12,2) NOT NULL CHECK (monto > 0),
+    moneda          VARCHAR(3) NOT NULL DEFAULT 'MXN',
+    modo            VARCHAR(8) NOT NULL DEFAULT 'sandbox',
+    estado          VARCHAR(12) NOT NULL DEFAULT 'creada' CHECK (estado IN ('creada','capturada','pendiente','fallida','vencida','reembolsada')),
+    pagador_correo  VARCHAR(150),
+    detalle         JSONB,
+    fecha           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_captura   TIMESTAMP,
+    fecha_reembolso TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pagos_paypal_pedido ON pagos_paypal (pedido_id);
+CREATE INDEX IF NOT EXISTS idx_pagos_paypal_cliente ON pagos_paypal (cliente_id, fecha DESC);
+
+CREATE OR REPLACE FUNCTION kz_paypal_cambios() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF current_setting('kozmok.purga', true) = 'si' THEN RETURN OLD; END IF;
+        RAISE EXCEPTION 'Los pagos de PayPal no se borran.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF current_setting('kozmok.purga', true) = 'si' THEN RETURN NEW; END IF;   -- SET NULL al borrar cliente/pedido de ejemplo
+    IF (NEW.orden_id, NEW.tipo, NEW.monto, NEW.moneda, NEW.modo, NEW.fecha) IS DISTINCT FROM (OLD.orden_id, OLD.tipo, OLD.monto, OLD.moneda, OLD.modo, OLD.fecha)
+       OR NEW.cliente_id IS DISTINCT FROM OLD.cliente_id OR NEW.pedido_id IS DISTINCT FROM OLD.pedido_id
+       OR (OLD.captura_id IS NOT NULL AND NEW.captura_id IS DISTINCT FROM OLD.captura_id) THEN
+        RAISE EXCEPTION 'Los datos de un pago de PayPal no se pueden cambiar.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF OLD.estado IN ('fallida','vencida','reembolsada') AND NEW.estado IS DISTINCT FROM OLD.estado THEN
+        RAISE EXCEPTION 'Ese pago de PayPal ya está cerrado.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF OLD.estado = 'capturada' AND NEW.estado NOT IN ('capturada','reembolsada') THEN
+        RAISE EXCEPTION 'Un pago cobrado solo puede reembolsarse.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF NEW.estado = 'capturada' AND OLD.estado <> 'capturada' THEN NEW.fecha_captura := CURRENT_TIMESTAMP; END IF;
+    IF NEW.estado = 'reembolsada' AND OLD.estado <> 'reembolsada' THEN NEW.fecha_reembolso := CURRENT_TIMESTAMP; END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_paypal_fecha ON pagos_paypal;
+CREATE TRIGGER trg_paypal_fecha BEFORE INSERT ON pagos_paypal FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
+DROP TRIGGER IF EXISTS trg_paypal_cambios ON pagos_paypal;
+CREATE TRIGGER trg_paypal_cambios BEFORE UPDATE OR DELETE ON pagos_paypal FOR EACH ROW EXECUTE FUNCTION kz_paypal_cambios();

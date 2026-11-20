@@ -733,7 +733,7 @@ const MIGAS = {
     '/resenas.html': [CUENTA_MIGA, ['Mis reseñas']],
     '/garantias.html': [CUENTA_MIGA, ['Mis garantías']],
     '/direcciones.html': [CUENTA_MIGA, ['Direcciones']],
-    '/pagos.html': [CUENTA_MIGA, ['Métodos de pago']],
+    '/pagos.html': [CUENTA_MIGA, ['Formas de pago']],
     '/soporte.html': [CUENTA_MIGA, ['Soporte']],
     '/datos.html': [CUENTA_MIGA, ['Mis datos']],
     '/seguridad.html': [CUENTA_MIGA, ['Seguridad']],

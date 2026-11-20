@@ -33,28 +33,27 @@ const cliente = Sesion.cliente();
 const ENVIO_GRATIS_DESDE = 10000;
 const COSTO_ENVIO = 199;
 let DIRECCIONES = [];
-let METODOS = [];
+let PAYPAL = { activo: false };   // ¿el pago con PayPal / tarjeta está configurado en el servidor?
 let RECOMP = { puntos: 0, valor_punto: 0.10 };
 let SUBTOTAL = 0;
 let GAR_TOTAL = 0;
 let ITEMS = [];          // líneas del carrito (para cotizar)
 let COT = null;          // última cotización del servidor (promociones + impuestos + envío + puntos)
 let MONEDERO = { saldo: 0, estado: 'activo' };
-const MARCA_LABEL = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', otra: 'Tarjeta' };
 
 async function cargarCarrito() {
     const y = window.scrollY, pasoPrev = PASO_PINTADO;   // al volver a pintar, la página no brinca
-    const [items, dirs, rec, metodos, mon] = await Promise.all([
+    const [items, dirs, rec, pp, mon] = await Promise.all([
         api(`/carrito/${cliente.id}`),
         api(`/clientes/${cliente.id}/direcciones`).catch(() => []),
         api(`/clientes/${cliente.id}/recompensas`).catch(() => ({ puntos: 0, valor_punto: 0.10 })),
-        api(`/clientes/${cliente.id}/metodos-pago`).catch(() => []),
+        api('/pagos/paypal/config').catch(() => ({ activo: false })),
         api('/monedero').catch(() => ({ saldo: 0, estado: 'activo' })),
     ]);
     MONEDERO = { saldo: Number(mon.saldo) || 0, estado: mon.estado };
     ITEMS = items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, garantia: i.garantia_clave || 'none' }));
     DIRECCIONES = dirs;
-    METODOS = metodos;
+    PAYPAL = pp;
     RECOMP = rec;
     const cont = document.getElementById('carrito-contenido');
     document.getElementById('btn-vaciar').hidden = items.length === 0;
@@ -181,31 +180,18 @@ async function cargarCarrito() {
                 <h2 class="ck-tit">${icon('card', 18)} ¿Cómo quieres pagar?</h2>
                 <div class="field"><label>Método de pago</label>
                     <select id="metodo-pago" onchange="cambioMetodo()">
-                        ${METODOS.map((m) => `<option value="mp:${m.id}" ${m.predeterminada ? 'selected' : ''}>${MARCA_LABEL[m.marca] || 'Tarjeta'} ****${m.ultimos4}${m.predeterminada ? ' (predeterminada)' : ''}</option>`).join('')}
-                        <option value="nueva">＋ Usar otra tarjeta…</option>
-                        <option value="paypal">PayPal</option>
-                        <option value="spei">Transferencia bancaria (SPEI)</option>
+                        <option value="paypal" ${PAYPAL.activo ? 'selected' : 'disabled'}>PayPal o tarjeta de débito / crédito${PAYPAL.activo ? '' : ' (no disponible)'}</option>
+                        <option value="spei" ${PAYPAL.activo ? '' : 'selected'}>Transferencia bancaria (SPEI)</option>
                         <option value="tienda">Pago en tienda</option>
                         <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
                     </select>
                 </div>
                 <div id="box-monedero" class="pago-box" hidden></div>
                 <div id="box-paypal" class="pago-box" hidden>
-                    <h4>${icon('wallet', 15)} PayPal</h4>
-                    <div class="pb-sub" style="margin:0">Al confirmar se cobra en tu cuenta de PayPal y el pedido queda pagado al instante.</div>
-                </div>
-                <div id="tarjeta-nueva" class="card-nueva" hidden>
-                    <div class="field"><label>Número de tarjeta</label>
-                        <input id="tn-num" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" oninput="fmtNum(this)" />
-                    </div>
-                    <div class="field"><label>Titular</label><input id="tn-titular" placeholder="Nombre en la tarjeta" /></div>
-                    <div class="field-row">
-                        <div class="field"><label>Mes</label><select id="tn-mes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select></div>
-                        <div class="field"><label>Año</label><select id="tn-anio">${Array.from({ length: 12 }, (_, i) => { const a = new Date().getFullYear() + i; return `<option value="${a}">${a}</option>`; }).join('')}</select></div>
-                        <div class="field"><label>CVV</label><input id="tn-cvv" inputmode="numeric" maxlength="4" placeholder="123" /></div>
-                    </div>
-                    <label style="display:flex;align-items:center;gap:8px;font-size:.85rem"><input type="checkbox" id="tn-guardar" style="width:auto" checked /> Guardar esta tarjeta para la próxima vez</label>
-                    <p style="font-size:.76rem;color:var(--text-muted);margin:8px 0 0">Pago protegido: solo guardamos la marca y los últimos 4 dígitos de tu tarjeta.</p>
+                    <h4>${icon('lock', 15)} PayPal o tarjeta</h4>
+                    <div class="pb-sub" style="margin:0">Al confirmar pasas a pagar con tu cuenta PayPal o con tarjeta de débito o crédito, sin necesidad de cuenta.
+                        Los datos de tu tarjeta los captura PayPal: Kozmok nunca los ve ni los guarda. Tu pedido queda apartado ${PAYPAL.minutos_para_pagar || 60} minutos mientras pagas.</div>
+                    ${PAYPAL.modo === 'sandbox' ? '<div class="pago-prueba">Modo de prueba: no se cobra dinero real.</div>' : ''}
                 </div>
                 ${bloquePuntos}
                 <div class="ck-acciones">
@@ -273,12 +259,6 @@ function validarPaso(n) {
         return true;
     }
     if (n === 3) {
-        if (document.getElementById('metodo-pago').value === 'nueva') {
-            const numero = document.getElementById('tn-num').value.replace(/\s/g, '');
-            if (numero.length < 13 || numero.length > 19) { toast('Revisa el número de tarjeta', 'warn'); return false; }
-            if (!document.getElementById('tn-titular').value.trim()) { toast('Escribe el titular de la tarjeta', 'warn'); return false; }
-            if (!/^\d{3,4}$/.test(document.getElementById('tn-cvv').value.trim())) { toast('El CVV debe tener 3 o 4 dígitos', 'warn'); return false; }
-        }
         if (document.getElementById('metodo-pago').value === 'monedero' && COT && MONEDERO.saldo < COT.total) {
             toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza. Recarga tu monedero o elige otro método.`, 'warn'); return false;
         }
@@ -350,21 +330,20 @@ function pintarRevision() {
                 ${pts ? `<div class="ck-sub">Canjeas ${pts.toLocaleString('es-MX')} puntos del Club</div>` : ''}
                 ${COT && COT.puntos_a_ganar ? `<div class="ck-sub">Ganas ${Number(COT.puntos_a_ganar).toLocaleString('es-MX')} puntos del Club${sel.value === 'spei' || sel.value === 'tienda' ? ' cuando se confirme tu pago' : ' al confirmar'}</div>` : ''}
                 ${sel.value === 'spei' || sel.value === 'tienda' ? '<div class="ck-sub">Recibirás una ficha de pago; el pedido se confirma al pagar.</div>' : ''}
+                ${sel.value === 'paypal' ? '<div class="ck-sub">Al confirmar pasas a la ventana de PayPal para pagar con tu cuenta o con tarjeta.</div>' : ''}
             </div>`;
         const b = document.getElementById('btn-comprar');
-        if (b && !b.disabled && COT) b.textContent = 'Confirmar pedido · ' + formatoMoneda2(COT.total);
+        if (b && !b.disabled && COT) b.textContent = textoBotonComprar();
     });
 }
 
-function fmtNum(el) {
-    const d = el.value.replace(/\D/g, '').slice(0, 19);
-    el.value = d.replace(/(.{4})/g, '$1 ').trim();
+function textoBotonComprar() {
+    const sel = document.getElementById('metodo-pago');
+    return (sel && sel.value === 'paypal' ? 'Continuar al pago' : 'Confirmar pedido') + (COT ? ' · ' + formatoMoneda2(COT.total) : '');
 }
 function cambioMetodo() {
     const sel = document.getElementById('metodo-pago');
-    const box = document.getElementById('tarjeta-nueva');
-    if (!sel || !box) return;
-    box.hidden = sel.value !== 'nueva';
+    if (!sel) return;
     document.getElementById('box-paypal').hidden = sel.value !== 'paypal';
     document.getElementById('box-monedero').hidden = sel.value !== 'monedero';
     pintarBoxMonedero();
@@ -431,7 +410,7 @@ function recalcular() {
     _cotTimer = setTimeout(async () => {
         try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts } }); } catch { return; }
         const r = document.getElementById('resumen-totales'); if (r) r.innerHTML = desgloseHTML(COT);
-        const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = 'Confirmar pedido · ' + formatoMoneda2(COT.total);
+        const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = textoBotonComprar();
         if (PASO === 4) pintarRevision();
         pintarBoxMonedero();
     }, pts ? 250 : 0);
@@ -477,38 +456,14 @@ document.getElementById('btn-vaciar').addEventListener('click', async () => {
     } catch (e) { toast(e.message, 'error'); }
 });
 
-// Resuelve el <select> de método de pago a un texto para guardar en el pedido.
-// Si es tarjeta nueva la valida y (si se pidió) la guarda antes de comprar.
-async function resolverMetodoPago() {
+// Resuelve el <select> de método de pago a lo que se guarda en el pedido.
+function resolverMetodoPago() {
     const v = document.getElementById('metodo-pago').value;
     if (v === 'spei') return { texto: 'Transferencia SPEI', tipo: 'spei' };
-    if (v === 'paypal') return { texto: 'PayPal', tipo: 'paypal' };
+    if (v === 'paypal') return PAYPAL.activo ? { texto: 'PayPal o tarjeta (PayPal)', tipo: 'paypal' } : null;
     if (v === 'monedero') return { texto: 'Monedero Kozmok', tipo: 'monedero' };
     if (v === 'tienda') return { texto: 'Pago en tienda', tipo: 'tienda' };
-    if (v.startsWith('mp:')) {
-        const m = METODOS.find((x) => String(x.id) === v.slice(3));
-        return { texto: (m ? `Tarjeta ${MARCA_LABEL[m.marca] || ''} ****${m.ultimos4}`.replace(/\s+/g, ' ').trim() : 'Tarjeta'), tipo: 'tarjeta' };
-    }
-    // Tarjeta nueva
-    const numero = document.getElementById('tn-num').value.replace(/\s/g, '');
-    const titular = document.getElementById('tn-titular').value.trim();
-    const cvv = document.getElementById('tn-cvv').value.trim();
-    if (numero.length < 13 || numero.length > 19) { toast('Revisa el número de tarjeta', 'warn'); return null; }
-    if (!titular) { toast('Escribe el titular de la tarjeta', 'warn'); return null; }
-    if (!/^\d{3,4}$/.test(cvv)) { toast('El CVV debe tener 3 o 4 dígitos', 'warn'); return null; }
-
-    const mes = Number(document.getElementById('tn-mes').value);
-    const anio = Number(document.getElementById('tn-anio').value);
-    const marca = /^4/.test(numero) ? 'Visa' : /^(5[1-5]|2[2-7])/.test(numero) ? 'Mastercard' : /^3[47]/.test(numero) ? 'American Express' : '';
-    if (document.getElementById('tn-guardar').checked) {
-        try {
-            await api(`/clientes/${cliente.id}/metodos-pago`, {
-                method: 'POST',
-                body: { tipo: 'tarjeta', numero, titular, expira_mes: mes, expira_anio: anio, predeterminada: METODOS.length === 0 },
-            });
-        } catch (e) { /* si falla el guardado, igual se puede comprar */ }
-    }
-    return { texto: `Tarjeta ${marca} ****${numero.slice(-4)}`.replace(/\s+/g, ' '), tipo: 'tarjeta' };
+    return null;
 }
 
 // Sin correo confirmado no se puede pagar: a escribir el código y de vuelta.
@@ -523,8 +478,8 @@ async function confirmarCompra() {
     const direccion = document.getElementById('direccion').value.trim();
     if (!direccion) { toast('Ingresa o elige una dirección de envío', 'warn'); return; }
 
-    const mp = await resolverMetodoPago();
-    if (!mp) { irPaso(3, { sinValidar: true }); return; }
+    const mp = resolverMetodoPago();
+    if (!mp) { toast('Elige cómo quieres pagar', 'warn'); irPaso(3, { sinValidar: true }); return; }
     // Pago con monedero: validación y confirmación (saldo antes y después)
     if (mp.tipo === 'monedero') {
         if (MONEDERO.saldo < COT.total) { toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza para el total de ${formatoMoneda2(COT.total)}. Recarga tu monedero o elige otro método.`, 'warn'); return; }
@@ -546,9 +501,10 @@ async function confirmarCompra() {
         });
         actualizarBadgeCarrito();
         Club.olvidar();   // el nivel pudo subir con esta compra
-        location.href = `/gracias.html?id=${pedido.id}`;
+        // PayPal: el pedido ya está apartado; falta pagarlo en la ventana de PayPal
+        location.href = mp.tipo === 'paypal' ? `/pagar.html?id=${pedido.id}` : `/gracias.html?id=${pedido.id}`;
     } catch (e) {
-        btn.disabled = false; btn.textContent = 'Confirmar pedido' + (COT ? ' · ' + formatoMoneda2(COT.total) : '');
+        btn.disabled = false; btn.textContent = textoBotonComprar();
         if (e.datos && e.datos.codigo === 'correo_no_verificado') {
             Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: false });
             return irAVerificar();

@@ -381,10 +381,10 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      (100 puntos = $10 de descuento). El total se recalcula al instante.
    - Direccion de envio: escribir una nueva o elegir una guardada.
    - Metodo de pago:
-        * una de tus tarjetas guardadas,
-        * "Usar otra tarjeta..." (pide numero, titular, MM/AA y CVV; puedes
-          marcar "guardar esta tarjeta"),
-        * PayPal (simulado: se cobra al instante),
+        * PayPal o tarjeta de debito / credito (cobro real por PayPal; en
+          modo de prueba "sandbox" no se mueve dinero real). Kozmok ya NO
+          pide ni guarda numeros de tarjeta: se capturan en la ventana de
+          PayPal. Sin credenciales de PayPal en el .env aparece "no disponible".
         * Transferencia bancaria (SPEI),
         * Pago en tienda,
         * Monedero Kozmok (muestra el saldo; ver 3.6 "Mi monedero"). Al
@@ -392,14 +392,21 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
           pagar y saldo despues del pago (o cuanto falta, con el boton
           "Recargar monedero"). Al confirmar pide una ultima confirmacion
           con esos datos y el saldo se descuenta en ese momento.
-     Nota: es una demo, no se cobra nada real. Del numero de tarjeta solo se
-     guardan la marca y los ultimos 4 digitos; el CVV nunca se guarda.
    - Al confirmar SIEMPRE se genera un COMPROBANTE (recibo.html), se guarda
      en la cuenta y lo puede ver el equipo. Segun el metodo:
-        * Tarjeta, PayPal o Monedero
-                   -> el pedido queda "Confirmado" y "Pagado"; los puntos se
-                      acreditan al instante. El comprobante es el recibo de
-                      compra con todos los datos.
+        * Monedero -> el pedido queda "Confirmado" y "Pagado"; los puntos se
+                      acreditan al instante.
+        * PayPal o tarjeta
+                   -> el pedido se crea apartado (60 min) y se pasa a la
+                      pagina "Paga tu pedido" (pagar.html) con los botones de
+                      PayPal: cuenta PayPal o tarjeta sin cuenta. Cuando
+                      PayPal confirma el cobro (el servidor compara monto,
+                      moneda y pedido) queda "Confirmado" y "Pagado" y se
+                      acreditan los puntos. Si se cierra la ventana, se paga
+                      despues desde Mis pedidos -> "Pagar ahora". Si pasan
+                      los 60 min sin pagar, se cancela solo sin cargo.
+                      Al cancelar un pedido pagado, el reembolso se hace de
+                      verdad en PayPal.
         * SPEI     -> el pedido queda "Pago pendiente". El comprobante es una
                       FICHA DE PAGO con banco, beneficiario, CLABE, concepto/
                       referencia, monto exacto y fecha limite.
@@ -434,8 +441,9 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    Mi monedero (monedero.html)
       - Saldo disponible en pesos (y lo que esta por acreditar).
       - Recargar: montos rapidos ($100, $200, $500, $1,000) u otro monto
-        ($50 a $20,000) y metodo: tarjeta o PayPal (el saldo queda al
-        instante) o transferencia (te da banco, CLABE y referencia; el saldo
+        (segun los limites del monedero) y metodo: PayPal o tarjeta (botones
+        de PayPal; el saldo sube cuando PayPal confirma el cobro) o
+        transferencia (te da banco, CLABE y referencia; el saldo
         sube cuando el equipo confirma el deposito, ver 4.15c).
       - Historial: fecha, concepto (recarga, compra con su pedido, reembolso o
         ajuste del equipo), metodo, monto y saldo que dejo cada movimiento.
@@ -1343,29 +1351,27 @@ Uso en tienda fisica
 ===============================================================================
 
 Donde
-   - Cuenta -> "Metodos de pago" (pagos.html) para administrarlos.
-   - Al pagar se puede usar: tarjeta guardada o nueva, PayPal (simulado),
-     Monedero Kozmok (3.6), transferencia SPEI o pago en tienda. Cada pedido
-     tiene su registro en la tabla pagos (4.15d).
-   - Tambien se puede agregar una tarjeta durante la compra, en el carrito.
+   - Cuenta -> "Formas de pago" (pagos.html): explica cada forma de pago y
+     muestra el historial de pagos con PayPal o tarjeta (folio de PayPal,
+     monto, estado: Pagado / Reembolsado / Rechazado, y "prueba" si fue en
+     sandbox).
+   - Al pagar se puede usar: PayPal o tarjeta (por PayPal), Monedero Kozmok
+     (3.6), transferencia SPEI o pago en tienda. Cada pedido tiene su
+     registro en la tabla pagos (4.15d) y cada orden de PayPal en
+     pagos_paypal.
 
 Que se guarda
-   - Tipo (tarjeta / transferencia / efectivo), marca (Visa, Mastercard,
-     American Express u "otra"), ultimos 4 digitos, titular y expiracion.
-   - NUNCA se guarda el numero completo ni el CVV. El CVV se pide y se valida
-     en el navegador, pero no se envia al servidor.
+   - Kozmok NO recibe ni guarda numeros de tarjeta ni CVV: la tarjeta se
+     captura en la ventana de PayPal. Solo se guardan el folio de la orden y
+     del cobro de PayPal, el monto, el estado y el correo del pagador.
+   - pagos_paypal no se puede editar ni borrar (control interno): solo
+     cambia de estado creada -> capturada -> reembolsada (o fallida/vencida).
 
-Marca automatica
-   - Se deduce del numero:  empieza en 4 -> Visa;  51-55 o 22-27 -> Mastercard;
-     34 o 37 -> American Express;  cualquier otro -> "otra".
-
-En el pedido
-   - El pedido guarda un texto legible del metodo, por ejemplo
-     "Tarjeta Visa ****4821", "PayPal", "Monedero Kozmok", "Transferencia
-     SPEI" o "Pago en tienda".
-
-Aviso
-   - Es una demo educativa: no hay pasarela de pago ni cargos reales.
+Configuracion (.env)
+   - PAYPAL_CLIENT_ID y PAYPAL_CLIENT_SECRET de developer.paypal.com
+     (Apps & Credentials, pestana Sandbox). Para probar se usa una cuenta
+     "personal" de prueba del sandbox o las tarjetas de prueba de PayPal.
+   - Modo real solo con PAYPAL_MODO=live y PAYPAL_PERMITIR_REAL=1 juntos.
 
 
 ===============================================================================

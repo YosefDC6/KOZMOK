@@ -25,10 +25,12 @@
 <script src="/js/layout.js"></script>
 <script src="/js/chatbot.js"></script>
 <script src="/js/cuenta.js"></script>
+<script src="/js/paypal-botones.js"></script>
 <script>
 // Mi monedero: saldo en pesos para pagar en la tienda. Se recarga con
-// tarjeta o PayPal (al instante) o por transferencia (se acredita cuando
-// el equipo la confirma). Cada movimiento queda con el saldo que dejó.
+// PayPal o tarjeta (los botones de PayPal; el saldo sube cuando el servidor
+// confirma el cobro) o por transferencia (se acredita cuando el equipo la
+// confirma). Cada movimiento queda con el saldo que dejó.
 const MONTOS = [100, 200, 500, 1000];
 const TIPO_MOV = {
     recarga:   { txt: 'Recarga',   ic: 'plus' },
@@ -36,10 +38,11 @@ const TIPO_MOV = {
     reembolso: { txt: 'Reembolso', ic: 'undo' },
     ajuste:    { txt: 'Ajuste',    ic: 'settings' },
 };
-const METODO_TXT = { tarjeta: 'Tarjeta de crédito / débito', paypal: 'PayPal', transferencia: 'Transferencia bancaria' };
+const METODO_TXT = { paypal: 'PayPal o tarjeta', transferencia: 'Transferencia bancaria', tarjeta: 'Tarjeta' };
 let MON = null;
 let MONTO = 200;
-let METODO = 'tarjeta';
+let METODO = 'paypal';
+let PPCFG = { activo: false };
 
 montarCuenta('monedero', async (panel) => {
     panel.innerHTML = `
@@ -57,7 +60,9 @@ montarCuenta('monedero', async (panel) => {
 });
 
 async function cargarMonedero() {
-    MON = await api('/monedero');
+    [MON, PPCFG] = await Promise.all([api('/monedero'), PayPalKZ.config()]);
+    if (!PPCFG.activo && METODO === 'paypal') METODO = 'transferencia';
+    BOTONES_PP = false;
     pintarSaldo();
     pintarRecarga();
     pintarHistorial();
@@ -103,16 +108,19 @@ function pintarRecarga() {
         </div>
         <label>Método de pago</label>
         <div class="mon-metodos">
-            ${Object.entries(METODO_TXT).map(([k, t]) => `
-                <label class="mon-metodo ${k === METODO ? 'on' : ''}">
-                    <input type="radio" name="mon-metodo" value="${k}" ${k === METODO ? 'checked' : ''} onchange="elegirMetodo('${k}')" />
-                    ${icon(k === 'paypal' ? 'wallet' : k === 'tarjeta' ? 'card' : 'download', 16)} ${t}
+            ${['paypal', 'transferencia'].map((k) => `
+                <label class="mon-metodo ${k === METODO ? 'on' : ''} ${k === 'paypal' && !PPCFG.activo ? 'off' : ''}">
+                    <input type="radio" name="mon-metodo" value="${k}" ${k === METODO ? 'checked' : ''} ${k === 'paypal' && !PPCFG.activo ? 'disabled' : ''} onchange="elegirMetodo('${k}')" />
+                    ${icon(k === 'paypal' ? 'card' : 'download', 16)} ${METODO_TXT[k]}${k === 'paypal' && !PPCFG.activo ? ' (no disponible)' : ''}
                 </label>`).join('')}
         </div>
         <p class="mon-nota" id="mon-nota"></p>
+        ${PPCFG.modo === 'sandbox' ? '<div class="pago-prueba" id="mon-prueba">Modo de prueba de PayPal: no se cobra dinero real.</div>' : ''}
+        <div id="mon-paypal" class="pagar-botones" hidden></div>
         <button class="btn btn-primary btn-block" id="mon-btn" onclick="recargar()">${icon('wallet', 16)} Recargar ${formatoMoneda(MONTO)}</button>
         <p class="mon-nota">Tu saldo se usa como forma de pago al finalizar tu compra.</p>`;
     notaMetodo();
+    pintarPagoRecarga();
 }
 
 function elegirMonto(m) {
@@ -130,14 +138,38 @@ function elegirMetodo(k) {
     METODO = k;
     document.querySelectorAll('.mon-metodo').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === k));
     notaMetodo();
+    pintarPagoRecarga();
+}
+// Con PayPal / tarjeta los botones de PayPal reemplazan al botón "Recargar"
+let BOTONES_PP = false;
+function pintarPagoRecarga() {
+    const caja = document.getElementById('mon-paypal'), btn = document.getElementById('mon-btn'), prueba = document.getElementById('mon-prueba');
+    if (!caja || !btn) return;
+    const pp = METODO === 'paypal' && PPCFG.activo;
+    caja.hidden = !pp; btn.hidden = pp; if (prueba) prueba.hidden = !pp;
+    if (!pp || BOTONES_PP) return;
+    BOTONES_PP = true;
+    PayPalKZ.botones(caja, {
+        crearOrden: async () => {
+            const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+            if (!(MONTO >= MON.recarga_min && MONTO <= tope)) throw new Error(tope < MON.recarga_min ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero.' : `La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)}`);
+            return (await api('/monedero/paypal/orden', { method: 'POST', body: { monto: MONTO } })).id;
+        },
+        alAprobar: async (ordenId) => {
+            const r = await api('/monedero/paypal/capturar', { method: 'POST', body: { orden_id: ordenId } });
+            toast(r.message, 'ok');
+            BOTONES_PP = false;
+            await cargarMonedero();
+        },
+        alCancelar: () => toast('No se hizo ningún cargo.', 'warn'),
+    });
 }
 function notaMetodo() {
     const n = document.getElementById('mon-nota');
     if (!n) return;
     n.textContent = METODO === 'transferencia'
         ? 'Te damos una referencia para transferir. El saldo aparece en cuanto confirmamos tu depósito.'
-        : METODO === 'paypal' ? 'Pagas con tu cuenta de PayPal y el saldo queda disponible al momento.'
-        : 'Se usa tu tarjeta predeterminada y el saldo queda disponible al momento.';
+        : 'Pagas con tu cuenta PayPal o con tarjeta de débito o crédito (sin cuenta). El saldo queda disponible en cuanto PayPal confirma el cobro. Kozmok no ve ni guarda los datos de tu tarjeta.';
 }
 function actualizarBoton() {
     const b = document.getElementById('mon-btn');
@@ -153,13 +185,7 @@ async function recargar() {
     const b = document.getElementById('mon-btn');
     b.disabled = true; b.textContent = 'Procesando…';
     try {
-        let tarjeta = null;
-        if (METODO === 'tarjeta') {
-            const tarjetas = await api(`/clientes/${Sesion.cliente().id}/metodos-pago`).catch(() => []);
-            const t = tarjetas.find((x) => x.predeterminada) || tarjetas[0];
-            if (t) tarjeta = `****${t.ultimos4}`;
-        }
-        const r = await api('/monedero/recargar', { method: 'POST', body: { monto: MONTO, metodo: METODO, tarjeta } });
+        const r = await api('/monedero/recargar', { method: 'POST', body: { monto: MONTO, metodo: 'transferencia' } });
         if (r.pendiente && r.datos_transferencia) {
             const d = r.datos_transferencia;
             await confirmar(`Transfiere ${formatoMoneda2(MONTO)} a ${d.beneficiario} (${d.banco}), CLABE ${d.clabe}, con la referencia ${d.referencia}. El saldo se acredita al confirmarse.`, { okText: 'Entendido', cancelText: 'Cerrar' });
