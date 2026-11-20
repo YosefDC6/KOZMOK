@@ -2238,6 +2238,17 @@ const FISCAL = {
     // Forma de pago del SAT (c_FormaPago) según cómo se pagó el pedido
     formaPago: { paypal: '31', spei: '03', tienda: '01', monedero: '05', efectivo: '01', tarjeta: '04', transferencia: '03' },
     diasParaFacturar: Number(process.env.FACTURA_DIAS_LIMITE) || 30,
+    // Receptores de prueba publicados por el SAT: en el sandbox del PAC solo se
+    // aceptan RFC de esta lista, con su nombre, código postal y régimen exactos.
+    // Se ofrecen en el formulario de factura únicamente en modo sandbox.
+    ejemplosSandbox: [
+        { rfc: 'URE180429TM6', razon_social: 'UNIVERSIDAD ROBOTICA ESPAÑOLA', codigo_postal: '86991', regimen_fiscal: '603', uso_cfdi: 'G03' },
+        { rfc: 'JES900109Q90', razon_social: 'JIMENEZ ESTRADA SALAS', codigo_postal: '37161', regimen_fiscal: '601', uso_cfdi: 'G01' },
+        { rfc: 'IVD920810GU2', razon_social: 'INNOVACION VALOR Y DESARROLLO', codigo_postal: '63901', regimen_fiscal: '601', uso_cfdi: 'G03' },
+        { rfc: 'XOJI740919U48', razon_social: 'INGRID XODAR JIMENEZ', codigo_postal: '76028', regimen_fiscal: '612', uso_cfdi: 'G03' },
+        { rfc: 'KAHO641101B39', razon_social: 'OSCAR KALA HAAK', codigo_postal: '76074', regimen_fiscal: '612', uso_cfdi: 'G01' },
+        { rfc: 'MISC491214B86', razon_social: 'CECILIA MIRANDA SANCHEZ', codigo_postal: '01010', regimen_fiscal: '612', uso_cfdi: 'G03' },
+    ],
 };
 const RFC_RE = /^([A-ZÑ&]{3,4})(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([A-Z\d]{2})([A\d])$/;
 
@@ -2399,7 +2410,8 @@ const errorFactura = (res, e) => {
 };
 
 app.get('/api/facturacion/config', (req, res) => {
-    res.json({ activo: facturama.configurado(), modo: facturama.CFG.modo, regimenes: FISCAL.regimenes, usos: FISCAL.usos, dias: FISCAL.diasParaFacturar });
+    res.json({ activo: facturama.configurado(), modo: facturama.CFG.modo, regimenes: FISCAL.regimenes, usos: FISCAL.usos, dias: FISCAL.diasParaFacturar,
+        ejemplos: facturama.CFG.modo === 'sandbox' ? FISCAL.ejemplosSandbox : [] });
 });
 
 app.get('/api/clientes/:id/datos-fiscales', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
