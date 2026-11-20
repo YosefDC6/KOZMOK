@@ -113,12 +113,55 @@
         </svg>`;
     };
 
+    // ---------------------------------------------------------
+    // Mascota: el fantasmita de Kozmok, con el mismo estilo del logo
+    // (relleno blanco, contorno oscuro, sombra sólida del color del tema e
+    // inclinado). mascotaKZK(alto) -> <svg> de ese alto.
+    //   <span data-mascota="120"></span> en HTML estático.
+    // ---------------------------------------------------------
+    window.mascotaKZK = function (alto = 40, { titulo = 'Fantasmita de Kozmok', saluda = true } = {}) {
+        const cuerpo = 'M7 25C7 12.5 14.4 5 24 5s17 7.5 17 20v22.5l-5.6-5.2-5.6 6-5.8-6-5.8 6-5.6-6L7 47.5z';
+        const brazo = saluda ? '<path d="M40.4 27.5c3.6-.6 6.2-3.4 6.8-7.4" fill="none" stroke-width="3.4" stroke-linecap="round"/>' : '';
+        const tinta = 'stroke:var(--kzk-contorno,#0B0E14)';
+        return `<svg class="kzk-mascota" viewBox="0 0 54 56" width="${Math.round(alto * 54 / 56)}" height="${alto}" role="img" aria-label="${titulo}"><title>${titulo}</title>
+            <g transform="skewX(-8) translate(5 0)">
+                <g transform="translate(3 3)" style="fill:var(--kzk-sombra,#6E8BF0);stroke:var(--kzk-sombra,#6E8BF0)" stroke-width="3.4" stroke-linejoin="round">
+                    <path d="${cuerpo}"/>${brazo}</g>
+                <g style="fill:var(--kzk-tinta,#fff);${tinta}" stroke-width="3.4" stroke-linejoin="round" paint-order="stroke">
+                    <path d="${cuerpo}"/>${brazo}</g>
+                <g class="km-ojos" style="fill:var(--kzk-contorno,#0B0E14)">
+                    <ellipse cx="18.6" cy="23.5" rx="2.6" ry="3.8"/><ellipse cx="29" cy="23.5" rx="2.6" ry="3.8"/></g>
+                <circle cx="19.4" cy="22.2" r=".9" fill="#fff"/><circle cx="29.8" cy="22.2" r=".9" fill="#fff"/>
+                <path d="M21 31.2q2.8 2.6 5.6 0" fill="none" style="${tinta}" stroke-width="2.2" stroke-linecap="round"/>
+                <ellipse cx="14.6" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
+                <ellipse cx="33.2" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
+                <path d="M47 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z" style="fill:var(--kzk-sombra,#6E8BF0)"/>
+            </g>
+        </svg>`;
+    };
+
     // Rellena íconos en HTML estático: <span data-ic="cart" data-ic-size="18"></span>
     // El ícono se antepone al contenido existente del elemento.
     document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('[data-logo]').forEach((el) => {
             el.innerHTML = window.logoKZK(Number(el.dataset.logo) || 16);
         });
+        document.querySelectorAll('[data-mascota]').forEach((el) => {
+            el.innerHTML = window.mascotaKZK(Number(el.dataset.mascota) || 40);
+        });
+        // En la tienda, los avisos de "no hay nada aquí" llevan al fantasmita.
+        if (!location.pathname.startsWith('/admin/')) {
+            const ponerMascota = (raiz) => {
+                const lista = raiz.matches && raiz.matches('.empty-state') ? [raiz] : raiz.querySelectorAll ? raiz.querySelectorAll('.empty-state') : [];
+                lista.forEach((el) => {
+                    if (el.querySelector('.kzk-mascota') || /^\s*cargando/i.test(el.textContent)) return;
+                    el.insertAdjacentHTML('afterbegin', `<span class="empty-mascota" aria-hidden="true">${window.mascotaKZK(64, { saluda: false })}</span>`);
+                });
+            };
+            ponerMascota(document);
+            new MutationObserver((cambios) => cambios.forEach((c) => c.addedNodes.forEach((n) => { if (n.nodeType === 1) ponerMascota(n); })))
+                .observe(document.body, { childList: true, subtree: true });
+        }
         document.querySelectorAll('[data-ic]').forEach((el) => {
             const prev = el.innerHTML.trim();
             el.innerHTML = window.icon(el.dataset.ic, Number(el.dataset.icSize) || 20) + (prev ? ' ' + prev : '');

@@ -155,7 +155,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .hero p { margin: 0; }
 .hero-actions { justify-content: flex-start; margin-top: 6px; }
 .hero-logo { flex: 1 1 340px; display: flex; flex-direction: column; align-items: center; gap: 22px; }
-.hero-logo .kzk-logo { width: min(300px, 70vw); height: auto; transform: rotate(-4deg); }
+.hero-logo .kzk-logo { width: min(280px, 50vw); height: auto; transform: rotate(-4deg); }
 .hero-sellos { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 
 /* Banner de promociones */
@@ -223,7 +223,23 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .cuenta-nav a.active { box-shadow: inset 4px 0 0 var(--accent); }
 
 /* Botón del asesor */
-#chatbot-toggle { border: 2px solid var(--arc-tinta); box-shadow: 4px 4px 0 var(--arc-tinta); }
+#chatbot-toggle {
+    width: 62px; height: 62px; background: var(--bg-panel-2); border: 2px solid var(--arc-tinta);
+    box-shadow: 4px 4px 0 var(--accent); transition: transform .12s ease, box-shadow .12s ease;
+}
+#chatbot-toggle:hover { background: var(--bg-panel-2); transform: translate(-1px, -1px) rotate(-4deg); box-shadow: 5px 5px 0 var(--accent); }
+#chatbot-toggle .kzk-mascota { margin-top: 2px; }
+.chatbot-titulo { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Fantasmita junto al logo de la portada */
+.hero-marca { position: relative; display: flex; align-items: flex-end; justify-content: center; }
+.hero-mascota { margin-left: -14px; margin-bottom: 26px; animation: kz-flotar 3.2s ease-in-out infinite; }
+.hero-mascota .kzk-mascota { display: block; width: min(130px, 26vw); height: auto; }
+@keyframes kz-flotar {
+    0%, 100% { transform: translateY(0) rotate(6deg); }
+    50%      { transform: translateY(-10px) rotate(2deg); }
+}
+@media (prefers-reduced-motion: reduce) { .hero-mascota { animation: none; transform: rotate(5deg); } }
 
 @media (max-width: 860px) {
     .hero { padding: 44px 18px 40px; }
@@ -250,3 +266,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .auth-error, .seg-alerta { border-width: 2px; }
 .tag.ok, .tag.mal, .tag.aviso { border-radius: 0; transform: skewX(-10deg); border-width: 2px; font-family: var(--font-arcade); font-style: italic; font-weight: 800; text-transform: uppercase; }
 .cuenta-avatar { color: #0B0E14; font-family: var(--font-arcade); font-style: italic; font-weight: 900; }
+
+/* Fantasmita en avisos vacíos, en el globo del asesor y en el 404 */
+.empty-state .empty-mascota { display: block; width: fit-content; margin: 0 auto 12px; animation: kz-flotar 3.2s ease-in-out infinite; }
+.empty-state .empty-mascota .kzk-mascota { display: block; }
+.chatbot-nudge .nudge-mascota { float: left; margin: 0 10px 2px 0; }
+.p404-marca { display: flex; justify-content: center; align-items: flex-end; gap: 4px; }
+.p404-mascota { margin-bottom: 10px; animation: kz-flotar 3.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .empty-state .empty-mascota, .p404-mascota { animation: none; } }
+#chatbot-panel { border: 2px solid var(--arc-tinta); box-shadow: 6px 6px 0 var(--accent); }
+#chatbot-panel .chatbot-header strong { font-family: var(--font-arcade); font-style: italic; font-weight: 800; text-transform: uppercase; letter-spacing: .01em; }
