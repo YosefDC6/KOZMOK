@@ -136,16 +136,28 @@ async function cargarCarrito() {
         RECOMP.puntos - (RECOMP.puntos % 100),
         Math.floor(base / RECOMP.valor_punto / 100) * 100
     ));
+    const previo = Math.min(puntosCanje(), maxCanje);   // conserva lo elegido si se vuelve a pintar
+    const mitad = Math.round(maxCanje / 2 / 100) * 100;
+    const chips = [[0, 'No usar'], ...(mitad >= 100 && mitad < maxCanje ? [[mitad, 'La mitad']] : []), [maxCanje, maxCanje === RECOMP.puntos - (RECOMP.puntos % 100) ? 'Todos' : 'El máximo']];
     const bloquePuntos = maxCanje >= 100
-        ? `<div class="field">
-             <label>Usar puntos del Club (tienes ${RECOMP.puntos.toLocaleString('es-MX')} · valen ${formatoMoneda(RECOMP.puntos * RECOMP.valor_punto)})</label>
-             <div style="display:flex;gap:8px;align-items:center">
-               <input type="number" id="canje" min="0" max="${maxCanje}" step="100" value="0" style="width:120px" oninput="recalcular()" />
-               <span style="font-size:.84rem;color:var(--text-muted)">puntos = <strong id="canje-mxn">$0</strong> de descuento (máx ${maxCanje})</span>
+        ? `<div class="canje-box">
+             <div class="canje-cab">
+               <h4>${icon('star', 15)} Puntos del Club</h4>
+               <span>Tienes <strong>${RECOMP.puntos.toLocaleString('es-MX')}</strong> · valen ${formatoMoneda(RECOMP.puntos * RECOMP.valor_punto)}</span>
              </div>
+             <div class="canje-valor">
+               <div><strong id="canje-pts">${previo.toLocaleString('es-MX')}</strong> puntos</div>
+               <div class="canje-desc" id="canje-mxn">${previo ? '−' + formatoMoneda(previo * RECOMP.valor_punto) : 'Sin descuento'}</div>
+             </div>
+             <input type="range" id="canje" class="canje-rango" min="0" max="${maxCanje}" step="100" value="${previo}" style="--llenado:${previo / maxCanje * 100}%"
+                    aria-label="Puntos a canjear" oninput="recalcular()" />
+             <div class="canje-chips">
+               ${chips.map(([v, t]) => `<button type="button" class="chip${v === previo ? ' on' : ''}" data-v="${v}" onclick="fijarCanje(${v})">${t}</button>`).join('')}
+             </div>
+             <small>Se canjean de 100 en 100 · 100 puntos = ${formatoMoneda(100 * RECOMP.valor_punto)}${maxCanje < RECOMP.puntos - (RECOMP.puntos % 100) ? ` · en este pedido puedes usar hasta ${maxCanje.toLocaleString('es-MX')}` : ''}</small>
            </div>`
         : (RECOMP.puntos > 0
-            ? `<p style="font-size:.82rem;color:var(--text-muted)">Junta 100 puntos para poder canjearlos. Tienes ${RECOMP.puntos}.</p>`
+            ? `<p class="canje-pocos">${icon('star', 14)} Tienes ${RECOMP.puntos.toLocaleString('es-MX')} puntos del Club. Al juntar 100 podrás usarlos como descuento.</p>`
             : '');
 
     const shipHint = envio === 0
@@ -412,10 +424,18 @@ function puntosCanje() {
     v = v - (v % 100);
     return v;
 }
+function fijarCanje(v) {
+    const el = document.getElementById('canje'); if (!el) return;
+    el.value = v; recalcular();
+}
 let _cotTimer = null;
 function recalcular() {
     const pts = puntosCanje();
-    const cm = document.getElementById('canje-mxn'); if (cm) cm.textContent = formatoMoneda(pts * RECOMP.valor_punto);
+    const cm = document.getElementById('canje-mxn'); if (cm) cm.textContent = pts ? '−' + formatoMoneda(pts * RECOMP.valor_punto) : 'Sin descuento';
+    const cp = document.getElementById('canje-pts'); if (cp) cp.textContent = pts.toLocaleString('es-MX');
+    const rg = document.getElementById('canje');
+    if (rg) rg.style.setProperty('--llenado', (Number(rg.max) ? pts / Number(rg.max) * 100 : 0) + '%');
+    document.querySelectorAll('.canje-chips .chip').forEach((c) => c.classList.toggle('on', Number(c.dataset.v) === pts));
     clearTimeout(_cotTimer);
     _cotTimer = setTimeout(async () => {
         try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts } }); } catch { return; }
