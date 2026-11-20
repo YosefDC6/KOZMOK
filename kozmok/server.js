@@ -7241,7 +7241,7 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, HOST, async () => {
-    console.log(`Kozmok escuchando en http://localhost:${PORT}`);
+    console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
     console.log(`   Panel de admin:  http://localhost:${PORT}/admin/login.html`);
     if (HOST === '0.0.0.0' || HOST === '::') {
