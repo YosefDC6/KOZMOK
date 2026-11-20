@@ -934,6 +934,10 @@ body.mp-lock { overflow: hidden; }
     align-items: center; justify-content: center; padding: 40px 20px 60px;
 }
 .auth-wrap .card { width: 100%; max-width: 420px; padding: 30px 26px; }
+/* Campo de correo oculto a la vista pero presente en el formulario (cuenta
+   recordada elegida): el navegador lo sigue usando para guardar o autollenar
+   la contraseña de ese correo. */
+.campo-oculto { position: absolute !important; width: 1px; height: 1px; margin: 0 !important; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .auth-wrap .field:last-of-type { margin-bottom: 20px; }
 
 /* =========================================================

@@ -27,13 +27,13 @@
     <div class="card" id="form-card" style="max-width:460px">
         <form id="form-registro">
             <div class="field"><label>Nombre completo</label><input type="text" id="nombre" required autocomplete="name" /></div>
-            <div class="field"><label>Correo electrónico</label><input type="email" id="correo" required autocomplete="email" />
+            <div class="field"><label>Correo electrónico</label><input type="email" id="correo" name="username" required autocomplete="username" />
                 <div class="sugerencia-correo" id="sugerencia-correo" hidden></div></div>
 
             <div class="field">
                 <label>Contraseña</label>
                 <div style="display:flex;gap:8px">
-                    <input type="password" id="password" minlength="8" maxlength="72" required autocomplete="new-password" oninput="medirPass()" />
+                    <input type="password" id="password" name="password" minlength="8" maxlength="72" required autocomplete="new-password" oninput="medirPass()" />
                     <button type="button" class="btn btn-outline btn-sm" id="toggle-pass" aria-label="Mostrar u ocultar contraseña" data-ic="eye" data-ic-size="16"></button>
                 </div>
                 <div class="pass-meter" id="pass-meter" hidden>
@@ -156,7 +156,7 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
         Sesion.guardarCliente({ ...data.cliente, recordar: body.recordar });
-        if (body.recordar) CuentasRecordadas.guardar('cliente', data.cliente);
+        if (body.recordar) { CuentasRecordadas.guardar('cliente', data.cliente); await guardarCredencial(body.correo, password, data.cliente.nombre); }
         const r = await CarritoInvitado.fusionar();
         toast(r.pasados ? `¡Cuenta creada! Tu carrito (${r.pasados} producto(s)) ya está en tu cuenta.` : '¡Cuenta creada!', 'ok');
         r.avisos.forEach((m) => toast(m, 'warn'));

@@ -43,11 +43,14 @@ montarCuenta('seguridad', async (panel, P) => {
         <div class="seg-grid">
             <section class="card">
                 <h3 class="seg-tit">${icon('lock', 18)} Cambiar contraseña</h3>
+                <form id="form-pass" onsubmit="event.preventDefault(); cambiarPassword()">
+                <input type="email" name="username" autocomplete="username" value="${escHTML((Sesion.cliente() || {}).correo || '')}" hidden readonly />
                 <div class="field"><label for="s-actual">Contraseña actual</label><input type="password" id="s-actual" autocomplete="current-password" /></div>
                 <div class="field"><label for="s-nueva">Nueva contraseña</label><input type="password" id="s-nueva" maxlength="72" autocomplete="new-password" />
                     ${ReglasPass.html('pass-reglas')}</div>
                 <div class="field"><label for="s-rep">Repetir nueva contraseña</label><input type="password" id="s-rep" autocomplete="new-password" /></div>
-                <button class="btn btn-primary" id="btn-pass">Actualizar contraseña</button>
+                <button class="btn btn-primary" id="btn-pass" type="submit">Actualizar contraseña</button>
+                </form>
             </section>
             <section class="card">
                 <div class="seg-cab">
@@ -71,7 +74,6 @@ montarCuenta('seguridad', async (panel, P) => {
                 </div>`).join('')}
         </section>`;
     ReglasPass.enlazar(document.getElementById('s-nueva'), document.getElementById('pass-reglas'));
-    document.getElementById('btn-pass').addEventListener('click', cambiarPassword);
     const otras = document.getElementById('btn-otras');
     if (otras) otras.addEventListener('click', async () => {
         try { const r = await api('/auth/sesiones/cerrar-otras', { method: 'POST' }); toast(r.message, 'ok'); montarDeNuevo(); }
@@ -103,6 +105,8 @@ async function cambiarPassword() {
     try {
         const r = await api(`/clientes/${CID}/password`, { method: 'PUT', body: { actual, nueva } });
         toast(r.message || 'Contraseña actualizada', 'ok');
+        const yo = Sesion.cliente() || {};
+        await guardarCredencial(yo.correo, nueva, yo.nombre);   // el navegador actualiza la que tenía guardada
         ['s-actual', 's-nueva', 's-rep'].forEach((i) => document.getElementById(i).value = '');
         Sesion.guardarCliente({ ...Sesion.cliente(), password_debil: false });
         document.getElementById('aviso-debil')?.remove();

@@ -3705,6 +3705,12 @@ app.put('/api/admin/mi-password', limiteAuth, asyncRoute(async (req, res) => {
     await pool.query('UPDATE usuarios SET password_hash = $1, password_debil = FALSE, cambiar_password = FALSE WHERE id = $2', [await seg.hashPassword(nueva), u.id]);
     const cerradas = await seg.revocarSesionesDe('usuario', u.id, 'cambio de contraseña', req.sesion.id);
     await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', usuario_id: u.id, detalle: `Cambio de contraseña del equipo; ${cerradas} sesión(es) cerradas` });
+    // Aviso por correo, igual que en la tienda: si no fue la persona, se entera.
+    await enviarCorreo(pool, { para: u.email, tipo: 'seguridad', asunto: 'Tu contraseña del panel de Kozmok cambió',
+        cuerpo: `Hola ${u.nombre}:\n\nLa contraseña de tu cuenta del panel de Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros equipos` : ''}.\n\n`
+            + `- Fecha: ${new Date().toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Mexico_City' })}\n`
+            + `- Dispositivo: ${descripcionDispositivo(req.headers['user-agent'])}\n\n`
+            + 'Si no fuiste tú, avisa de inmediato a un administrador para que bloquee tu cuenta.' });
     res.json({ message: cerradas ? `Contraseña actualizada. Cerramos ${cerradas} sesión(es) en otros equipos.` : 'Contraseña actualizada' });
 }));
 

@@ -134,6 +134,19 @@ const CuentasRecordadas = {
 };
 window.CuentasRecordadas = CuentasRecordadas;
 
+// Le pide al navegador (Chrome, Edge) que guarde el correo y la contraseña
+// en su gestor de contraseñas, como cuando entras a una cuenta de Google.
+// El navegador pregunta "¿Guardar contraseña?" y la próxima vez la autollena.
+// La contraseña la guarda el navegador, nunca la tienda. Firefox y Safari no
+// tienen esta función, pero igual ofrecen guardarla al enviar el formulario.
+async function guardarCredencial(correo, password, nombre) {
+    try {
+        if (!correo || !password || !window.PasswordCredential || !navigator.credentials) return;
+        await navigator.credentials.store(new PasswordCredential({ id: correo, password, name: nombre || correo }));
+    } catch { /* el navegador no lo permite o la persona dijo que no */ }
+}
+window.guardarCredencial = guardarCredencial;
+
 // Tokens de la versión anterior (Base64 en localStorage): ya no sirven.
 try { localStorage.removeItem('kz_token'); localStorage.removeItem('kz_admin_token'); } catch { /* sin almacenamiento */ }
 
