@@ -123,13 +123,15 @@
     // ------------------------------------------------------------
     // Movimiento manual de inventario
     // ------------------------------------------------------------
-    const MOTIVOS = {
-        entrada: ['Compra a proveedor', 'Devolución de cliente', 'Ajuste de inventario', 'Conteo físico'],
-        salida: ['Merma / daño', 'Ajuste de inventario', 'Conteo físico', 'Muestra o uso interno'],
-    };
+    // Motivos y umbrales vienen del servidor (la misma lista que valida)
+    let MOTIVOS = null, UMBRAL = { umbral_valor: 3000, umbral_piezas: 3 };
     async function nuevoMovimiento({ productoId = null, tipo = 'entrada', onListo: cb = null } = {}) {
         onListo = cb;
-        try { await catalogos(); } catch (e) { toast(e.message, 'error'); return; }
+        try {
+            await catalogos();
+            if (!MOTIVOS) { const r = await api('/admin/movimientos-inventario/motivos'); MOTIVOS = r.motivos; UMBRAL = r; }
+        } catch (e) { toast(e.message, 'error'); return; }
+        const esAdmin = (Sesion.usuario() || {}).rol === 'admin';
         const radio = (t, txt) => `<label style="display:flex;align-items:center;gap:6px;width:auto;margin:0"><input type="radio" name="msa-tipo" value="${t}" ${t === tipo ? 'checked' : ''} style="width:auto" onchange="ScmAcciones._motivos()" /> ${txt}</label>`;
         abrirModal(`
             <h3>Nuevo movimiento</h3>
@@ -138,36 +140,45 @@
             </div>
             <div class="field"><label>Tipo</label><div style="display:flex;gap:18px;align-items:center;padding:6px 0">${radio('entrada', 'Entrada')}${radio('salida', 'Salida')}</div></div>
             <div class="field-row">
-                <div class="field"><label>Cantidad</label><input type="number" min="1" id="msa-cantidad" value="1" /></div>
-                <div class="field"><label>Motivo</label><select id="msa-motivo" onchange="document.getElementById('msa-otro-wrap').hidden = this.value !== 'otro'"></select></div>
+                <div class="field"><label>Cantidad</label><input type="number" min="1" step="1" id="msa-cantidad" value="1" /></div>
+                <div class="field"><label>Motivo</label><select id="msa-motivo" onchange="ScmAcciones._detalle()"></select></div>
             </div>
-            <div class="field" id="msa-otro-wrap" hidden><label>Describe el motivo</label><input id="msa-otro" placeholder="Ej. traspaso entre sucursales" /></div>
+            <div class="field"><label id="msa-detalle-lbl">Detalle</label>
+                <textarea id="msa-detalle" rows="2" maxlength="300" placeholder="Qué pasó, folio de la factura, quién lo detectó…"></textarea></div>
             <div class="field-row">
-                <div class="field"><label>Fecha</label><input type="datetime-local" id="msa-fecha" value="${ahoraLocal()}" max="${ahoraLocal()}" /></div>
+                <div class="field"><label>Fecha y hora</label><input value="La registra el sistema al guardar" disabled /></div>
                 <div class="field"><label>Usuario</label><input value="${(Sesion.usuario() || {}).nombre || ''}" disabled /></div>
             </div>
-            <p style="font-size:.76rem;color:var(--text-muted);margin:0">Una salida cuenta como demanda: si deja el producto en stock crítico se genera solo su pedido de reposición.</p>
+            <p style="font-size:.76rem;color:var(--text-muted);margin:0">El movimiento queda en la bitácora con tu nombre y no se puede editar ni borrar; un error se corrige con un movimiento contrario.
+                ${esAdmin ? '' : `Las salidas de ${UMBRAL.umbral_piezas} piezas o más, de ${formatoMoneda(UMBRAL.umbral_valor)} o más, o por robo, necesitan la aprobación de un administrador.`}</p>
             <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="ScmAcciones._guardarMovimiento()">Registrar movimiento</button>`);
         motivos();
     }
     function motivos() {
         const t = document.querySelector('input[name="msa-tipo"]:checked').value;
-        $('msa-motivo').innerHTML = MOTIVOS[t].map((m) => `<option>${m}</option>`).join('') + '<option value="otro">Otro…</option>';
-        $('msa-otro-wrap').hidden = true;
+        $('msa-motivo').innerHTML = Object.entries(MOTIVOS[t]).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+        detalle();
+    }
+    // Las salidas y los ajustes siempre llevan el detalle escrito
+    function detalle() {
+        const t = document.querySelector('input[name="msa-tipo"]:checked').value;
+        const obligatorio = t === 'salida' || ['otro', 'conteo'].includes($('msa-motivo').value);
+        $('msa-detalle-lbl').textContent = obligatorio ? 'Detalle (obligatorio)' : 'Detalle (opcional)';
     }
     async function guardarMovimiento() {
         const body = {
             producto_id: Number($('msa-producto').value),
             tipo: document.querySelector('input[name="msa-tipo"]:checked').value,
             cantidad: Number($('msa-cantidad').value),
-            motivo: $('msa-motivo').value === 'otro' ? $('msa-otro').value.trim() : $('msa-motivo').value,
-            fecha: $('msa-fecha').value || null,
+            motivo_tipo: $('msa-motivo').value,
+            detalle: $('msa-detalle').value.trim(),
         };
-        if (!body.motivo) return toast('Escribe el motivo', 'warn');
-        if (!body.cantidad || body.cantidad < 1) return toast('La cantidad debe ser mayor a 0', 'warn');
+        if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
+        const obligatorio = body.tipo === 'salida' || ['otro', 'conteo'].includes(body.motivo_tipo);
+        if (obligatorio && body.detalle.length < 10) return toast('Describe qué pasó (al menos 10 caracteres)', 'warn');
         try {
-            await api('/admin/movimientos-inventario', { method: 'POST', body });
-            listo(`Movimiento registrado (${body.tipo === 'entrada' ? '+' : '−'}${body.cantidad})`);
+            const r = await api('/admin/movimientos-inventario', { method: 'POST', body });
+            listo(r.message || `Movimiento registrado (${body.tipo === 'entrada' ? '+' : '−'}${body.cantidad})`);
         } catch (e) { toast(e.message, 'error'); }
     }
 
@@ -227,6 +238,6 @@
     window.ScmAcciones = {
         pedidoReposicion, nuevoMovimiento, abasto, cerrar,
         _alCambiarProducto: alCambiarProducto, _alCambiarProveedor: alCambiarProveedor, _costo: costo,
-        _guardarPedido: guardarPedido, _motivos: motivos, _guardarMovimiento: guardarMovimiento, _guardarAbasto: guardarAbasto,
+        _guardarPedido: guardarPedido, _motivos: motivos, _detalle: detalle, _guardarMovimiento: guardarMovimiento, _guardarAbasto: guardarAbasto,
     };
 })();

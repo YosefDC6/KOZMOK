@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Auditoría · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<style>
+    .aud-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 16px; align-items: start; }
+    @media (max-width: 1100px) { .aud-grid { grid-template-columns: 1fr; } }
+    .aud-filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .aud-filtros .field { margin: 0; }
+    .aud-cambio { font-size: .78rem; line-height: 1.5; }
+    .aud-cambio .k { color: var(--text-muted); }
+    .aud-cambio del { color: var(--danger); text-decoration: line-through; }
+    .aud-cambio ins { color: var(--success); text-decoration: none; }
+    td.aud-det { max-width: 380px; word-break: break-word; }
+    .integridad { display: flex; gap: 12px; align-items: flex-start; }
+    .integridad .ico { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
+    .integridad.ok .ico { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+    .integridad.mal .ico { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+    .pend { border-bottom: 1px solid var(--line); padding: 10px 0; font-size: .86rem; }
+    .pend:last-child { border-bottom: none; }
+    .pend .acc { display: flex; gap: 8px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="aud-grid">
+            <section class="card">
+                <div class="aud-filtros">
+                    <div class="field"><label>Área</label><select id="f-entidad">
+                        <option value="">Todas</option><option value="producto">Inventario y productos</option><option value="pedido">Pedidos y pagos</option>
+                        <option value="cliente">Clientes</option><option value="clientes">Clientes (ediciones)</option><option value="monedero">Monedero</option>
+                        <option value="promociones">Promociones</option><option value="usuarios">Cuentas y roles</option><option value="impuestos">Impuestos</option>
+                        <option value="garantias">Garantías</option><option value="seguridad">Seguridad</option></select></div>
+                    <div class="field"><label>Acción</label><input id="f-accion" placeholder="baja, precio, pago…" /></div>
+                    <div class="field"><label>Buscar</label><input id="f-q" placeholder="Folio, producto, motivo…" /></div>
+                    <div class="field"><label>Desde</label><input type="date" id="f-desde" /></div>
+                    <div class="field"><label>Hasta</label><input type="date" id="f-hasta" /></div>
+                </div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>Fecha</th><th>Quién</th><th>Acción</th><th>Detalle</th></tr></thead>
+                    <tbody id="filas"><tr><td colspan="4">Cargando…</td></tr></tbody>
+                </table></div>
+                <div style="text-align:center;margin-top:12px"><button class="btn btn-outline btn-sm" id="btn-mas" hidden>Cargar más</button></div>
+            </section>
+            <aside style="display:flex;flex-direction:column;gap:16px">
+                <section class="card" id="integridad"><p style="margin:0;color:var(--text-muted)">Verificando la bitácora…</p></section>
+                <section class="card">
+                    <h3 style="margin-top:0">Bajas por aprobar</h3>
+                    <p style="font-size:.8rem;color:var(--text-muted);margin-top:4px">Salidas de inventario que un empleado solicitó y que necesitan una segunda firma antes de descontar el stock.</p>
+                    <div id="pendientes"></div>
+                </section>
+                <section class="card" style="font-size:.82rem;color:var(--text-muted);line-height:1.55">
+                    <h3 style="margin-top:0;color:var(--text)">Cómo se protege</h3>
+                    <ul style="margin:0;padding-left:18px">
+                        <li>La fecha de cada registro la pone la base de datos, no la computadora del empleado.</li>
+                        <li>Los movimientos de inventario, puntos y monedero no se editan ni se borran: un error se corrige con un movimiento contrario.</li>
+                        <li>Cada registro guarda la huella (SHA-256) del anterior: si alguien altera uno directo en la base, la cadena se rompe y aquí se avisa.</li>
+                        <li>Las bajas grandes, los robos y los ajustes de monedero piden la firma de otra persona.</li>
+                    </ul>
+                </section>
+            </aside>
+        </div>
+    </main>
+</div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('auditoria');
+document.getElementById('topbar').innerHTML = adminHeader('Auditoría', 'Quién hizo qué y cuándo: cada cambio del equipo queda registrado y no se puede borrar.',
+    '<button class="btn btn-outline" onclick="todo()">Actualizar</button>');
+
+const ACCION = {
+    baja_inventario: 'Baja de inventario', entrada_inventario: 'Entrada de inventario', baja_solicitada: 'Baja solicitada (por aprobar)',
+    baja_aprobada: 'Baja aprobada', baja_rechazada: 'Baja rechazada', producto_alta: 'Alta de producto', producto_precio: 'Cambio de precio',
+    producto_edicion: 'Edición de producto', producto_desactivado: 'Producto desactivado', producto_eliminado: 'Producto eliminado',
+    pedido_estado: 'Cambio de estado de pedido', pedido_cancelado: 'Pedido cancelado', pago_registrado: 'Pago registrado',
+    cliente_eliminado: 'Cliente eliminado', cliente_inactivado: 'Cliente inactivado', monedero_ajuste: 'Ajuste de monedero',
+    monedero_ajuste_solicitado: 'Ajuste de monedero solicitado', monedero_ajuste_aprobado: 'Ajuste de monedero aprobado',
+    monedero_ajuste_rechazado: 'Ajuste de monedero rechazado', monedero_estado: 'Bloqueo / desbloqueo de monedero',
+    recarga_confirmada: 'Recarga confirmada', recarga_cancelada: 'Recarga cancelada',
+};
+const nombreAccion = (a) => ACCION[a] || a.replace(/^(POST|PUT|DELETE) /, (m) => ({ 'POST ': 'Alta · ', 'PUT ': 'Cambio · ', 'DELETE ': 'Baja · ' }[m])).replace(/\/:id/g, '').replace(/\//g, ' ').trim();
+
+function cambioHTML(r) {
+    const a = r.antes || {}, d = r.despues || {};
+    const claves = [...new Set([...Object.keys(a), ...Object.keys(d)])].slice(0, 8);
+    const v = (x) => (x === null || x === undefined ? '—' : typeof x === 'object' ? JSON.stringify(x) : String(x));
+    return `<div class="aud-cambio">
+        ${r.entidad_id ? `<div><span class="k">${escHTML(r.entidad)}:</span> <span class="mono">${escHTML(r.entidad_id)}</span></div>` : ''}
+        ${claves.map((k) => `<div><span class="k">${escHTML(k)}:</span> ${k in a ? `<del>${escHTML(v(a[k]))}</del> → ` : ''}<ins>${escHTML(v(d[k]))}</ins></div>`).join('')}
+        ${r.motivo ? `<div><span class="k">Motivo:</span> ${escHTML(r.motivo)}</div>` : ''}
+    </div>`;
+}
+
+let ULTIMO = null;
+async function cargar(mas = false) {
+    const p = new URLSearchParams();
+    const val = (id) => document.getElementById(id).value.trim();
+    if (val('f-entidad')) p.set('entidad', val('f-entidad'));
+    if (val('f-accion')) p.set('accion', val('f-accion'));
+    if (val('f-q')) p.set('q', val('f-q'));
+    if (val('f-desde')) p.set('desde', val('f-desde'));
+    if (val('f-hasta')) p.set('hasta', val('f-hasta'));
+    if (mas && ULTIMO) p.set('antes_de', ULTIMO);
+    const filas = await api('/admin/auditoria?' + p);
+    const tb = document.getElementById('filas');
+    const html = filas.map((r) => `<tr>
+        <td style="white-space:nowrap">${formatoFechaHora(r.fecha)}<div style="font-size:.72rem;color:var(--text-muted)">#${r.id}${r.ip ? ' · ' + escHTML(r.ip) : ''}</div></td>
+        <td>${escHTML(r.usuario_nombre || 'Sistema')}<div style="font-size:.72rem;color:var(--text-muted)">${escHTML(ROL_LABEL[r.rol] || r.rol || '')}</div></td>
+        <td>${escHTML(nombreAccion(r.accion))}</td>
+        <td class="aud-det">${cambioHTML(r)}</td></tr>`).join('');
+    if (mas) tb.insertAdjacentHTML('beforeend', html);
+    else tb.innerHTML = html || '<tr><td colspan="4">No hay registros con esos filtros.</td></tr>';
+    ULTIMO = filas.length ? filas[filas.length - 1].id : ULTIMO;
+    document.getElementById('btn-mas').hidden = filas.length < 100;
+}
+
+async function verificar() {
+    const el = document.getElementById('integridad');
+    try {
+        const v = await api('/admin/auditoria/verificar');
+        el.innerHTML = v.integra
+            ? `<div class="integridad ok"><span class="ico">${icon('check', 18)}</span><div><strong>Bitácora íntegra</strong>
+                <div style="font-size:.82rem;color:var(--text-muted)">${v.total.toLocaleString('es-MX')} registros verificados: ninguno fue cambiado ni borrado.</div></div></div>`
+            : `<div class="integridad mal"><span class="ico">${icon('alert', 18)}</span><div><strong>La bitácora fue alterada</strong>
+                <div style="font-size:.82rem;color:var(--text-muted)">Registro #${v.primer_problema.id} (${formatoFechaHora(v.primer_problema.fecha)}): ${escHTML(v.primer_problema.motivo)}. Alguien modificó la base de datos por fuera del sistema.</div></div></div>`;
+    } catch (e) { el.innerHTML = `<p style="margin:0;color:var(--danger)">${escHTML(e.message)}</p>`; }
+}
+
+async function pendientes() {
+    const el = document.getElementById('pendientes');
+    const lista = await api('/admin/movimientos-inventario/pendientes').catch(() => []);
+    const yo = (Sesion.usuario() || {}).nombre;
+    el.innerHTML = lista.length ? lista.map((m) => `<div class="pend">
+        <strong>${m.cantidad} × ${escHTML(m.producto_nombre)}</strong> · <span class="mono">${formatoMoneda(m.valor)}</span>
+        <div style="color:var(--text-muted);font-size:.8rem">${escHTML(m.motivo)}</div>
+        <div style="color:var(--text-muted);font-size:.76rem">Pidió: ${escHTML(m.usuario_nombre || '—')} · ${formatoFechaHora(m.fecha)} · stock actual ${m.stock}</div>
+        <div class="acc">
+            <button class="btn btn-primary btn-sm" onclick="resolver(${m.id}, 'aprobar')" ${m.usuario_nombre === yo ? 'disabled title="Otra persona debe aprobarla"' : ''}>Aprobar baja</button>
+            <button class="btn btn-ghost btn-sm" onclick="resolver(${m.id}, 'rechazar')">Rechazar</button>
+        </div></div>`).join('') : '<p style="margin:0;font-size:.85rem;color:var(--text-muted)">No hay bajas esperando aprobación.</p>';
+}
+async function resolver(id, decision) {
+    let nota = '';
+    if (decision === 'rechazar') {
+        nota = prompt('¿Por qué se rechaza la baja?') || '';
+        if (nota.trim().length < 5) return toast('Escribe el motivo del rechazo', 'warn');
+    } else if (!(await confirmar('Al aprobarla, las piezas salen del inventario y queda tu nombre como quien autorizó.', { okText: 'Aprobar baja' }))) return;
+    try {
+        const r = await api(`/admin/movimientos-inventario/${id}/resolver`, { method: 'POST', body: { decision, nota } });
+        toast(r.message, 'ok'); todo();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+function todo() { cargar(); verificar(); pendientes(); }
+['f-entidad', 'f-desde', 'f-hasta'].forEach((id) => document.getElementById(id).addEventListener('change', () => cargar()));
+let t;
+['f-accion', 'f-q'].forEach((id) => document.getElementById(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => cargar(), 350); }));
+document.getElementById('btn-mas').addEventListener('click', () => cargar(true));
+todo();
+</script>
+</body>
+</html>

@@ -62,6 +62,7 @@ const ADMIN_SECCIONES = [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },
         { href: '/admin/usuarios.html',      key: 'usuarios',      ic: 'lock',     label: 'Cuentas y equipo' },
         { href: '/admin/seguridad.html',     key: 'seguridad',     ic: 'shield',   label: 'Seguridad' },
+        { href: '/admin/auditoria.html',     key: 'auditoria',     ic: 'clock',    label: 'Auditoría' },
         { href: '/admin/configuracion.html', key: 'configuracion', ic: 'settings', label: 'Configuración' },
     ] },
 ];

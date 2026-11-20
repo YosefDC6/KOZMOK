@@ -468,6 +468,9 @@ const esId = (v) => /^\d{1,9}$/.test(String(v));
 // Errores de PostgreSQL -> mensaje genérico (nunca se muestra el SQL ni
 // el detalle interno, que le daría pistas a un atacante).
 function mensajeSeguro(e) {
+    // Rechazos del control interno (disparadores de la base): su mensaje
+    // está escrito para el usuario, así que se muestra tal cual.
+    if (e && e.code === 'P0001' && e.hint === 'control_interno') return e.message;
     if (e && e.code && /^[0-9A-Z]{5}$/.test(e.code)) {
         if (e.code === '23505') return 'Ese registro ya existe.';
         if (e.code === '23503') return 'El registro está relacionado con otros datos.';

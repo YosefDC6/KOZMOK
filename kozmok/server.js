@@ -78,6 +78,11 @@ const asyncRoute = (fn) => (req, res, next) => fn(req, res, next).catch((err) =>
     console.error(`[${folio}]`, req.method, req.originalUrl, '->', err.message);
     if (res.headersSent) return;
     if (err.code && String(err.code).startsWith('22')) return res.status(400).json({ message: seg.mensajeSeguro(err) });
+    // La base rechazó un cambio prohibido (control interno): 409 con su motivo
+    if (err.code === 'P0001' && err.hint === 'control_interno') {
+        seg.registrarEvento(req, { tipo: 'control_interno', severidad: 'alta', detalle: err.message.slice(0, 250), usuario_id: req.usuario ? req.usuario.id : null });
+        return res.status(409).json({ message: err.message });
+    }
     res.status(500).json({ error: 'Error del servidor', message: 'Ocurrió un error interno. Intenta de nuevo.', folio });
 });
 
@@ -310,6 +315,33 @@ function descripcionDispositivo(ua = '') {
     const nav = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Navegador';
     const so = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'otro sistema';
     return `${nav} en ${so}`;
+}
+
+// =========================================================
+// BITÁCORA DE AUDITORÍA (control interno)
+// Toda acción sensible del equipo queda aquí con quién, cuándo (reloj de
+// la base de datos, no de la computadora del empleado), desde qué IP, qué
+// había antes y qué quedó después. La tabla es "solo agregar" y va
+// encadenada con SHA-256 (ver db/control_interno.sql).
+// =========================================================
+async function auditar(db, req, { accion, entidad, entidad_id = null, antes = null, despues = null, motivo = null }) {
+    const u = (req && req.usuario) || {};
+    await db.query(
+        `INSERT INTO auditoria (usuario_id, usuario_nombre, rol, accion, entidad, entidad_id, antes, despues, motivo, ip)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [u.id || null, u.nombre || (u.id ? null : 'Sistema'), u.rol || null, accion, entidad,
+            entidad_id == null ? null : String(entidad_id),
+            antes == null ? null : JSON.stringify(antes), despues == null ? null : JSON.stringify(despues),
+            motivo ? String(motivo).slice(0, 1000) : null, req ? seg.ipDe(req) : null]);
+}
+// Solo los campos que cambiaron (para no llenar la bitácora de ruido)
+function diferencias(antes, despues, campos) {
+    const a = {}, d = {};
+    for (const k of campos) {
+        if (despues[k] === undefined) continue;
+        if (String(antes[k] ?? '') !== String(despues[k] ?? '')) { a[k] = antes[k] ?? null; d[k] = despues[k] ?? null; }
+    }
+    return Object.keys(d).length ? { antes: a, despues: d } : null;
 }
 
 // Dirección pública de la tienda para los enlaces de los correos. Si no se
@@ -2508,7 +2540,7 @@ const PERMISOS_API = [
     { ruta: /^\/productos(\/|$)/,                      metodos: TODO, permisos: ['productos-editar'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: LEER, permisos: ['proveedores', 'productos', 'inventario', 'ordenes-compra', 'scm'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: TODO, permisos: ['proveedores'] },
-    { ruta: /^\/movimientos-inventario$/,              metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
+    { ruta: /^\/movimientos-inventario(\/(motivos|pendientes))?$/, metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
     { ruta: /^\/(ordenes-compra|pedidos-scm)(\/|$)/,   metodos: TODO, permisos: ['ordenes-compra', 'inventario', 'scm'] },
     { ruta: /^\/scm\/nivel$/,                            metodos: ['PUT'], permisos: ['nivel-scm'] },
     { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
@@ -2559,6 +2591,73 @@ app.use('/api/admin', (req, res, next) => {
     if (regla && (regla.permisos.includes('*') || regla.permisos.some((k) => puedeVer(rol, k)))) return next();
     return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
 });
+
+// Bitácora general: todo cambio hecho desde el panel queda registrado
+// (quién, qué ruta, qué datos y el resultado). Las acciones con detalle
+// propio (inventario, productos, pagos, estados, bajas de clientes) además
+// guardan el "antes y después". Nunca se guardan contraseñas ni tokens.
+const AUDITORIA_PROPIA = [
+    /^\/movimientos-inventario/, /^\/productos(\/\d+)?(\/restock)?$/, /^\/(pedidos|erp\/ordenes)\/\d+\/estado$/,
+    /^\/pedidos\/\d+\/registrar-pago$/, /^\/clientes\/\d+$/, /^\/mi-password$/, /^\/monederos\//,
+];
+function limpiarParaBitacora(obj, nivel = 0) {
+    if (obj == null || typeof obj !== 'object' || nivel > 3) return obj;
+    const out = Array.isArray(obj) ? [] : {};
+    for (const [k, v] of Object.entries(obj)) {
+        if (/pass|token|clave|secret|cvv|tarjeta_numero/i.test(k)) { out[k] = '***'; continue; }
+        out[k] = typeof v === 'string' ? v.slice(0, 300) : limpiarParaBitacora(v, nivel + 1);
+    }
+    return out;
+}
+app.use('/api/admin', (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD') return next();
+    const ruta = req.path.replace(/\/+$/, '');
+    // La edición de un cliente (PUT /clientes/:id) sí va aquí; su baja (DELETE) ya se audita.
+    const propia = AUDITORIA_PROPIA.some((r) => r.test(ruta)) && !(req.method === 'PUT' && /^\/clientes\/\d+$/.test(ruta));
+    if (propia) return next();
+    res.on('finish', () => {
+        if (res.statusCode >= 400) return;
+        const partes = ruta.split('/').filter(Boolean);
+        const id = partes.find((x) => /^\d+$/.test(x)) || null;
+        auditar(pool, req, {
+            accion: `${req.method} ${ruta.replace(/\/\d+/g, '/:id')}`.slice(0, 40),
+            entidad: (partes[0] || 'panel').slice(0, 40), entidad_id: id,
+            despues: limpiarParaBitacora(req.body || {}),
+        }).catch((e) => console.error('Bitácora:', e.message));
+    });
+    next();
+});
+
+// Consulta de la bitácora (solo administrador: no hay regla para otros roles)
+app.get('/api/admin/auditoria', asyncRoute(async (req, res) => {
+    const cond = [], val = [];
+    const add = (sql, v) => { val.push(v); cond.push(sql.replace('?', '$' + val.length)); };
+    if (req.query.entidad) add('entidad = ?', String(req.query.entidad));
+    if (req.query.usuario_id) add('usuario_id = ?', Number(req.query.usuario_id));
+    if (req.query.accion) add('accion ILIKE ?', '%' + String(req.query.accion) + '%');
+    if (req.query.q) add('(motivo ILIKE ? OR entidad_id ILIKE $' + (val.length + 1) + ' OR antes::text ILIKE $' + (val.length + 1) + ' OR despues::text ILIKE $' + (val.length + 1) + ')', '%' + String(req.query.q) + '%');
+    if (req.query.desde) add('fecha >= ?::date', String(req.query.desde));
+    if (req.query.hasta) add("fecha < (?::date + INTERVAL '1 day')", String(req.query.hasta));
+    const antesDe = Number(req.query.antes_de) || null;   // paginación por id
+    if (antesDe) add('id < ?', antesDe);
+    const r = await pool.query(
+        `SELECT id, fecha, usuario_id, usuario_nombre, rol, accion, entidad, entidad_id, antes, despues, motivo, ip, hash
+         FROM auditoria ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''} ORDER BY id DESC LIMIT 100`, val);
+    res.json(r.rows);
+}));
+// Verifica la cadena de huellas: si alguien cambió o borró un registro
+// directo en la base de datos, aquí aparece el primero que no cuadra.
+app.get('/api/admin/auditoria/verificar', asyncRoute(async (req, res) => {
+    const r = await pool.query(`
+        SELECT id, fecha, hash = kz_auditoria_huella(a) AS huella_ok,
+               hash_anterior = COALESCE(lag(hash) OVER (ORDER BY id), repeat('0', 64)) AS cadena_ok
+        FROM auditoria a ORDER BY id`);
+    const malo = r.rows.find((x) => !x.huella_ok || !x.cadena_ok);
+    res.json({
+        total: r.rows.length, integra: !malo,
+        primer_problema: malo ? { id: malo.id, fecha: malo.fecha, motivo: !malo.huella_ok ? 'El contenido del registro fue modificado' : 'Falta o se movió el registro anterior (borrado)' } : null,
+    });
+}));
 
 // Identidad del usuario interno autenticado (para que el panel valide
 // la sesión contra el servidor y no confíe solo en localStorage).
@@ -2621,6 +2720,7 @@ app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) 
         `SELECT numero_orden, estado FROM pedidos WHERE cliente_id = $1 ORDER BY id`, [cli.id]);
     if (pedidos.rows.length > 0 && cli.estado_cliente === 'activo') {
         await pool.query(`UPDATE clientes SET estado_cliente = 'inactivo', etapa_crm = 'Inactivo' WHERE id = $1`, [cli.id]);
+        await auditar(pool, req, { accion: 'cliente_inactivado', entidad: 'cliente', entidad_id: cli.id, antes: { estado: cli.estado_cliente }, despues: { estado: 'inactivo' } });
         return res.json({ message: `${cli.nombre} tiene pedidos: se marcó como inactivo. Si lo eliminas de nuevo se borra por completo.`, resultado: 'inactivo' });
     }
     const enCurso = pedidos.rows.filter((p) => !['entregado', 'cancelado'].includes(p.estado));
@@ -2630,11 +2730,25 @@ app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) 
     const db = await pool.connect();
     try {
         await db.query('BEGIN');
+        // Sus puntos y su monedero se van con él: es el único caso en que el
+        // control interno deja borrar movimientos, y queda en la bitácora.
+        const resumen = (await db.query(
+            `SELECT c.nombre, c.correo, c.puntos, COALESCE(m.saldo, 0) AS saldo_monedero
+             FROM clientes c LEFT JOIN monederos m ON m.cliente_id = c.id WHERE c.id = $1`, [cli.id])).rows[0];
+        if (Number(resumen.saldo_monedero) > 0) {
+            throw Object.assign(new Error(`No se puede eliminar: tiene ${precioTxt(Number(resumen.saldo_monedero))} en su monedero. Primero hay que devolvérselo.`), { publico: true });
+        }
+        await auditar(db, req, { accion: 'cliente_eliminado', entidad: 'cliente', entidad_id: cli.id, antes: resumen });
+        await db.query(`SET LOCAL kozmok.purga = 'si'`);
         await db.query('UPDATE pedidos SET cliente_id = NULL WHERE cliente_id = $1', [cli.id]);
         await db.query('UPDATE chatbot_consultas SET cliente_id = NULL WHERE cliente_id = $1', [cli.id]);
         await db.query('DELETE FROM clientes WHERE id = $1', [cli.id]);
         await db.query('COMMIT');
-    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+    } catch (e) {
+        await db.query('ROLLBACK');
+        if (e.publico) return res.status(400).json({ message: e.message });
+        throw e;
+    } finally { db.release(); }
     res.json({
         message: pedidos.rows.length
             ? `${cli.nombre} se eliminó por completo. Sus ${pedidos.rows.length} pedido(s) se conservan como "Cliente eliminado".`
@@ -3182,8 +3296,17 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
             activo !== undefined ? activo : true, restock || 'push',
             costo_unitario === undefined || costo_unitario === '' ? null : costo_unitario, destacado === true]
     );
-    await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
-    res.status(201).json({ message: 'Producto creado', producto: result.rows[0] });
+    const nuevo = result.rows[0];
+    // El stock inicial también queda como movimiento (de dónde salió cada pieza)
+    if (Number(nuevo.stock) > 0) {
+        await pool.query(`INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
+                          VALUES ($1,'entrada',$2,'Alta del producto con existencias iniciales','alta',$3,$4)`,
+            [nuevo.id, nuevo.stock, req.usuario.id, redondear(Number(nuevo.costo_unitario || nuevo.precio) * Number(nuevo.stock))]);
+    }
+    await auditar(pool, req, { accion: 'producto_alta', entidad: 'producto', entidad_id: nuevo.id,
+        despues: { nombre: nuevo.nombre, precio: nuevo.precio, costo_unitario: nuevo.costo_unitario, stock: nuevo.stock } });
+    await generarOrdenAutomaticaSiCritico(pool, nuevo.id);
+    res.status(201).json({ message: 'Producto creado', producto: nuevo });
 }));
 
 app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
@@ -3193,11 +3316,20 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
         uso_recomendado, imagen_url, proveedor_id, activo, restock, costo_unitario, destacado
     } = req.body;
 
+    const previo = (await pool.query('SELECT * FROM productos WHERE id = $1', [req.params.id])).rows[0];
+    if (!previo) return res.status(404).json({ message: 'Producto no encontrado' });
+    // El stock solo cambia con movimientos (entrada / salida), que dejan
+    // rastro de quién, cuándo y por qué. Aquí no se acepta cambiarlo.
+    if (stock !== undefined && stock !== null && stock !== '' && Number(stock) !== Number(previo.stock)) {
+        return res.status(400).json({ message: 'Las existencias no se editan aquí: registra una entrada o salida de inventario (queda en la bitácora con su motivo).' });
+    }
+
     const result = await pool.query(
         `UPDATE productos SET
             nombre = COALESCE($1, nombre), descripcion = COALESCE($2, descripcion),
             categoria_id = COALESCE($3, categoria_id), marca = COALESCE($4, marca),
-            precio = COALESCE($5, precio), stock = COALESCE($6, stock),
+            -- el stock no se toca aquí ($6 solo se valida arriba)
+            precio = COALESCE($5, precio), stock = stock + 0 * COALESCE($6, 0),
             stock_minimo = COALESCE($7, stock_minimo), procesador = COALESCE($8, procesador),
             ram_gb = COALESCE($9, ram_gb), almacenamiento = COALESCE($10, almacenamiento),
             tarjeta_grafica = COALESCE($11, tarjeta_grafica), pantalla = COALESCE($12, pantalla),
@@ -3211,6 +3343,11 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
             costo_unitario === '' ? null : costo_unitario, req.params.id, typeof destacado === 'boolean' ? destacado : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    const cambio = diferencias(previo, result.rows[0], ['nombre', 'precio', 'costo_unitario', 'stock_minimo', 'activo', 'proveedor_id', 'restock', 'categoria_id', 'marca']);
+    if (cambio) {
+        const sube = Number(result.rows[0].precio) !== Number(previo.precio);
+        await auditar(pool, req, { accion: sube ? 'producto_precio' : 'producto_edicion', entidad: 'producto', entidad_id: previo.id, ...cambio, motivo: req.body.motivo_cambio || null });
+    }
     await generarOrdenAutomaticaSiCritico(pool, result.rows[0].id);
     res.json({ message: 'Producto actualizado', producto: result.rows[0] });
 }));
@@ -3228,29 +3365,40 @@ app.put('/api/admin/productos/:id/estrategia', asyncRoute(async (req, res) => {
 }));
 
 app.delete('/api/admin/productos/:id', asyncRoute(async (req, res) => {
-    const enUso = await pool.query('SELECT id FROM pedido_items WHERE producto_id = $1 LIMIT 1', [req.params.id]);
+    const previo = (await pool.query('SELECT id, nombre, stock, precio FROM productos WHERE id = $1', [req.params.id])).rows[0];
+    if (!previo) return res.status(404).json({ message: 'Producto no encontrado' });
+    // Con ventas o movimientos no se borra: su historia debe seguir completa.
+    const enUso = await pool.query(
+        `SELECT 1 FROM pedido_items WHERE producto_id = $1 UNION ALL SELECT 1 FROM movimientos_inventario WHERE producto_id = $1 LIMIT 1`, [req.params.id]);
     if (enUso.rows.length > 0) {
         await pool.query('UPDATE productos SET activo = false WHERE id = $1', [req.params.id]);
-        return res.json({ message: 'El producto tiene ventas asociadas; se desactivó en lugar de eliminarlo' });
+        await auditar(pool, req, { accion: 'producto_desactivado', entidad: 'producto', entidad_id: previo.id, antes: previo });
+        return res.json({ message: 'El producto tiene ventas o movimientos; se desactivó en lugar de eliminarlo' });
     }
     await pool.query('DELETE FROM productos WHERE id = $1', [req.params.id]);
+    await auditar(pool, req, { accion: 'producto_eliminado', entidad: 'producto', entidad_id: previo.id, antes: previo });
     res.json({ message: 'Producto eliminado' });
 }));
 
 // Restock manual desde el admin
 app.post('/api/admin/productos/:id/restock', asyncRoute(async (req, res) => {
-    const { cantidad, motivo } = req.body;
-    if (!cantidad || cantidad < 1) return res.status(400).json({ message: 'Cantidad inválida' });
-
-    const prod = await pool.query('SELECT * FROM productos WHERE id = $1', [req.params.id]);
-    if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
-
-    const nuevoStock = prod.rows[0].stock + Number(cantidad);
-    await pool.query('UPDATE productos SET stock = $1 WHERE id = $2', [nuevoStock, req.params.id]);
-    await pool.query(
-        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id) VALUES ($1,'entrada',$2,$3,$4)`,
-        [req.params.id, cantidad, motivo || 'Restock manual desde admin', req.usuario.id]
-    );
+    const cantidad = Number(req.body.cantidad);
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 10000) return res.status(400).json({ message: 'Cantidad inválida' });
+    const motivo = String(req.body.motivo || 'Restock manual desde admin').slice(0, 300);
+    const db = await pool.connect();
+    let nuevoStock;
+    try {
+        await db.query('BEGIN');
+        const prod = (await db.query('SELECT * FROM productos WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!prod) { await db.query('ROLLBACK'); return res.status(404).json({ message: 'Producto no encontrado' }); }
+        nuevoStock = prod.stock + cantidad;
+        await db.query('UPDATE productos SET stock = $1 WHERE id = $2', [nuevoStock, req.params.id]);
+        await db.query(
+            `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor) VALUES ($1,'entrada',$2,$3,'compra',$4,$5)`,
+            [req.params.id, cantidad, motivo, req.usuario.id, redondear(Number(prod.costo_unitario || prod.precio) * cantidad)]);
+        await auditar(db, req, { accion: 'entrada_inventario', entidad: 'producto', entidad_id: prod.id, antes: { stock: prod.stock }, despues: { stock: nuevoStock }, motivo });
+        await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
     await generarOrdenAutomaticaSiCritico(pool, req.params.id);
     res.json({ message: 'Restock aplicado', stock_nuevo: nuevoStock });
 }));
@@ -3277,27 +3425,101 @@ app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
 // Registrar un movimiento manual (ajuste, merma, conteo físico, etc.) —
 // a diferencia del restock rápido, aquí también se puede registrar una
 // SALIDA manual, con su propio motivo.
-app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
-    const { producto_id, tipo, cantidad, motivo, fecha } = req.body;
-    if (!producto_id || !['entrada', 'salida'].includes(tipo) || !cantidad || cantidad < 1) {
-        return res.status(400).json({ message: 'Producto, tipo y cantidad son obligatorios' });
-    }
-    const prod = await pool.query('SELECT stock FROM productos WHERE id = $1', [producto_id]);
-    if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
-    if (tipo === 'salida' && prod.rows[0].stock < cantidad) {
-        return res.status(400).json({ message: `Solo hay ${prod.rows[0].stock} en stock; no se puede registrar una salida mayor` });
-    }
+// Motivos de un movimiento manual. Las salidas (bajas) siempre llevan un
+// detalle escrito; las de un empleado que no es administrador y pasan del
+// umbral quedan PENDIENTES (no tocan el stock) hasta que un administrador
+// las apruebe: así nadie puede dar de baja mercancía valiosa solo.
+const MOTIVOS_INV = {
+    entrada: { compra: 'Compra a proveedor', devolucion_cliente: 'Devolución de cliente', conteo: 'Ajuste por conteo físico', otro: 'Otro' },
+    salida: { merma: 'Merma / daño', robo: 'Robo o extravío', conteo: 'Ajuste por conteo físico', uso_interno: 'Muestra o uso interno', devolucion_proveedor: 'Devolución a proveedor', otro: 'Otro' },
+};
+const BAJA_UMBRAL_VALOR = Number(process.env.BAJA_UMBRAL_VALOR) || 3000;   // pesos
+const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;
+app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS }));
 
-    const signo = tipo === 'entrada' ? 1 : -1;
-    await pool.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [signo * cantidad, producto_id]);
-    const result = await pool.query(
-        `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, usuario_id, fecha)
-         VALUES ($1,$2,$3,$4,$5, COALESCE($6::timestamp, CURRENT_TIMESTAMP)) RETURNING *`,
-        [producto_id, tipo, cantidad, motivo || 'Ajuste manual', req.usuario.id, fecha || null]
-    );
-    if (tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id, 'demanda');
-    res.status(201).json(result.rows[0]);
+app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
+    // La fecha NO se acepta del navegador: la pone la base de datos.
+    const { producto_id, tipo } = req.body;
+    const cantidad = Number(req.body.cantidad);
+    const motivoTipo = String(req.body.motivo_tipo || '');
+    const detalle = String(req.body.detalle || req.body.motivo || '').trim().slice(0, 300);
+    if (!producto_id || !['entrada', 'salida'].includes(tipo) || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 10000) {
+        return res.status(400).json({ message: 'Producto, tipo y una cantidad entera mayor a 0 son obligatorios' });
+    }
+    if (!MOTIVOS_INV[tipo][motivoTipo]) return res.status(400).json({ message: 'Elige el motivo del movimiento' });
+    if ((tipo === 'salida' || ['otro', 'conteo'].includes(motivoTipo)) && detalle.length < 10) {
+        return res.status(400).json({ message: 'Describe qué pasó (al menos 10 caracteres): queda en la bitácora junto con tu nombre' });
+    }
+    const db = await pool.connect();
+    try {
+        await db.query('BEGIN');
+        const prod = (await db.query('SELECT id, nombre, stock, precio, costo_unitario FROM productos WHERE id = $1 FOR UPDATE', [producto_id])).rows[0];
+        if (!prod) { await db.query('ROLLBACK'); return res.status(404).json({ message: 'Producto no encontrado' }); }
+        if (tipo === 'salida' && prod.stock < cantidad) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({ message: `Solo hay ${prod.stock} en stock; no se puede registrar una salida mayor` });
+        }
+        const valor = redondear(Number(prod.costo_unitario || prod.precio) * cantidad);
+        const necesitaFirma = tipo === 'salida' && req.usuario.rol !== 'admin'
+            && (valor >= BAJA_UMBRAL_VALOR || cantidad >= BAJA_UMBRAL_PIEZAS || motivoTipo === 'robo');
+        const motivo = `${MOTIVOS_INV[tipo][motivoTipo]}${detalle ? ': ' + detalle : ''}`;
+        const mov = (await db.query(
+            `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, estado, valor)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [producto_id, tipo, cantidad, motivo, motivoTipo, req.usuario.id, necesitaFirma ? 'pendiente' : 'aplicado', valor])).rows[0];
+        if (!necesitaFirma) {
+            await db.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [(tipo === 'entrada' ? 1 : -1) * cantidad, producto_id]);
+        }
+        await auditar(db, req, {
+            accion: necesitaFirma ? 'baja_solicitada' : (tipo === 'entrada' ? 'entrada_inventario' : 'baja_inventario'),
+            entidad: 'producto', entidad_id: producto_id,
+            antes: { stock: prod.stock }, despues: { stock: necesitaFirma ? prod.stock : prod.stock + (tipo === 'entrada' ? cantidad : -cantidad), movimiento: mov.id, valor },
+            motivo,
+        });
+        await db.query('COMMIT');
+        if (!necesitaFirma && tipo === 'salida') await generarOrdenAutomaticaSiCritico(pool, producto_id, 'demanda');
+        res.status(201).json({
+            ...mov,
+            message: necesitaFirma
+                ? `La baja de ${cantidad} × ${prod.nombre} (${precioTxt(valor)}) quedó pendiente: un administrador debe aprobarla antes de que salga del inventario.`
+                : `Movimiento registrado (${tipo === 'entrada' ? '+' : '−'}${cantidad})`,
+        });
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
 }));
+
+// Bajas pendientes de aprobación (las ve quien puede aprobar: administrador)
+app.get('/api/admin/movimientos-inventario/pendientes', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT m.id, m.fecha, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.valor, p.nombre AS producto_nombre, p.stock,
+                u.nombre AS usuario_nombre
+         FROM movimientos_inventario m JOIN productos p ON p.id = m.producto_id LEFT JOIN usuarios u ON u.id = m.usuario_id
+         WHERE m.estado = 'pendiente' ORDER BY m.fecha`);
+    res.json(r.rows);
+}));
+app.post('/api/admin/movimientos-inventario/:id/resolver', requireAdmin, asyncRoute(async (req, res) => {
+    const aprobar = req.body.decision === 'aprobar';
+    const nota = String(req.body.nota || '').trim().slice(0, 300);
+    if (!aprobar && nota.length < 5) return res.status(400).json({ message: 'Escribe por qué se rechaza' });
+    const db = await pool.connect();
+    try {
+        await db.query('BEGIN');
+        const m = (await db.query(`SELECT * FROM movimientos_inventario WHERE id = $1 FOR UPDATE`, [req.params.id])).rows[0];
+        if (!m || m.estado !== 'pendiente') { await db.query('ROLLBACK'); return res.status(400).json({ message: 'Esa solicitud ya no está pendiente' }); }
+        // Segunda firma: quien solicita la baja no la puede aprobar.
+        if (Number(m.usuario_id) === Number(req.usuario.id)) { await db.query('ROLLBACK'); return res.status(403).json({ message: 'Otra persona debe aprobar tu propia solicitud' }); }
+        const prod = (await db.query('SELECT stock, nombre FROM productos WHERE id = $1 FOR UPDATE', [m.producto_id])).rows[0];
+        if (aprobar && prod.stock < m.cantidad) { await db.query('ROLLBACK'); return res.status(400).json({ message: `Ya solo hay ${prod.stock} en stock; no se puede aplicar la baja` }); }
+        await db.query(`UPDATE movimientos_inventario SET estado = $2, aprobado_por = $3, nota_resolucion = $4 WHERE id = $1`,
+            [m.id, aprobar ? 'aplicado' : 'rechazado', req.usuario.id, nota || null]);
+        if (aprobar) await db.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [m.cantidad, m.producto_id]);
+        await auditar(db, req, { accion: aprobar ? 'baja_aprobada' : 'baja_rechazada', entidad: 'producto', entidad_id: m.producto_id,
+            antes: { stock: prod.stock, movimiento: m.id, solicitada_por: m.usuario_id }, despues: { stock: aprobar ? prod.stock - m.cantidad : prod.stock }, motivo: nota || m.motivo });
+        await db.query('COMMIT');
+        if (aprobar) await generarOrdenAutomaticaSiCritico(pool, m.producto_id, 'demanda');
+        res.json({ message: aprobar ? `Baja aprobada: salieron ${m.cantidad} × ${prod.nombre}` : 'Baja rechazada; el stock no cambió' });
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+}));
+
 
 
 // =========================================================
@@ -3919,7 +4141,13 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
         // Cancelar desde el panel deshace stock, garantías, puntos y métricas
         // (igual que cuando cancela el cliente).
         if (estado === 'cancelado') {
+            const motivoCancel = String(req.body.motivo || '').trim().slice(0, 300);
+            if (pedido.pago_estado === 'pagado' && motivoCancel.length < 5) {
+                throw new Error('Escribe el motivo de la cancelación (el pedido ya estaba pagado)');
+            }
             const r = await cancelarPedido(client, pedido, { usuarioId: req.usuario.id });
+            await auditar(client, req, { accion: 'pedido_cancelado', entidad: 'pedido', entidad_id: pedido.numero_orden,
+                antes: { estado: pedido.estado, pago_estado: pedido.pago_estado, total: pedido.total }, despues: { estado: 'cancelado' }, motivo: motivoCancel || null });
             await registrarProceso(client, pedido.id, 'cancelacion',
                 `Orden cancelada: stock regresado al inventario${r.canjeados ? `, ${r.canjeados} puntos devueltos` : ''}${r.ganados ? `, ${r.ganados} puntos retirados` : ''}`,
                 { usuarioId: req.usuario.id, automatico: false });
@@ -3933,6 +4161,18 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
         // avanza sin cobrar (para eso está "Marcar pago recibido").
         if (estado === 'pendiente') throw new Error('Un pedido no puede regresar a "pendiente" una vez confirmado');
         if (pedido.pago_estado !== 'pagado') throw new Error('Primero registra el pago del pedido ("Marcar pago recibido")');
+        // Los estados solo avanzan: un pedido enviado no "regresa" a preparación
+        // (evita reescribir la historia de un envío).
+        const ORDEN = ['confirmado', 'procesando', 'enviado', 'entregado'];
+        if (ORDEN.indexOf(estado) <= ORDEN.indexOf(pedido.estado)) {
+            throw new Error(`Un pedido "${pedido.estado}" no puede regresar a "${estado}"`);
+        }
+        const guia = String(req.body.numero_guia || '').trim().slice(0, 50);
+        const transportista = String(req.body.transportista || '').trim().slice(0, 100);
+        if (guia || transportista) {
+            await client.query('UPDATE pedidos SET numero_guia = COALESCE(NULLIF($2, \'\'), numero_guia), transportista = COALESCE(NULLIF($3, \'\'), transportista) WHERE id = $1',
+                [pedido.id, guia, transportista]);
+        }
 
         const campoFecha = estado === 'enviado' ? ', fecha_envio = COALESCE(fecha_envio, CURRENT_TIMESTAMP)'
             : estado === 'entregado' ? ', fecha_entrega = CURRENT_TIMESTAMP'
@@ -3943,6 +4183,8 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
         );
         await registrarProceso(client, pedido.id, 'estado', `Estado: ${pedido.estado} → ${estado}`,
             { usuarioId: req.usuario.id, automatico: false });
+        await auditar(client, req, { accion: 'pedido_estado', entidad: 'pedido', entidad_id: pedido.numero_orden,
+            antes: { estado: pedido.estado }, despues: { estado, ...(result.rows[0].numero_guia ? { guia: result.rows[0].numero_guia } : {}) } });
         await client.query('COMMIT');
         res.json({ message: 'Estado actualizado', pedido: result.rows[0] });
     } catch (e) {
@@ -3966,14 +4208,28 @@ app.post('/api/admin/pedidos/:id/registrar-pago', asyncRoute(async (req, res) =>
         const pedido = pr.rows[0];
         if (pedido.pago_estado === 'pagado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Este pedido ya está pagado' }); }
         if (pedido.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido está cancelado' }); }
+        // Comprobante: folio de la transferencia o del ticket de caja. Sin él
+        // cualquiera podría "dar por pagado" un pedido que nadie pagó.
+        const comprobante = String(req.body.comprobante || '').trim().slice(0, 60);
+        if (comprobante.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el folio o referencia del comprobante de pago (transferencia o ticket de caja)' }); }
+        const repetido = await client.query('SELECT numero_orden FROM pedidos WHERE pago_comprobante = $1 AND id <> $2 LIMIT 1', [comprobante, pedido.id]);
+        if (repetido.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ message: `Ese comprobante ya se usó para el pedido ${repetido.rows[0].numero_orden}` }); }
+        // Segregación de funciones: quien capturó la venta no confirma su pago.
+        if (pedido.vendedor_id && Number(pedido.vendedor_id) === Number(req.usuario.id) && req.usuario.rol !== 'admin') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: 'Tú capturaste esta orden: otra persona del equipo debe confirmar su pago' });
+        }
 
         await client.query(
             `UPDATE pedidos SET pago_estado = 'pagado',
                  estado = CASE WHEN estado = 'pendiente' THEN 'confirmado' ELSE estado END,
-                 fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP)
+                 fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP),
+                 pago_comprobante = $2, pago_registrado_por = $3
              WHERE id = $1`,
-            [req.params.id]
+            [req.params.id, comprobante, req.usuario.id]
         );
+        await auditar(client, req, { accion: 'pago_registrado', entidad: 'pedido', entidad_id: pedido.numero_orden,
+            antes: { pago_estado: pedido.pago_estado, estado: pedido.estado }, despues: { pago_estado: 'pagado', comprobante, total: pedido.total } });
         // Los pedidos con pago pendiente nacen en 'pendiente'; cuando salen de
         // ahí (aquí mismo o antes, moviéndolos en el pipeline) el trigger
         // trg_pedido_metricas ya suma la compra. Aquí solo se dan los puntos.
@@ -5765,6 +6021,9 @@ async function migrarEsquema() {
     await pool.query(`CREATE TABLE IF NOT EXISTS reportes_erp (
         id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL, desde DATE, hasta DATE, datos JSONB NOT NULL,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    // Control interno: bitácora encadenada, fechas del servidor y registros
+    // que no se pueden reescribir (va al final: necesita todas las tablas).
+    await pool.query(require('fs').readFileSync(path.join(__dirname, 'db', 'control_interno.sql'), 'utf8'));
 }
 
 // Página no encontrada: la API responde JSON; el resto, la página 404 de la tienda.

@@ -200,10 +200,16 @@
             if (await confirmar('Este pedido todavía no está pagado. ¿Registrar el pago ahora para poder avanzarlo?', { okText: 'Registrar pago' })) registrarPago(true);
             return;
         }
-        if (FLUJO.indexOf(destino) < FLUJO.indexOf(d.estado) &&
-            !(await confirmar(`¿Regresar el pedido a "${destino}"?`, { okText: 'Regresar' }))) return;
+        // Los estados solo avanzan (control interno): no se "regresa" un envío.
+        if (FLUJO.indexOf(destino) < FLUJO.indexOf(d.estado)) { toast(`Un pedido "${d.estado}" no puede regresar a "${destino}"`, 'warn'); return; }
+        const body = { estado: destino };
+        if (destino === 'enviado') {
+            const guia = await pedirDato('Número de guía de la paquetería (opcional, el cliente lo recibe por correo):', { placeholder: 'Ej. DHL 8821340012', okText: 'Marcar enviado' });
+            if (guia === null) return;
+            body.numero_guia = guia.trim();
+        }
         try {
-            await api(`/admin/pedidos/${d.id}/estado`, { method: 'PUT', body: { estado: destino } });
+            await api(`/admin/pedidos/${d.id}/estado`, { method: 'PUT', body });
             refrescar(`Estado actualizado a "${destino}"`);
         } catch (e) { toast(e.message, 'error'); }
     }
@@ -211,17 +217,26 @@
     async function cancelar() {
         const d = actual;
         if (!(await confirmar(`¿Cancelar ${d.numero_orden}? Se regresa el stock al inventario (con su movimiento), se cancelan sus garantías y se ajustan los puntos del cliente.`, { okText: 'Cancelar pedido', peligro: true }))) return;
+        let motivo = '';
+        if (d.pago_estado === 'pagado') {
+            motivo = await pedirDato('El pedido ya está pagado: ¿por qué se cancela? (queda en la auditoría)', { placeholder: 'Ej. el cliente lo pidió por teléfono; folio de soporte TK-1042', okText: 'Cancelar pedido' });
+            if (motivo === null) return;
+            if (motivo.trim().length < 5) return toast('Escribe el motivo de la cancelación', 'warn');
+        }
         try {
-            const r = await api(`/admin/pedidos/${d.id}/estado`, { method: 'PUT', body: { estado: 'cancelado' } });
+            const r = await api(`/admin/pedidos/${d.id}/estado`, { method: 'PUT', body: { estado: 'cancelado', motivo: motivo.trim() } });
             refrescar(r.message);
         } catch (e) { toast(e.message, 'error'); }
     }
 
     async function registrarPago(yaConfirmado) {
         const d = actual;
-        if (!yaConfirmado && !(await confirmar('Confirmas que se recibió el pago. El pedido pasa a "Confirmado" y el cliente recibe sus puntos.', { okText: 'Sí, registrar pago' }))) return;
+        const comprobante = await pedirDato(`Folio del comprobante de pago de ${d.numero_orden} (${formatoMoneda(d.total)}): número de la transferencia SPEI o del ticket de caja.`,
+            { placeholder: 'Ej. 0099812374 o TK-55821', okText: 'Registrar pago' });
+        if (comprobante === null) return;
+        if (comprobante.trim().length < 4) return toast('Escribe el folio del comprobante', 'warn');
         try {
-            const r = await api(`/admin/pedidos/${d.id}/registrar-pago`, { method: 'POST' });
+            const r = await api(`/admin/pedidos/${d.id}/registrar-pago`, { method: 'POST', body: { comprobante: comprobante.trim() } });
             refrescar(r.message + (r.puntos_ganados ? ` (+${r.puntos_ganados} puntos)` : ''));
         } catch (e) { toast(e.message, 'error'); }
     }
