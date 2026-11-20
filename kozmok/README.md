@@ -201,6 +201,26 @@ texto libre.
 - **Rendimiento**: caché en memoria del catálogo (se invalida con cualquier cambio), gzip,
   índices nuevos y reportes con consultas en paralelo.
 
+## Pagos con PayPal y factura electrónica (modo de prueba)
+
+Los dos funcionan en **sandbox**: se usan las APIs reales, pero no se mueve dinero ni se
+emiten facturas con validez fiscal. El modo real exige dos variables a propósito
+(`*_MODO=live` y `*_PERMITIR_REAL=1`).
+
+- **PayPal o tarjeta** (`paypal.js`): el pedido se aparta 60 min y se paga en `pagar.html`
+  con los botones de PayPal. El servidor crea la orden con su propio total y solo confirma
+  si PayPal responde `COMPLETED` con el mismo monto, moneda y pedido. Cancelar un pedido
+  pagado hace el reembolso real en PayPal. Kozmok no recibe números de tarjeta.
+  Configura `PAYPAL_CLIENT_ID` y `PAYPAL_CLIENT_SECRET` (developer.paypal.com → Apps &
+  Credentials → Sandbox) y prueba con una cuenta personal del sandbox.
+- **Factura CFDI 4.0** (`facturama.js`): el cliente factura un pedido pagado desde
+  Mis pedidos; el equipo en Panel → Facturas. Se timbra con Facturama (sandbox) y llega
+  PDF y XML por correo. Configura `FACTURAMA_USUARIO`, `FACTURAMA_PASSWORD` y
+  `FACTURA_LUGAR_EXPEDICION`; en el perfil de Facturama, el emisor de prueba
+  `EKU9003173C9`.
+- Sin credenciales, esas opciones aparecen como "no disponible" y el resto de la tienda
+  funciona igual.
+
 ## Notas para producción
 
 - Usa variables de entorno reales (o el `.env`), sirve todo con HTTPS y pon `COOKIE_SEGURA=1`.
