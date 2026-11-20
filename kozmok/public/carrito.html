@@ -204,8 +204,8 @@ async function cargarCarrito() {
                 <div class="field"><label>Método de pago</label>
                     <select id="metodo-pago" onchange="cambioMetodo()">
                         <option value="paypal" ${PAYPAL.activo ? 'selected' : 'disabled'}>PayPal o tarjeta de débito / crédito${PAYPAL.activo ? '' : ' (no disponible)'}</option>
-                        <option value="spei" ${PAYPAL.activo ? '' : 'selected'}>Transferencia bancaria (SPEI)</option>
-                        <option value="tienda">Pago en tienda</option>
+                        ${PAYPAL.spei ? `<option value="spei" ${PAYPAL.activo ? '' : 'selected'}>Transferencia bancaria (SPEI)</option>` : ''}
+                        <option value="tienda" ${!PAYPAL.activo && !PAYPAL.spei ? 'selected' : ''}>Pago en tienda</option>
                         <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
                     </select>
                 </div>

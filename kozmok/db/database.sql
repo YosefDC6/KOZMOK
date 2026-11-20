@@ -87,7 +87,7 @@ CREATE TABLE usuarios (
     telefono            VARCHAR(30),
     -- Roles empresariales (ERP): administrador, ventas y logística.
     -- Para agregar uno nuevo: añádelo aquí, en ROLES_INTERNOS y
-    -- PERMISOS_API (server.js) y en PERMISOS (admin/js/admin-layout.js).
+    -- PERMISOS_API (server.js) y en PERMISOS (public/admin/js/permisos.js).
     rol                 VARCHAR(20) NOT NULL DEFAULT 'ventas'
                          CONSTRAINT usuarios_rol_check CHECK (rol IN ('admin','ventas','logistica')),
     activo              BOOLEAN DEFAULT TRUE,

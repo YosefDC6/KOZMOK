@@ -22,9 +22,9 @@
         let bloquePago;
         if (pendiente) {
             const filasPago = esSPEI ? `
-                <tr><td>Banco</td><td>${d.emisor.banco}</td></tr>
+                ${d.emisor.clabe ? `<tr><td>Banco</td><td>${d.emisor.banco}</td></tr>
                 <tr><td>Beneficiario</td><td>${d.emisor.beneficiario}</td></tr>
-                <tr><td>CLABE</td><td class="mono">${d.emisor.clabe}</td></tr>
+                <tr><td>CLABE</td><td class="mono">${d.emisor.clabe}</td></tr>` : ''}
                 <tr><td>Concepto / Referencia</td><td class="mono">${d.pago_referencia}</td></tr>
                 <tr><td>Monto exacto</td><td><strong>${money(d.total)}</strong></td></tr>
                 <tr><td>Fecha límite</td><td>${fecha(d.pago_vence)}</td></tr>
@@ -77,7 +77,7 @@
                 <div class="rec-top">
                     <div>
                         <div class="rec-marca">${window.logoKZK ? logoKZK(22) : ic('ghost', 16)} Kozmok</div>
-                        <div class="rec-emisor">${d.emisor.nombre}<br>RFC ${d.emisor.rfc}<br>${d.emisor.domicilio}</div>
+                        <div class="rec-emisor">${[d.emisor.nombre, d.emisor.rfc ? 'RFC ' + d.emisor.rfc : '', d.emisor.domicilio].filter(Boolean).join('<br>')}</div>
                     </div>
                     <div class="rec-folio">
                         <span class="rec-doc-tipo">${titulo}</span>

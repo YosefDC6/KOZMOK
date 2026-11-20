@@ -62,6 +62,7 @@ montarCuenta('monedero', async (panel) => {
 async function cargarMonedero() {
     [MON, PPCFG] = await Promise.all([api('/monedero'), PayPalKZ.config()]);
     if (!PPCFG.activo && METODO === 'paypal') METODO = 'transferencia';
+    if (!PPCFG.spei && METODO === 'transferencia' && PPCFG.activo) METODO = 'paypal';
     BOTONES_PP = false;
     pintarSaldo();
     pintarRecarga();
@@ -108,7 +109,7 @@ function pintarRecarga() {
         </div>
         <label>Método de pago</label>
         <div class="mon-metodos">
-            ${['paypal', 'transferencia'].map((k) => `
+            ${['paypal', 'transferencia'].filter((k) => k === 'paypal' || PPCFG.spei).map((k) => `
                 <label class="mon-metodo ${k === METODO ? 'on' : ''} ${k === 'paypal' && !PPCFG.activo ? 'off' : ''}">
                     <input type="radio" name="mon-metodo" value="${k}" ${k === METODO ? 'checked' : ''} ${k === 'paypal' && !PPCFG.activo ? 'disabled' : ''} onchange="elegirMetodo('${k}')" />
                     ${icon(k === 'paypal' ? 'card' : 'download', 16)} ${METODO_TXT[k]}${k === 'paypal' && !PPCFG.activo ? ' (no disponible)' : ''}

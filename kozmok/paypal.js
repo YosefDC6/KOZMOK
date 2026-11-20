@@ -130,6 +130,20 @@ function resumenCaptura(orden) {
     };
 }
 
+// Estado actual de un cobro. Sirve para los pagos que PayPal dejó "en
+// revisión" (PENDING): se vuelven a consultar hasta que se completan o fallan.
+async function verCaptura(capturaId) {
+    const { ok, status, datos } = await llamar('GET', `/v2/payments/captures/${encodeURIComponent(capturaId)}`);
+    if (!ok) throw errorPayPal('No se encontró el cobro en PayPal', datos, status);
+    return {
+        captura_id: datos.id || capturaId,
+        estado: datos.status || null,                       // COMPLETED | PENDING | DECLINED | FAILED...
+        monto: datos.amount ? Number(datos.amount.value) : null,
+        moneda: datos.amount ? datos.amount.currency_code : null,
+        referencia: datos.custom_id || null,
+    };
+}
+
 // Reembolso total (o parcial si se da monto) de un cobro.
 async function reembolsar(capturaId, { monto, nota, requestId } = {}) {
     const cuerpo = { note_to_payer: String(nota || 'Reembolso de Kozmok').slice(0, 255) };
@@ -143,4 +157,4 @@ async function reembolsar(capturaId, { monto, nota, requestId } = {}) {
     return { id: datos.id, estado: datos.status };
 }
 
-module.exports = { CFG, configurado, crearOrden, verOrden, capturarOrden, reembolsar, dosDecimales };
+module.exports = { CFG, configurado, crearOrden, verOrden, capturarOrden, verCaptura, reembolsar, dosDecimales };

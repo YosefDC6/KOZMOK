@@ -393,11 +393,27 @@ function diferencias(antes, despues, campos) {
 
 // Dirección pública de la tienda para los enlaces de los correos. Si no se
 // define URL_PUBLICA en el .env se usa la dirección con la que se abrió la
-// página (ojo: "localhost" solo funciona en la misma computadora).
+// página, pero solo si es esta computadora o una IP de la red local: el
+// encabezado Host lo escribe quien hace la petición, y si se aceptara tal
+// cual alguien podría pedir la recuperación de otra cuenta con su propio
+// dominio y recibir el enlace (con el token) cuando la víctima lo abra.
+// Con un dominio propio hay que definir URL_PUBLICA.
+function hostDeConfianza(host) {
+    const m = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::(\d{1,5}))?$/i.exec(String(host || '').trim());
+    if (!m) return false;
+    const nombre = m[1].toLowerCase().replace(/^\[|\]$/g, '');
+    if (nombre === 'localhost' || nombre === '::1') return true;
+    const ip = nombre.split('.').map(Number);
+    if (ip.length === 4 && ip.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        if (ip[0] === 127 || ip[0] === 10 || (ip[0] === 192 && ip[1] === 168) || (ip[0] === 172 && ip[1] >= 16 && ip[1] <= 31)) return true;
+    }
+    return ipsDeRed().some((x) => x.ip === nombre);
+}
 function urlPublica(req) {
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
-    return `${req.protocol || 'http'}://${req.headers.host}`;
+    if (hostDeConfianza(req.headers.host)) return `${req.protocol || 'http'}://${req.headers.host}`;
+    return `http://localhost:${process.env.PORT || 3000}`;
 }
 
 // =========================================================
@@ -1100,10 +1116,21 @@ function analizarMensajeLibre(mensaje) {
 
     // Presupuesto: "15 mil", "15,000", "$15000", "20k"
     let presupuesto = null;
+    // Se ignoran los números que son modelo o especificación ("RTX 4060",
+    // "i7-13700", "1080p", "16 GB", "144 Hz"): no son dinero.
     const milMatch = texto.match(/(\d+(?:[.,]\d+)?)\s*(mil|k\b)/);
-    const numMatch = texto.match(/\$?\s?(\d[\d,.]{2,7})/);
     if (milMatch) presupuesto = Math.round(parseFloat(milMatch[1].replace(',', '.')) * 1000);
-    else if (numMatch) presupuesto = Number(numMatch[1].replace(/[,.]/g, ''));
+    else {
+        for (const m of texto.matchAll(/(\$?)\s?(\d[\d,.]{2,7})/g)) {
+            const antes = texto.slice(Math.max(0, m.index - 8), m.index);
+            const despues = texto.slice(m.index + m[0].length, m.index + m[0].length + 6);
+            const esModelo = /(rtx|gtx|rx|gt|i[3579]|ryzen\s*\d?|core|ultra|serie|series|modelo|m)[\s-]*$/.test(antes);
+            const esMedida = /^\s*(gb|tb|mb|hz|mhz|ghz|w\b|mah|p\b|"|”|pulgadas|nits|dpi|rpm|fps)/.test(despues);
+            if (!m[1] && (esModelo || esMedida)) continue;
+            presupuesto = Number(m[2].replace(/[,.]/g, ''));
+            break;
+        }
+    }
 
     let uso = null;
     for (const [clave, kws] of Object.entries(USO_PALABRAS)) {
@@ -1124,7 +1151,11 @@ function analizarMensajeLibre(mensaje) {
 }
 
 app.post('/api/chatbot/recomendar', asyncRoute(async (req, res) => {
-    const { presupuesto, uso, categoria, cliente_id, mensaje } = req.body;
+    const { uso, categoria, mensaje } = req.body;
+    // El cliente sale de su sesión, no del cuerpo de la petición: si no,
+    // cualquiera podría escribir interacciones en el CRM de otra persona.
+    const cliente_id = await clienteDeSesion(req);
+    const presupuesto = Number(req.body.presupuesto) > 0 ? Number(req.body.presupuesto) : null;
     const inferido = analizarMensajeLibre(mensaje);
 
     // Los valores explícitos (chips) siguen siendo filtro duro, igual que antes.
@@ -1423,18 +1454,14 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
     if (['enviado', 'entregado'].includes(pedido.estado)) {
         throw new Error('El pedido ya salió del almacén; regístralo como devolución (movimiento de entrada) en lugar de cancelarlo');
     }
-    // Pagado con PayPal (cuenta o tarjeta): primero se hace el reembolso real
-    // en PayPal. Si PayPal no lo acepta, no se cancela nada.
-    let reembolso_paypal = null;
-    if (pedido.metodo_tipo === 'paypal' && pedido.pago_estado === 'pagado') {
-        const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' FOR UPDATE`, [pedido.id])).rows[0];
-        if (pp) {
-            if (!paypal.configurado()) throw new Error('No se puede reembolsar: PayPal no está configurado en el servidor');
-            const r = await paypal.reembolsar(pp.captura_id, { nota: `Cancelación del pedido ${pedido.numero_orden}`, requestId: `kz-ref-${pp.id}` });
-            await client.query(`UPDATE pagos_paypal SET estado = 'reembolsada', reembolso_id = $2 WHERE id = $1`, [pp.id, r.id]);
-            reembolso_paypal = { monto: Number(pp.monto), id: r.id };
-        }
-    }
+    // Pagado con PayPal: se revisa desde el inicio que se pueda reembolsar,
+    // pero el reembolso real se hace al final, cuando todo lo demás (factura
+    // ante el SAT, stock, puntos) ya salió bien. Si se hiciera primero y algo
+    // fallara después, el dinero ya estaría devuelto con el pedido vigente.
+    const ppCobro = (pedido.metodo_tipo === 'paypal' && pedido.pago_estado === 'pagado')
+        ? (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' FOR UPDATE`, [pedido.id])).rows[0]
+        : null;
+    if (ppCobro && !paypal.configurado()) throw new Error('No se puede reembolsar: PayPal no está configurado en el servidor');
     // Si el pedido ya tenía factura, se cancela ante el SAT (motivo 03: la
     // operación no se llevó a cabo). Si el PAC no lo acepta, no se cancela el pedido.
     const fac = (await client.query(`SELECT * FROM facturas WHERE pedido_id = $1 AND estado = 'timbrada' FOR UPDATE`, [pedido.id])).rows[0];
@@ -1504,10 +1531,98 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
         await moverMonedero(client, mon, { tipo: 'reembolso', monto: Number(pedido.total), concepto: `Reembolso por cancelar ${pedido.numero_orden}`, pedidoId: pedido.id, usuarioId });
         reembolso_monedero = Number(pedido.total);
     }
+    // Último paso: el reembolso real en PayPal. Si PayPal no lo acepta, la
+    // transacción se deshace y el pedido sigue como estaba.
+    let reembolso_paypal = null;
+    if (ppCobro) {
+        const r = await paypal.reembolsar(ppCobro.captura_id, { nota: `Cancelación del pedido ${pedido.numero_orden}`, requestId: `kz-ref-${ppCobro.id}` });
+        await client.query(`UPDATE pagos_paypal SET estado = 'reembolsada', reembolso_id = $2 WHERE id = $1`, [ppCobro.id, r.id]);
+        reembolso_paypal = { monto: Number(ppCobro.monto), id: r.id };
+    }
     await client.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedido.id]);
     // Órdenes de PayPal que se crearon y nadie pagó: ya no se pueden cobrar
     await client.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE pedido_id = $1 AND estado = 'creada'`, [pedido.id]);
     return { canjeados, ganados, productos: items.rows.length, reembolso_monedero, reembolso_paypal };
+}
+
+// Marca como pagado un pedido cobrado con PayPal (al capturar o cuando un
+// pago en revisión se completa). Debe ir dentro de una transacción.
+async function confirmarPedidoPayPal(client, p, pp, cap) {
+    await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = COALESCE($3, pagador_correo) WHERE id = $1`,
+        [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
+    await client.query(
+        `UPDATE pedidos SET pago_estado = 'pagado', estado = 'confirmado', fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP),
+             pago_referencia = $2, pago_comprobante = $2, pago_vence = NULL
+         WHERE id = $1`, [p.id, cap.captura_id]);
+    const puntos_ganados = await aplicarCobroPedido(client, p, { metricas: false });
+    await registrarProceso(client, p.id, 'pago', `Pago con PayPal confirmado (${cap.captura_id})${puntos_ganados ? `, +${puntos_ganados} puntos` : ''}`, { automatico: true });
+    return puntos_ganados;
+}
+// Abona al monedero una recarga cobrada con PayPal.
+async function abonarRecargaPayPal(client, monedero, pp, cap) {
+    await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = COALESCE($3, pagador_correo) WHERE id = $1`,
+        [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
+    return moverMonedero(client, monedero, { tipo: 'recarga', monto: Number(pp.monto), concepto: 'Recarga con PayPal', metodo: 'paypal', referencia: cap.captura_id });
+}
+
+// Pagos que PayPal dejó "en revisión" (PENDING). Se consultan cada minuto:
+//   - si se completó: se confirma el pedido o se abona la recarga; si el
+//     pedido se canceló mientras tanto, se reembolsa el cobro.
+//   - si PayPal lo rechazó: el pago queda fallido y el pedido vuelve a tener
+//     plazo de pago (o vence) para pagarlo de otra forma.
+const ESTADOS_FINALES_PAYPAL = ['DECLINED', 'FAILED', 'VOIDED', 'REFUNDED', 'PARTIALLY_REFUNDED'];
+async function conciliarPayPalPendientes() {
+    if (!paypal.configurado()) return 0;
+    const pend = await pool.query(`SELECT id FROM pagos_paypal WHERE estado = 'pendiente' AND captura_id IS NOT NULL ORDER BY id LIMIT 20`);
+    let n = 0;
+    for (const { id } of pend.rows) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`, [id])).rows[0];
+            if (!pp) { await client.query('ROLLBACK'); continue; }
+            const cap = await paypal.verCaptura(pp.captura_id);
+            if (cap.estado === 'PENDING') { await client.query('ROLLBACK'); continue; }
+            const ref = pp.tipo === 'pedido' ? `pedido-${pp.pedido_id}` : (pp.detalle || {}).referencia;
+            const coincide = cap.referencia === ref && cap.moneda === pp.moneda && Math.abs(Number(cap.monto) - Number(pp.monto)) < 0.005;
+            if (cap.estado === 'COMPLETED' && pp.tipo === 'pedido') {
+                const p = (await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [pp.pedido_id])).rows[0];
+                if (p && coincide && p.estado !== 'cancelado' && p.pago_estado !== 'pagado') {
+                    await confirmarPedidoPayPal(client, p, pp, cap);
+                } else {
+                    // Pedido cancelado, ya pagado por otro medio o monto distinto: se devuelve.
+                    const r = await paypal.reembolsar(cap.captura_id, { nota: 'El pedido ya no estaba disponible', requestId: `kz-ref-pend-${pp.id}` });
+                    await client.query(`UPDATE pagos_paypal SET estado = 'capturada' WHERE id = $1`, [pp.id]);
+                    await client.query(`UPDATE pagos_paypal SET estado = 'reembolsada', reembolso_id = $2, detalle = COALESCE(detalle, '{}'::jsonb) || $3 WHERE id = $1`,
+                        [pp.id, r.id, JSON.stringify({ motivo: !p ? 'pedido_inexistente' : !coincide ? 'monto_distinto' : p.estado === 'cancelado' ? 'pedido_cancelado' : 'ya_pagado' })]);
+                    if (p) await registrarProceso(client, p.id, 'pago', `PayPal completó un pago en revisión que ya no correspondía; se reembolsó (${cap.captura_id})`, { automatico: true });
+                }
+            } else if (cap.estado === 'COMPLETED' && pp.tipo === 'recarga') {
+                if (coincide) {
+                    const m = await monederoDe(client, pp.cliente_id, { bloquear: true });
+                    await abonarRecargaPayPal(client, m, pp, cap);
+                } else {
+                    const r = await paypal.reembolsar(cap.captura_id, { nota: 'Recarga no coincidió', requestId: `kz-ref-pend-${pp.id}` });
+                    await client.query(`UPDATE pagos_paypal SET estado = 'capturada' WHERE id = $1`, [pp.id]);
+                    await client.query(`UPDATE pagos_paypal SET estado = 'reembolsada', reembolso_id = $2 WHERE id = $1`, [pp.id, r.id]);
+                }
+            } else if (ESTADOS_FINALES_PAYPAL.includes(cap.estado)) {
+                await client.query(`UPDATE pagos_paypal SET estado = 'fallida', detalle = COALESCE(detalle, '{}'::jsonb) || $2 WHERE id = $1`,
+                    [pp.id, JSON.stringify({ estado_final: cap.estado })]);
+                if (pp.tipo === 'pedido') {
+                    await client.query(`UPDATE pedidos SET pago_vence = CURRENT_TIMESTAMP + INTERVAL '60 minutes'
+                                        WHERE id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente'`, [pp.pedido_id]);
+                    await registrarProceso(client, pp.pedido_id, 'pago', `PayPal rechazó el pago que estaba en revisión (${cap.estado}); el pedido tiene 60 minutos para pagarse de otra forma`, { automatico: true });
+                }
+            } else { await client.query('ROLLBACK'); continue; }
+            await client.query('COMMIT');
+            n++;
+        } catch (e) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('PayPal en revisión', id, '->', e.message);
+        } finally { client.release(); }
+    }
+    return n;
 }
 
 // Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
@@ -1798,6 +1913,7 @@ async function tareasPeriodicas() {
     await pool.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE tipo = 'recarga' AND estado = 'creada' AND fecha < CURRENT_TIMESTAMP - INTERVAL '3 hours'`)
         .catch((e) => console.error('PayPal vencidas:', e.message));
     await procesarReabastoAutomatico().catch((e) => console.error('Reabasto:', e.message));
+    await conciliarPayPalPendientes().catch((e) => console.error('PayPal en revisión:', e.message));
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
     // Transferencias al monedero que nadie confirmó en 3 días: se cancelan
@@ -1874,6 +1990,29 @@ function formatoMXN(n) {
 // pendiente y se confirma cuando el servidor captura el pago (ver
 // /api/pagos/paypal/*). Si el cliente no paga en 60 minutos se cancela solo.
 // Ya no existe la "tarjeta" que se daba por cobrada sin pasar por un banco.
+// Datos de la empresa y de la cuenta para recibir transferencias (SPEI).
+// Vienen del .env: no se inventan. Sin una CLABE válida (18 dígitos con su
+// dígito verificador) la transferencia no se ofrece en la tienda, para que
+// nadie mande dinero a una cuenta que no existe.
+function clabeValida(c) {
+    if (!/^\d{18}$/.test(c)) return false;
+    const pesos = [3, 7, 1];
+    const suma = [...c.slice(0, 17)].reduce((a, d, i) => a + (Number(d) * pesos[i % 3]) % 10, 0);
+    return (10 - (suma % 10)) % 10 === Number(c[17]);
+}
+const EMPRESA = (() => {
+    const t = (k) => (process.env[k] || '').trim();
+    const nombre = t('EMPRESA_NOMBRE') || 'Kozmok';
+    const clabe = t('SPEI_CLABE').replace(/\s+/g, '');
+    if (clabe && !clabeValida(clabe)) console.warn('SPEI_CLABE no es una CLABE válida (18 dígitos con dígito verificador): la transferencia queda desactivada');
+    return {
+        nombre, rfc: t('EMPRESA_RFC').toUpperCase() || null, domicilio: t('EMPRESA_DOMICILIO') || null,
+        banco: t('SPEI_BANCO') || null, clabe: clabeValida(clabe) ? clabe : null, beneficiario: t('SPEI_BENEFICIARIO') || nombre,
+    };
+})();
+const speiConfigurado = () => !!(EMPRESA.clabe && EMPRESA.banco);
+const datosTransferencia = (referencia) => ({ banco: EMPRESA.banco, clabe: EMPRESA.clabe, beneficiario: EMPRESA.beneficiario, referencia });
+
 const METODOS_TIENDA = {
     paypal:   { inmediato: false, minutos: Number(process.env.PAYPAL_MINUTOS_PARA_PAGAR) || 60 },
     monedero: { inmediato: true },
@@ -1899,6 +2038,9 @@ const procesarCompra = asyncRoute(async (req, res) => {
     if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres pagar' });
     if (metodo_tipo === 'paypal' && !paypal.configurado()) {
         return res.status(503).json({ message: 'El pago con PayPal o tarjeta no está disponible por ahora. Elige transferencia, pago en tienda o monedero.' });
+    }
+    if (metodo_tipo === 'spei' && !speiConfigurado()) {
+        return res.status(503).json({ message: 'El pago por transferencia no está disponible por ahora. Elige otra forma de pago.' });
     }
     let puntos_canjear = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
     if (!items || items.length === 0) {
@@ -1941,7 +2083,9 @@ const procesarCompra = asyncRoute(async (req, res) => {
                 return res.status(400).json({ message: `Ya tienes ${abiertos.rows[0].n} pedidos esperando pago. Págalos o cancélalos antes de hacer otro.` });
             }
         }
-        const numero_orden = 'ORD-' + Date.now();
+        // Milisegundos + 3 dígitos al azar: dos clientes que compran en el mismo
+        // milisegundo ya no chocan con el UNIQUE de numero_orden.
+        const numero_orden = 'ORD-' + Date.now() + String(crypto.randomInt(1000)).padStart(3, '0');
 
         // 1) Validar stock (con bloqueo de fila) y armar las líneas.
         const lineas = [];
@@ -1952,7 +2096,9 @@ const procesarCompra = asyncRoute(async (req, res) => {
             if (prod.rows.length === 0) throw new Error('Uno de los productos de tu carrito ya no existe; quítalo para continuar');
             if (!prod.rows[0].activo) throw new Error(`"${prod.rows[0].nombre}" ya no está a la venta; quítalo de tu carrito para continuar`);
             const p = prod.rows[0];
-            if (p.stock < cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
+            // Se compara contra el total pedido de ese producto (si viene en
+            // varias líneas, cada una por separado pasaría la revisión).
+            if (p.stock < porProducto[item.producto_id]) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
             const gp = planGarantia(item.garantia);
             lineas.push({
                 producto_id: p.id, categoria_id: p.categoria_id, nombre: p.nombre, precio: Number(p.precio), cantidad,
@@ -2218,17 +2364,26 @@ async function facturarPedido(pedidoId, fiscales, quien, req) {
         if (vigente) throw Object.assign(new Error('Este pedido ya tiene factura'), { status: 409, publico: true });
         const { cfdi, total } = await armarCFDI(client, p, fiscales);
         const t = await facturama.timbrar(cfdi);
-        const f = (await client.query(
-            `INSERT INTO facturas (pedido_id, cliente_id, facturama_id, uuid, serie, folio, rfc, razon_social, regimen_fiscal, codigo_postal,
-                                   uso_cfdi, forma_pago, total, modo, solicitada_por, usuario_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
-            [p.id, p.cliente_id, t.id, t.uuid, t.serie, t.folio, fiscales.rfc, fiscales.razon_social, fiscales.regimen_fiscal, fiscales.codigo_postal,
-                fiscales.uso_cfdi, cfdi.PaymentForm, t.total ?? total, facturama.CFG.modo, quien.usuario_id ? 'equipo' : 'cliente', quien.usuario_id || null])).rows[0];
-        await registrarProceso(client, p.id, 'factura', `Factura ${t.serie || ''}${t.folio || ''} timbrada (UUID ${t.uuid || '—'}) para ${fiscales.rfc}`, { automatico: !quien.usuario_id, usuarioId: quien.usuario_id || null });
-        if (req && quien.usuario_id) {
-            await auditar(client, req, { accion: 'factura_emitida', entidad: 'pedido', entidad_id: p.id, despues: { factura: f.id, uuid: f.uuid, rfc: f.rfc, total: f.total } });
+        // Ya timbrada ante el SAT: si guardarla falla, se cancela para que no
+        // quede una factura vigente que Kozmok no tiene registrada.
+        let f;
+        try {
+            f = (await client.query(
+                `INSERT INTO facturas (pedido_id, cliente_id, facturama_id, uuid, serie, folio, rfc, razon_social, regimen_fiscal, codigo_postal,
+                                       uso_cfdi, forma_pago, total, modo, solicitada_por, usuario_id)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+                [p.id, p.cliente_id, t.id, t.uuid, t.serie, t.folio, fiscales.rfc, fiscales.razon_social, fiscales.regimen_fiscal, fiscales.codigo_postal,
+                    fiscales.uso_cfdi, cfdi.PaymentForm, t.total ?? total, facturama.CFG.modo, quien.usuario_id ? 'equipo' : 'cliente', quien.usuario_id || null])).rows[0];
+            await registrarProceso(client, p.id, 'factura', `Factura ${t.serie || ''}${t.folio || ''} timbrada (UUID ${t.uuid || '—'}) para ${fiscales.rfc}`, { automatico: !quien.usuario_id, usuarioId: quien.usuario_id || null });
+            if (req && quien.usuario_id) {
+                await auditar(client, req, { accion: 'factura_emitida', entidad: 'pedido', entidad_id: p.id, despues: { factura: f.id, uuid: f.uuid, rfc: f.rfc, total: f.total } });
+            }
+            await client.query('COMMIT');
+        } catch (eGuardar) {
+            await client.query('ROLLBACK').catch(() => {});
+            await facturama.cancelar(t.id, '02').catch((ec) => console.error(`CFDI ${t.uuid} timbrado sin guardar y no se pudo cancelar:`, ec.message));
+            throw eGuardar;
         }
-        await client.query('COMMIT');
         // Facturama manda el PDF y XML al correo del cliente (si falla, igual se puede descargar)
         const c = p.cliente_id ? (await pool.query('SELECT correo FROM clientes WHERE id = $1', [p.cliente_id])).rows[0] : null;
         if (c && c.correo) facturama.enviarPorCorreo(t.id, c.correo, `Tu factura del pedido ${p.numero_orden} · Kozmok`).catch(() => {});
@@ -2247,11 +2402,11 @@ app.get('/api/facturacion/config', (req, res) => {
     res.json({ activo: facturama.configurado(), modo: facturama.CFG.modo, regimenes: FISCAL.regimenes, usos: FISCAL.usos, dias: FISCAL.diasParaFacturar });
 });
 
-app.get('/api/clientes/:id/datos-fiscales', asyncRoute(async (req, res) => {
+app.get('/api/clientes/:id/datos-fiscales', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
     const r = await pool.query('SELECT rfc, razon_social, regimen_fiscal, codigo_postal, uso_cfdi FROM datos_fiscales WHERE cliente_id = $1', [req.params.id]);
     res.json(r.rows[0] || null);
 }));
-app.put('/api/clientes/:id/datos-fiscales', asyncRoute(async (req, res) => {
+app.put('/api/clientes/:id/datos-fiscales', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
     const v = validarFiscales(req.body || {});
     if (v.error) return res.status(400).json({ message: v.error });
     const d = v.datos;
@@ -2295,40 +2450,6 @@ app.get('/api/facturas/:id/:formato(pdf|xml)', asyncRoute(async (req, res) => {
     } catch (e) { errorFactura(res, e); }
 }));
 
-app.get('/api/admin/facturas', asyncRoute(async (req, res) => {
-    const r = await pool.query(
-        `SELECT f.*, p.numero_orden, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre FROM facturas f
-         JOIN pedidos p ON p.id = f.pedido_id LEFT JOIN clientes c ON c.id = f.cliente_id LEFT JOIN usuarios u ON u.id = f.usuario_id
-         ORDER BY f.id DESC LIMIT 300`);
-    res.json({ facturas: r.rows, activo: facturama.configurado(), modo: facturama.CFG.modo });
-}));
-// El equipo factura un pedido por su número (p. ej. una venta de mostrador del ERP)
-app.post('/api/admin/facturas', asyncRoute(async (req, res) => {
-    const v = validarFiscales(req.body || {});
-    if (v.error) return res.status(400).json({ message: v.error });
-    const p = (await pool.query('SELECT id FROM pedidos WHERE numero_orden = $1', [String(req.body.numero_orden || '').trim().toUpperCase()])).rows[0];
-    if (!p) return res.status(404).json({ message: 'No encontré ese número de pedido' });
-    try {
-        const f = await facturarPedido(p.id, v.datos, { usuario_id: req.usuario.id }, req);
-        res.status(201).json({ message: 'Factura generada', factura: f });
-    } catch (e) { errorFactura(res, e); }
-}));
-app.post('/api/admin/facturas/:id/cancelar', asyncRoute(async (req, res) => {
-    const motivo = ['02', '03'].includes(req.body.motivo) ? req.body.motivo : null;
-    const detalle = String(req.body.detalle || '').trim();
-    if (!motivo) return res.status(400).json({ message: 'Elige el motivo de cancelación' });
-    if (detalle.length < 10) return res.status(400).json({ message: 'Explica por qué se cancela (al menos 10 caracteres)' });
-    const f = (await pool.query('SELECT * FROM facturas WHERE id = $1', [req.params.id])).rows[0];
-    if (!f) return res.status(404).json({ message: 'Factura no encontrada' });
-    if (f.estado === 'cancelada') return res.status(400).json({ message: 'La factura ya estaba cancelada' });
-    try {
-        const r = await facturama.cancelar(f.facturama_id, motivo);
-        const estado = r.estado === 'canceled' ? 'cancelada' : 'cancelando';
-        await pool.query('UPDATE facturas SET estado = $2, motivo_cancelacion = $3 WHERE id = $1', [f.id, estado, motivo]);
-        await auditar(pool, req, { accion: 'factura_cancelada', entidad: 'pedido', entidad_id: f.pedido_id, antes: { estado: f.estado }, despues: { estado, uuid: f.uuid }, motivo: `${motivo}: ${detalle}` });
-        res.json({ message: estado === 'cancelada' ? 'Factura cancelada ante el SAT' : 'Cancelación enviada; el SAT la está procesando', estado });
-    } catch (e) { errorFactura(res, e); }
-}));
 
 // =========================================================
 // DEVOLUCIONES
@@ -2469,145 +2590,6 @@ app.post('/api/devoluciones/:id/cancelar', requireCliente, asyncRoute(async (req
     res.json({ message: `Cancelaste la devolución ${d.folio}` });
 }));
 
-// ---- Equipo
-app.get('/api/admin/devoluciones', asyncRoute(async (req, res) => {
-    const r = await pool.query(
-        `SELECT d.*, p.numero_orden, p.metodo_tipo, p.total AS total_pedido, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
-                ur.nombre AS revisado_nombre, uc.nombre AS cerrado_nombre,
-                EXISTS (SELECT 1 FROM facturas f WHERE f.pedido_id = p.id AND f.estado = 'timbrada') AS facturado,
-                COALESCE(json_agg(json_build_object('id', di.id, 'nombre', pr.nombre, 'producto_id', di.producto_id, 'cantidad', di.cantidad,
-                                                    'monto', di.monto, 'reingresa', di.reingresa, 'stock', pr.stock, 'activo', pr.activo) ORDER BY di.id)
-                         FILTER (WHERE di.id IS NOT NULL), '[]') AS items
-         FROM devoluciones d JOIN pedidos p ON p.id = d.pedido_id LEFT JOIN clientes c ON c.id = d.cliente_id
-         LEFT JOIN usuarios ur ON ur.id = d.revisado_por LEFT JOIN usuarios uc ON uc.id = d.cerrado_por
-         LEFT JOIN devolucion_items di ON di.devolucion_id = d.id LEFT JOIN productos pr ON pr.id = di.producto_id
-         GROUP BY d.id, p.id, c.id, ur.id, uc.id ORDER BY d.id DESC LIMIT 300`);
-    res.json({ devoluciones: r.rows, motivos: DEV.motivos, vias: DEV.vias, estados: DEV.estados, umbral_admin: DEV.umbralAdmin });
-}));
-
-app.post('/api/admin/devoluciones/:id/revisar', asyncRoute(async (req, res) => {
-    const aprobar = req.body.decision === 'aprobar';
-    const nota = String(req.body.nota || '').trim().slice(0, 1000);
-    if (!aprobar && nota.length < 10) return res.status(400).json({ message: 'Explica al cliente por qué se rechaza (al menos 10 caracteres)' });
-    const d = (await pool.query('SELECT * FROM devoluciones WHERE id = $1', [req.params.id])).rows[0];
-    if (!d) return res.status(404).json({ message: 'Devolución no encontrada' });
-    if (d.estado !== 'solicitada') return res.status(400).json({ message: 'Esta devolución ya se revisó' });
-    await pool.query('UPDATE devoluciones SET estado = $2, nota_equipo = $3, revisado_por = $4 WHERE id = $1', [d.id, aprobar ? 'aprobada' : 'rechazada', nota || null, req.usuario.id]);
-    await auditar(pool, req, { accion: aprobar ? 'devolucion_aprobada' : 'devolucion_rechazada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto }, motivo: nota || null });
-    const dir = process.env.DEVOLUCIONES_DIRECCION || 'la dirección que te indicaremos por correo';
-    avisarDevolucion(d, aprobar ? 'Tu devolución fue aprobada' : 'Tu devolución no fue aprobada', aprobar
-        ? `Aprobamos tu devolución. Empaca el producto con sus accesorios, escribe el folio ${d.folio} en la caja y envíalo a ${dir}. Cuando lo recibamos y lo revisemos, ${d.resolucion === 'cambio' ? 'te enviamos el cambio' : `te reembolsamos ${formatoMXN(d.monto)}`}.${nota ? '\n\nNota del equipo: ' + nota : ''}`
-        : `Revisamos tu solicitud y no pudimos aprobarla: ${nota}\n\nSi tienes dudas, responde este correo o escríbenos en Soporte.`);
-    res.json({ message: aprobar ? 'Devolución aprobada; le avisamos al cliente cómo enviarla' : 'Devolución rechazada; le avisamos al cliente' });
-}));
-
-app.post('/api/admin/devoluciones/:id/recibir', asyncRoute(async (req, res) => {
-    const nota = String(req.body.nota || '').trim().slice(0, 1000);
-    const marcas = Array.isArray(req.body.items) ? req.body.items : [];
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
-        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
-        if (d.estado !== 'aprobada') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Solo se recibe una devolución aprobada' }); }
-        const items = (await client.query('SELECT di.*, p.costo_unitario, p.precio FROM devolucion_items di LEFT JOIN productos p ON p.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
-        let reingresan = 0;
-        for (const it of items) {
-            const vuelve = !!(marcas.find((m) => Number(m.id) === it.id) || {}).reingresa;
-            await client.query('UPDATE devolucion_items SET reingresa = $2 WHERE id = $1', [it.id, vuelve]);
-            if (vuelve && it.producto_id) {
-                // La pieza vuelve a venta: entrada de inventario con fecha del servidor
-                await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
-                await client.query(
-                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
-                     VALUES ($1,'entrada',$2,$3,'devolucion_cliente',$4,$5)`,
-                    [it.producto_id, it.cantidad, `Devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
-                reingresan += it.cantidad;
-            }
-        }
-        await client.query(`UPDATE devoluciones SET estado = 'recibida', nota_equipo = COALESCE(NULLIF($2, ''), nota_equipo) WHERE id = $1`, [d.id, nota]);
-        await auditar(client, req, { accion: 'devolucion_recibida', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, piezas_a_venta: reingresan }, motivo: nota || null });
-        await client.query('COMMIT');
-        avisarDevolucion(d, 'Recibimos tu devolución', `Ya llegó tu devolución y la estamos revisando. ${d.resolucion === 'cambio' ? 'En cuanto salga tu cambio te mandamos la guía.' : `En breve te reembolsamos ${formatoMXN(d.monto)}.`}`);
-        res.json({ message: `Recibida. ${reingresan ? reingresan + ' pieza(s) regresaron a inventario.' : 'Ninguna pieza regresó a venta.'}` });
-    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
-}));
-
-app.post('/api/admin/devoluciones/:id/cerrar', limiteDinero, asyncRoute(async (req, res) => {
-    const accion = req.body.accion === 'cambiar' ? 'cambiar' : 'reembolsar';
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
-        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
-        if (d.estado !== 'recibida') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Primero registra que se recibió el producto' }); }
-        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1', [d.pedido_id])).rows[0];
-        const items = (await client.query('SELECT di.*, pr.nombre, pr.stock, pr.costo_unitario, pr.precio FROM devolucion_items di LEFT JOIN productos pr ON pr.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
-
-        if (accion === 'cambiar') {
-            const guia = String(req.body.guia || '').trim().slice(0, 60);
-            if (guia.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el número de guía del envío del cambio' }); }
-            for (const it of items) {
-                const pr = (await client.query('SELECT stock FROM productos WHERE id = $1 FOR UPDATE', [it.producto_id])).rows[0];
-                if (!pr || pr.stock < it.cantidad) { await client.query('ROLLBACK'); return res.status(400).json({ message: `No hay existencias de "${it.nombre}" para el cambio; ofrécele el reembolso` }); }
-                await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [it.cantidad, it.producto_id]);
-                await client.query(
-                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
-                     VALUES ($1,'salida',$2,$3,'reemplazo_cliente',$4,$5)`,
-                    [it.producto_id, it.cantidad, `Cambio por devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
-            }
-            await client.query(`UPDATE devoluciones SET estado = 'cambiada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, `Guía ${guia}`, req.usuario.id]);
-            await auditar(client, req, { accion: 'devolucion_cambio', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, guia } });
-            await client.query('COMMIT');
-            avisarDevolucion(d, 'Tu cambio va en camino', `Enviamos tu cambio de ${items.map((i) => `${i.cantidad} × ${i.nombre}`).join(', ')}. Número de guía: ${guia}.`);
-            return res.json({ message: 'Cambio registrado; se descontó del inventario y le avisamos al cliente' });
-        }
-
-        // Reembolso
-        if (Number(d.monto) > DEV.umbralAdmin && req.usuario.rol !== 'admin') {
-            await client.query('ROLLBACK');
-            return res.status(403).json({ message: `Los reembolsos mayores a ${formatoMXN(DEV.umbralAdmin)} los autoriza un administrador` });
-        }
-        const via = d.reembolso_via || viasDevolucion(p.metodo_tipo)[0];
-        let ref = null;
-        if (via === 'paypal') {
-            const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' ORDER BY id DESC LIMIT 1`, [p.id])).rows[0];
-            if (!pp) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'No encontré el cobro de PayPal de este pedido; reembolsa al monedero' }); }
-            if (!paypal.configurado()) { await client.query('ROLLBACK'); return res.status(503).json({ message: 'PayPal no está configurado en el servidor' }); }
-            const r = await paypal.reembolsar(pp.captura_id, { monto: d.monto, nota: `Devolución ${d.folio}`, requestId: `kz-dev-${d.id}` });
-            ref = `PayPal ${r.id || ''}`.trim();
-        } else if (via === 'monedero') {
-            const m = await monederoDe(client, p.cliente_id, { bloquear: true });
-            const mov = await moverMonedero(client, m, { tipo: 'reembolso', monto: Number(d.monto), concepto: `Devolución ${d.folio}`, pedidoId: p.id, usuarioId: req.usuario.id });
-            ref = `Monedero mov. ${mov.id}`;
-        } else {
-            const comp = String(req.body.comprobante || '').trim().slice(0, 60);
-            if (comp.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el folio de la transferencia del reembolso' }); }
-            const dup = (await client.query(`SELECT folio FROM devoluciones WHERE reembolso_ref = $1`, [`Transferencia ${comp}`])).rows[0];
-            if (dup) { await client.query('ROLLBACK'); return res.status(400).json({ message: `Ese folio ya se usó en la devolución ${dup.folio}` }); }
-            ref = `Transferencia ${comp}`;
-        }
-        // Se retiran los puntos que dio la parte devuelta de la compra
-        const ganados = Number((await client.query(`SELECT COALESCE(SUM(puntos), 0) AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`, [p.id])).rows[0].n);
-        const pagado = Math.max(1, Number(p.total) - Number(p.envio || 0));
-        const retirar = Math.floor(ganados * Math.min(1, (Number(d.monto) - (d.incluye_envio ? Number(p.envio) : 0)) / pagado));
-        if (retirar > 0 && p.cliente_id) {
-            await client.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [retirar, p.cliente_id]);
-            await client.query(`INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
-                [p.cliente_id, -retirar, `Devolución ${d.folio}`, p.id]);
-        }
-        await client.query(`UPDATE devoluciones SET estado = 'reembolsada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, ref, req.usuario.id]);
-        await auditar(client, req, { accion: 'devolucion_reembolsada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto, via, ref, puntos_retirados: retirar } });
-        await client.query('COMMIT');
-        const facturado = (await pool.query(`SELECT 1 FROM facturas WHERE pedido_id = $1 AND estado = 'timbrada'`, [p.id])).rows.length > 0;
-        avisarDevolucion(d, 'Te reembolsamos tu devolución', `Te reembolsamos ${formatoMXN(d.monto)} ${via === 'paypal' ? 'por PayPal (si pagaste con tarjeta, tu banco puede tardar de 5 a 10 días hábiles en reflejarlo)' : via === 'monedero' ? 'en tu monedero Kozmok; ya puedes usarlo' : 'por transferencia'}.${retirar ? ` Se descontaron ${retirar} puntos que te había dado esa parte de la compra.` : ''}`);
-        res.json({ message: `Reembolso de ${formatoMXN(d.monto)} hecho (${ref}).${retirar ? ` Se retiraron ${retirar} puntos.` : ''}${facturado ? ' Este pedido tiene factura: emite la nota de crédito en Facturama.' : ''}` });
-    } catch (e) {
-        await client.query('ROLLBACK').catch(() => {});
-        if (e.paypal || e.publico) return res.status(e.status && e.status < 600 ? e.status : 502).json({ message: e.message });
-        throw e;
-    } finally { client.release(); }
-}));
 
 // =========================================================
 // PAYPAL (cuenta PayPal o tarjeta) — sandbox: sin dinero real
@@ -2621,7 +2603,8 @@ app.post('/api/admin/devoluciones/:id/cerrar', limiteDinero, asyncRoute(async (r
 // =========================================================
 app.get('/api/pagos/paypal/config', (req, res) => {
     res.json({ activo: paypal.configurado(), client_id: paypal.configurado() ? paypal.CFG.clientId : null,
-               moneda: paypal.CFG.moneda, modo: paypal.CFG.modo, minutos_para_pagar: METODOS_TIENDA.paypal.minutos });
+               moneda: paypal.CFG.moneda, modo: paypal.CFG.modo, minutos_para_pagar: METODOS_TIENDA.paypal.minutos,
+               spei: speiConfigurado() });   // la tienda también lo usa para saber si ofrece transferencia
 });
 // Historial de pagos con PayPal / tarjeta del cliente (para "Formas de pago")
 app.get('/api/pagos/paypal/mios', requireCliente, asyncRoute(async (req, res) => {
@@ -2690,19 +2673,19 @@ app.post('/api/pagos/paypal/capturar', limiteDinero, requireCliente, asyncRoute(
         if (cap.estado !== 'COMPLETED') {
             await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = $3, detalle = $4 WHERE id = $1`,
                 [pp.id, cap.captura_id, cap.estado === 'PENDING' ? 'pendiente' : 'fallida', JSON.stringify({ estado: cap.estado, motivo: cap.motivo_pendiente })]);
+            if (cap.estado === 'PENDING') {
+                // Mientras PayPal lo revisa el pedido no vence (si venciera se
+                // cancelaría y PayPal podría cobrarlo después). La tarea
+                // conciliarPayPalPendientes lo confirma o lo libera.
+                await client.query('UPDATE pedidos SET pago_vence = NULL WHERE id = $1', [p.id]);
+                await registrarProceso(client, p.id, 'pago', `PayPal dejó el pago en revisión (${cap.captura_id})`, { automatico: true });
+            }
             await client.query('COMMIT');
             return res.status(402).json({ message: cap.estado === 'PENDING'
                 ? 'PayPal dejó el pago en revisión. Te avisaremos cuando se confirme; tu pedido sigue apartado.'
                 : 'PayPal no aprobó el pago. Intenta con otra tarjeta o cuenta.' });
         }
-        await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = $3 WHERE id = $1`,
-            [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
-        await client.query(
-            `UPDATE pedidos SET pago_estado = 'pagado', estado = 'confirmado', fecha_confirmacion = COALESCE(fecha_confirmacion, CURRENT_TIMESTAMP),
-                 pago_referencia = $2, pago_comprobante = $2, pago_vence = NULL
-             WHERE id = $1`, [p.id, cap.captura_id]);
-        const puntos_ganados = await aplicarCobroPedido(client, p, { metricas: false });
-        await registrarProceso(client, p.id, 'pago', `Pago con PayPal confirmado (${cap.captura_id})${puntos_ganados ? `, +${puntos_ganados} puntos` : ''}`, { automatico: true });
+        const puntos_ganados = await confirmarPedidoPayPal(client, p, pp, cap);
         await client.query('COMMIT');
         avisarPronto();
         res.json({ message: 'Pago confirmado', pedido_id: p.id, numero_orden: p.numero_orden, puntos_ganados, captura_id: cap.captura_id, modo: paypal.CFG.modo });
@@ -2804,14 +2787,7 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
         garantias: garantias.rows,
         puntos_ganados: ganados,
         puntos_canjeados: canjeados,
-        emisor: {
-            nombre: 'Kozmok S.A. de C.V.',
-            rfc: 'KOZ250101XY9',
-            domicilio: 'Av. Tecnológico 1200, Col. Centro, Aguascalientes, Ags.',
-            banco: 'STP',
-            clabe: '646180' + String(1000000000 + Number(pedido.id) * 131).slice(0, 12),
-            beneficiario: 'Kozmok S.A. de C.V.',
-        },
+        emisor: { ...EMPRESA },
     });
 }));
 
@@ -3451,6 +3427,7 @@ app.use('/api/admin', (req, res, next) => {
 const AUDITORIA_PROPIA = [
     /^\/movimientos-inventario/, /^\/productos(\/\d+)?(\/restock)?$/, /^\/(pedidos|erp\/ordenes)\/\d+\/estado$/,
     /^\/pedidos\/\d+\/registrar-pago$/, /^\/clientes\/\d+$/, /^\/mi-password$/, /^\/monederos\//,
+    /^\/facturas(\/|$)/, /^\/devoluciones\//,
 ];
 function limpiarParaBitacora(obj, nivel = 0) {
     if (obj == null || typeof obj !== 'object' || nivel > 3) return obj;
@@ -3479,6 +3456,191 @@ app.use('/api/admin', (req, res, next) => {
     });
     next();
 });
+
+// ---------------------------------------------------------
+// FACTURACIÓN Y DEVOLUCIONES (equipo). Van aquí, después de la sesión
+// interna y del control de permisos: registradas antes, Express las
+// atendía sin pedir login.
+// ---------------------------------------------------------
+app.get('/api/admin/facturas', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT f.*, p.numero_orden, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre FROM facturas f
+         JOIN pedidos p ON p.id = f.pedido_id LEFT JOIN clientes c ON c.id = f.cliente_id LEFT JOIN usuarios u ON u.id = f.usuario_id
+         ORDER BY f.id DESC LIMIT 300`);
+    res.json({ facturas: r.rows, activo: facturama.configurado(), modo: facturama.CFG.modo });
+}));
+// El equipo factura un pedido por su número (p. ej. una venta de mostrador del ERP)
+app.post('/api/admin/facturas', asyncRoute(async (req, res) => {
+    const v = validarFiscales(req.body || {});
+    if (v.error) return res.status(400).json({ message: v.error });
+    const p = (await pool.query('SELECT id FROM pedidos WHERE numero_orden = $1', [String(req.body.numero_orden || '').trim().toUpperCase()])).rows[0];
+    if (!p) return res.status(404).json({ message: 'No encontré ese número de pedido' });
+    try {
+        const f = await facturarPedido(p.id, v.datos, { usuario_id: req.usuario.id }, req);
+        res.status(201).json({ message: 'Factura generada', factura: f });
+    } catch (e) { errorFactura(res, e); }
+}));
+app.post('/api/admin/facturas/:id/cancelar', asyncRoute(async (req, res) => {
+    const motivo = ['02', '03'].includes(req.body.motivo) ? req.body.motivo : null;
+    const detalle = String(req.body.detalle || '').trim();
+    if (!motivo) return res.status(400).json({ message: 'Elige el motivo de cancelación' });
+    if (detalle.length < 10) return res.status(400).json({ message: 'Explica por qué se cancela (al menos 10 caracteres)' });
+    const f = (await pool.query('SELECT * FROM facturas WHERE id = $1', [req.params.id])).rows[0];
+    if (!f) return res.status(404).json({ message: 'Factura no encontrada' });
+    if (f.estado === 'cancelada') return res.status(400).json({ message: 'La factura ya estaba cancelada' });
+    try {
+        const r = await facturama.cancelar(f.facturama_id, motivo);
+        const estado = r.estado === 'canceled' ? 'cancelada' : 'cancelando';
+        await pool.query('UPDATE facturas SET estado = $2, motivo_cancelacion = $3 WHERE id = $1', [f.id, estado, motivo]);
+        await auditar(pool, req, { accion: 'factura_cancelada', entidad: 'pedido', entidad_id: f.pedido_id, antes: { estado: f.estado }, despues: { estado, uuid: f.uuid }, motivo: `${motivo}: ${detalle}` });
+        res.json({ message: estado === 'cancelada' ? 'Factura cancelada ante el SAT' : 'Cancelación enviada; el SAT la está procesando', estado });
+    } catch (e) { errorFactura(res, e); }
+}));
+
+// Devoluciones: equipo
+app.get('/api/admin/devoluciones', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT d.*, p.numero_orden, p.metodo_tipo, p.total AS total_pedido, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
+                ur.nombre AS revisado_nombre, uc.nombre AS cerrado_nombre,
+                EXISTS (SELECT 1 FROM facturas f WHERE f.pedido_id = p.id AND f.estado = 'timbrada') AS facturado,
+                COALESCE(json_agg(json_build_object('id', di.id, 'nombre', pr.nombre, 'producto_id', di.producto_id, 'cantidad', di.cantidad,
+                                                    'monto', di.monto, 'reingresa', di.reingresa, 'stock', pr.stock, 'activo', pr.activo) ORDER BY di.id)
+                         FILTER (WHERE di.id IS NOT NULL), '[]') AS items
+         FROM devoluciones d JOIN pedidos p ON p.id = d.pedido_id LEFT JOIN clientes c ON c.id = d.cliente_id
+         LEFT JOIN usuarios ur ON ur.id = d.revisado_por LEFT JOIN usuarios uc ON uc.id = d.cerrado_por
+         LEFT JOIN devolucion_items di ON di.devolucion_id = d.id LEFT JOIN productos pr ON pr.id = di.producto_id
+         GROUP BY d.id, p.id, c.id, ur.id, uc.id ORDER BY d.id DESC LIMIT 300`);
+    res.json({ devoluciones: r.rows, motivos: DEV.motivos, vias: DEV.vias, estados: DEV.estados, umbral_admin: DEV.umbralAdmin });
+}));
+
+app.post('/api/admin/devoluciones/:id/revisar', asyncRoute(async (req, res) => {
+    const aprobar = req.body.decision === 'aprobar';
+    const nota = String(req.body.nota || '').trim().slice(0, 1000);
+    if (!aprobar && nota.length < 10) return res.status(400).json({ message: 'Explica al cliente por qué se rechaza (al menos 10 caracteres)' });
+    const d = (await pool.query('SELECT * FROM devoluciones WHERE id = $1', [req.params.id])).rows[0];
+    if (!d) return res.status(404).json({ message: 'Devolución no encontrada' });
+    if (d.estado !== 'solicitada') return res.status(400).json({ message: 'Esta devolución ya se revisó' });
+    await pool.query('UPDATE devoluciones SET estado = $2, nota_equipo = $3, revisado_por = $4 WHERE id = $1', [d.id, aprobar ? 'aprobada' : 'rechazada', nota || null, req.usuario.id]);
+    await auditar(pool, req, { accion: aprobar ? 'devolucion_aprobada' : 'devolucion_rechazada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto }, motivo: nota || null });
+    const dir = process.env.DEVOLUCIONES_DIRECCION || 'la dirección que te indicaremos por correo';
+    avisarDevolucion(d, aprobar ? 'Tu devolución fue aprobada' : 'Tu devolución no fue aprobada', aprobar
+        ? `Aprobamos tu devolución. Empaca el producto con sus accesorios, escribe el folio ${d.folio} en la caja y envíalo a ${dir}. Cuando lo recibamos y lo revisemos, ${d.resolucion === 'cambio' ? 'te enviamos el cambio' : `te reembolsamos ${formatoMXN(d.monto)}`}.${nota ? '\n\nNota del equipo: ' + nota : ''}`
+        : `Revisamos tu solicitud y no pudimos aprobarla: ${nota}\n\nSi tienes dudas, responde este correo o escríbenos en Soporte.`);
+    res.json({ message: aprobar ? 'Devolución aprobada; le avisamos al cliente cómo enviarla' : 'Devolución rechazada; le avisamos al cliente' });
+}));
+
+app.post('/api/admin/devoluciones/:id/recibir', asyncRoute(async (req, res) => {
+    const nota = String(req.body.nota || '').trim().slice(0, 1000);
+    const marcas = Array.isArray(req.body.items) ? req.body.items : [];
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
+        if (d.estado !== 'aprobada') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Solo se recibe una devolución aprobada' }); }
+        const items = (await client.query('SELECT di.*, p.costo_unitario, p.precio FROM devolucion_items di LEFT JOIN productos p ON p.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
+        let reingresan = 0;
+        for (const it of items) {
+            const vuelve = !!(marcas.find((m) => Number(m.id) === it.id) || {}).reingresa;
+            await client.query('UPDATE devolucion_items SET reingresa = $2 WHERE id = $1', [it.id, vuelve]);
+            if (vuelve && it.producto_id) {
+                // La pieza vuelve a venta: entrada de inventario con fecha del servidor
+                await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
+                await client.query(
+                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
+                     VALUES ($1,'entrada',$2,$3,'devolucion_cliente',$4,$5)`,
+                    [it.producto_id, it.cantidad, `Devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
+                reingresan += it.cantidad;
+            }
+        }
+        await client.query(`UPDATE devoluciones SET estado = 'recibida', nota_equipo = COALESCE(NULLIF($2, ''), nota_equipo) WHERE id = $1`, [d.id, nota]);
+        await auditar(client, req, { accion: 'devolucion_recibida', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, piezas_a_venta: reingresan }, motivo: nota || null });
+        await client.query('COMMIT');
+        avisarDevolucion(d, 'Recibimos tu devolución', `Ya llegó tu devolución y la estamos revisando. ${d.resolucion === 'cambio' ? 'En cuanto salga tu cambio te mandamos la guía.' : `En breve te reembolsamos ${formatoMXN(d.monto)}.`}`);
+        res.json({ message: `Recibida. ${reingresan ? reingresan + ' pieza(s) regresaron a inventario.' : 'Ninguna pieza regresó a venta.'}` });
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+}));
+
+app.post('/api/admin/devoluciones/:id/cerrar', limiteDinero, asyncRoute(async (req, res) => {
+    const accion = req.body.accion === 'cambiar' ? 'cambiar' : 'reembolsar';
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
+        if (d.estado !== 'recibida') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Primero registra que se recibió el producto' }); }
+        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1', [d.pedido_id])).rows[0];
+        const items = (await client.query('SELECT di.*, pr.nombre, pr.stock, pr.costo_unitario, pr.precio FROM devolucion_items di LEFT JOIN productos pr ON pr.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
+
+        if (accion === 'cambiar') {
+            const guia = String(req.body.guia || '').trim().slice(0, 60);
+            if (guia.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el número de guía del envío del cambio' }); }
+            for (const it of items) {
+                const pr = (await client.query('SELECT stock FROM productos WHERE id = $1 FOR UPDATE', [it.producto_id])).rows[0];
+                if (!pr || pr.stock < it.cantidad) { await client.query('ROLLBACK'); return res.status(400).json({ message: `No hay existencias de "${it.nombre}" para el cambio; ofrécele el reembolso` }); }
+                await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [it.cantidad, it.producto_id]);
+                await client.query(
+                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
+                     VALUES ($1,'salida',$2,$3,'reemplazo_cliente',$4,$5)`,
+                    [it.producto_id, it.cantidad, `Cambio por devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
+            }
+            await client.query(`UPDATE devoluciones SET estado = 'cambiada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, `Guía ${guia}`, req.usuario.id]);
+            await auditar(client, req, { accion: 'devolucion_cambio', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, guia } });
+            await client.query('COMMIT');
+            avisarDevolucion(d, 'Tu cambio va en camino', `Enviamos tu cambio de ${items.map((i) => `${i.cantidad} × ${i.nombre}`).join(', ')}. Número de guía: ${guia}.`);
+            return res.json({ message: 'Cambio registrado; se descontó del inventario y le avisamos al cliente' });
+        }
+
+        // Reembolso
+        if (Number(d.monto) > DEV.umbralAdmin && req.usuario.rol !== 'admin') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: `Los reembolsos mayores a ${formatoMXN(DEV.umbralAdmin)} los autoriza un administrador` });
+        }
+        const via = d.reembolso_via || viasDevolucion(p.metodo_tipo)[0];
+        let ref = null;
+        let ppDev = null;   // el reembolso de PayPal se hace al final (ver abajo)
+        if (via === 'paypal') {
+            ppDev = (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' ORDER BY id DESC LIMIT 1`, [p.id])).rows[0];
+            if (!ppDev) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'No encontré el cobro de PayPal de este pedido; reembolsa al monedero' }); }
+            if (!paypal.configurado()) { await client.query('ROLLBACK'); return res.status(503).json({ message: 'PayPal no está configurado en el servidor' }); }
+        } else if (via === 'monedero') {
+            const m = await monederoDe(client, p.cliente_id, { bloquear: true });
+            const mov = await moverMonedero(client, m, { tipo: 'reembolso', monto: Number(d.monto), concepto: `Devolución ${d.folio}`, pedidoId: p.id, usuarioId: req.usuario.id });
+            ref = `Monedero mov. ${mov.id}`;
+        } else {
+            const comp = String(req.body.comprobante || '').trim().slice(0, 60);
+            if (comp.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el folio de la transferencia del reembolso' }); }
+            const dup = (await client.query(`SELECT folio FROM devoluciones WHERE reembolso_ref = $1`, [`Transferencia ${comp}`])).rows[0];
+            if (dup) { await client.query('ROLLBACK'); return res.status(400).json({ message: `Ese folio ya se usó en la devolución ${dup.folio}` }); }
+            ref = `Transferencia ${comp}`;
+        }
+        // Se retiran los puntos que dio la parte devuelta de la compra
+        const ganados = Number((await client.query(`SELECT COALESCE(SUM(puntos), 0) AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`, [p.id])).rows[0].n);
+        const pagado = Math.max(1, Number(p.total) - Number(p.envio || 0));
+        const retirar = Math.floor(ganados * Math.min(1, (Number(d.monto) - (d.incluye_envio ? Number(p.envio) : 0)) / pagado));
+        if (retirar > 0 && p.cliente_id) {
+            await client.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [retirar, p.cliente_id]);
+            await client.query(`INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
+                [p.cliente_id, -retirar, `Devolución ${d.folio}`, p.id]);
+        }
+        // El dinero sale al final, cuando el resto ya se aplicó. El Request-Id
+        // fijo hace que un reintento no reembolse dos veces.
+        if (ppDev) {
+            const r = await paypal.reembolsar(ppDev.captura_id, { monto: d.monto, nota: `Devolución ${d.folio}`, requestId: `kz-dev-${d.id}` });
+            ref = `PayPal ${r.id || ''}`.trim();
+        }
+        await client.query(`UPDATE devoluciones SET estado = 'reembolsada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, ref, req.usuario.id]);
+        await auditar(client, req, { accion: 'devolucion_reembolsada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto, via, ref, puntos_retirados: retirar } });
+        await client.query('COMMIT');
+        const facturado = (await pool.query(`SELECT 1 FROM facturas WHERE pedido_id = $1 AND estado = 'timbrada'`, [p.id])).rows.length > 0;
+        avisarDevolucion(d, 'Te reembolsamos tu devolución', `Te reembolsamos ${formatoMXN(d.monto)} ${via === 'paypal' ? 'por PayPal (si pagaste con tarjeta, tu banco puede tardar de 5 a 10 días hábiles en reflejarlo)' : via === 'monedero' ? 'en tu monedero Kozmok; ya puedes usarlo' : 'por transferencia'}.${retirar ? ` Se descontaron ${retirar} puntos que te había dado esa parte de la compra.` : ''}`);
+        res.json({ message: `Reembolso de ${formatoMXN(d.monto)} hecho (${ref}).${retirar ? ` Se retiraron ${retirar} puntos.` : ''}${facturado ? ' Este pedido tiene factura: emite la nota de crédito en Facturama.' : ''}` });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (e.paypal || e.publico) return res.status(e.status && e.status < 600 ? e.status : 502).json({ message: e.message });
+        throw e;
+    } finally { client.release(); }
+}));
 
 // Consulta de la bitácora (solo administrador: no hay regla para otros roles)
 app.get('/api/admin/auditoria', asyncRoute(async (req, res) => {
@@ -6629,14 +6791,15 @@ app.post('/api/monedero/paypal/capturar', limiteDinero, requireCliente, asyncRou
         const coincide = cap.referencia === ref && cap.moneda === paypal.CFG.moneda && Math.abs(Number(cap.monto) - Number(pp.monto)) < 0.005;
         if (cap.estado !== 'COMPLETED' || !coincide) {
             if (cap.estado === 'COMPLETED') await paypal.reembolsar(cap.captura_id, { nota: 'Recarga no coincidió', requestId: `kz-ref-cap-${pp.id}` }).catch(() => {});
-            await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'fallida', detalle = detalle || $3 WHERE id = $1`,
-                [pp.id, cap.captura_id, JSON.stringify({ estado: cap.estado, coincide })]);
+            // En revisión (PENDING) queda "pendiente": conciliarPayPalPendientes
+            // la abona cuando PayPal la complete.
+            const enRevision = cap.estado === 'PENDING' && coincide;
+            await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = $4, detalle = detalle || $3 WHERE id = $1`,
+                [pp.id, cap.captura_id, JSON.stringify({ estado: cap.estado, coincide }), enRevision ? 'pendiente' : 'fallida']);
             await client.query('COMMIT');
             return res.status(402).json({ message: cap.estado === 'PENDING' ? 'PayPal dejó el pago en revisión; la recarga se aplica al confirmarse.' : 'PayPal no aprobó el pago. No se hizo ningún cargo.' });
         }
-        await client.query(`UPDATE pagos_paypal SET captura_id = $2, estado = 'capturada', pagador_correo = $3 WHERE id = $1`,
-            [pp.id, cap.captura_id, cap.pagador ? cap.pagador.correo : null]);
-        const mov = await moverMonedero(client, m, { tipo: 'recarga', monto: Number(pp.monto), concepto: 'Recarga con PayPal', metodo: 'paypal', referencia: cap.captura_id });
+        const mov = await abonarRecargaPayPal(client, m, pp, cap);
         await client.query('COMMIT');
         res.json({ message: `Recarga de ${formatoMXN(pp.monto)} aplicada`, saldo: m.saldo, movimiento: mov, modo: paypal.CFG.modo });
     } catch (e) {
@@ -6653,6 +6816,7 @@ app.post('/api/monedero/recargar', limiteDinero, requireCliente, asyncRoute(asyn
     if (['tarjeta', 'paypal'].includes(req.body.metodo)) return res.status(400).json({ message: 'Para recargar con tarjeta o PayPal usa el botón de PayPal.' });
     const metodo = req.body.metodo === 'transferencia' ? 'transferencia' : null;
     if (!metodo) return res.status(400).json({ message: 'Elige cómo quieres recargar' });
+    if (!speiConfigurado()) return res.status(503).json({ message: 'La recarga por transferencia no está disponible por ahora.' });
     if (!(monto >= MON.recargaMin && monto <= MON.recargaMax)) {
         return res.status(400).json({ message: `Cada recarga debe ser de ${formatoMXN(MON.recargaMin)} a ${formatoMXN(MON.recargaMax)}` });
     }
@@ -6694,7 +6858,7 @@ app.post('/api/monedero/recargar', limiteDinero, requireCliente, asyncRoute(asyn
                 ? `Recarga registrada. Transfiere ${formatoMXN(monto)} con la referencia ${referencia}; el saldo se acredita al confirmarse.`
                 : `Recarga de ${formatoMXN(monto)} aplicada`,
             movimiento: mov, saldo: m.saldo, pendiente: metodo === 'transferencia',
-            datos_transferencia: metodo === 'transferencia' ? { banco: 'STP', clabe: '646180157000000004', beneficiario: 'Kozmok S.A. de C.V.', referencia } : null,
+            datos_transferencia: metodo === 'transferencia' ? datosTransferencia(referencia) : null,
         });
     } catch (e) {
         await client.query('ROLLBACK').catch(() => {});
