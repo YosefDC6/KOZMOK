@@ -6697,8 +6697,8 @@ const MON = {
     diaOps: Number(process.env.MONEDERO_DIA_OPERACIONES) || 3,          // recargas en 24 h
     mesMax: Number(process.env.MONEDERO_MES_MAX) || 30000,              // suma de recargas del mes
     saldoMax: Number(process.env.MONEDERO_SALDO_MAX) || 30000,          // saldo + recargas en camino
-    pendientesMax: 2,                                                    // transferencias sin confirmar
-    pendienteDias: 3,                                                    // después se cancelan solas
+    pendientesMax: Number(process.env.MONEDERO_TRANSFERENCIAS_PENDIENTES) || 2,   // transferencias sin confirmar
+    pendienteDias: Number(process.env.MONEDERO_TRANSFERENCIA_DIAS) || 3,          // después se cancelan solas
     ajusteUmbral: Number(process.env.MONEDERO_AJUSTE_UMBRAL) || 500,    // arriba de esto, segunda firma
 };
 // Cifras del reglamento (las muestra terminos.html, así el texto legal
