@@ -7152,6 +7152,8 @@ app.get('/api/auth/estado', asyncRoute(async (req, res) => {
 
 // Recuperar contraseña: siempre responde lo mismo (no revela si el correo
 // existe). Si existe, "envía" un enlace de un solo uso que vence en 30 min.
+// Enlaces de recuperación que puede recibir una misma cuenta por hora.
+const RECUPERACION_MAX_HORA = Math.max(1, Number(process.env.RECUPERACION_MAX_POR_HORA) || 10);
 app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
     const correo = seg.normalizarCorreo(req.body.correo);
     const generico = { message: 'Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja.' };
@@ -7159,12 +7161,12 @@ app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
     const c = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE LOWER(correo) = $1 AND estado_cliente = 'activo'`, [correo]);
     if (!c.rows[0]) { await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', detalle: `Recuperación pedida para un correo no registrado: ${correo}` }); return res.json(generico); }
     const recientes = await pool.query(`SELECT COUNT(*)::int AS n FROM recuperaciones WHERE cliente_id = $1 AND fecha > CURRENT_TIMESTAMP - INTERVAL '1 hour'`, [c.rows[0].id]);
-    if (recientes.rows[0].n >= 3) {
-        // Máximo 3 enlaces por hora por cuenta (contra abuso). Al cliente se le
+    if (recientes.rows[0].n >= RECUPERACION_MAX_HORA) {
+        // Máximo RECUPERACION_MAX_HORA enlaces por hora por cuenta (contra abuso). Al cliente se le
         // responde lo mismo de siempre; en el panel queda registrado por qué
         // no salió el correo.
         await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', cliente_id: c.rows[0].id,
-            detalle: `No se mandó el enlace de recuperación a ${c.rows[0].correo}: ya se pidieron 3 en la última hora` });
+            detalle: `No se mandó el enlace de recuperación a ${c.rows[0].correo}: ya se pidieron ${RECUPERACION_MAX_HORA} en la última hora` });
         return res.json(generico);
     }
     const token = crypto.randomBytes(32).toString('base64url');
