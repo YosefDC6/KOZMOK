@@ -1502,7 +1502,7 @@ app.post('/api/carrito/agregar', agregarAlCarrito);
 
 const actualizarItemCarrito = asyncRoute(async (req, res) => {
     const cur = await pool.query(
-        `SELECT cd.id, cd.cantidad, cd.garantia_clave, p.precio, p.stock
+        `SELECT cd.id, cd.cantidad, cd.garantia_clave, p.precio, p.stock, p.activo, p.nombre
          FROM carrito_detalle cd
          JOIN carrito ca ON ca.id = cd.carrito_id
          JOIN productos p ON p.id = cd.producto_id
@@ -1511,6 +1511,7 @@ const actualizarItemCarrito = asyncRoute(async (req, res) => {
     );
     if (cur.rows.length === 0) return res.status(404).json({ message: 'Ítem no encontrado en tu carrito' });
     const row = cur.rows[0];
+    if (!row.activo) return res.status(400).json({ message: `"${row.nombre}" ya no está a la venta; quítalo de tu carrito` });
     const cantidad = req.body.cantidad !== undefined ? Math.max(1, Math.floor(Number(req.body.cantidad) || 1)) : row.cantidad;
     if (req.body.cantidad !== undefined && cantidad > Number(row.stock)) {
         return res.status(400).json({ message: `Solo hay ${row.stock} disponibles` });
@@ -3570,6 +3571,8 @@ app.get('/api/clientes/:id/favoritos', asyncRoute(async (req, res) => {
 app.post('/api/clientes/:id/favoritos', asyncRoute(async (req, res) => {
     const { producto_id } = req.body;
     if (!producto_id) return res.status(400).json({ message: 'producto_id es requerido' });
+    const disponible = await pool.query('SELECT 1 FROM productos WHERE id = $1 AND activo', [Number(producto_id) || 0]);
+    if (!disponible.rows.length) return res.status(404).json({ message: 'Ese producto ya no está disponible' });
     await pool.query(
         `INSERT INTO favoritos (cliente_id, producto_id) VALUES ($1, $2)
          ON CONFLICT (cliente_id, producto_id) DO NOTHING`,
@@ -4788,12 +4791,13 @@ app.put('/api/admin/productos/:id/estrategia', asyncRoute(async (req, res) => {
     res.json({ message: `Estrategia actualizada a ${estrategia.toUpperCase()}`, producto: { ...r.rows[0], estrategia_logistica: estrategia.toUpperCase() } });
 }));
 
+// "Desactivar" un producto: sale del catálogo y ya no se puede comprar,
+// pero toda su historia (ventas, movimientos, reseñas, garantías) sigue
+// completa. Se vuelve a activar desde Editar o con el botón Activar.
 app.delete('/api/admin/productos/:id', asyncRoute(async (req, res) => {
-    const previo = (await pool.query('SELECT id, nombre, stock, precio FROM productos WHERE id = $1', [req.params.id])).rows[0];
+    const previo = (await pool.query('SELECT id, nombre, stock, precio, activo FROM productos WHERE id = $1', [req.params.id])).rows[0];
     if (!previo) return res.status(404).json({ message: 'Producto no encontrado' });
-    // Con ventas o movimientos no se borra: su historia debe seguir completa.
-    const enUso = await pool.query(
-        `SELECT 1 FROM pedido_items WHERE producto_id = $1 UNION ALL SELECT 1 FROM movimientos_inventario WHERE producto_id = $1 LIMIT 1`, [req.params.id]);
+    if (!previo.activo) return res.json({ message: `"${previo.nombre}" ya estaba desactivado` });
     // Lo que queda en curso con este producto. Los pedidos ya hechos se
     // respetan (tienen sus piezas apartadas y se surten normal); en los
     // carritos aparece como "ya no está a la venta" y no se puede comprar.
@@ -4802,17 +4806,84 @@ app.delete('/api/admin/productos/:id', asyncRoute(async (req, res) => {
                   WHERE pi.producto_id = $1 AND pe.estado IN ('pendiente','confirmado','procesando','enviado')) AS pedidos,
                 (SELECT COUNT(*)::int FROM carrito_detalle WHERE producto_id = $1) AS carritos,
                 (SELECT COUNT(*)::int FROM favoritos WHERE producto_id = $1) AS favoritos`, [req.params.id])).rows[0];
-    if (enUso.rows.length > 0) {
-        await pool.query('UPDATE productos SET activo = false WHERE id = $1', [req.params.id]);
-        await auditar(pool, req, { accion: 'producto_desactivado', entidad: 'producto', entidad_id: previo.id, antes: previo, despues: { en_curso: enCurso } });
-        const partes = [];
-        if (enCurso.pedidos) partes.push(`${enCurso.pedidos} pedido(s) en proceso lo incluyen y se surtirán normalmente`);
-        if (enCurso.carritos) partes.push(`está en ${enCurso.carritos} carrito(s), donde aparecerá como "ya no está a la venta"`);
-        return res.json({ message: 'El producto tiene ventas o movimientos; se desactivó en lugar de eliminarlo' + (partes.length ? '. ' + partes.join('; ') + '.' : '.'), en_curso: enCurso });
+    await pool.query('UPDATE productos SET activo = false WHERE id = $1', [req.params.id]);
+    await auditar(pool, req, { accion: 'producto_desactivado', entidad: 'producto', entidad_id: previo.id, antes: previo, despues: { activo: false, en_curso: enCurso } });
+    const partes = [];
+    if (enCurso.pedidos) partes.push(`${enCurso.pedidos} pedido(s) en proceso lo incluyen y se surtirán normalmente`);
+    if (enCurso.carritos) partes.push(`está en ${enCurso.carritos} carrito(s), donde aparecerá como "ya no está a la venta"`);
+    if (enCurso.favoritos) partes.push(`${enCurso.favoritos} cliente(s) lo tienen en favoritos y lo verán como no disponible`);
+    res.json({ message: `"${previo.nombre}" se desactivó: ya no aparece en la tienda` + (partes.length ? '. ' + partes.join('; ') + '.' : '.'), en_curso: enCurso });
+}));
+
+// Borrado DEFINITIVO de la base de datos. Mientras no exista el rol de
+// superadmin, solo un administrador que conozca el código del .env
+// (CODIGO_BORRADO_DEFINITIVO) puede hacerlo. Sin ese código en el .env, el
+// borrado definitivo está apagado. Además:
+//   - el producto debe estar desactivado antes;
+//   - si tiene historia (ventas, movimientos de inventario, órdenes de
+//     compra, reseñas, garantías…) NO se borra: la base no lo permite y así
+//     no quedan reportes, facturas o inventarios incompletos.
+const CODIGO_BORRADO = String(process.env.CODIGO_BORRADO_DEFINITIVO || '').trim();
+const borradoDefinitivoActivo = () => CODIGO_BORRADO.length >= 8;
+function codigoBorradoValido(codigo) {
+    if (!borradoDefinitivoActivo()) return false;
+    const a = crypto.createHash('sha256').update(String(codigo || '')).digest();
+    const b = crypto.createHash('sha256').update(CODIGO_BORRADO).digest();
+    return crypto.timingSafeEqual(a, b);
+}
+app.get('/api/admin/productos/borrado-definitivo', (req, res) => {
+    res.json({ activo: borradoDefinitivoActivo() && req.usuario.rol === 'admin' });
+});
+app.post('/api/admin/productos/:id/eliminar-definitivo', limiteAuth, asyncRoute(async (req, res) => {
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ message: 'Solo un administrador puede borrar productos definitivamente' });
+    if (!borradoDefinitivoActivo()) return res.status(403).json({ message: 'El borrado definitivo está apagado (falta CODIGO_BORRADO_DEFINITIVO en el .env). Desactiva el producto en su lugar.' });
+    const previo = (await pool.query('SELECT id, nombre, marca, precio, stock, activo FROM productos WHERE id = $1', [req.params.id])).rows[0];
+    if (!previo) return res.status(404).json({ message: 'Producto no encontrado' });
+    const motivo = String(req.body.motivo || '').trim().slice(0, 300);
+    if (motivo.length < 5) return res.status(400).json({ message: 'Escribe el motivo del borrado (queda en la auditoría)' });
+    if (!codigoBorradoValido(req.body.codigo)) {
+        await seg.registrarEvento(req, { tipo: 'borrado_definitivo', severidad: 'alta', usuario_id: req.usuario.id,
+            detalle: `${req.usuario.nombre} intentó borrar definitivamente "${previo.nombre}" con un código incorrecto` });
+        return res.status(403).json({ message: 'El código de autorización no es correcto' });
     }
-    await pool.query('DELETE FROM productos WHERE id = $1', [req.params.id]);
-    await auditar(pool, req, { accion: 'producto_eliminado', entidad: 'producto', entidad_id: previo.id, antes: previo });
-    res.json({ message: 'Producto eliminado' });
+    if (previo.activo) return res.status(400).json({ message: 'Primero desactiva el producto; solo se borran productos desactivados' });
+    if (Number(previo.stock) > 0) return res.status(400).json({ message: `Tiene ${previo.stock} pieza(s) en existencia. Registra su salida de inventario antes de borrarlo.` });
+    // Algunas tablas borrarían o dejarían huérfana su historia en cascada
+    // (reseñas, promociones, garantías, movimientos), así que se revisa antes.
+    const historia = (await pool.query(
+        `SELECT (SELECT COUNT(*) FROM pedido_items WHERE producto_id = $1)::int AS ventas,
+                (SELECT COUNT(*) FROM movimientos_inventario WHERE producto_id = $1)::int AS movimientos,
+                (SELECT COUNT(*) FROM ordenes_compra WHERE producto_id = $1)::int AS ordenes,
+                (SELECT COUNT(*) FROM devolucion_items WHERE producto_id = $1)::int AS devoluciones,
+                (SELECT COUNT(*) FROM resenas WHERE producto_id = $1)::int AS resenas,
+                (SELECT COUNT(*) FROM garantias WHERE producto_id = $1)::int AS garantias,
+                (SELECT COUNT(*) FROM promociones WHERE producto_id = $1)::int AS promociones`, [previo.id])).rows[0];
+    const NOMBRES = { ventas: 'venta(s)', movimientos: 'movimiento(s) de inventario', ordenes: 'orden(es) de compra', devoluciones: 'devolución(es)', resenas: 'reseña(s)', garantias: 'garantía(s)', promociones: 'promoción(es)' };
+    const tiene = Object.entries(historia).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${NOMBRES[k]}`);
+    if (tiene.length) {
+        return res.status(409).json({ message: `"${previo.nombre}" tiene historia en el sistema (${tiene.join(', ')}), así que no se puede borrar: déjalo desactivado.` });
+    }
+
+    const db = await pool.connect();
+    try {
+        await db.query('BEGIN');
+        // Carritos y favoritos no son historia: se limpian con el producto.
+        await db.query('DELETE FROM carrito_detalle WHERE producto_id = $1', [previo.id]);
+        await db.query('DELETE FROM favoritos WHERE producto_id = $1', [previo.id]);
+        await db.query('DELETE FROM productos WHERE id = $1', [previo.id]);
+        await db.query('COMMIT');
+    } catch (e) {
+        await db.query('ROLLBACK').catch(() => {});
+        // 23503: otra tabla lo usa (ventas, movimientos, reseñas…); P0001: tabla que no se reescribe.
+        if (e.code === '23503' || e.code === 'P0001' || /llave foránea|foreign key|solo se puede agregar|no se puede/i.test(e.message)) {
+            return res.status(409).json({ message: `"${previo.nombre}" tiene historia en el sistema (ventas, movimientos de inventario, órdenes de compra, reseñas o garantías), así que no se puede borrar: déjalo desactivado.` });
+        }
+        throw e;
+    } finally { db.release(); }
+    await auditar(pool, req, { accion: 'producto_eliminado', entidad: 'producto', entidad_id: previo.id, antes: previo, motivo });
+    await seg.registrarEvento(req, { tipo: 'borrado_definitivo', severidad: 'media', usuario_id: req.usuario.id,
+        detalle: `${req.usuario.nombre} borró definitivamente el producto "${previo.nombre}" (id ${previo.id}). Motivo: ${motivo}` });
+    res.json({ message: `"${previo.nombre}" se borró definitivamente` });
 }));
 
 // Restock manual desde el admin

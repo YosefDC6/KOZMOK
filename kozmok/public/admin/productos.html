@@ -115,7 +115,9 @@ function renderTablaProductos() {
             <td>${p.activo ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>' : '<span class="tag">Inactivo</span>'}</td>
             <td style="white-space:nowrap">
                 <button class="btn btn-outline btn-sm" onclick="editarProducto(${p.id})">Editar</button>
-                <button class="btn btn-ghost btn-sm" onclick="eliminarProducto(${p.id})">Eliminar</button>
+                ${p.activo
+                    ? `<button class="btn btn-ghost btn-sm" onclick="desactivarProducto(${p.id})">Desactivar</button>`
+                    : `<button class="btn btn-ghost btn-sm" onclick="activarProducto(${p.id})">Activar</button>`}
             </td>
         </tr>
     `).join('') : `<tr><td colspan="10" style="color:var(--text-muted)">Ningún producto coincide con estos filtros.</td></tr>`;
@@ -198,8 +200,19 @@ async function editarProducto(id) {
         ${formularioProducto(p)}
         <div style="display:flex;gap:10px;margin-top:10px">
             <button class="btn btn-primary" style="flex:1" onclick="guardarProducto(${id})">Guardar cambios</button>
-            <button class="btn btn-danger" onclick="eliminarProducto(${id})">Eliminar</button>
         </div>
+        ${BORRADO_DEFINITIVO ? `
+        <details class="zona-peligro" style="margin-top:18px">
+            <summary style="cursor:pointer;color:var(--danger);font-size:.88rem">Borrar definitivamente de la base de datos</summary>
+            <p style="font-size:.84rem;color:var(--text-muted);margin:8px 0">
+                No se puede deshacer. Solo se borran productos <strong>desactivados</strong>, sin existencias y <strong>sin historia</strong>
+                (ventas, movimientos de inventario, órdenes de compra, reseñas o garantías); si la tienen, déjalo desactivado.
+            </p>
+            ${p.activo ? '<p style="font-size:.84rem;margin:0">Primero desactívalo.</p>' : `
+            <div class="field"><label>Motivo</label><input id="bd-motivo" maxlength="300" placeholder="Ej. producto dado de alta por error" /></div>
+            <div class="field"><label>Código de autorización</label><input id="bd-codigo" type="password" autocomplete="off" /></div>
+            <button class="btn btn-danger btn-sm" onclick="borrarDefinitivo(${id})">Borrar definitivamente</button>`}
+        </details>` : ''}
     `;
     document.getElementById('modal-producto').classList.add('open');
 }
@@ -241,18 +254,41 @@ async function guardarProducto(id) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function eliminarProducto(id) {
-    if (!(await confirmar('¿Eliminar este producto?', { okText: 'Eliminar', peligro: true }))) return;
+// Desactivar: sale de la tienda pero conserva toda su historia.
+async function desactivarProducto(id) {
+    if (!(await confirmar('¿Desactivar este producto? Deja de aparecer en la tienda y no se puede comprar; sus ventas, inventario y garantías se conservan. Puedes volver a activarlo cuando quieras.', { okText: 'Desactivar' }))) return;
     try {
-        await api(`/admin/productos/${id}`, { method: 'DELETE' });
-        document.getElementById('modal-producto').classList.remove('open');
-        toast('Producto eliminado', 'ok');
+        const r = await api(`/admin/productos/${id}`, { method: 'DELETE' });
+        toast(r.message, 'ok');
         cargarProductos();
     } catch (e) { toast(e.message, 'error'); }
 }
+async function activarProducto(id) {
+    try {
+        await api(`/admin/productos/${id}`, { method: 'PUT', body: { activo: true } });
+        toast('Producto activado: ya aparece en la tienda', 'ok');
+        cargarProductos();
+    } catch (e) { toast(e.message, 'error'); }
+}
+// Borrado definitivo: solo administradores con el código de autorización.
+let BORRADO_DEFINITIVO = false;
+async function borrarDefinitivo(id) {
+    const motivo = document.getElementById('bd-motivo').value.trim();
+    const codigo = document.getElementById('bd-codigo').value;
+    if (motivo.length < 5) { toast('Escribe el motivo del borrado', 'warn'); return; }
+    if (!codigo) { toast('Escribe el código de autorización', 'warn'); return; }
+    if (!(await confirmar('¿Borrar definitivamente este producto? No se puede deshacer.', { okText: 'Borrar', peligro: true }))) return;
+    try {
+        const r = await api(`/admin/productos/${id}/eliminar-definitivo`, { method: 'POST', body: { motivo, codigo } });
+        document.getElementById('modal-producto').classList.remove('open');
+        toast(r.message, 'ok');
+        cargarProductos();
+    } catch (e) { document.getElementById('bd-codigo').value = ''; toast(e.message, 'error'); }
+}
 
 (async () => {
-    await Promise.all([cargarCategorias(), cargarProveedores()]);
+    await Promise.all([cargarCategorias(), cargarProveedores(),
+        api('/admin/productos/borrado-definitivo').then((r) => { BORRADO_DEFINITIVO = !!r.activo; }).catch(() => {})]);
     await cargarProductos();
     const editar = new URLSearchParams(location.search).get('editar');
     if (editar) editarProducto(Number(editar));
