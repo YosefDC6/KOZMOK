@@ -7242,11 +7242,16 @@ app.use((req, res) => {
 
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en http://localhost:${PORT}`);
+    console.log(`   Tienda:          http://localhost:${PORT}`);
+    console.log(`   Panel de admin:  http://localhost:${PORT}/admin/login.html`);
     if (HOST === '0.0.0.0' || HOST === '::') {
         const ips = ipsDeRed();
         if (ips.length) {
             console.log('Desde un celular en la misma red Wi-Fi abre:');
-            ips.forEach((x) => console.log(`   http://${x.ip}:${PORT}   (${x.nombre})`));
+            ips.forEach((x) => {
+                console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
+                console.log(`   Panel de admin:  http://${x.ip}:${PORT}/admin/login.html`);
+            });
         } else console.log('Sin red local detectada: solo se puede abrir desde esta computadora.');
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
