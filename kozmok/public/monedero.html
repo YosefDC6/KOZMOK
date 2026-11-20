@@ -186,13 +186,12 @@ async function recargar() {
     b.disabled = true; b.textContent = 'Procesando…';
     try {
         const r = await api('/monedero/recargar', { method: 'POST', body: { monto: MONTO, metodo: 'transferencia' } });
+        await cargarMonedero();
         if (r.pendiente && r.datos_transferencia) {
-            const d = r.datos_transferencia;
-            await confirmar(`Transfiere ${formatoMoneda2(MONTO)} a ${d.beneficiario} (${d.banco}), CLABE ${d.clabe}, con la referencia ${d.referencia}. El saldo se acredita al confirmarse.`, { okText: 'Entendido', cancelText: 'Cerrar' });
+            verDatosTransferencia({ ...r.datos_transferencia, monto: MONTO, fecha: new Date().toISOString() });
         } else {
             toast(r.message, 'ok');
         }
-        await cargarMonedero();
     } catch (e) {
         toast(e.message, 'error');
         b.disabled = false; actualizarBoton();
@@ -208,7 +207,9 @@ function pintarHistorial() {
                 ${movs.length === 0 ? '<tr><td colspan="5">Aún no tienes movimientos. Haz tu primera recarga.</td></tr>' : movs.map((m) => {
                     const monto = Number(m.monto);
                     const t = TIPO_MOV[m.tipo] || { txt: m.tipo, ic: 'info' };
-                    const est = m.estado === 'pendiente' ? ' <span class="tag" style="color:var(--warning);border-color:var(--warning)">Por acreditar</span>'
+                    const verDatos = m.estado === 'pendiente' && m.tipo === 'recarga' && m.metodo === 'transferencia' && m.referencia && MON.transferencia
+                        ? ` <button class="btn btn-outline btn-sm mov-datos" onclick="verDatosTransferencia(${escHTML(JSON.stringify({ referencia: m.referencia, monto: Number(m.monto), fecha: m.fecha }))})">${icon('info', 13)} Ver datos para transferir</button>` : '';
+                    const est = m.estado === 'pendiente' ? ' <span class="tag" style="color:var(--warning);border-color:var(--warning)">Por acreditar</span>' + verDatos
                               : m.estado === 'cancelado' ? ' <span class="tag">Rechazada</span>' : '';
                     return `<tr class="${m.estado !== 'aplicado' ? 'mov-off' : ''}">
                         <td>${formatoFecha(m.fecha)}</td>
@@ -220,6 +221,43 @@ function pintarHistorial() {
                 }).join('')}
             </tbody>
         </table>`;
+}
+
+// Datos para transferir una recarga pendiente. Se puede volver a abrir
+// desde el historial cuantas veces haga falta.
+function verDatosTransferencia({ referencia, monto, fecha, banco, clabe, beneficiario }) {
+    const t = { ...(MON.transferencia || {}), ...(clabe ? { banco, clabe, beneficiario } : {}) };
+    if (!t.clabe) { toast('Por ahora no tenemos disponibles los datos para transferir. Escríbenos desde Soporte.', 'warn'); return; }
+    const dias = Number((MON.transferencia || {}).dias) || 3;
+    const limite = fecha ? new Date(new Date(fecha).getTime() + dias * 86400000) : null;
+    const fila = (etq, valor, copiable) => `<tr><td>${etq}</td><td><span class="${copiable ? 'mono' : ''}">${escHTML(String(valor))}</span>
+        ${copiable ? `<button class="btn btn-ghost btn-sm td-copiar" data-copiar="${escHTML(String(valor))}" aria-label="Copiar ${etq}">${icon('clipboard', 14)} Copiar</button>` : ''}</td></tr>`;
+    const ov = document.createElement('div');
+    ov.className = 'confirm-overlay';
+    ov.innerHTML = `
+        <div class="confirm-box td-box" role="dialog" aria-label="Datos para transferir">
+            <h3 style="margin:0 0 4px">${icon('download', 18)} Datos para transferir</h3>
+            <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">Haz una transferencia SPEI desde tu banco con estos datos. Escribe la referencia en el concepto: así identificamos tu depósito.</p>
+            <table class="td-tabla">
+                ${fila('Banco', t.banco)}
+                ${fila('Beneficiario', t.beneficiario)}
+                ${fila('CLABE', t.clabe, true)}
+                ${fila('Referencia / concepto', referencia, true)}
+                ${fila('Monto exacto', formatoMoneda2(monto), false)}
+                ${limite ? fila('Fecha límite', limite.toLocaleDateString('es-MX', { dateStyle: 'long' }), false) : ''}
+            </table>
+            <p style="margin:12px 0 0;color:var(--text-muted);font-size:.8rem">Tu saldo se acredita cuando confirmamos el depósito. Puedes volver a ver estos datos en tu historial de movimientos.</p>
+            <div class="confirm-actions"><button class="btn btn-primary btn-sm" data-x>Entendido</button></div>
+        </div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add('open'));
+    const cerrar = () => { ov.classList.remove('open'); setTimeout(() => ov.remove(), 200); };
+    ov.querySelector('[data-x]').addEventListener('click', cerrar);
+    ov.addEventListener('click', (e) => { if (e.target === ov) cerrar(); });
+    ov.querySelectorAll('[data-copiar]').forEach((b) => b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copiar.replace(/\s+/g, '')); toast('Copiado', 'ok', 1500); }
+        catch { toast('No se pudo copiar; selecciónalo y cópialo a mano', 'warn'); }
+    }));
 }
 
 function formatoMoneda2(v) {

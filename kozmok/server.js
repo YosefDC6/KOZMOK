@@ -6752,6 +6752,8 @@ app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
         limites: { por_operacion: MON.recargaMax, por_dia: MON.diaMax, operaciones_dia: MON.diaOps, por_mes: MON.mesMax, saldo_maximo: MON.saldoMax },
         uso: { dia: uso.dia, mes: uso.mes, operaciones_dia: uso.dia_ops }, disponible_hoy: redondear(disponibleRecarga(m, uso)),
         movimientos: movs.rows,
+        // Para volver a ver a dónde transferir una recarga que sigue pendiente
+        transferencia: speiConfigurado() ? { ...datosTransferencia(null), dias: MON.pendienteDias } : null,
     });
 }));
 // Revisa si el cliente puede recargar ese monto (correo, estado y límites).

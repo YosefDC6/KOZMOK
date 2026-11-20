@@ -2528,3 +2528,12 @@ tr.mov-off td { opacity: .7; }
 .canje-pocos { display: flex; align-items: center; gap: 6px; font-size: .84rem; color: var(--text-muted); margin: 12px 0 4px; }
 .canje-pocos svg { color: var(--accent); }
 .canje-box input.canje-rango { border: 0; padding: 0; box-shadow: none; background: transparent; min-height: 0; }
+
+/* Monedero: ventana con los datos para transferir una recarga */
+.td-box { max-width: 460px; text-align: left; }
+.td-tabla { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.td-tabla td { padding: 7px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.td-tabla td:first-child { color: var(--text-muted); white-space: nowrap; padding-right: 12px; }
+.td-tabla .mono { font-family: var(--font-mono); word-break: break-all; }
+.td-copiar { margin-left: 6px; padding: 2px 8px; }
+.mov-datos { display: inline-flex; gap: 4px; margin-top: 6px; padding: 3px 9px; font-size: .78rem; }
