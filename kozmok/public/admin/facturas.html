@@ -105,6 +105,7 @@ async function confirmarCancelacion(id) {
 function facturarPedido() {
     const opts = (o) => Object.entries(o).map(([k, v]) => `<option value="${k}">${k} · ${escHTML(v)}</option>`).join('');
     abrir(`<h3 style="margin-bottom:10px">Facturar un pedido</h3>
+        ${selectorEjemplos()}
         <div class="field-row">
             <div class="field"><label>Número de pedido</label><input id="fp-orden" placeholder="ORD-20261120-0001" /></div>
             <div class="field"><label>RFC</label><input id="fp-rfc" maxlength="13" style="text-transform:uppercase" /></div>
@@ -116,6 +117,20 @@ function facturarPedido() {
         </div>
         <div class="field"><label>Uso del CFDI</label><select id="fp-uso">${opts(CFG.usos)}</select></div>
         <button class="btn btn-primary" style="width:100%" onclick="emitir()">Generar factura</button>`);
+}
+// Modo de prueba: receptores de prueba del SAT que llenan el formulario
+function selectorEjemplos() {
+    if (!CFG || CFG.modo !== 'sandbox' || !(CFG.ejemplos || []).length) return '';
+    return `<div class="field"><label>Datos de prueba</label><select onchange="usarEjemplo(this.value)">
+        <option value="">Elegir un receptor de prueba del SAT…</option>
+        ${CFG.ejemplos.map((e, i) => `<option value="${i}">${escHTML(e.rfc)} · ${escHTML(e.razon_social)}</option>`).join('')}
+    </select></div>`;
+}
+function usarEjemplo(i) {
+    const e = (CFG.ejemplos || [])[i];
+    if (!e) return;
+    const poner = (k, val) => { document.getElementById(`fp-${k}`).value = val; };
+    poner('rfc', e.rfc); poner('razon', e.razon_social); poner('cp', e.codigo_postal); poner('regimen', e.regimen_fiscal); poner('uso', e.uso_cfdi);
 }
 async function emitir() {
     const v = (k) => document.getElementById(k).value.trim();

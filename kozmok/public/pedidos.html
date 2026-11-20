@@ -357,6 +357,21 @@ function botonesFactura(p) {
     if (ref && Date.now() - new Date(ref).getTime() > FACT.dias * 86400000) return '';
     return `<button class="btn btn-outline btn-sm" onclick="pedirFactura(${p.id})">${icon('clipboard', 14)} Facturar</button>`;
 }
+// Modo de prueba: lista de receptores de prueba del SAT que llena el formulario
+function selectorEjemplos(cfg, pre) {
+    if (!cfg || cfg.modo !== 'sandbox' || !(cfg.ejemplos || []).length) return '';
+    window.EJEMPLOS_FISCALES = cfg.ejemplos;
+    return `<div class="field"><label>Datos de prueba</label><select onchange="usarEjemplo(this.value, '${pre}')">
+        <option value="">Elegir un receptor de prueba del SAT…</option>
+        ${cfg.ejemplos.map((e, i) => `<option value="${i}">${escHTML(e.rfc)} · ${escHTML(e.razon_social)}</option>`).join('')}
+    </select></div>`;
+}
+function usarEjemplo(i, pre) {
+    const e = (window.EJEMPLOS_FISCALES || [])[i];
+    if (!e) return;
+    const poner = (k, val) => { const el = document.getElementById(`${pre}-${k}`); if (el) el.value = val; };
+    poner('rfc', e.rfc); poner('razon', e.razon_social); poner('cp', e.codigo_postal); poner('regimen', e.regimen_fiscal); poner('uso', e.uso_cfdi);
+}
 const cerrarModal = () => document.getElementById('modal-generico').classList.remove('open');
 async function pedirFactura(id) {
     const p = (window.PEDIDOS || []).find((x) => x.id === id);
@@ -367,6 +382,7 @@ async function pedirFactura(id) {
         <h3 style="margin-bottom:2px">Facturar pedido ${escHTML(p.numero_orden)}</h3>
         <p style="margin:0 0 14px;color:var(--text-muted);font-size:.85rem">Total ${formatoMoneda(p.total)}. Escribe tus datos tal como aparecen en tu constancia de situación fiscal.</p>
         ${FACT.modo === 'sandbox' ? '<div class="pago-prueba" style="margin-bottom:12px">Facturación de prueba: el CFDI se timbra en el sandbox del PAC y no tiene validez fiscal.</div>' : ''}
+        ${selectorEjemplos(FACT, 'ff')}
         <div class="field-row">
             <div class="field"><label>RFC</label><input id="ff-rfc" maxlength="13" value="${escHTML(g.rfc || '')}" placeholder="XAXX010101000" style="text-transform:uppercase" /></div>
             <div class="field"><label>Código postal fiscal</label><input id="ff-cp" maxlength="5" inputmode="numeric" value="${escHTML(g.codigo_postal || '')}" placeholder="20000" /></div>

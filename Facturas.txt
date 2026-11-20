@@ -1,0 +1,199 @@
+KOZMOK - FACTURACIÓN (FACTURAMA) Y PAGOS CON PAYPAL
+Guía de configuración y pruebas en modo sandbox (sin dinero real ni validez fiscal)
+=====================================================================================
+
+El código de PayPal y de Facturama ya está en el repo (rama main):
+  - kozmok/paypal.js        -> cobro con PayPal o tarjeta (API Orders v2) y reembolsos
+  - kozmok/facturama.js     -> factura electrónica CFDI 4.0 (timbrar, PDF/XML, cancelar)
+  - public/js/paypal-botones.js -> botones de PayPal en el pago
+  - Tienda: Mi cuenta -> Mis pedidos -> botón "Facturar"
+  - Panel interno: menú "Facturas" (ver, descargar y cancelar CFDI)
+Solo hay que crear las cuentas de prueba y llenar el archivo .env.
+
+
+-------------------------------------------------------------------------------------
+1. PAYPAL (SANDBOX)
+-------------------------------------------------------------------------------------
+1) Crear una cuenta de PayPal tipo "Personal" en paypal.com.
+   No hace falta asociar banco ni tarjeta. Solo sirve para entrar al Developer Dashboard.
+2) Entrar a developer.paypal.com -> Log in to Dashboard (con esa misma cuenta).
+3) Arriba, dejar seleccionado "Sandbox" (no Live).
+4) Apps & Credentials -> Create App
+     Nombre: Kozmok
+     Tipo:   Merchant
+5) Copiar el Client ID y el Secret (no compartirlos ni subirlos a GitHub).
+
+Cuentas de prueba (Testing Tools -> Sandbox Accounts):
+  - PayPal crea dos cuentas falsas: una Business (vendedor = Kozmok) y una
+    Personal (comprador), con correo tipo sb-xxxx@personal.example.com.
+  - En los ⋮ de la cuenta Personal -> View/Edit account se ven el correo y la
+    contraseña (se puede cambiar ahí).
+  - La cuenta Personal ya trae saldo falso y una tarjeta de prueba.
+
+IMPORTANTE al pagar en la tienda:
+  - En la ventana de PayPal NO sirve la cuenta real ni "Crear cuenta":
+    hay que iniciar sesión con la cuenta sandbox Personal.
+  - No llegan códigos por SMS. Si pide uno, probar con 111111.
+  - Alternativa: botón "Tarjeta de débito o crédito" con una tarjeta falsa de
+    Testing Tools -> Card Generator (país Mexico).
+  - Nunca usar una tarjeta real en modo de prueba.
+
+
+-------------------------------------------------------------------------------------
+2. FACTURAMA (SANDBOX)
+-------------------------------------------------------------------------------------
+1) Registrarse en dev.facturama.mx (cuenta sandbox, gratis).
+   Si el correo ya está usado, se puede usar un alias de Gmail:
+     kozmok.tienda+facturama@gmail.com  (llega a la misma bandeja)
+2) Perfil fiscal del EMISOR (datos de prueba del SAT, no los reales):
+     RFC:              EKU9003173C9
+     Tipo de persona:  Moral
+     Razón social:     ESCUELA KEMPER URGATE   (mayúsculas, sin S.A. de C.V.)
+     Nombre comercial: Kozmok
+     Régimen fiscal:   601 - General de Ley Personas Morales
+     Código postal:    42501   (colonia: cualquiera de la lista)
+     Calle / número:   cualquiera (es de prueba)
+   Si por error se pone otro RFC y ya no deja cambiarlo, crear otra cuenta sandbox.
+3) Sellos digitales (CSD) de prueba:
+     Descarga: https://cdnfacturama.azureedge.net/content/csd-pruebas.zip
+     Usar el .cer y el .key de la carpeta EKU9003173C9
+     Contraseña: 12345678a
+     -> Validar Sellos -> Guardar cambios
+4) Lugar de Expedición (menú derecho del perfil):
+     Nombre: KOZMOK
+     C.P.:   42501   (Estado: Hidalgo)
+5) Serie dentro de ese lugar de expedición:
+     Serie: KZ   (la misma que FACTURA_SERIE del .env)
+     Folio inicial: 1
+
+
+-------------------------------------------------------------------------------------
+3. ARCHIVO .env
+-------------------------------------------------------------------------------------
+Ubicación: kozmok/kozmok/.env  (junto a server.js; copiar .env.example si no existe)
+Debe llamarse ".env" (no ".env.txt"). Ya está en .gitignore: no se sube a GitHub.
+
+  # --- PayPal ---
+  PAYPAL_CLIENT_ID=           <- Client ID de la app Sandbox
+  PAYPAL_CLIENT_SECRET=       <- Secret de la app Sandbox
+  PAYPAL_MONEDA=MXN
+  PAYPAL_MINUTOS_PARA_PAGAR=60
+
+  # --- Facturama ---
+  FACTURAMA_USUARIO=          <- nombre de usuario de la cuenta sandbox de Facturama
+  FACTURAMA_PASSWORD=         <- contraseña de esa cuenta
+  FACTURA_LUGAR_EXPEDICION=42501
+  FACTURA_SERIE=KZ
+  FACTURA_DIAS_LIMITE=30
+
+Reglas:
+  - Sin espacios alrededor del "=" y sin comillas
+    (salvo que la contraseña tenga # o espacios: FACTURAMA_PASSWORD="abc#123").
+  - NO poner PAYPAL_MODO=live ni FACTURAMA_MODO=live (así se queda en prueba).
+  - Después de guardar: reiniciar el servidor (Ctrl+C y npm start).
+
+Comprobar que la facturación está activa:
+  http://localhost:3000/api/facturacion/config   -> debe decir "activo": true
+
+
+-------------------------------------------------------------------------------------
+4. CÓMO FACTURAR UN PEDIDO
+-------------------------------------------------------------------------------------
+Tienda (cliente):
+  1) Mi cuenta -> Mis pedidos.
+  2) Botón "Facturar" (solo aparece si el pedido está PAGADO, no cancelado y
+     dentro de los 30 días).
+  3) Datos fiscales del RECEPTOR. En modo de prueba el formulario tiene el campo
+     "Datos de prueba": al elegir uno se llenan solos RFC, razón social, C.P.,
+     régimen y uso del CFDI (ver la tabla de la sección 5).
+  4) Generar factura -> aparecen los botones "Factura PDF" y "XML" en el pedido
+     (con la etiqueta "prueba"). También se envía al correo del cliente.
+
+Panel interno:
+  - Menú "Facturas": todas las facturas emitidas, descarga y cancelación.
+  - Al cancelar un pedido con factura, la factura también se cancela ante el SAT.
+
+Facturama:
+  - Las facturas también aparecen en la lista de facturas emitidas de la cuenta sandbox.
+
+
+-------------------------------------------------------------------------------------
+5. DATOS DE EJEMPLO PARA FACTURAR (receptores de prueba del SAT)
+-------------------------------------------------------------------------------------
+En el sandbox el SAT solo acepta RFC de su lista de pruebas, y el nombre, el C.P.
+y el régimen deben ser exactamente los de esa lista (mayúsculas, con Ñ si la
+lleva, sin S.A. de C.V.). No usar RFC reales.
+
+Personas morales (RFC de 12 caracteres):
+  RFC            Razón social                     C.P.    Régimen  Uso
+  URE180429TM6   UNIVERSIDAD ROBOTICA ESPAÑOLA    86991   603      G03
+  JES900109Q90   JIMENEZ ESTRADA SALAS            37161   601      G01
+  IVD920810GU2   INNOVACION VALOR Y DESARROLLO    63901   601      G03
+
+Personas físicas (RFC de 13 caracteres):
+  RFC            Nombre                           C.P.    Régimen  Uso
+  XOJI740919U48  INGRID XODAR JIMENEZ             76028   612      G03
+  KAHO641101B39  OSCAR KALA HAAK                  76074   612      G01
+  MISC491214B86  CECILIA MIRANDA SANCHEZ          01010   612      G03
+
+Régimen 601 = General de Ley Personas Morales
+Régimen 603 = Personas Morales con Fines no Lucrativos
+Régimen 612 = Personas Físicas con Actividades Empresariales y Profesionales
+Uso G01 = Adquisición de mercancías · G03 = Gastos en general
+
+Estos mismos datos aparecen en el campo "Datos de prueba" del formulario de
+factura (tienda y panel). Ese campo solo se ve en modo sandbox.
+
+El EMISOR (la tienda) sigue siendo EKU9003173C9 - ESCUELA KEMPER URGATE (sección 2).
+
+
+-------------------------------------------------------------------------------------
+6. ERRORES COMUNES Y SOLUCIÓN
+-------------------------------------------------------------------------------------
+No aparece el botón "Facturar"
+  -> Revisar /api/facturacion/config. Si "activo": false, falta algo en el .env
+     (usuario, contraseña o FACTURA_LUGAR_EXPEDICION de 5 dígitos), el .env está
+     en otra carpeta o no se reinició el servidor. Si "activo": true, el pedido
+     no está pagado.
+
+"Revisa tu RFC"
+  -> Formato incorrecto: escribirlo todo junto, sin espacios ni guiones, y con
+     ceros (0) y no letras O. Ej.: URE180429TM6
+
+"El atributo 'ExpeditionPlace' debe existir como código postal en alguno de los
+ Lugares de expedición"
+  -> Dar de alta en Facturama el Lugar de Expedición con el C.P. 42501
+     (el mismo de FACTURA_LUGAR_EXPEDICION).
+
+"El atributo 'Serie' debe existir en la sucursal"
+  -> Agregar la serie KZ dentro de ese Lugar de Expedición, o poner en el .env
+     una serie que ya exista ahí (y reiniciar el servidor).
+
+"El campo Nombre del receptor debe pertenecer al nombre asociado al RFC"
+  -> La razón social y el C.P. del cliente no coinciden con su RFC. Usar uno de
+     los receptores de la sección 5, con sus datos exactos.
+
+Error del régimen fiscal del receptor
+  -> El régimen no corresponde al RFC. Usar el de la tabla de la sección 5
+     (por ejemplo URE180429TM6 va con 603, no con 601).
+
+"Facturama rechazó el usuario o la contraseña"
+  -> Revisar FACTURAMA_USUARIO (es el nombre de usuario, no siempre el correo)
+     y FACTURAMA_PASSWORD.
+
+"PayPal rechazó las credenciales"
+  -> Revisar que PAYPAL_CLIENT_ID y PAYPAL_CLIENT_SECRET sean los de la pestaña
+     Sandbox (no Live).
+
+PayPal no deja iniciar sesión o no llega el código
+  -> Usar la cuenta sandbox Personal (sb-...@personal.example.com), no la real.
+
+
+-------------------------------------------------------------------------------------
+7. PASAR A PRODUCCIÓN (solo si algún día se cobra y factura de verdad)
+-------------------------------------------------------------------------------------
+  - PayPal: cuenta Empresas, app en la pestaña Live, y en el .env
+      PAYPAL_MODO=live  y  PAYPAL_PERMITIR_REAL=1   (hacen falta las dos)
+  - Facturama: cuenta real con el RFC, sellos CSD reales del SAT, y en el .env
+      FACTURAMA_MODO=live  y  FACTURAMA_PERMITIR_REAL=1
+  - Mientras no estén las dos líneas, todo se queda en modo de prueba.
