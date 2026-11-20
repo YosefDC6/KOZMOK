@@ -142,6 +142,29 @@ FILTRO_SQLI=registrar npm start
 - `asyncRoute` y `mensajeSeguro`: el error de la base nunca se manda al cliente (antes la respuesta incluía `detalle: err.message`).
 - Validación de formatos (correo, teléfono, montos, fechas) antes de consultar.
 
+## 4. Fraude interno y de clientes (control interno)
+
+Las reglas viven en `kozmok/db/control_interno.sql` (se aplica solo al arrancar) para
+que se cumplan aunque alguien llame a la API directo o tenga acceso a la base:
+
+- **Fecha del servidor**: pedidos y movimientos de inventario, puntos, monedero y ERP
+  guardan `CURRENT_TIMESTAMP`; la fecha que mande el cliente o el empleado se ignora.
+- **Solo agregar**: los movimientos no se editan ni se borran; un error se corrige con
+  un movimiento compensatorio. Solo cambia el estado de un pendiente.
+- **Pedidos sellados**: folio, fecha y montos inmutables; estados solo hacia adelante;
+  entregado y cancelado son finales; un pago registrado no se deshace.
+- **Bitácora encadenada** (`auditoria`): quién, cuándo, antes y después, con huella
+  SHA-256 que incluye la del registro anterior. Panel → Auditoría → *Verificar integridad*.
+- **Segunda firma**: bajas de inventario ≥ `BAJA_UMBRAL_PIEZAS` / `BAJA_UMBRAL_VALOR` o
+  por robo, ajustes de monedero > `MONEDERO_AJUSTE_UMBRAL`, confirmación de pagos manuales
+  (folio único, quien captura no confirma).
+- **Clientes**: puntos negativos al cancelar un pedido cuyos puntos ya se usaron, máximo de
+  piezas por producto y de pedidos sin pagar, límites del monedero (por operación, día, mes,
+  saldo máximo), correo verificado para recargar, estados activo/congelado/bloqueado con motivo.
+
+Los casos de fraude (empleados E1–E10, clientes C1–C9) y su cláusula están en el documento
+del proyecto; las reglas para el cliente en la tienda, `terminos.html`.
+
 ## Dónde está cada cosa
 
 | Archivo | Qué contiene |

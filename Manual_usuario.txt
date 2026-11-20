@@ -1651,5 +1651,22 @@ Reglas de negocio embebidas
    (1 con HTTPS) y FILTRO_SQLI (bloquear | registrar).
 
 ===============================================================================
+ CONTROL INTERNO, AUDITORÍA Y MONEDERO
+===============================================================================
+ - Las fechas de pedidos y movimientos las pone el servidor; no se pueden cambiar.
+ - Los movimientos de inventario no se editan ni se borran. Para corregir un
+   error se registra otro movimiento que lo compense.
+ - Bajas de inventario: si son de 3 piezas o más, de $3,000 o más, o por robo,
+   quedan "pendientes" hasta que un administrador las apruebe en Panel >
+   Auditoría. Nadie aprueba su propia baja.
+ - Pagos por transferencia o en tienda: se confirman con el folio del
+   comprobante. Un folio no se repite y quien lo captura no lo confirma.
+ - Pedidos: los estados solo avanzan. Cancelar un pedido pagado pide motivo.
+ - Monedero (Panel > Monedero): para congelar o bloquear se elige un motivo y se
+   describe el caso. Los ajustes mayores a $500 los aprueba otra persona.
+ - Auditoría > Verificar integridad: revisa que nadie haya alterado la bitácora.
+ - Clientes: las reglas que ven están en la tienda, "Términos y condiciones".
+
+===============================================================================
  Fin del manual.
 ===============================================================================

@@ -187,6 +187,17 @@ El widget (botón flotante en todas las páginas de la tienda) guía al
 usuario con preguntas rápidas de uso y presupuesto, y también acepta
 texto libre.
 
+## Control interno, monedero y rendimiento
+
+- **Antifraude**: `db/control_interno.sql` (triggers de fecha del servidor, tablas de solo
+  agregar, pedidos sellados, bitácora encadenada). Detalle en `SEGURIDAD.md` §4.
+- **Auditoría** (panel, solo admin): bitácora con filtros, verificación de la cadena y
+  bajas de inventario pendientes de aprobar.
+- **Monedero**: límites configurables en `.env` (`MONEDERO_*`), congelar/bloquear con motivo,
+  ajustes grandes con segunda firma. Reglas públicas en `terminos.html` (lee `/api/reglamento`).
+- **Rendimiento**: caché en memoria del catálogo (se invalida con cualquier cambio), gzip,
+  índices nuevos y reportes con consultas en paralelo.
+
 ## Notas para producción
 
 - Usa variables de entorno reales (o el `.env`), sirve todo con HTTPS y pon `COOKIE_SEGURA=1`.
