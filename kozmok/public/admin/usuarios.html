@@ -67,14 +67,48 @@ async function cargarUsuarios() {
                     ${ROLES.map((r) => `<option value="${r.clave}" ${r.clave === u.rol ? 'selected' : ''}>${r.nombre}</option>`).join('')}
                    </select>`
                 : `<span class="tag">${(window.ROL_LABEL && ROL_LABEL[u.rol]) || u.rol}</span>`}</td>
-            <td>${u.activo
-                ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>'
-                : '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Inactivo</span>'}</td>
+            <td>${celdaEstado(u)}</td>
             <td>${u.dosf_metodo === 'app' ? '<span class="tag">App</span>' : '<span class="tag">Correo</span>'}
                 ${esAdmin && u.dosf_metodo === 'app' && u.id !== usuarioActual.id ? `<button class="btn btn-ghost btn-sm" title="Si perdió su celular: vuelve a recibir el código por correo" onclick="reiniciar2fa(${u.id}, '${escHTML(u.nombre).replace(/'/g, '&#39;')}')">Reiniciar</button>` : ''}</td>
             <td>${u.ultimo_login ? formatoFecha(u.ultimo_login) : 'Nunca'}</td>
         </tr>
     `).join('');
+}
+
+// Estado de la cuenta y, para el administrador, el botón para activarla
+// (manda un enlace por correo) o desactivarla.
+function celdaEstado(u) {
+    const nombre = escHTML(u.nombre).replace(/'/g, '&#39;');
+    const propia = u.id === usuarioActual.id;
+    if (u.activo) {
+        return `<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>`
+            + (esAdmin && !propia ? ` <button class="btn btn-ghost btn-sm" onclick="desactivarCuenta(${u.id}, '${nombre}')">Desactivar</button>` : '');
+    }
+    if (u.activacion_enviada) {
+        return `<span class="tag" style="color:var(--warning, #d4a017);border-color:var(--warning, #d4a017)" title="Enlace enviado el ${formatoFechaHora(u.activacion_enviada)}">Activación enviada</span>`
+            + (esAdmin ? `<div style="margin-top:4px"><button class="btn btn-ghost btn-sm" onclick="activarCuenta(${u.id}, '${nombre}', true)">Reenviar</button>
+                          <button class="btn btn-ghost btn-sm" onclick="desactivarCuenta(${u.id}, '${nombre}', true)">Cancelar</button></div>` : '');
+    }
+    return `<span class="tag" style="color:var(--danger);border-color:var(--danger)">Inactivo</span>`
+        + (esAdmin ? ` <button class="btn btn-outline btn-sm" onclick="activarCuenta(${u.id}, '${nombre}')">Activar</button>` : '');
+}
+
+async function activarCuenta(id, nombre, reenviar = false) {
+    const txt = reenviar
+        ? `¿Reenviar el enlace de activación a ${nombre}? El enlace anterior deja de servir.`
+        : `¿Activar la cuenta de ${nombre}? Le mandaremos un correo con un enlace para crear su contraseña; la cuenta queda activa cuando lo abra.`;
+    if (!(await confirmar(txt, { okText: reenviar ? 'Reenviar' : 'Mandar enlace' }))) return;
+    try { const r = await api(`/admin/usuarios/${id}/activar`, { method: 'POST' }); toast(r.message, 'ok'); cargarUsuarios(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+async function desactivarCuenta(id, nombre, soloEnlace = false) {
+    const txt = soloEnlace
+        ? `¿Cancelar el enlace de activación de ${nombre}? La cuenta sigue inactiva.`
+        : `¿Desactivar la cuenta de ${nombre}? Ya no podrá entrar al panel y se cerrarán sus sesiones abiertas.`;
+    if (!(await confirmar(txt, { okText: soloEnlace ? 'Cancelar enlace' : 'Desactivar' }))) return;
+    try { const r = await api(`/admin/usuarios/${id}/desactivar`, { method: 'POST' }); toast(r.message, 'ok'); cargarUsuarios(); }
+    catch (e) { toast(e.message, 'error'); }
 }
 
 // Si alguien perdió el celular con su app autenticadora, vuelve a recibir el

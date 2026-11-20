@@ -6653,7 +6653,10 @@ app.put('/api/admin/garantias/:id', asyncRoute(async (req, res) => {
 // =========================================================
 
 app.get('/api/admin/usuarios', asyncRoute(async (req, res) => {
-    const result = await pool.query('SELECT id, nombre, email, telefono, rol, activo, ultimo_login, dosf_metodo FROM usuarios ORDER BY id ASC');
+    const result = await pool.query(
+        `SELECT u.id, u.nombre, u.email, u.telefono, u.rol, u.activo, u.ultimo_login, u.dosf_metodo,
+                (SELECT MAX(a.creado) FROM activaciones_usuario a WHERE a.usuario_id = u.id AND a.usado IS NULL AND a.expira > CURRENT_TIMESTAMP) AS activacion_enviada
+         FROM usuarios u ORDER BY u.id ASC`);
     res.json(result.rows);
 }));
 
@@ -6696,6 +6699,70 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
         boton: { texto: 'Entrar al panel', url: enlace },
     });
     res.status(201).json({ message: `Cuenta creada. Le mandamos un correo de bienvenida a ${u.email}; al entrar por primera vez se le pedirá cambiar la contraseña.`, usuario: u });
+}));
+
+// ---------------------------------------------------------
+// Activar / desactivar cuentas del equipo (solo admin).
+//   Activar: no se activa al instante. Se manda un enlace al correo de la
+//   persona (vence en 48 h, sirve una vez); al abrirlo crea su propia
+//   contraseña y la cuenta queda activa. Así se comprueba que el correo es
+//   suyo (ahí le llega el código de dos pasos) y nadie más sabe la contraseña.
+//   Desactivar: deja de poder entrar al momento y se cierran sus sesiones.
+// ---------------------------------------------------------
+const ACTIVACION_HORAS = 48;
+app.post('/api/admin/usuarios/:id/activar', requireAdmin, asyncRoute(async (req, res) => {
+    const u = (await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [req.params.id])).rows[0];
+    if (!u) return res.status(404).json({ message: 'Usuario no encontrado' });
+    if (u.activo) return res.status(400).json({ message: `${u.nombre} ya está activo` });
+    if (!correo_.configurado()) return res.status(400).json({ message: 'El correo del sistema no está configurado (SMTP en el .env): no se puede mandar el enlace de activación' });
+    const dom = await correo_.dominioRecibeCorreo(seg.normalizarCorreo(u.email));
+    if (!dom.ok) return res.status(400).json({ message: `No se puede mandar el enlace a ${u.email}: ${dom.motivo}` });
+    const recientes = await pool.query(`SELECT COUNT(*)::int AS n FROM activaciones_usuario WHERE usuario_id = $1 AND creado > CURRENT_TIMESTAMP - INTERVAL '1 hour'`, [u.id]);
+    if (recientes.rows[0].n >= 5) return res.status(429).json({ message: 'Ya se mandaron 5 enlaces en la última hora. Espera un poco o pide que revise su carpeta de spam.' });
+
+    // El enlace anterior deja de servir: solo vale el último.
+    await pool.query('UPDATE activaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [u.id]);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await pool.query(
+        `INSERT INTO activaciones_usuario (usuario_id, token_hash, expira, creado_por, ip)
+         VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' hours')::interval, $4, $5)`,
+        [u.id, seg.sha256(token), String(ACTIVACION_HORAS), req.usuario.id, seg.ipDe(req)]);
+    const enlace = `${urlPublica(req)}/admin/activar.html?token=${token}`;
+    await enviarCorreo(pool, {
+        para: u.email, tipo: 'registro',
+        asunto: 'Activa tu cuenta del panel de Kozmok',
+        cuerpo: `Hola ${u.nombre}:\n\n${req.usuario.nombre} activó tu acceso al panel de Kozmok con el rol de ${(ROLES_INTERNOS[u.rol] || {}).nombre || u.rol}.\n\n`
+            + `Para terminar, abre este enlace y crea tu contraseña (vence en ${ACTIVACION_HORAS} horas y solo sirve una vez):\n${enlace}\n\n`
+            + 'Si no esperabas este correo, ignóralo: la cuenta no se activa hasta que abras el enlace.',
+        boton: { texto: 'Activar mi cuenta', url: enlace },
+    });
+    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'baja', usuario_id: u.id, detalle: `${req.usuario.nombre} mandó el enlace de activación a ${u.nombre} (${u.email})` });
+    res.json({ message: `Le mandamos a ${u.email} un enlace para activar su cuenta (vence en ${ACTIVACION_HORAS} horas). Quedará activa cuando cree su contraseña.` });
+}));
+
+app.post('/api/admin/usuarios/:id/desactivar', requireAdmin, asyncRoute(async (req, res) => {
+    if (String(req.params.id) === String(req.usuario.id)) return res.status(400).json({ message: 'No puedes desactivar tu propia cuenta' });
+    const u = (await pool.query('SELECT id, nombre, email, rol, activo FROM usuarios WHERE id = $1', [req.params.id])).rows[0];
+    if (!u) return res.status(404).json({ message: 'Usuario no encontrado' });
+    if (!u.activo) {
+        // Si tenía un enlace de activación pendiente, se cancela.
+        const c = await pool.query('UPDATE activaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL RETURNING id', [u.id]);
+        return res.json({ message: c.rowCount ? `Se canceló el enlace de activación de ${u.nombre}` : `${u.nombre} ya estaba inactivo` });
+    }
+    if (u.rol === 'admin') {
+        const otros = await pool.query("SELECT COUNT(*)::int AS n FROM usuarios WHERE rol = 'admin' AND activo AND id <> $1", [u.id]);
+        if (!otros.rows[0].n) return res.status(400).json({ message: 'Debe quedar al menos un administrador activo' });
+    }
+    await pool.query('UPDATE usuarios SET activo = FALSE WHERE id = $1', [u.id]);
+    await pool.query('UPDATE activaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [u.id]);
+    const cerradas = await seg.revocarSesionesDe('usuario', u.id, 'cuenta desactivada');
+    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'media', usuario_id: u.id, detalle: `${req.usuario.nombre} desactivó la cuenta de ${u.nombre}; ${cerradas} sesión(es) cerradas` });
+    await enviarCorreo(pool, {
+        para: u.email, tipo: 'seguridad',
+        asunto: 'Tu acceso al panel de Kozmok se desactivó',
+        cuerpo: `Hola ${u.nombre}:\n\n${req.usuario.nombre} desactivó tu cuenta del panel de Kozmok, así que ya no puedes entrar. Si crees que es un error, habla con un administrador.`,
+    });
+    res.json({ message: `Cuenta de ${u.nombre} desactivada${cerradas ? `; se cerraron ${cerradas} sesión(es)` : ''}` });
 }));
 
 // Cambiar el rol de un usuario interno (solo admin). El admin no puede
@@ -7503,6 +7570,38 @@ app.post('/api/auth/recuperar', limiteAuth, captchaMw, asyncRoute(async (req, re
     res.json(generico);
 }));
 
+// Activación de cuentas del equipo (enlace del correo "Activa tu cuenta").
+async function activacionDeToken(token) {
+    if (!/^[A-Za-z0-9_-]{30,60}$/.test(String(token || ''))) return null;
+    const r = await pool.query(
+        `SELECT a.id, a.usuario_id, u.nombre, u.email, u.rol, u.activo FROM activaciones_usuario a JOIN usuarios u ON u.id = a.usuario_id
+         WHERE a.token_hash = $1 AND a.usado IS NULL AND a.expira > CURRENT_TIMESTAMP`, [seg.sha256(String(token))]);
+    return r.rows[0] || null;
+}
+app.get('/api/auth/activar-usuario', limiteAuth, asyncRoute(async (req, res) => {
+    const a = await activacionDeToken(req.query.token);
+    if (!a) return res.status(400).json({ message: 'El enlace ya venció o ya se usó. Pide a un administrador que te mande uno nuevo.' });
+    res.json({ nombre: a.nombre, correo: a.email, rol: (ROLES_INTERNOS[a.rol] || {}).nombre || a.rol });
+}));
+app.post('/api/auth/activar-usuario', limiteAuth, asyncRoute(async (req, res) => {
+    const a = await activacionDeToken(req.body.token);
+    if (!a) {
+        await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'media', detalle: 'Se usó un enlace de activación inválido, vencido o ya usado' });
+        return res.status(400).json({ message: 'El enlace ya venció o ya se usó. Pide a un administrador que te mande uno nuevo.' });
+    }
+    const nueva = String(req.body.nueva || req.body.password || '');
+    const err = seg.validarPassword(nueva, { correo: a.email, nombre: a.nombre });
+    if (err) return res.status(400).json({ message: err });
+    await pool.query(
+        `UPDATE usuarios SET password_hash = $1, activo = TRUE, cambiar_password = FALSE, password_debil = FALSE WHERE id = $2`,
+        [await seg.hashPassword(nueva), a.usuario_id]);
+    await pool.query('UPDATE activaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [a.usuario_id]);
+    await seg.revocarSesionesDe('usuario', a.usuario_id, 'cuenta activada con contraseña nueva');
+    await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`usuario:${seg.normalizarCorreo(a.email)}`]);
+    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'baja', usuario_id: a.usuario_id, detalle: `${a.nombre} activó su cuenta del panel y creó su contraseña` });
+    res.json({ message: 'Tu cuenta quedó activa. Ya puedes entrar al panel con tu correo y tu nueva contraseña.' });
+}));
+
 app.post('/api/auth/restablecer', limiteAuth, asyncRoute(async (req, res) => {
     const token = String(req.body.token || '');
     const nueva = String(req.body.nueva || req.body.password || '');
@@ -7769,6 +7868,17 @@ async function migrarEsquema() {
         usado BOOLEAN NOT NULL DEFAULT FALSE,
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_desafios_2fa_sujeto ON desafios_2fa(tipo, sujeto_id)');
+    // Enlaces de "Activa tu cuenta" del equipo (solo se guarda la huella del token).
+    await pool.query(`CREATE TABLE IF NOT EXISTS activaciones_usuario (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        token_hash CHAR(64) UNIQUE NOT NULL,
+        expira TIMESTAMP NOT NULL,
+        usado TIMESTAMP,
+        creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        ip VARCHAR(64),
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_activaciones_usuario ON activaciones_usuario(usuario_id)');
 
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
