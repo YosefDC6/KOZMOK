@@ -29,6 +29,7 @@
 // servidor; aquí solo se muestran los botones de PayPal y, cuando el
 // cliente aprueba, el servidor cobra y confirma el pedido.
 const cliente = Sesion.cliente();
+window.KZ_PAGINA_PRIVADA = true;
 if (!cliente) irALogin();
 const ID = Number(new URLSearchParams(location.search).get('id'));
 const caja = document.getElementById('pagar');

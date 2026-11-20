@@ -19,6 +19,7 @@ const CUENTA_LINKS = [
 ];
 
 async function montarCuenta(key, render) {
+    window.KZ_PAGINA_PRIVADA = true;
     const sesion = Sesion.cliente();
     if (!sesion || !sesion.id) { irALogin(); return; }
 
@@ -45,7 +46,7 @@ async function montarCuenta(key, render) {
     document.getElementById('cn-logout').addEventListener('click', () => {
         Sesion.cerrarSesionCliente();
         if (window.toast) toast('Sesión cerrada', 'ok');
-        setTimeout(() => location.href = '/index.html', 350);
+        setTimeout(() => location.replace('/index.html'), 350);
     });
 
     let PERFIL;

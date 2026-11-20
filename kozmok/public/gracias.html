@@ -24,6 +24,7 @@
 <script src="/js/chatbot.js"></script>
 <script>
 const cliente = Sesion.cliente();
+window.KZ_PAGINA_PRIVADA = true;
 if (!cliente) irALogin();
 
 const ESTADO_LABEL = { pendiente: 'Pendiente', confirmado: 'Confirmado', procesando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };

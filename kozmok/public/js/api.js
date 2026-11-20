@@ -290,6 +290,23 @@ const ReglasPass = {
     },
 };
 
+// Páginas que necesitan sesión (cuenta del cliente, pagar, panel). Si el
+// navegador las muestra desde su memoria al presionar "atrás" después de
+// cerrar sesión, se revisa la sesión y se manda al inicio de sesión.
+window.addEventListener('pageshow', (ev) => {
+    if (!ev.persisted) return;   // carga normal: cada página revisa su sesión
+    const p = location.pathname;
+    if (p.startsWith('/admin/') && !p.endsWith('/login.html')) {
+        if (!Sesion.usuario()) { location.replace('/admin/login.html'); return; }
+        api('/admin/whoami').catch(() => {});   // si la sesión ya no existe, api() manda al login
+        return;
+    }
+    if (window.KZ_PAGINA_PRIVADA) {
+        if (!Sesion.cliente()) { location.replace('/login.html?next=' + encodeURIComponent(p + location.search)); return; }
+        api('/auth/estado').then(({ cliente }) => { if (!cliente) { localStorage.removeItem('kz_cliente'); location.replace('/login.html'); } }).catch(() => {});
+    }
+});
+
 // Manda al login guardando a dónde volver después
 function irALogin(mensaje) {
     if (mensaje && window.toast) toast(mensaje, 'info');

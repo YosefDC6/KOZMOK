@@ -289,7 +289,7 @@ window.abrirDosPasos = abrirDosPasos;
 
 async function cerrarSesionAdmin() {
     await Sesion.cerrarSesionUsuario();
-    window.location.href = '/admin/login.html';
+    window.location.replace('/admin/login.html');
 }
 
 // Exporta un array de objetos a CSV y lo descarga.

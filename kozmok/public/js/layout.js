@@ -181,7 +181,7 @@ async function renderNavbar() {
         b.addEventListener('click', () => {
             Sesion.cerrarSesionCliente();
             if (window.toast) toast('Sesión cerrada', 'ok');
-            setTimeout(() => location.href = '/index.html', 400);
+            setTimeout(() => location.replace('/index.html'), 400);
         })
     );
 

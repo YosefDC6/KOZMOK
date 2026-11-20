@@ -122,6 +122,40 @@ function abrirNueva() {
     pintarCampos();
 }
 
+// Contraseña con las mismas reglas que la tienda (8+, mayúsculas y
+// minúsculas, número y símbolo) y un botón que genera una segura.
+function campoPassword(esCliente = false) {
+    return `
+        <div class="field">
+            <label for="f-pass">Contraseña temporal</label>
+            <div style="display:flex;gap:8px">
+                <input type="password" id="f-pass" maxlength="72" autocomplete="new-password" />
+                <button type="button" class="btn btn-outline btn-sm" onclick="verPass()" title="Mostrar u ocultar" aria-label="Mostrar u ocultar contraseña">${icon('eye', 16)}</button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="generarPass()" title="Generar una contraseña segura">Generar</button>
+            </div>
+            ${ReglasPass.html('f-reglas')}
+        </div>
+        <div class="field"><label for="f-pass2">Repetir contraseña</label><input type="password" id="f-pass2" maxlength="72" autocomplete="new-password" /></div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin:-6px 0 12px">${esCliente
+            ? 'No va en el correo de bienvenida. El correo le explica cómo poner su propia contraseña con «¿Olvidaste tu contraseña?».'
+            : 'Dásela a la persona por un medio seguro (no va en el correo de bienvenida). Al entrar por primera vez se le pide cambiarla.'}</p>`;
+}
+function verPass() {
+    ['f-pass', 'f-pass2'].forEach((id) => { const i = document.getElementById(id); i.type = i.type === 'password' ? 'text' : 'password'; });
+}
+function generarPass() {
+    const grupos = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnpqrstuvwxyz', '23456789', '#$%&*!?@+-'];
+    const azar = (n) => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+    const todos = grupos.join('');
+    const c = grupos.map((g) => g[azar(g.length)]);              // al menos uno de cada tipo
+    while (c.length < 14) c.push(todos[azar(todos.length)]);
+    for (let i = c.length - 1; i > 0; i--) { const j = azar(i + 1); [c[i], c[j]] = [c[j], c[i]]; }
+    const pw = c.join('');
+    ['f-pass', 'f-pass2'].forEach((id) => { const i = document.getElementById(id); i.value = pw; i.type = 'text'; i.dispatchEvent(new Event('input')); });
+    document.getElementById('u-error').style.display = 'none';
+    if (window.copiarTexto) copiarTexto(pw).then((ok) => ok && toast('Contraseña generada y copiada', 'ok'));
+}
+
 function pintarCampos() {
     const tipo = document.getElementById('tipo').value;
     const desc = document.getElementById('tipo-desc');
@@ -132,15 +166,14 @@ function pintarCampos() {
         cont.innerHTML = `
             <div class="field"><label>Nombre completo</label><input id="f-nombre" /></div>
             <div class="field"><label>Correo electrónico</label><input type="email" id="f-correo" /></div>
-            <div class="field-row">
-                <div class="field"><label>Contraseña (mín. 6)</label><input type="password" id="f-pass" minlength="6" /></div>
-                <div class="field"><label>Teléfono</label><input id="f-tel" /></div>
-            </div>
+            <div class="field"><label>Teléfono</label><input id="f-tel" /></div>
+            ${campoPassword(true)}
             <div class="field"><label>Empresa (opcional)</label><input id="f-empresa" /></div>
             <div class="field-row">
                 <div class="field"><label>Ciudad</label><input id="f-ciudad" /></div>
                 <div class="field"><label>Estado</label><input id="f-estado" /></div>
             </div>`;
+        ReglasPass.enlazar(document.getElementById('f-pass'), document.getElementById('f-reglas'));
     } else {
         const clave = tipo.slice(4);
         const r = ROLES.find((x) => x.clave === clave);
@@ -148,10 +181,9 @@ function pintarCampos() {
         cont.innerHTML = `
             <div class="field"><label>Nombre completo</label><input id="f-nombre" /></div>
             <div class="field"><label>Email</label><input type="email" id="f-correo" /></div>
-            <div class="field-row">
-                <div class="field"><label>Contraseña (mín. 6)</label><input type="password" id="f-pass" minlength="6" /></div>
-                <div class="field"><label>Teléfono</label><input id="f-tel" /></div>
-            </div>`;
+            <div class="field"><label>Teléfono</label><input id="f-tel" /></div>
+            ${campoPassword()}`;
+        ReglasPass.enlazar(document.getElementById('f-pass'), document.getElementById('f-reglas'));
     }
 }
 
@@ -163,7 +195,9 @@ async function guardar() {
     const nombre = g('f-nombre'), correo = g('f-correo'), password = document.getElementById('f-pass').value, telefono = g('f-tel');
 
     if (!nombre || !correo || !password) { err.textContent = 'Nombre, correo y contraseña son obligatorios.'; err.style.display = 'block'; return; }
-    if (password.length < 6) { err.textContent = 'La contraseña debe tener al menos 6 caracteres.'; err.style.display = 'block'; return; }
+    const falta = ReglasPass.faltante(password);
+    if (falta) { err.textContent = falta; err.style.display = 'block'; return; }
+    if (password !== document.getElementById('f-pass2').value) { err.textContent = 'Las contraseñas no coinciden.'; err.style.display = 'block'; return; }
 
     try {
         if (tipo === 'cliente') {
@@ -172,16 +206,16 @@ async function guardar() {
                 empresa: g('f-empresa'), ciudad: g('f-ciudad'), estado: g('f-estado'),
             }});
             cerrarModal();
-            toast('Cliente creado', 'ok');
+            toast(r.message || 'Cliente creado', 'ok');
             if (await confirmar('Cliente creado. ¿Abrir su ficha ahora?', { okText: 'Abrir ficha' })) {
                 location.href = '/admin/cliente.html?id=' + r.cliente.id;
             }
         } else {
-            await api('/admin/usuarios', { method: 'POST', body: {
+            const r = await api('/admin/usuarios', { method: 'POST', body: {
                 nombre, email: correo, password, telefono, rol: tipo.slice(4),
             }});
             cerrarModal();
-            toast('Cuenta interna creada', 'ok');
+            toast(r.message || 'Cuenta interna creada', 'ok');
             cargarUsuarios();
         }
     } catch (e) {

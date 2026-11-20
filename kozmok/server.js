@@ -87,7 +87,12 @@ app.use((req, res, next) => {
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
 // HTML/JS/CSS se revalidan (ETag), así una actualización se ve al momento.
 app.use(express.static(path.join(__dirname, 'public'), {
-    setHeaders(res, ruta) { if (/\.(png|jpe?g|webp|gif|svg|ico|woff2?)$/i.test(ruta)) res.setHeader('Cache-Control', 'public, max-age=86400'); },
+    setHeaders(res, ruta) {
+        if (/\.(png|jpe?g|webp|gif|svg|ico|woff2?)$/i.test(ruta)) res.setHeader('Cache-Control', 'public, max-age=86400');
+        // Las páginas no se guardan: así, después de cerrar sesión, la flecha
+        // "atrás" del navegador no vuelve a mostrar la cuenta o el panel.
+        else if (/\.html$/i.test(ruta)) res.setHeader('Cache-Control', 'no-store');
+    },
 }));
 // Chart.js servido desde node_modules: las gráficas del panel funcionan sin
 // internet (antes venía solo de cdnjs y sin conexión salía "Chart is not defined").
@@ -530,7 +535,7 @@ function nuevoCodigoVerificacion() {
 const hashCodigo = (clienteId, codigo) => crypto.createHash('sha256').update(`${clienteId}:${codigo}`).digest('hex');
 
 // Guarda un código nuevo y manda el correo. db puede ser una transacción.
-async function enviarCodigoVerificacion(db, req, cliente, { bienvenida = false } = {}) {
+async function enviarCodigoVerificacion(db, req, cliente, { bienvenida = false, creadaPor = null } = {}) {
     const codigo = nuevoCodigoVerificacion();
     await db.query(
         `UPDATE clientes SET verificacion_hash = $2, verificacion_intentos = 0,
@@ -546,7 +551,9 @@ async function enviarCodigoVerificacion(db, req, cliente, { bienvenida = false }
             : `Hola ${cliente.nombre}:\n\nEste es tu nuevo código para confirmar tu correo:\n\n${codigo}\n\n`)
             + `Vence en ${VERIF_MINUTOS} minutos. Si cerraste la página, entra aquí y escríbelo:\n${enlace}\n\n`
             + (bienvenida && cliente.codigo_socio ? `Tu código de socio del Club Kozmok es ${cliente.codigo_socio}.\n\n` : '')
-            + 'Si no creaste esta cuenta, ignora este mensaje.',
+            + (creadaPor
+                ? `Tu cuenta la creó ${creadaPor} del equipo de Kozmok. Para elegir tu propia contraseña entra a "¿Olvidaste tu contraseña?" en ${urlPublica(req)}/recuperar.html\n\nSi no pediste esta cuenta, responde a este correo.`
+                : 'Si no creaste esta cuenta, ignora este mensaje.'),
         boton: { texto: 'Confirmar mi correo', url: enlace },
     });
 }
@@ -4060,6 +4067,9 @@ app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
 
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [seg.normalizarCorreo(correo)]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado' });
+    // Igual que en el registro de la tienda: el dominio debe existir y recibir correo.
+    const dom = await correo_.dominioRecibeCorreo(seg.normalizarCorreo(correo));
+    if (!dom.ok) return res.status(400).json({ message: dom.motivo + (dom.sugerencia ? ` ¿Quisiste decir ${dom.sugerencia}?` : '') });
 
     const hash = await seg.hashPassword(password);
     let codigoSocio;
@@ -4069,13 +4079,15 @@ app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
         if (d.rows.length === 0) break;
     }
     const r = await pool.query(
-        `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, codigo_socio, estado_cliente, etapa_crm)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'activo','Prospecto')
-         RETURNING id, nombre, correo, telefono, empresa, ciudad, estado, etapa_crm, fecha_registro`,
-        [nombre, correo, hash, telefono || null, empresa || null, ciudad || null, estado || null, codigoSocio]
+        `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, codigo_socio, estado_cliente, etapa_crm, correo_verificado)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'activo','Prospecto',$9)
+         RETURNING id, nombre, correo, telefono, empresa, ciudad, estado, etapa_crm, fecha_registro, codigo_socio`,
+        [nombre, seg.normalizarCorreo(correo), hash, telefono || null, empresa || null, ciudad || null, estado || null, codigoSocio, !correo_.configurado()]
     );
     await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [r.rows[0].id]);
-    res.status(201).json({ message: 'Cliente creado', cliente: r.rows[0] });
+    // Bienvenida con su código para confirmar el correo (como al registrarse en la tienda).
+    if (correo_.configurado()) await enviarCodigoVerificacion(pool, req, r.rows[0], { bienvenida: true, creadaPor: req.usuario.nombre });
+    res.status(201).json({ message: correo_.configurado() ? 'Cliente creado. Le mandamos un correo de bienvenida con su código para confirmar el correo.' : 'Cliente creado', cliente: r.rows[0] });
 }));
 
 app.get('/api/admin/clientes/:id/pedidos', asyncRoute(async (req, res) => {
@@ -6630,14 +6642,31 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     if (!ROLES_INTERNOS[rol]) return res.status(400).json({ message: 'Rol no válido' });
     const existe = await pool.query('SELECT id FROM usuarios WHERE LOWER(email) = $1', [seg.normalizarCorreo(email)]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'El email ya está registrado' });
+    // El código de dos pasos del panel llega a este correo: debe ser real.
+    const dom = await correo_.dominioRecibeCorreo(seg.normalizarCorreo(email));
+    if (!dom.ok) return res.status(400).json({ message: dom.motivo + (dom.sugerencia ? ` ¿Quisiste decir ${dom.sugerencia}?` : '') });
 
     const hash = await seg.hashPassword(password);
     const result = await pool.query(
         `INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo, cambiar_password)
          VALUES ($1,$2,$3,$4,$5,$6, TRUE) RETURNING id, nombre, email, telefono, rol, activo`,
-        [nombre, email, hash, telefono, rol, activo !== undefined ? activo : true]
+        [nombre, seg.normalizarCorreo(email), hash, telefono, rol, activo !== undefined ? activo : true]
     );
-    res.status(201).json({ message: 'Usuario creado. Al entrar por primera vez se le pedirá cambiar la contraseña.', usuario: result.rows[0] });
+    const u = result.rows[0];
+    // Bienvenida: dónde entrar y qué esperar. La contraseña NO va en el
+    // correo (se la da quien creó la cuenta) y se cambia al primer acceso.
+    const enlace = `${urlPublica(req)}/admin/login.html`;
+    await enviarCorreo(pool, {
+        para: u.email, tipo: 'registro',
+        asunto: 'Te dieron acceso al panel de Kozmok',
+        cuerpo: `Hola ${u.nombre}:\n\n${req.usuario.nombre} creó tu cuenta en el panel de Kozmok con el rol de ${ROLES_INTERNOS[rol].nombre}.\n\n`
+            + `- Usuario: ${u.email}\n- Contraseña: la temporal que te dio ${req.usuario.nombre}\n\n`
+            + 'Al entrar por primera vez te pediremos cambiarla por una que solo tú conozcas. '
+            + (DOSF.panelObligatorio ? 'Además, cada vez que entres te mandaremos a este correo un código de verificación en dos pasos.\n\n' : '\n\n')
+            + `Entra aquí: ${enlace}\n\nSi no esperabas este correo, avísale a un administrador de Kozmok.`,
+        boton: { texto: 'Entrar al panel', url: enlace },
+    });
+    res.status(201).json({ message: `Cuenta creada. Le mandamos un correo de bienvenida a ${u.email}; al entrar por primera vez se le pedirá cambiar la contraseña.`, usuario: u });
 }));
 
 // Cambiar el rol de un usuario interno (solo admin). El admin no puede
