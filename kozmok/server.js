@@ -3172,11 +3172,33 @@ app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
 }));
 
 // Crea un ticket (folio TK-xxxx), su primer mensaje y la interacción CRM.
+// Prioridad automática de los tickets que abre el cliente (el cliente no la
+// elige; el equipo puede cambiarla después en el panel).
+//   alta : un pedido o el acceso a la cuenta, o el texto habla de cobros
+//          dobles, cargos no reconocidos, fraude o cuenta robada
+//   media: garantía, devolución, facturación
+//   baja : otros temas
+const CATEGORIAS_TICKET = ['pedido', 'garantia', 'devolucion', 'facturacion', 'cuenta', 'general'];
+const PRIORIDAD_POR_CATEGORIA = { pedido: 'alta', cuenta: 'alta', garantia: 'media', devolucion: 'media', facturacion: 'media', general: 'baja' };
+const TICKET_URGENTE = /(cobr\w*\s+(doble|dos\s+veces)|doble\s+cobro|cargo\s+no\s+reconocido|no\s+reconozco|fraude|estafa|hacke|robar\w*|me\s+robaron|suplant)/i;
+function prioridadAutomatica(categoria, texto) {
+    if (TICKET_URGENTE.test(String(texto || ''))) return 'alta';
+    return PRIORIDAD_POR_CATEGORIA[categoria] || 'baja';
+}
+
 async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }, { autor = 'cliente', usuarioId = null } = {}) {
+    categoria = CATEGORIAS_TICKET.includes(categoria) ? categoria : 'general';
+    // El cliente no decide la prioridad: se calcula según el caso.
+    if (autor !== 'equipo') prioridad = prioridadAutomatica(categoria, `${asunto} ${descripcion}`);
+    // Solo se liga un pedido que sea de este cliente.
+    if (pedido_id) {
+        const p = await pool.query('SELECT id FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(pedido_id) || 0, clienteId]);
+        pedido_id = p.rows[0] ? p.rows[0].id : null;
+    }
     const ins = await pool.query(
         `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje)
          VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6) RETURNING id`,
-        [clienteId, String(asunto).slice(0, 160), (categoria || 'general').slice(0, 40),
+        [clienteId, String(asunto).slice(0, 160), categoria,
             ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion]
     );
     const t = await pool.query(
@@ -3238,19 +3260,22 @@ app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
 app.post('/api/clientes/:id/tickets/:ticketId/mensajes', asyncRoute(async (req, res) => {
     const { mensaje } = req.body;
     if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const t = await pool.query('SELECT id, estado FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id]);
+    const t = await pool.query('SELECT id, folio, estado FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
+    // Un caso resuelto o cerrado ya no recibe mensajes del cliente ni se
+    // reabre por su cuenta: solo el equipo lo reabre desde el panel. Si
+    // necesita más ayuda, abre un ticket nuevo.
+    if (['resuelto', 'cerrado'].includes(t.rows[0].estado)) {
+        return res.status(409).json({ message: `El ticket ${t.rows[0].folio} ya está ${t.rows[0].estado}. Si necesitas más ayuda, abre un ticket nuevo.`, cerrado: true });
+    }
+    const texto = String(mensaje).trim().slice(0, 4000);
+    if (!texto) return res.status(400).json({ message: 'El mensaje es requerido' });
 
     await pool.query(
         `INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2)`,
-        [req.params.ticketId, mensaje]
+        [req.params.ticketId, texto]
     );
-    // Si estaba resuelto/cerrado, se reabre
-    if (['resuelto', 'cerrado'].includes(t.rows[0].estado)) {
-        await pool.query("UPDATE tickets SET estado = 'abierto' WHERE id = $1", [req.params.ticketId]);
-    } else {
-        await pool.query("UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [req.params.ticketId]);
-    }
+    await pool.query("UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [req.params.ticketId]);
     res.status(201).json({ message: 'Mensaje enviado' });
 }));
 

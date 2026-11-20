@@ -29,7 +29,6 @@
 <script>
 let CID = null;
 const EST_LABEL = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
-const PRIO_LABEL = { baja: 'Baja', media: 'Media', alta: 'Alta' };
 
 montarCuenta('soporte', async (panel, P) => {
     CID = P.id;
@@ -51,7 +50,7 @@ async function vistaLista(panel) {
                 <a class="card ticket-row" href="/soporte.html?ticket=${t.id}">
                     <div>
                         <span class="mono" style="font-size:.82rem">${t.folio}</span>
-                        <div style="font-weight:600">${t.asunto}</div>
+                        <div style="font-weight:600">${escHTML(t.asunto)}</div>
                         <div style="font-size:.8rem;color:var(--text-muted)">${formatoFecha(t.fecha_actualizacion)} · ${t.mensajes} mensaje(s)</div>
                     </div>
                     <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
@@ -60,15 +59,17 @@ async function vistaLista(panel) {
     `;
 }
 
+let TICKET_PREVIO = {};
 async function vistaHilo(panel, id) {
     let t;
     try { t = await api(`/clientes/${CID}/tickets/${id}`); }
-    catch (e) { panel.innerHTML = `<div class="empty-state">${e.message}<br><a href="/soporte.html">Volver a soporte</a></div>`; return; }
+    catch (e) { panel.innerHTML = `<div class="empty-state">${escHTML(e.message)}<br><a href="/soporte.html">Volver a soporte</a></div>`; return; }
+    TICKET_PREVIO = { asunto: 'Seguimiento a ' + t.folio + ': ' + t.asunto, categoria: t.categoria };
     panel.innerHTML = `
         <div class="cuenta-head">
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
-            <h1 style="margin-top:6px">${t.asunto}</h1>
-            <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span> · Prioridad ${PRIO_LABEL[t.prioridad]}</p>
+            <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
+            <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span></p>
         </div>
         <div class="hilo">
             ${t.mensajes.map((m) => `
@@ -79,10 +80,12 @@ async function vistaHilo(panel, id) {
             `).join('')}
         </div>
         ${['resuelto', 'cerrado'].includes(t.estado)
-            ? '<p style="color:var(--text-muted);font-size:.85rem">Este ticket está cerrado. Si escribes de nuevo, se vuelve a abrir.</p>'
-            : ''}
-        <div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" placeholder="Escribe tu mensaje…"></textarea></div>
-        <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>
+            ? `<div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes. Si necesitas más ayuda, abre uno nuevo.</p>
+                   <button class="btn btn-primary btn-sm" onclick="formTicket(TICKET_PREVIO)">Abrir un ticket nuevo</button>
+               </div>`
+            : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="Escribe tu mensaje…"></textarea></div>
+               <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>`}
     `;
 }
 
@@ -95,13 +98,12 @@ async function responder(id) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-function formTicket() {
+function formTicket(previo = {}) {
     document.getElementById('modal-generico-body').innerHTML = `
         <button class="modal-close" onclick="document.getElementById('modal-generico').classList.remove('open')">${icon('x', 20)}</button>
         <h3>Nuevo ticket de soporte</h3>
         <div class="field"><label>Asunto</label><input id="tk-asunto" placeholder="Resumen del problema" /></div>
-        <div class="field-row">
-            <div class="field"><label>Categoría</label>
+        <div class="field"><label>Categoría</label>
                 <select id="tk-cat">
                     <option value="pedido">Un pedido</option>
                     <option value="garantia">Garantía</option>
@@ -110,14 +112,12 @@ function formTicket() {
                     <option value="cuenta">Mi cuenta</option>
                     <option value="general">Otro</option>
                 </select>
-            </div>
-            <div class="field"><label>Prioridad</label>
-                <select id="tk-prio"><option value="baja">Baja</option><option value="media" selected>Media</option><option value="alta">Alta</option></select>
-            </div>
         </div>
-        <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" placeholder="Incluye tu número de orden si aplica."></textarea></div>
+        <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Incluye tu número de orden si aplica."></textarea></div>
         <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Crear ticket</button>
     `;
+    if (previo.asunto) document.getElementById('tk-asunto').value = previo.asunto.slice(0, 160);
+    if (previo.categoria) document.getElementById('tk-cat').value = previo.categoria;
     document.getElementById('modal-generico').classList.add('open');
 }
 
@@ -125,7 +125,6 @@ async function crearTicket() {
     const body = {
         asunto: document.getElementById('tk-asunto').value.trim(),
         categoria: document.getElementById('tk-cat').value,
-        prioridad: document.getElementById('tk-prio').value,
         descripcion: document.getElementById('tk-desc').value.trim(),
     };
     if (!body.asunto || !body.descripcion) { toast('Asunto y descripción son obligatorios', 'warn'); return; }
