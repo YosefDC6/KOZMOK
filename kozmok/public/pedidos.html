@@ -128,6 +128,7 @@ montarCuenta('pedidos', async (panel, P) => {
                 ${p.estado === 'entregado' ? `<button class="btn btn-primary btn-sm" onclick="detallePedido(${p.id}, true)">Dejar reseña</button>` : ''}
                 ${botonesFactura(p)}
                 ${CANCELABLES.includes(p.estado) ? `<button class="btn btn-ghost btn-sm" onclick="cancelarPedido(${p.id})">Cancelar</button>` : ''}
+                <a class="btn btn-ghost btn-sm" href="/soporte.html?pedido=${p.id}">${icon('help', 14)} Ayuda con este pedido</a>
             </div>
             <div id="det-${p.id}"></div>
         </div>`;

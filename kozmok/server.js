@@ -3164,8 +3164,8 @@ app.put('/api/clientes/:id/preferencias', asyncRoute(async (req, res) => {
 // =========================================================
 app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `SELECT t.*, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes
-         FROM tickets t WHERE t.cliente_id = $1 ORDER BY t.fecha_actualizacion DESC`,
+        `SELECT t.*, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes, p.numero_orden
+         FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.cliente_id = $1 ORDER BY t.fecha_actualizacion DESC`,
         [req.params.id]
     );
     res.json(r.rows);
@@ -3246,7 +3246,9 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
-    const t = await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id]);
+    const t = await pool.query(
+        `SELECT t.*, p.numero_orden, p.estado AS pedido_estado FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
+         WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     const msgs = await pool.query(
         `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m
@@ -4400,10 +4402,11 @@ app.get('/api/admin/tickets', asyncRoute(async (req, res) => {
     const rows = await pool.query(
         `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
                 (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes,
-                u.nombre AS asignado_nombre
+                u.nombre AS asignado_nombre, pe.numero_orden
          FROM tickets t
          JOIN clientes c ON t.cliente_id = c.id
          LEFT JOIN usuarios u ON t.asignado_a = u.id
+         LEFT JOIN pedidos pe ON pe.id = t.pedido_id
          ${where}
          ORDER BY CASE t.estado WHEN 'abierto' THEN 0 WHEN 'en_proceso' THEN 1 ELSE 2 END,
                   CASE t.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END,
@@ -4421,8 +4424,9 @@ app.get('/api/admin/tickets', asyncRoute(async (req, res) => {
 
 app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono
-         FROM tickets t JOIN clientes c ON t.cliente_id = c.id WHERE t.id = $1`,
+        `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
+                p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido
+         FROM tickets t JOIN clientes c ON t.cliente_id = c.id LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.id = $1`,
         [req.params.id]
     );
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });

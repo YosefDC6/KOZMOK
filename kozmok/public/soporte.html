@@ -32,9 +32,14 @@ const EST_LABEL = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Res
 
 montarCuenta('soporte', async (panel, P) => {
     CID = P.id;
-    const idTicket = new URLSearchParams(location.search).get('ticket');
+    const qs = new URLSearchParams(location.search);
+    const idTicket = qs.get('ticket');
     if (idTicket) await vistaHilo(panel, idTicket);
-    else await vistaLista(panel);
+    else {
+        await vistaLista(panel);
+        // Desde "Mis pedidos" → "Ayuda con este pedido"
+        if (qs.get('pedido')) formTicket({ categoria: 'pedido', pedido_id: Number(qs.get('pedido')) });
+    }
 });
 
 async function vistaLista(panel) {
@@ -51,7 +56,7 @@ async function vistaLista(panel) {
                     <div>
                         <span class="mono" style="font-size:.82rem">${t.folio}</span>
                         <div style="font-weight:600">${escHTML(t.asunto)}</div>
-                        <div style="font-size:.8rem;color:var(--text-muted)">${formatoFecha(t.fecha_actualizacion)} · ${t.mensajes} mensaje(s)</div>
+                        <div style="font-size:.8rem;color:var(--text-muted)">${t.numero_orden ? `Pedido <span class="mono">${escHTML(t.numero_orden)}</span> · ` : ''}${formatoFecha(t.fecha_actualizacion)} · ${t.mensajes} mensaje(s)</div>
                     </div>
                     <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
                 </a>
@@ -64,12 +69,13 @@ async function vistaHilo(panel, id) {
     let t;
     try { t = await api(`/clientes/${CID}/tickets/${id}`); }
     catch (e) { panel.innerHTML = `<div class="empty-state">${escHTML(e.message)}<br><a href="/soporte.html">Volver a soporte</a></div>`; return; }
-    TICKET_PREVIO = { asunto: 'Seguimiento a ' + t.folio + ': ' + t.asunto, categoria: t.categoria };
+    TICKET_PREVIO = { asunto: 'Seguimiento a ' + t.folio + ': ' + t.asunto, categoria: t.categoria, pedido_id: t.pedido_id };
     panel.innerHTML = `
         <div class="cuenta-head">
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
             <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
-            <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span></p>
+            <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
+               ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}</p>
         </div>
         <div class="hilo">
             ${t.mensajes.map((m) => `
@@ -113,12 +119,43 @@ function formTicket(previo = {}) {
                     <option value="general">Otro</option>
                 </select>
         </div>
-        <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Incluye tu número de orden si aplica."></textarea></div>
+        <div class="field" id="tk-ped-wrap"><label>Pedido relacionado <span style="color:var(--text-muted);font-weight:400">(opcional)</span></label>
+            <select id="tk-pedido"><option value="">Cargando tus pedidos…</option></select>
+            <small id="tk-ped-nota" style="color:var(--text-muted)"></small>
+        </div>
+        <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó."></textarea></div>
         <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Crear ticket</button>
     `;
     if (previo.asunto) document.getElementById('tk-asunto').value = previo.asunto.slice(0, 160);
     if (previo.categoria) document.getElementById('tk-cat').value = previo.categoria;
+    document.getElementById('tk-cat').addEventListener('change', mostrarPedidoTicket);
     document.getElementById('modal-generico').classList.add('open');
+    cargarPedidosTicket(previo.pedido_id);
+}
+
+// Categorías en las que tiene sentido elegir un pedido.
+const CAT_CON_PEDIDO = ['pedido', 'garantia', 'devolucion', 'facturacion'];
+let PEDIDOS_CLIENTE = null;
+async function cargarPedidosTicket(elegido) {
+    const sel = document.getElementById('tk-pedido');
+    try { if (!PEDIDOS_CLIENTE) PEDIDOS_CLIENTE = await api(`/pedidos/cliente/${CID}`); }
+    catch { PEDIDOS_CLIENTE = []; }
+    if (!document.body.contains(sel)) return;
+    const estado = (e) => String(e || '').replace(/_/g, ' ');
+    sel.innerHTML = '<option value="">Ninguno / no aplica</option>' + PEDIDOS_CLIENTE.map((p) =>
+        `<option value="${p.id}">${escHTML(p.numero_orden)} · ${escHTML(estado(p.estado))} · ${formatoMoneda(p.total)} · ${formatoFecha(p.fecha_pedido)}</option>`).join('');
+    if (elegido && PEDIDOS_CLIENTE.some((p) => Number(p.id) === Number(elegido))) sel.value = String(elegido);
+    document.getElementById('tk-ped-nota').textContent = PEDIDOS_CLIENTE.length ? '' : 'Aún no tienes pedidos.';
+    mostrarPedidoTicket();
+}
+function mostrarPedidoTicket() {
+    const cat = document.getElementById('tk-cat').value;
+    const wrap = document.getElementById('tk-ped-wrap');
+    const ver = CAT_CON_PEDIDO.includes(cat);
+    wrap.style.display = ver ? '' : 'none';
+    if (!ver) document.getElementById('tk-pedido').value = '';
+    // En "Un pedido" se pide elegirlo si tiene pedidos.
+    wrap.querySelector('label span').textContent = cat === 'pedido' && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length ? '' : '(opcional)';
 }
 
 async function crearTicket() {
@@ -126,8 +163,10 @@ async function crearTicket() {
         asunto: document.getElementById('tk-asunto').value.trim(),
         categoria: document.getElementById('tk-cat').value,
         descripcion: document.getElementById('tk-desc').value.trim(),
+        pedido_id: Number(document.getElementById('tk-pedido').value) || null,
     };
     if (!body.asunto || !body.descripcion) { toast('Asunto y descripción son obligatorios', 'warn'); return; }
+    if (body.categoria === 'pedido' && !body.pedido_id && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length) { toast('Elige el pedido con el que necesitas ayuda', 'warn'); return; }
     try {
         const r = await api(`/clientes/${CID}/tickets`, { method: 'POST', body });
         toast('Ticket ' + r.ticket.folio + ' creado', 'ok');

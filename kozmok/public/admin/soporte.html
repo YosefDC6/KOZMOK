@@ -58,7 +58,7 @@ async function vistaLista() {
                         <tr onclick="location.href='/admin/soporte.html?ticket=${t.id}'" style="cursor:pointer">
                             <td class="mono">${t.folio}</td>
                             <td>${t.cliente_nombre}<div style="font-size:.76rem;color:var(--text-muted)">${t.cliente_correo}</div></td>
-                            <td>${t.asunto}<div style="font-size:.76rem;color:var(--text-muted)">${t.mensajes} mensaje(s) · ${t.categoria}</div></td>
+                            <td>${t.asunto}<div style="font-size:.76rem;color:var(--text-muted)">${t.mensajes} mensaje(s) · ${t.categoria}${t.numero_orden ? ` · <span class="mono">${t.numero_orden}</span>` : ''}</div></td>
                             <td><span class="tag prio-${t.prioridad}">${PRIO[t.prioridad]}</span></td>
                             <td><span class="tag estado-${t.estado}">${EST[t.estado]}</span></td>
                             <td>${formatoFecha(t.fecha_actualizacion)}</td>
@@ -82,7 +82,8 @@ async function vistaHilo(id) {
     catch (e) { document.getElementById('main').innerHTML = `<p>${e.message}</p><a href="/admin/soporte.html">Volver</a>`; return; }
     document.getElementById('main').innerHTML = `
         <a href="/admin/soporte.html" style="font-size:.85rem">← Cola de tickets</a>
-        ${adminHeader(t.asunto, `<span class="mono">${t.folio}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${t.cliente_nombre}</a> · ${t.cliente_correo}`)}
+        ${adminHeader(t.asunto, `<span class="mono">${t.folio}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${t.cliente_nombre}</a> · ${t.cliente_correo}`
+            + (t.numero_orden ? ` · Pedido <a class="mono" href="/admin/pedidos.html?open=${t.pedido_id}">${t.numero_orden}</a> (${String(t.pedido_estado || '').replace(/_/g, ' ')}, ${formatoMoneda(t.pedido_total)})` : ''))}
         <div class="card" style="margin-bottom:16px">
             <div class="field-row">
                 <div class="field"><label>Estado</label>
