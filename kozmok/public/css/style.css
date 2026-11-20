@@ -2427,3 +2427,29 @@ tr.mov-off td { opacity: .7; }
 .sim-ayuda { font-size: .78rem; color: var(--text-muted); margin: 6px 0 12px; line-height: 1.45; }
 .sim-nota { font-size: .74rem; color: var(--text-muted); margin: 12px 0 0; text-align: center; }
 .sim-call .field, .sim-call .sim-lbl { text-align: left; }
+
+/* ---------------------------------------------------------
+   Barras de desplazamiento con el estilo Kozmok (tienda y panel).
+   Siguen el tema elegido (azul, esmeralda, grafito, claro) porque usan
+   las mismas variables. Chrome/Edge/Safari: ::-webkit-scrollbar;
+   Firefox: scrollbar-color (solo ahí, porque en Chrome anularía lo demás).
+   --------------------------------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--accent) 38%, var(--line));
+    border-radius: 999px;
+    border: 2px solid var(--bg);          /* deja un margen alrededor del "pulgar" */
+}
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+::-webkit-scrollbar-thumb:active { background: var(--accent); }
+::-webkit-scrollbar-corner { background: var(--bg); }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }   /* sin flechas */
+/* Dentro de tarjetas, menús y modales la pista toma el color del panel */
+.card ::-webkit-scrollbar-track, .modal ::-webkit-scrollbar-track, .table-wrap::-webkit-scrollbar-track,
+.admin-sidebar::-webkit-scrollbar-track, .admin-sidebar ::-webkit-scrollbar-track { background: transparent; }
+.card ::-webkit-scrollbar-thumb, .modal ::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb,
+.admin-sidebar::-webkit-scrollbar-thumb, .admin-sidebar ::-webkit-scrollbar-thumb { border-color: transparent; background-clip: padding-box; }
+@supports (-moz-appearance: none) {
+    html, * { scrollbar-color: color-mix(in srgb, var(--accent) 45%, var(--line)) transparent; scrollbar-width: thin; }
+}
