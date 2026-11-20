@@ -484,6 +484,15 @@ function irAVerificar() {
 }
 
 let COMPRANDO = false;   // evita que un doble clic mande la compra dos veces
+// Al volver con «Atrás» el navegador puede mostrar la página guardada con el
+// carrito viejo: se vuelve a leer del servidor (ya vacío si el pedido se creó).
+window.addEventListener('pageshow', (ev) => {
+    if (!ev.persisted) return;
+    COMPRANDO = false;
+    const b = document.getElementById('btn-comprar');
+    if (b) { b.disabled = false; b.textContent = textoBotonComprar(); }
+    cargarCarrito();
+});
 async function confirmarCompra() {
     if (COMPRANDO) return;
     if ((Sesion.cliente() || {}).correo_verificado === false) return irAVerificar();
@@ -534,6 +543,12 @@ async function confirmarCompra() {
         location.href = mp.tipo === 'paypal' ? `/pagar.html?id=${pedido.id}` : `/gracias.html?id=${pedido.id}`;
     } catch (e) {
         soltar();
+        if (e.datos && e.datos.codigo === 'pedido_ya_creado') {
+            toast(e.datos.message + (e.datos.metodo_tipo === 'paypal' ? ' Te llevamos a pagarlo.' : ''), 'ok');
+            location.href = e.datos.metodo_tipo === 'paypal' ? `/pagar.html?id=${e.datos.pedido_id}` : `/gracias.html?id=${e.datos.pedido_id}`;
+            return;
+        }
+        if (e.datos && e.datos.codigo === 'carrito_vacio') { toast(e.datos.message, 'warn'); cargarCarrito(); return; }
         if (e.datos && e.datos.codigo === 'correo_no_verificado') {
             Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: false });
             return irAVerificar();

@@ -1913,17 +1913,34 @@ const procesarCompra = asyncRoute(async (req, res) => {
     if (Object.values(porProducto).some((n) => n > MAX_PIEZAS_POR_PRODUCTO)) {
         return res.status(400).json({ message: `Puedes llevar hasta ${MAX_PIEZAS_POR_PRODUCTO} piezas de cada producto por pedido. Para compras por volumen escríbenos desde Soporte.` });
     }
-    //  - Pedidos sin pagar (SPEI / tienda): apartan stock; se limita cuántos puede tener abiertos.
-    if (!metodo.inmediato) {
-        const abiertos = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos WHERE cliente_id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente'`, [cliente_id]);
-        if (abiertos.rows[0].n >= MAX_PEDIDOS_SIN_PAGAR) {
-            return res.status(400).json({ message: `Ya tienes ${abiertos.rows[0].n} pedidos esperando pago. Págalos o cancélalos antes de hacer otro con transferencia o pago en tienda.` });
-        }
-    }
-
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        // Una compra a la vez por cliente: si llegan dos envíos juntos (doble clic,
+        // regresar y volver a confirmar, dos pestañas), el segundo espera aquí a que
+        // termine el primero y luego ve el carrito ya vacío.
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('kz-compra'), $1)`, [cliente_id]);
+        const enCarrito = await client.query(
+            `SELECT COUNT(*)::int AS n FROM carrito_detalle cd JOIN carrito ca ON ca.id = cd.carrito_id WHERE ca.cliente_id = $1`, [cliente_id]);
+        if (enCarrito.rows[0].n === 0) {
+            await client.query('ROLLBACK');
+            const ult = await pool.query(
+                `SELECT id, numero_orden, metodo_tipo FROM pedidos WHERE cliente_id = $1 AND fecha_pedido > NOW() - INTERVAL '10 minutes'
+                  ORDER BY id DESC LIMIT 1`, [cliente_id]);
+            const p = ult.rows[0];
+            return res.status(409).json(p
+                ? { message: `Tu pedido ${p.numero_orden} ya está creado.`, codigo: 'pedido_ya_creado', pedido_id: p.id, metodo_tipo: p.metodo_tipo }
+                : { message: 'Tu carrito está vacío. Si ya hiciste tu pedido, lo ves en Mis pedidos.', codigo: 'carrito_vacio' });
+        }
+        //  - Pedidos sin pagar (PayPal / SPEI / tienda): apartan stock; se limita cuántos puede
+        //    tener abiertos. Se cuenta dentro del candado para que dos envíos juntos no lo brinquen.
+        if (!metodo.inmediato) {
+            const abiertos = await client.query(`SELECT COUNT(*)::int AS n FROM pedidos WHERE cliente_id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente'`, [cliente_id]);
+            if (abiertos.rows[0].n >= MAX_PEDIDOS_SIN_PAGAR) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: `Ya tienes ${abiertos.rows[0].n} pedidos esperando pago. Págalos o cancélalos antes de hacer otro.` });
+            }
+        }
         const numero_orden = 'ORD-' + Date.now();
 
         // 1) Validar stock (con bloqueo de fila) y armar las líneas.
