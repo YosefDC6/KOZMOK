@@ -56,8 +56,13 @@ app.use((req, res, next) => {
         res.removeHeader('Content-Length');
         res.setHeader('Content-Encoding', 'gzip');
         res.setHeader('Vary', 'Accept-Encoding');
-        gz.on('data', (c) => write(c));
+        // Control de flujo: si el socket se llena se pausa el gzip, y cuando el
+        // gzip se vacía se avisa a quien escribe (sin esto, los archivos
+        // grandes como style.css se quedaban esperando para siempre).
+        gz.on('data', (c) => { if (write(c) === false) gz.pause(); });
         gz.on('end', () => end());
+        gz.on('drain', () => res.emit('drain'));
+        res.on('drain', () => gz.resume());
     };
     res.write = (chunk, enc, cb) => { decidir(); return gz ? gz.write(chunk, enc, cb) : write(chunk, enc, cb); };
     res.end = (chunk, enc, cb) => {
