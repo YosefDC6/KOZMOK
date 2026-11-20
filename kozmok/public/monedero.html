@@ -230,34 +230,75 @@ function verDatosTransferencia({ referencia, monto, fecha, banco, clabe, benefic
     if (!t.clabe) { toast('Por ahora no tenemos disponibles los datos para transferir. Escríbenos desde Soporte.', 'warn'); return; }
     const dias = Number((MON.transferencia || {}).dias) || 3;
     const limite = fecha ? new Date(new Date(fecha).getTime() + dias * 86400000) : null;
-    const fila = (etq, valor, copiable) => `<tr><td>${etq}</td><td><span class="${copiable ? 'mono' : ''}">${escHTML(String(valor))}</span>
-        ${copiable ? `<button class="btn btn-ghost btn-sm td-copiar" data-copiar="${escHTML(String(valor))}" aria-label="Copiar ${etq}">${icon('clipboard', 14)} Copiar</button>` : ''}</td></tr>`;
+    const montoTxt = formatoMoneda2(monto);
+    // CLABE en grupos (banco · plaza · cuenta · verificador) para leerla y dictarla fácil
+    const clabeVer = /^\d{18}$/.test(t.clabe) ? `${t.clabe.slice(0, 3)} ${t.clabe.slice(3, 6)} ${t.clabe.slice(6, 17)} ${t.clabe.slice(17)}` : t.clabe;
+    const todo = `Transferencia SPEI\nBanco: ${t.banco}\nBeneficiario: ${t.beneficiario}\nCLABE: ${t.clabe}\nConcepto / referencia: ${referencia}\nMonto: ${montoTxt}`
+        + (limite ? `\nFecha límite: ${limite.toLocaleDateString('es-MX', { dateStyle: 'long' })}` : '');
+    const btnCopiar = (valor, etq) => `<button type="button" class="td-copiar" data-copiar="${escHTML(valor)}" aria-label="Copiar ${etq}">${icon('clipboard', 15)}<span>Copiar</span></button>`;
     const ov = document.createElement('div');
     ov.className = 'confirm-overlay';
     ov.innerHTML = `
-        <div class="confirm-box td-box" role="dialog" aria-label="Datos para transferir">
-            <h3 style="margin:0 0 4px">${icon('download', 18)} Datos para transferir</h3>
-            <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">Haz una transferencia SPEI desde tu banco con estos datos. Escribe la referencia en el concepto: así identificamos tu depósito.</p>
-            <table class="td-tabla">
-                ${fila('Banco', t.banco)}
-                ${fila('Beneficiario', t.beneficiario)}
-                ${fila('CLABE', t.clabe, true)}
-                ${fila('Referencia / concepto', referencia, true)}
-                ${fila('Monto exacto', formatoMoneda2(monto), false)}
-                ${limite ? fila('Fecha límite', limite.toLocaleDateString('es-MX', { dateStyle: 'long' }), false) : ''}
-            </table>
-            <p style="margin:12px 0 0;color:var(--text-muted);font-size:.8rem">Tu saldo se acredita cuando confirmamos el depósito. Puedes volver a ver estos datos en tu historial de movimientos.</p>
-            <div class="confirm-actions"><button class="btn btn-primary btn-sm" data-x>Entendido</button></div>
+        <div class="confirm-box td-box" role="dialog" aria-modal="true" aria-labelledby="td-titulo">
+            <div class="td-cab">
+                <div class="td-ico">${icon('download', 20)}</div>
+                <div><h3 id="td-titulo">Datos para transferir</h3><p>Transferencia SPEI desde la app o la página de tu banco</p></div>
+                <button type="button" class="td-cerrar" data-x aria-label="Cerrar">${icon('x', 18)}</button>
+            </div>
+
+            <div class="td-monto">
+                <span class="td-etq">Monto exacto a transferir</span>
+                <div class="td-valor-fila"><strong>${montoTxt}</strong>${btnCopiar(Number(monto).toFixed(2), 'monto')}</div>
+            </div>
+
+            <div class="td-dato td-clave">
+                <span class="td-etq">CLABE interbancaria</span>
+                <div class="td-valor-fila"><span class="td-valor mono">${escHTML(clabeVer)}</span>${btnCopiar(t.clabe, 'CLABE')}</div>
+            </div>
+
+            <div class="td-dato td-clave">
+                <span class="td-etq">Concepto / referencia <em>(escríbela tal cual)</em></span>
+                <div class="td-valor-fila"><span class="td-valor mono">${escHTML(referencia)}</span>${btnCopiar(referencia, 'referencia')}</div>
+            </div>
+
+            <div class="td-mini">
+                <div class="td-dato"><span class="td-etq">Banco</span><div class="td-valor-fila"><span class="td-valor-sm">${escHTML(t.banco)}</span></div></div>
+                <div class="td-dato"><span class="td-etq">Beneficiario</span><div class="td-valor-fila"><span class="td-valor-sm">${escHTML(t.beneficiario)}</span>${btnCopiar(t.beneficiario, 'beneficiario')}</div></div>
+            </div>
+
+            ${limite ? `<div class="td-limite">${icon('clock', 15)}<span>Transfiere antes del <strong>${limite.toLocaleDateString('es-MX', { dateStyle: 'long' })}</strong>; después la recarga se cancela.</span></div>` : ''}
+
+            <ol class="td-pasos">
+                <li>Abre la app de tu banco y elige <strong>transferir a otro banco (SPEI)</strong>.</li>
+                <li>Pega la <strong>CLABE</strong> y el <strong>monto exacto</strong>.</li>
+                <li>En el concepto escribe la <strong>referencia</strong>: así identificamos tu depósito.</li>
+            </ol>
+            <p class="td-nota">Tu saldo se acredita cuando confirmamos el depósito. Estos datos siguen disponibles en tu historial de movimientos.</p>
+
+            <div class="td-acciones">
+                <button type="button" class="btn btn-outline" data-todo>${icon('clipboard', 16)} Copiar todos los datos</button>
+                <button type="button" class="btn btn-primary" data-x>Entendido</button>
+            </div>
         </div>`;
     document.body.appendChild(ov);
     requestAnimationFrame(() => ov.classList.add('open'));
-    const cerrar = () => { ov.classList.remove('open'); setTimeout(() => ov.remove(), 200); };
-    ov.querySelector('[data-x]').addEventListener('click', cerrar);
+    const cerrar = () => { ov.classList.remove('open'); document.removeEventListener('keydown', esc); setTimeout(() => ov.remove(), 200); };
+    const esc = (e) => { if (e.key === 'Escape') cerrar(); };
+    document.addEventListener('keydown', esc);
+    ov.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', cerrar));
     ov.addEventListener('click', (e) => { if (e.target === ov) cerrar(); });
-    ov.querySelectorAll('[data-copiar]').forEach((b) => b.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(b.dataset.copiar.replace(/\s+/g, '')); toast('Copiado', 'ok', 1500); }
-        catch { toast('No se pudo copiar; selecciónalo y cópialo a mano', 'warn'); }
-    }));
+    const copiar = async (texto, boton) => {
+        try {
+            await navigator.clipboard.writeText(texto);
+            const antes = boton.innerHTML;
+            boton.classList.add('copiado');
+            boton.innerHTML = `${icon('check', 15)}<span>Copiado</span>`;
+            setTimeout(() => { boton.classList.remove('copiado'); boton.innerHTML = antes; }, 1600);
+        } catch { toast('No se pudo copiar; selecciónalo y cópialo a mano', 'warn'); }
+    };
+    ov.querySelectorAll('[data-copiar]').forEach((b) => b.addEventListener('click', () => copiar(b.dataset.copiar, b)));
+    ov.querySelector('[data-todo]').addEventListener('click', (e) => copiar(todo, e.currentTarget));
+    ov.querySelector('.td-dato .td-copiar').focus();
 }
 
 function formatoMoneda2(v) {
