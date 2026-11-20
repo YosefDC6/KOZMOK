@@ -161,9 +161,9 @@ async function tabInteracciones() {
                     <div class="crm-tl-item">
                         <div class="crm-tl-ico">${icon(TIPO_ICO[i.tipo] || 'chat', 16)}</div>
                         <div style="flex:1">
-                            <div class="tl-tipo">${i.tipo}</div>
-                            <div>${i.descripcion}</div>
-                            <div class="tl-meta">${formatoFecha(i.fecha)}${i.usuario_nombre ? ' · ' + i.usuario_nombre : ''}</div>
+                            <div class="tl-tipo">${TIPO_INTERACCION[i.tipo] || escHTML(i.tipo)}</div>
+                            <div>${escHTML(i.descripcion)}</div>
+                            <div class="tl-meta">${formatoFecha(i.fecha)} · ${escHTML(quienRegistro(i))}</div>
                         </div>
                     </div>`).join('')}
             </div>`}
@@ -249,10 +249,6 @@ async function guardarEtapa() {
 function nuevaInteraccion() {
     simuladorInteraccion({
         cliente: { id: Number(ID), nombre: C.nombre, correo: C.correo, telefono: C.telefono },
-        onGuardar: (tipo, descripcion) => api(`/admin/clientes/${ID}/interacciones`, {
-            method: 'POST',
-            body: { tipo, descripcion, usuario_id: Sesion.usuario().id },
-        }),
         despues: () => { location.href = `?id=${ID}&tab=interacciones`; },
     });
 }

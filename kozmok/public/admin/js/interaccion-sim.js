@@ -1,29 +1,35 @@
 // public/admin/js/interaccion-sim.js
-// Simulador de interacciones para el CRM: llamada, correo, reunión, chat y
-// soporte. Cada panel arma una descripción y llama a onGuardar(tipo, desc).
+// "Nueva interacción" del CRM. Nada es simulado: cada tipo corresponde a
+// algo que pasa de verdad y el servidor lo registra con su fecha.
+//   llamada  -> se marca desde el teléfono (enlace tel:) y se registra el
+//               resultado, la duración y las notas.
+//   correo   -> se envía de verdad con el Gmail de la tienda.
+//   reunion  -> se agenda y el cliente recibe la invitación por correo.
+//   soporte  -> abre un ticket que el cliente ve en su cuenta.
+//   (los chats se registran solos cuando el cliente usa el asesor en línea)
 //
 //   simuladorInteraccion({
-//     cliente:  { id, nombre, correo, telefono },   // cliente fijo, o
+//     cliente:  { id, nombre, correo, telefono },     // cliente fijo, o
 //     clientes: [ {id,nombre,correo,telefono}, ... ], // lista para elegir
 //     tipoInicial: 'llamada',
-//     onGuardar: async (tipo, descripcion) => { ... }  // hace el POST
+//     despues: () => { ... },                         // al registrar
 //   })
 (function () {
     const TIPOS = [
         { k: 'llamada', label: 'Llamada', ic: 'phone' },
         { k: 'correo',  label: 'Correo',  ic: 'mail' },
         { k: 'reunion', label: 'Reunión', ic: 'calendar' },
-        { k: 'chat',    label: 'Chat',    ic: 'chat' },
-        { k: 'soporte', label: 'Soporte', ic: 'shield' },
+        { k: 'soporte', label: 'Ticket de soporte', ic: 'shield' },
     ];
     const ic = (n, s) => (window.icon ? window.icon(n, s) : '');
+    const esc = (t) => (window.escHTML ? escHTML(t) : String(t ?? ''));
 
-    let modal, cfg, cliente, tipo, timerInt;
+    let modal, cfg, cliente, tipo;
 
     function abrir(opts) {
         cfg = opts || {};
         cliente = cfg.cliente || (cfg.clientes && cfg.clientes[0]) || null;
-        tipo = cfg.tipoInicial || 'llamada';
+        tipo = TIPOS.some((t) => t.k === cfg.tipoInicial) ? cfg.tipoInicial : 'llamada';
         if (!modal) {
             modal = document.createElement('div');
             modal.className = 'modal-overlay';
@@ -34,22 +40,21 @@
         modal.classList.add('open');
         render();
     }
-    function cerrar() {
-        if (timerInt) clearInterval(timerInt);
-        timerInt = null;
-        modal.classList.remove('open');
-    }
+    function cerrar() { modal.classList.remove('open'); }
     window.simuladorInteraccion = abrir;
+    // Etiquetas para las listas de interacciones
+    window.TIPO_INTERACCION = { llamada: 'Llamada', correo: 'Correo', reunion: 'Reunión', chat: 'Chat', soporte: 'Soporte' };
+    window.quienRegistro = (i) => i.usuario_nombre || ({ chatbot: 'Asesor en línea (el cliente)', cliente: 'El cliente (Soporte)', sistema: 'Sistema' }[i.origen] || 'Sistema');
 
     function render() {
         const b = document.getElementById('sim-body');
         const selCliente = (cfg.clientes && !cfg.cliente)
             ? `<div class="field"><label>Cliente</label>
                  <select id="sim-cli" onchange="__simSetCliente(this.value)">
-                   ${cfg.clientes.map((c) => `<option value="${c.id}" ${cliente && c.id === cliente.id ? 'selected' : ''}>${c.nombre} — ${c.correo || ''}</option>`).join('')}
+                   ${cfg.clientes.map((c) => `<option value="${c.id}" ${cliente && c.id === cliente.id ? 'selected' : ''}>${esc(c.nombre)} — ${esc(c.correo || '')}</option>`).join('')}
                  </select>
                </div>`
-            : `<p class="sim-cli-fijo">${ic('user', 14)} ${cliente ? cliente.nombre : ''}</p>`;
+            : `<p class="sim-cli-fijo">${ic('user', 14)} ${esc(cliente ? cliente.nombre : '')}</p>`;
 
         b.innerHTML = `
             <button class="modal-close" onclick="__simCerrar()">${ic('x', 18)}</button>
@@ -59,30 +64,32 @@
                 ${TIPOS.map((t) => `<button class="sim-tipo ${t.k === tipo ? 'on' : ''}" onclick="__simTipo('${t.k}')">${ic(t.ic, 16)} ${t.label}</button>`).join('')}
             </div>
             <div class="sim-panel" id="sim-panel"></div>
+            <p class="sim-nota">Los chats se registran solos cuando el cliente usa el asesor en línea de la tienda.</p>
         `;
         panel();
     }
 
     window.__simCerrar = cerrar;
     window.__simTipo = (t) => {
-        if (timerInt) { clearInterval(timerInt); timerInt = null; }
+        if (!TIPOS.some((x) => x.k === t)) return;
         tipo = t;
         document.querySelectorAll('.sim-tipo').forEach((el, i) => el.classList.toggle('on', TIPOS[i].k === t));
         panel();
     };
     window.__simSetCliente = (id) => { cliente = cfg.clientes.find((c) => String(c.id) === String(id)); panel(); };
 
-    async function guardar(descripcion) {
+    // Manda la interacción al servidor (él arma la descripción y pone la fecha)
+    async function registrar(datos, btn) {
         if (!cliente) { toast('Elige un cliente', 'warn'); return; }
-        if (!descripcion || !descripcion.trim()) { toast('Falta la información de la interacción', 'warn'); return; }
+        if (btn) { btn.disabled = true; btn.dataset.txt = btn.textContent; btn.textContent = 'Guardando…'; }
         try {
-            await cfg.onGuardar(tipo, descripcion.trim(), cliente);
-            toast('Interacción registrada', 'ok');
+            const r = await api('/admin/interacciones', { method: 'POST', body: { cliente_id: cliente.id, tipo, ...datos } });
+            toast(r.message || 'Interacción registrada', 'ok');
             cerrar();
             if (cfg.despues) cfg.despues();
         } catch (e) { toast(e.message || 'No se pudo registrar', 'error'); }
+        finally { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btn.dataset.txt; } }
     }
-    window.__simGuardar = guardar;
 
     function panel() {
         const p = document.getElementById('sim-panel');
@@ -90,67 +97,39 @@
         if (tipo === 'llamada') p.innerHTML = panelLlamada();
         else if (tipo === 'correo') p.innerHTML = panelCorreo();
         else if (tipo === 'reunion') p.innerHTML = panelReunion();
-        else if (tipo === 'chat') p.innerHTML = panelChat();
         else p.innerHTML = panelSoporte();
     }
 
-    /* ---------- LLAMADA ---------- */
-    let llamadaSeg = 0, llamadaEstado = 'idle';
+    /* ---------- LLAMADA (se hace desde el teléfono) ---------- */
     function panelLlamada() {
-        llamadaSeg = 0; llamadaEstado = 'idle';
-        const tel = (cliente && cliente.telefono) || 'sin teléfono';
+        const tel = cliente && cliente.telefono;
+        const telLimpio = tel ? String(tel).replace(/[^\d+]/g, '') : '';
         return `
-            <div class="sim-call" id="sim-call">
-                <div class="sc-num">${ic('phone', 22)}<span>${tel}</span></div>
-                <div class="sc-estado" id="sc-estado">Listo para llamar a ${cliente ? cliente.nombre.split(' ')[0] : ''}</div>
-                <div class="sc-timer" id="sc-timer" hidden>00:00</div>
-                <div id="sc-controls">
-                    <button class="btn btn-primary sc-llamar" onclick="__simCallStart()">${ic('phone', 16)} Iniciar llamada</button>
+            <div class="sim-call">
+                <div class="sc-num">${ic('phone', 22)}<span>${esc(tel || 'Sin teléfono registrado')}</span></div>
+                ${tel ? `<a class="btn btn-outline" style="width:100%" href="tel:${telLimpio}">${ic('phone', 16)} Llamar desde mi teléfono</a>
+                    <p class="sim-ayuda">Abre la app de llamadas de tu computadora o celular. Al terminar, registra cómo te fue.</p>` : '<p class="sim-ayuda">Agrega el teléfono en los datos del cliente para poder llamarle.</p>'}
+                <label class="sim-lbl">¿Cómo terminó?</label>
+                <div class="sim-chips" id="sc-res">
+                    ${[['contesto', 'Contestó'], ['no_contesto', 'No contestó'], ['buzon', 'Buzón de voz'], ['equivocado', 'Número equivocado']]
+                        .map(([k, t], i) => `<button class="sim-chip ${i === 0 ? 'on' : ''}" data-v="${k}" onclick="__simPick(this,'sc-res');__simDur()">${t}</button>`).join('')}
                 </div>
-                <div id="sc-cierre" hidden>
-                    <label class="sim-lbl">Resultado</label>
-                    <div class="sim-chips" id="sc-res">
-                        ${['Contestó', 'No contestó', 'Buzón de voz'].map((r, i) => `<button class="sim-chip ${i === 0 ? 'on' : ''}" onclick="__simPick(this,'sc-res')">${r}</button>`).join('')}
-                    </div>
-                    <textarea id="sc-notas" rows="3" placeholder="Notas de la llamada (acuerdos, siguiente paso)…"></textarea>
-                    <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="__simCallSave()">Guardar en el historial</button>
-                </div>
+                <div class="field" id="sc-dur-f"><label>Duración (minutos)</label><input type="number" id="sc-dur" min="1" max="600" step="1" placeholder="Ej. 8" /></div>
+                <div class="field"><label>Notas</label><textarea id="sc-notas" rows="3" placeholder="Qué se habló, acuerdos y siguiente paso…"></textarea></div>
+                <button class="btn btn-primary" style="width:100%" onclick="__simCallSave(this)">Registrar llamada</button>
             </div>`;
     }
-    window.__simCallStart = () => {
-        llamadaEstado = 'llamando';
-        document.getElementById('sc-estado').innerHTML = '<span class="sc-dot"></span> Llamando…';
-        document.getElementById('sc-controls').innerHTML = `<button class="btn btn-danger sc-colgar" onclick="__simCallEnd()">${ic('x', 16)} Colgar</button>`;
-        setTimeout(() => {
-            if (llamadaEstado !== 'llamando') return;
-            llamadaEstado = 'en_llamada';
-            document.getElementById('sc-estado').textContent = 'En llamada';
-            const t = document.getElementById('sc-timer'); t.hidden = false;
-            timerInt = setInterval(() => {
-                llamadaSeg++;
-                t.textContent = String(Math.floor(llamadaSeg / 60)).padStart(2, '0') + ':' + String(llamadaSeg % 60).padStart(2, '0');
-            }, 1000);
-        }, 1600);
+    window.__simDur = () => {
+        const v = document.querySelector('#sc-res .sim-chip.on')?.dataset.v;
+        document.getElementById('sc-dur-f').hidden = v !== 'contesto';
     };
-    window.__simCallEnd = () => {
-        if (timerInt) { clearInterval(timerInt); timerInt = null; }
-        const conecto = llamadaEstado === 'en_llamada';
-        llamadaEstado = 'fin';
-        document.getElementById('sc-estado').textContent = conecto ? 'Llamada finalizada' : 'Llamada sin respuesta';
-        document.getElementById('sc-controls').innerHTML = '';
-        const cierre = document.getElementById('sc-cierre'); cierre.hidden = false;
-        if (!conecto) {
-            const chips = cierre.querySelectorAll('#sc-res .sim-chip');
-            chips.forEach((c) => c.classList.remove('on'));
-            chips[1].classList.add('on');
-        }
-    };
-    window.__simCallSave = () => {
-        const tel = (cliente && cliente.telefono) || 's/n';
-        const dur = String(Math.floor(llamadaSeg / 60)).padStart(2, '0') + ':' + String(llamadaSeg % 60).padStart(2, '0');
-        const res = document.querySelector('#sc-res .sim-chip.on')?.textContent || 'No contestó';
+    window.__simCallSave = (btn) => {
+        const resultado = document.querySelector('#sc-res .sim-chip.on')?.dataset.v;
+        const duracion_min = Number(document.getElementById('sc-dur').value || 0);
         const notas = document.getElementById('sc-notas').value.trim();
-        guardar(`Llamada saliente a ${tel} — duración ${dur}. Resultado: ${res}.${notas ? ' ' + notas : ''}`);
+        if (resultado === 'contesto' && !(duracion_min >= 1)) return toast('Indica cuántos minutos duró', 'warn');
+        if (resultado === 'contesto' && notas.length < 10) return toast('Anota de qué se habló (al menos 10 caracteres)', 'warn');
+        registrar({ resultado, duracion_min, notas }, btn);
     };
 
     /* ---------- CORREO ---------- */
@@ -164,7 +143,7 @@
     function panelCorreo() {
         return `
             <div class="sim-mail">
-                <div class="field"><label>Para</label><input value="${(cliente && cliente.correo) || ''}" readonly /></div>
+                <div class="field"><label>Para</label><input value="${esc((cliente && cliente.correo) || '')}" readonly /></div>
                 <div class="field"><label>Plantilla</label>
                     <select id="sm-plantilla" onchange="__simPlantilla()">
                         <option value="">Escribir desde cero</option>
@@ -185,8 +164,8 @@
         document.getElementById('sm-asunto').value = t.asunto;
         document.getElementById('sm-cuerpo').value = t.cuerpo.replace('{nombre}', nom);
     };
-    // El correo se manda de verdad al cliente (Gmail de la tienda) y además
-    // queda registrado como interacción.
+    // El correo se manda de verdad al cliente (Gmail de la tienda); el
+    // servidor lo registra como interacción solo si salió.
     window.__simMailSend = async (btn) => {
         const asunto = document.getElementById('sm-asunto').value.trim();
         const cuerpo = document.getElementById('sm-cuerpo').value.trim();
@@ -198,8 +177,8 @@
             const r = await api(`/admin/clientes/${cliente.id}/correo`, { method: 'POST', body: { asunto, cuerpo } });
             toast(r.message, r.estado === 'enviado' || r.estado === 'pendiente' ? 'ok' : 'warn');
             if (r.estado === 'error') return;
-            const resumen = cuerpo.replace(/\s+/g, ' ').slice(0, 140);
-            await guardar(`Correo enviado a ${cliente.correo || ''} — Asunto: "${asunto}". ${resumen}`);
+            cerrar();
+            if (cfg.despues) cfg.despues();
         } catch (e) {
             toast(e.message, 'error');
         } finally {
@@ -207,92 +186,54 @@
         }
     };
 
-    /* ---------- REUNIÓN ---------- */
+    /* ---------- REUNIÓN (invitación real por correo) ---------- */
     function panelReunion() {
         const man = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
         return `
             <div class="sim-meet">
                 <div class="field-row">
-                    <div class="field"><label>Fecha</label><input type="date" id="sr-fecha" value="${man}" /></div>
+                    <div class="field"><label>Fecha</label><input type="date" id="sr-fecha" min="${new Date().toISOString().slice(0, 10)}" value="${man}" /></div>
                     <div class="field"><label>Hora</label><input type="time" id="sr-hora" value="10:00" /></div>
                 </div>
                 <div class="field"><label>Modalidad</label>
                     <select id="sr-mod"><option>Videollamada</option><option>Presencial</option><option>Teléfono</option></select>
                 </div>
-                <div class="field"><label>Agenda / objetivo</label><textarea id="sr-agenda" rows="3" placeholder="Temas a tratar, equipos de interés, presupuesto…"></textarea></div>
-                <button class="btn btn-primary" style="width:100%" onclick="__simMeetSave()">${ic('clock', 15)} Agendar reunión</button>
+                <div class="field"><label>Tema de la reunión</label><textarea id="sr-agenda" rows="3" placeholder="Equipos de interés, presupuesto, dudas a resolver…"></textarea></div>
+                <p class="sim-ayuda">${ic('mail', 13)} Se le envía la invitación a ${esc((cliente && cliente.correo) || 'su correo')} con la fecha, la modalidad y tu nombre.</p>
+                <button class="btn btn-primary" style="width:100%" onclick="__simMeetSave(this)">${ic('calendar', 15)} Agendar y enviar invitación</button>
             </div>`;
     }
-    window.__simMeetSave = () => {
-        const f = document.getElementById('sr-fecha').value;
-        const h = document.getElementById('sr-hora').value;
-        const m = document.getElementById('sr-mod').value;
-        const a = document.getElementById('sr-agenda').value.trim();
-        if (!f || !h) { toast('Elige fecha y hora', 'warn'); return; }
-        const fBonita = new Date(f + 'T' + h).toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short' });
-        guardar(`Reunión agendada para ${fBonita} (${m}).${a ? ' Agenda: ' + a : ''}`);
+    window.__simMeetSave = (btn) => {
+        const fecha = document.getElementById('sr-fecha').value;
+        const hora = document.getElementById('sr-hora').value;
+        const modalidad = document.getElementById('sr-mod').value;
+        const agenda = document.getElementById('sr-agenda').value.trim();
+        if (!fecha || !hora) return toast('Elige fecha y hora', 'warn');
+        if (new Date(fecha + 'T' + hora) < new Date()) return toast('La reunión debe ser en una fecha futura', 'warn');
+        if (agenda.length < 10) return toast('Escribe el tema de la reunión (al menos 10 caracteres)', 'warn');
+        registrar({ fecha, hora, modalidad, agenda }, btn);
     };
 
-    /* ---------- CHAT ---------- */
-    let chatMsgs = [];
-    const RESP_CLIENTE = ['Sí, claro.', 'De acuerdo, gracias.', 'Perfecto, lo reviso.', 'Muchas gracias por la ayuda.'];
-    function panelChat() {
-        chatMsgs = [];
-        return `
-            <div class="sim-chat">
-                <div class="sch-log" id="sch-log"><div class="sch-vacio">Escribe o usa una respuesta rápida para iniciar la conversación.</div></div>
-                <div class="sim-chips">
-                    ${['Hola, ¿en qué te puedo ayudar?', 'Con gusto reviso tu pedido.', '¿Hay algo más en lo que pueda apoyarte?'].map((q) => `<button class="sim-chip" onclick="__simChatSend('${q.replace(/'/g, "\\'")}')">${q}</button>`).join('')}
-                </div>
-                <div class="sch-input">
-                    <input id="sch-txt" placeholder="Escribe un mensaje…" onkeydown="if(event.key==='Enter')__simChatSend()" />
-                    <button class="btn btn-outline btn-sm" onclick="__simChatSend()">Enviar</button>
-                </div>
-                <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="__simChatSave()">Cerrar chat y guardar</button>
-            </div>`;
-    }
-    window.__simChatSend = (texto) => {
-        const inp = document.getElementById('sch-txt');
-        const t = (texto || (inp && inp.value) || '').trim();
-        if (!t) return;
-        if (inp && !texto) inp.value = '';
-        chatMsgs.push({ de: 'agente', t });
-        pintarChat();
-        setTimeout(() => {
-            chatMsgs.push({ de: 'cliente', t: RESP_CLIENTE[chatMsgs.length % RESP_CLIENTE.length] });
-            pintarChat();
-        }, 700);
-    };
-    function pintarChat() {
-        const log = document.getElementById('sch-log');
-        if (!log) return;
-        log.innerHTML = chatMsgs.map((m) => `<div class="sch-msg ${m.de}">${m.t}</div>`).join('');
-        log.scrollTop = log.scrollHeight;
-    }
-    window.__simChatSave = () => {
-        const nAg = chatMsgs.filter((m) => m.de === 'agente').length;
-        if (nAg === 0) { toast('Envía al menos un mensaje', 'warn'); return; }
-        const ultimo = [...chatMsgs].reverse().find((m) => m.de === 'agente');
-        guardar(`Chat de atención — ${chatMsgs.length} mensajes. Último del equipo: "${ultimo.t}"`);
-    };
-
-    /* ---------- SOPORTE ---------- */
+    /* ---------- SOPORTE (ticket real) ---------- */
     function panelSoporte() {
         return `
             <div class="sim-sop">
-                <div class="field"><label>Prioridad</label>
-                    <select id="ss-prio"><option>Media</option><option>Alta</option><option>Baja</option></select>
+                <div class="field-row">
+                    <div class="field" style="flex:2"><label>Asunto</label><input id="ss-asunto" maxlength="160" placeholder="Ej. Seguimiento a tu garantía" /></div>
+                    <div class="field"><label>Prioridad</label>
+                        <select id="ss-prio"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></select></div>
                 </div>
-                <div class="field"><label>Nota de la atención</label><textarea id="ss-nota" rows="4" placeholder="Motivo del contacto, diagnóstico, solución o siguiente paso…"></textarea></div>
-                <p style="font-size:.8rem;color:var(--text-muted)">Para dar seguimiento formal con folio, usa el <a href="/admin/soporte.html">gestor de tickets</a>.</p>
-                <button class="btn btn-primary" style="width:100%" onclick="__simSopSave()">Guardar nota</button>
+                <div class="field"><label>Mensaje para el cliente</label><textarea id="ss-msg" rows="4" placeholder="Lo que el cliente va a leer en su cuenta…"></textarea></div>
+                <p class="sim-ayuda">Se abre un ticket con folio que el cliente ve y puede responder en Soporte; también le llega un aviso por correo. El seguimiento sigue en el <a href="/admin/soporte.html">gestor de tickets</a>.</p>
+                <button class="btn btn-primary" style="width:100%" onclick="__simSopSave(this)">Abrir ticket</button>
             </div>`;
     }
-    window.__simSopSave = () => {
-        const prio = document.getElementById('ss-prio').value;
-        const nota = document.getElementById('ss-nota').value.trim();
-        if (!nota) { toast('Escribe la nota', 'warn'); return; }
-        guardar(`Nota de soporte (prioridad ${prio}): ${nota}`);
+    window.__simSopSave = (btn) => {
+        const asunto = document.getElementById('ss-asunto').value.trim();
+        const mensaje = document.getElementById('ss-msg').value.trim();
+        if (asunto.length < 5) return toast('Escribe el asunto', 'warn');
+        if (mensaje.length < 10) return toast('Escribe el mensaje (al menos 10 caracteres)', 'warn');
+        registrar({ asunto, mensaje, prioridad: document.getElementById('ss-prio').value }, btn);
     };
 
     /* ---------- util chips ---------- */

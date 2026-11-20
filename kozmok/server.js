@@ -1181,9 +1181,12 @@ app.post('/api/chatbot/recomendar', asyncRoute(async (req, res) => {
         );
         // Si hay cliente logueado, esto también cuenta como una interacción CRM
         if (cliente_id) {
+            const USOS = { gaming: 'gaming', oficina: 'oficina', diseno: 'diseño', programacion: 'programación', estudiante: 'escuela', streaming: 'streaming', servidor: 'servidor' };
+            const pide = mensaje ? `«${String(mensaje).slice(0, 200)}»`
+                : [usoFinal ? `equipo para ${USOS[usoFinal] || usoFinal}` : 'una recomendación', presupuestoFinal ? `presupuesto de ${precioTxt(presupuestoFinal)}` : ''].filter(Boolean).join(', ');
             await pool.query(
-                `INSERT INTO interacciones (cliente_id, tipo, descripcion) VALUES ($1, 'chat', $2)`,
-                [cliente_id, `Consulta al chatbot: ${mensaje || `uso=${usoFinal || 'N/A'}, presupuesto=${presupuestoFinal || 'N/A'}`}`]
+                `INSERT INTO interacciones (cliente_id, tipo, descripcion, origen) VALUES ($1, 'chat', $2, 'chatbot')`,
+                [cliente_id, `Usó el asesor en línea: ${pide}. Se le sugirieron ${sugerencias.length} producto(s)${sugerencias.length ? ': ' + sugerencias.slice(0, 3).map((x) => x.nombre).join(', ') : ''}.`]
             );
         }
     } catch (e) {
@@ -2220,7 +2223,7 @@ app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
 }));
 
 // Crea un ticket (folio TK-xxxx), su primer mensaje y la interacción CRM.
-async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }) {
+async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }, { autor = 'cliente', usuarioId = null } = {}) {
     const ins = await pool.query(
         `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje)
          VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6) RETURNING id`,
@@ -2233,13 +2236,15 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
     );
     const folio = t.rows[0].folio;
     await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2)`,
-        [t.rows[0].id, descripcion]
+        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4)`,
+        [t.rows[0].id, autor === 'equipo' ? 'equipo' : 'cliente', autor === 'equipo' ? usuarioId : null, descripcion]
     );
     // También queda como interacción CRM
     await pool.query(
-        `INSERT INTO interacciones (cliente_id, tipo, descripcion) VALUES ($1, 'soporte', $2)`,
-        [clienteId, `Ticket ${folio}: ${asunto}`]
+        `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, origen) VALUES ($1, $2, 'soporte', $3, $4)`,
+        [clienteId, autor === 'equipo' ? usuarioId : null,
+            autor === 'equipo' ? `Abrió el ticket ${folio} para el cliente: ${asunto}` : `El cliente abrió el ticket ${folio}: ${asunto}`,
+            autor === 'equipo' ? 'equipo' : 'cliente']
     );
     return t.rows[0];
 }
@@ -2936,10 +2941,15 @@ app.post('/api/admin/clientes/:id/correo', asyncRoute(async (req, res) => {
     const c = await pool.query('SELECT id, correo FROM clientes WHERE id = $1', [req.params.id]);
     if (!c.rows[0]) return res.status(404).json({ message: 'Cliente no encontrado' });
     if (!c.rows[0].correo) return res.status(400).json({ message: 'El cliente no tiene correo registrado' });
+    if (!correo.configurado()) return res.status(503).json({ estado: 'sin_smtp', message: 'No se envió: falta configurar la cuenta de Gmail de la tienda en el .env.' });
     const id = await enviarCorreo(pool, { para: c.rows[0].correo, asunto, cuerpo, tipo: 'crm', cliente_id: c.rows[0].id });
-    if (!correo.configurado()) return res.json({ estado: 'sin_smtp', message: 'Correo guardado. Para que salga de verdad falta configurar la cuenta de Gmail de la tienda.' });
     await despacharCorreos();
     const e = (await pool.query('SELECT estado, error FROM correos_salida WHERE id = $1', [id])).rows[0];
+    // Interacción real: solo si el correo salió o quedó en cola para reintento
+    if (e.estado !== 'error') {
+        await registrarInteraccion(c.rows[0].id, req.usuario.id, 'correo',
+            `Correo enviado a ${c.rows[0].correo} — «${asunto}»: ${cuerpo.replace(/\s+/g, ' ').slice(0, 160)}${cuerpo.length > 160 ? '…' : ''}`);
+    }
     res.json({ estado: e.estado, message: e.estado === 'enviado' ? `Correo enviado a ${c.rows[0].correo}`
         : e.estado === 'pendiente' ? 'Correo en cola: sale en unos segundos' : `No se pudo enviar: ${e.error || 'error desconocido'}` });
 }));
@@ -3027,13 +3037,8 @@ app.get('/api/admin/clientes/:id/interacciones', asyncRoute(async (req, res) => 
 }));
 
 app.post('/api/admin/clientes/:id/interacciones', asyncRoute(async (req, res) => {
-    const { tipo, descripcion, usuario_id } = req.body;
-    if (!tipo || !descripcion) return res.status(400).json({ message: 'Tipo y descripción son requeridos' });
-    const result = await pool.query(
-        `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion) VALUES ($1,$2,$3,$4) RETURNING *`,
-        [req.params.id, usuario_id || null, tipo, descripcion]
-    );
-    res.status(201).json(result.rows[0]);
+    const r = await interaccionReal(req, Number(req.params.id));
+    res.status(r.status).json(r.body);
 }));
 
 // =========================================================
@@ -3051,7 +3056,7 @@ app.get('/api/admin/interacciones', asyncRoute(async (req, res) => {
     if (busqueda) { cond.push(`(i.descripcion ILIKE $${i} OR c.nombre ILIKE $${i})`); values.push(`%${busqueda}%`); i++; }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const rows = await pool.query(
-        `SELECT i.id, i.tipo, i.descripcion, i.fecha, i.cliente_id,
+        `SELECT i.id, i.tipo, i.descripcion, i.fecha, i.cliente_id, i.origen,
                 c.nombre AS cliente_nombre, u.nombre AS usuario_nombre
          FROM interacciones i
          JOIN clientes c ON i.cliente_id = c.id
@@ -3062,19 +3067,102 @@ app.get('/api/admin/interacciones', asyncRoute(async (req, res) => {
     res.json(rows.rows);
 }));
 
-// Crear interacción eligiendo el cliente (flujo "Nueva interacción" global)
+// "Nueva interacción" eligiendo el cliente: mismas reglas que desde su ficha.
 app.post('/api/admin/interacciones', asyncRoute(async (req, res) => {
-    const { cliente_id, tipo, descripcion } = req.body;
-    const tipos = ['llamada', 'correo', 'reunion', 'chat', 'soporte'];
-    if (!cliente_id || !tipos.includes(tipo) || !descripcion) {
-        return res.status(400).json({ message: 'Cliente, tipo válido y descripción son requeridos' });
-    }
-    const r = await pool.query(
-        `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion) VALUES ($1,$2,$3,$4) RETURNING *`,
-        [cliente_id, req.usuario.id, tipo, descripcion]
-    );
-    res.status(201).json({ message: 'Interacción registrada', interaccion: r.rows[0] });
+    const r = await interaccionReal(req, Number(req.body.cliente_id));
+    res.status(r.status).json(r.body);
 }));
+
+// ---------------------------------------------------------
+// INTERACCIONES REALES
+//   Ninguna se inventa desde el panel: cada tipo corresponde a algo que
+//   pasó de verdad y la fecha la pone el servidor.
+//     llamada  -> la hace la persona desde su teléfono y registra resultado,
+//                 duración y notas.
+//     reunion  -> se agenda y se le manda la invitación por correo al cliente.
+//     soporte  -> abre un ticket real que el cliente ve en su cuenta (y aviso
+//                 por correo).
+//     correo   -> se registra al enviarse (POST /clientes/:id/correo).
+//     chat     -> solo cuando el cliente usa el asesor en línea.
+// ---------------------------------------------------------
+async function registrarInteraccion(clienteId, usuarioId, tipo, descripcion, origen = 'equipo') {
+    const r = await pool.query(
+        `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, origen) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [clienteId, usuarioId, tipo, String(descripcion).slice(0, 2000), origen]);
+    return r.rows[0];
+}
+const RESULTADOS_LLAMADA = { contesto: 'Contestó', no_contesto: 'No contestó', buzon: 'Buzón de voz', equivocado: 'Número equivocado' };
+const MODALIDADES_REUNION = ['Videollamada', 'Presencial', 'Teléfono'];
+const fechaLarga = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+async function interaccionReal(req, clienteId) {
+    const b = req.body || {};
+    const tipo = String(b.tipo || '');
+    const c = (await pool.query('SELECT id, nombre, correo, telefono FROM clientes WHERE id = $1', [clienteId])).rows[0];
+    if (!c) return { status: 404, body: { message: 'Cliente no encontrado' } };
+    const yo = req.usuario;
+
+    if (tipo === 'llamada') {
+        const resultado = String(b.resultado || '');
+        const minutos = Number(b.duracion_min || 0);
+        const notas = String(b.notas || '').trim().slice(0, 1000);
+        if (!RESULTADOS_LLAMADA[resultado]) return { status: 400, body: { message: 'Elige cómo terminó la llamada' } };
+        if (resultado === 'contesto' && (!Number.isInteger(minutos) || minutos < 1 || minutos > 600)) return { status: 400, body: { message: 'Indica cuántos minutos duró la llamada' } };
+        if (resultado === 'contesto' && notas.length < 10) return { status: 400, body: { message: 'Anota de qué se habló (al menos 10 caracteres)' } };
+        const tel = c.telefono || 'sin teléfono registrado';
+        const i = await registrarInteraccion(c.id, yo.id, 'llamada',
+            `Llamada a ${tel}: ${RESULTADOS_LLAMADA[resultado]}${resultado === 'contesto' ? `, ${minutos} min` : ''}.${notas ? ' ' + notas : ''}`);
+        return { status: 201, body: { message: 'Llamada registrada', interaccion: i } };
+    }
+
+    if (tipo === 'reunion') {
+        const fecha = String(b.fecha || ''), hora = String(b.hora || '');
+        const modalidad = MODALIDADES_REUNION.includes(b.modalidad) ? b.modalidad : null;
+        const agenda = String(b.agenda || '').trim().slice(0, 1000);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return { status: 400, body: { message: 'Elige fecha y hora' } };
+        if (new Date(`${fecha}T${hora}`).getTime() < Date.now()) return { status: 400, body: { message: 'La reunión debe ser en una fecha futura' } };
+        if (!modalidad) return { status: 400, body: { message: 'Elige la modalidad' } };
+        if (agenda.length < 10) return { status: 400, body: { message: 'Escribe el tema de la reunión (al menos 10 caracteres)' } };
+        if (!c.correo) return { status: 400, body: { message: 'El cliente no tiene correo para mandarle la invitación' } };
+        if (!correo.configurado()) return { status: 503, body: { message: 'No se puede mandar la invitación: falta configurar el Gmail de la tienda en el .env' } };
+        const cuando = `${fechaLarga(fecha)} a las ${hora} h`;
+        const correoId = await enviarCorreo(pool, {
+            para: c.correo, tipo: 'crm', cliente_id: c.id,
+            asunto: `Reunión con Kozmok: ${cuando}`,
+            cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\nAgendamos una reunión contigo.\n\nCuándo: ${cuando}\nModalidad: ${modalidad}\nCon: ${yo.nombre}\nTema: ${agenda}\n\n`
+                + (modalidad === 'Videollamada' ? 'Te enviaremos el enlace de la videollamada antes de la reunión.\n\n' : modalidad === 'Teléfono' ? `Te llamaremos al ${c.telefono || 'número que tengas registrado'}.\n\n` : '')
+                + 'Si necesitas cambiar la fecha, responde a este correo o escríbenos desde Soporte.',
+            boton: { texto: 'Ir a Soporte', url: `${urlBase(null)}/soporte.html` },
+        });
+        await despacharCorreos();
+        const e = (await pool.query('SELECT estado, error FROM correos_salida WHERE id = $1', [correoId])).rows[0];
+        if (e.estado === 'error') return { status: 502, body: { message: `No se pudo enviar la invitación: ${e.error || 'error del correo'}` } };
+        const i = await registrarInteraccion(c.id, yo.id, 'reunion', `Reunión agendada para el ${cuando} (${modalidad}); invitación enviada a ${c.correo}. Tema: ${agenda}`);
+        return { status: 201, body: { message: `Reunión agendada; invitación enviada a ${c.correo}`, interaccion: i } };
+    }
+
+    if (tipo === 'soporte') {
+        const asunto = String(b.asunto || '').trim().slice(0, 160);
+        const mensaje = String(b.mensaje || '').trim().slice(0, 4000);
+        if (asunto.length < 5) return { status: 400, body: { message: 'Escribe el asunto del ticket' } };
+        if (mensaje.length < 10) return { status: 400, body: { message: 'Escribe el mensaje para el cliente (al menos 10 caracteres)' } };
+        const t = await crearTicket(c.id, { asunto, categoria: 'general', descripcion: mensaje, prioridad: b.prioridad },
+            { autor: 'equipo', usuarioId: yo.id });
+        if (c.correo && correo.configurado()) {
+            await enviarCorreo(pool, {
+                para: c.correo, tipo: 'soporte', cliente_id: c.id,
+                asunto: `Te escribimos de Soporte Kozmok (${t.folio})`,
+                cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\n${mensaje}\n\nPuedes responder desde tu cuenta, en Soporte, con el folio ${t.folio}.`,
+                boton: { texto: 'Ver el ticket', url: `${urlBase(null)}/soporte.html` },
+            });
+        }
+        return { status: 201, body: { message: `Ticket ${t.folio} abierto; el cliente lo ve en su cuenta`, ticket: t } };
+    }
+
+    if (tipo === 'correo') return { status: 400, body: { message: 'Los correos se registran al enviarlos desde la pestaña Correo' } };
+    if (tipo === 'chat') return { status: 400, body: { message: 'Los chats se registran solos cuando el cliente usa el asesor en línea' } };
+    return { status: 400, body: { message: 'Tipo de interacción no válido' } };
+}
 
 // =========================================================
 // ADMIN: EVALUACIONES (todas las reseñas)

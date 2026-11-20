@@ -327,3 +327,36 @@ BEGIN
     RAISE EXCEPTION 'Los movimientos de inventario no se pueden modificar ni borrar (solo corregir su fecha con motivo). Si hubo un error, registra un movimiento contrario.'
         USING ERRCODE = 'P0001', HINT = 'control_interno';
 END $$ LANGUAGE plpgsql;
+
+-- =========================================================
+-- INTERACCIONES CRM REALES
+--   origen: equipo (la registró una persona del panel), chatbot (el cliente
+--   usó el asesor en línea), cliente (abrió un ticket), sistema.
+--   Fecha del servidor y solo agregar: una interacción no se edita ni se
+--   borra (se borran con el cliente, por la purga del CRM).
+--   Se quitan las 4 interacciones de ejemplo que traía el script inicial.
+-- =========================================================
+ALTER TABLE interacciones ADD COLUMN IF NOT EXISTS origen VARCHAR(20);
+DO $$ BEGIN
+    PERFORM set_config('kozmok.purga', 'si', true);
+    DELETE FROM interacciones WHERE descripcion IN (
+        'Se discutieron opciones de laptop para edición de video.',
+        'Envío de cotización PC Workstation Diseño.',
+        'Consultó por el chatbot una laptop gamer con presupuesto de $28,000.',
+        'Reunión inicial para conocer necesidades de cómputo de la agencia.');
+    UPDATE interacciones SET origen = CASE
+        WHEN usuario_id IS NOT NULL THEN 'equipo'
+        WHEN tipo = 'chat' THEN 'chatbot'
+        WHEN tipo = 'soporte' THEN 'cliente'
+        ELSE 'sistema' END
+    WHERE origen IS NULL;
+    PERFORM set_config('kozmok.purga', 'no', true);
+END $$;
+ALTER TABLE interacciones ALTER COLUMN origen SET DEFAULT 'sistema';
+ALTER TABLE interacciones DROP CONSTRAINT IF EXISTS interacciones_origen_check;
+ALTER TABLE interacciones ADD CONSTRAINT interacciones_origen_check CHECK (origen IN ('equipo','chatbot','cliente','sistema'));
+DROP TRIGGER IF EXISTS trg_interacciones_fecha ON interacciones;
+CREATE TRIGGER trg_interacciones_fecha BEFORE INSERT ON interacciones FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
+DROP TRIGGER IF EXISTS trg_interacciones_cambios ON interacciones;
+CREATE TRIGGER trg_interacciones_cambios BEFORE UPDATE OR DELETE ON interacciones FOR EACH ROW EXECUTE FUNCTION kz_solo_agregar();
+CREATE INDEX IF NOT EXISTS idx_interacciones_fecha ON interacciones (fecha DESC);

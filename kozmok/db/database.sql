@@ -1360,11 +1360,8 @@ INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estad
  ('Sofía Herrera', 'sofia@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
  ('Carlos Fuentes', 'carlos@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
 
-INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, fecha) VALUES
- (1, 1, 'llamada', 'Se discutieron opciones de laptop para edición de video.', CURRENT_TIMESTAMP - INTERVAL '2 days'),
- (1, 1, 'correo', 'Envío de cotización PC Workstation Diseño.', CURRENT_TIMESTAMP - INTERVAL '5 days'),
- (2, 2, 'chat', 'Consultó por el chatbot una laptop gamer con presupuesto de $28,000.', CURRENT_TIMESTAMP - INTERVAL '1 days'),
- (3, 2, 'reunion', 'Reunión inicial para conocer necesidades de cómputo de la agencia.', CURRENT_TIMESTAMP - INTERVAL '9 days');
+-- Sin interacciones de ejemplo: el CRM solo registra contactos reales
+-- (llamadas, correos enviados, reuniones, tickets y uso del asesor en línea).
 
 -- Direcciones y favoritos de ejemplo
 INSERT INTO direcciones (cliente_id, alias, destinatario, calle, ciudad, estado, codigo_postal, telefono, predeterminada) VALUES

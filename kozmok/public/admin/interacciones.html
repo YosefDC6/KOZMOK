@@ -66,10 +66,10 @@ async function cargar() {
         : rows.map((i) => `
             <tr>
                 <td>${formatoFecha(i.fecha)}</td>
-                <td><a href="/admin/cliente.html?id=${i.cliente_id}&tab=interacciones">${i.cliente_nombre}</a></td>
-                <td style="text-transform:capitalize">${i.tipo}</td>
-                <td>${i.descripcion}</td>
-                <td>${i.usuario_nombre || '—'}</td>
+                <td><a href="/admin/cliente.html?id=${i.cliente_id}&tab=interacciones">${escHTML(i.cliente_nombre)}</a></td>
+                <td>${TIPO_INTERACCION[i.tipo] || escHTML(i.tipo)}</td>
+                <td>${escHTML(i.descripcion)}</td>
+                <td>${i.usuario_nombre ? escHTML(i.usuario_nombre) : `<span style="color:var(--text-muted)">${quienRegistro(i)}</span>`}</td>
             </tr>`).join('');
 }
 
@@ -77,10 +77,6 @@ async function nueva() {
     const clientes = await api('/admin/clientes');
     simuladorInteraccion({
         clientes: clientes.map((c) => ({ id: c.id, nombre: c.nombre, correo: c.correo, telefono: c.telefono })),
-        onGuardar: (tipo, descripcion, cli) => api('/admin/interacciones', {
-            method: 'POST',
-            body: { cliente_id: cli.id, tipo, descripcion },
-        }),
         despues: cargar,
     });
 }

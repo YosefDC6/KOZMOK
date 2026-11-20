@@ -2422,3 +2422,8 @@ tr.mov-off td { opacity: .7; }
 /* Movimientos: registro tardío o fecha corregida */
 .mv-aviso { color: var(--warning); font-size: .74rem; font-weight: 600; }
 .link-btn.mv-aviso { background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+
+/* Nueva interacción */
+.sim-ayuda { font-size: .78rem; color: var(--text-muted); margin: 6px 0 12px; line-height: 1.45; }
+.sim-nota { font-size: .74rem; color: var(--text-muted); margin: 12px 0 0; text-align: center; }
+.sim-call .field, .sim-call .sim-lbl { text-align: left; }

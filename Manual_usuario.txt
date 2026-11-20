@@ -653,29 +653,31 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         Evaluaciones : resenas que el cliente ha dejado en productos.
    - "Cambiar etapa": Prospecto -> Activo -> Frecuente -> Inactivo. El paso a
      "Activo" tambien ocurre solo al confirmarse la primera compra.
-   - "Nueva interaccion": abre el SIMULADOR (ver 4.4); queda ligada al
-     usuario interno que la registro.
+   - "Nueva interaccion": abre el formulario (ver 4.4) con el cliente fijo;
+     queda ligada al usuario interno que la registro.
 
 4.4  INTERACCIONES  (admin/interacciones.html)  [CRM]
    - Todas las interacciones de todos los clientes, con filtros por texto,
-     tipo y rango de fechas. La columna "Registro" dice quien la capturo.
-   - "Nueva interaccion" abre un SIMULADOR con 5 modos; cada uno arma la
-     descripcion que se guarda:
-        Llamada : muestra el telefono, boton "Iniciar llamada" -> "Llamando"
-                  -> cronometro -> "Colgar"; luego eliges el resultado
-                  (Contesto / No contesto / Buzon) y agregas notas.
-        Correo  : "Para" con el correo del cliente, plantillas (seguimiento,
-                  cotizacion, bienvenida, recordatorio de pago), asunto y
-                  cuerpo. "Enviar correo" lo manda DE VERDAD al cliente desde
-                  la cuenta de Gmail de la tienda (queda tambien en
-                  Seguridad -> Correos enviados) y registra la interaccion.
-                  Sin Gmail configurado solo se guarda.
-        Reunion : fecha, hora, modalidad (videollamada/presencial/telefono)
-                  y agenda. "Agendar reunion".
-        Chat    : mini conversacion con respuestas rapidas; "Cerrar chat".
-        Soporte : prioridad + nota; enlace al gestor de tickets para
-                  seguimiento formal con folio.
-   - En la ficha de un cliente el simulador ya viene con ese cliente fijo.
+     tipo y rango de fechas. La columna "Registro" dice quien la capturo o,
+     si fue automatica, "Asesor en linea (el cliente)" o "El cliente (Soporte)".
+   - Solo se registran contactos REALES; nada se simula. La fecha la pone el
+     servidor y una interaccion no se puede editar ni borrar.
+   - "Nueva interaccion" tiene 4 modos:
+        Llamada : muestra el telefono y "Llamar desde mi telefono" (abre la
+                  app de llamadas). Al terminar eliges como termino
+                  (Contesto / No contesto / Buzon / Numero equivocado); si
+                  contesto, la duracion en minutos y notas de lo que se hablo.
+        Correo  : plantillas, asunto y cuerpo. "Enviar correo" lo manda de
+                  verdad desde el Gmail de la tienda; se registra solo si
+                  salio. Sin Gmail configurado no se envia ni se registra.
+        Reunion : fecha y hora futuras, modalidad y tema. Al agendarla el
+                  cliente recibe la invitacion por correo.
+        Ticket de soporte : asunto, prioridad y mensaje. Abre un ticket con
+                  folio que el cliente ve y responde en su cuenta (Soporte) y
+                  le llega un aviso por correo.
+   - Los chats no se capturan a mano: se registran solos cuando el cliente
+     usa el asesor en linea de la tienda (con lo que pidio y lo sugerido).
+     Tambien se registran solos los tickets que abre el cliente.
 
 4.5  EVALUACIONES  (admin/evaluaciones.html)  [CRM]
    - Todas las resenas de productos hechas por clientes.
