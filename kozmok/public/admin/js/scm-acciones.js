@@ -146,10 +146,11 @@
             <div class="field"><label id="msa-detalle-lbl">Detalle</label>
                 <textarea id="msa-detalle" rows="2" maxlength="300" placeholder="Qué pasó, folio de la factura, quién lo detectó…"></textarea></div>
             <div class="field-row">
-                <div class="field"><label>Fecha y hora</label><input value="La registra el sistema al guardar" disabled /></div>
+                <div class="field"><label>Fecha del movimiento</label><input type="datetime-local" id="msa-fecha-mov" value="${ahoraLocal()}" max="${ahoraLocal()}" /></div>
                 <div class="field"><label>Usuario</label><input value="${(Sesion.usuario() || {}).nombre || ''}" disabled /></div>
             </div>
-            <p style="font-size:.76rem;color:var(--text-muted);margin:0">El movimiento queda en la bitácora con tu nombre y no se puede editar ni borrar; un error se corrige con un movimiento contrario.
+            <p style="font-size:.76rem;color:var(--text-muted);margin:0">Si pasó antes (por ejemplo, una merma de ayer), cambia la fecha del movimiento: además se guarda la hora real en que lo registras y tu nombre.
+                El movimiento no se puede borrar; un error se corrige con un movimiento contrario.
                 ${esAdmin ? '' : `Las salidas de ${UMBRAL.umbral_piezas} piezas o más, de ${formatoMoneda(UMBRAL.umbral_valor)} o más, o por robo, necesitan la aprobación de un administrador.`}</p>
             <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="ScmAcciones._guardarMovimiento()">Registrar movimiento</button>`);
         motivos();
@@ -172,7 +173,9 @@
             cantidad: Number($('msa-cantidad').value),
             motivo_tipo: $('msa-motivo').value,
             detalle: $('msa-detalle').value.trim(),
+            fecha: $('msa-fecha-mov').value || null,
         };
+        if (body.fecha && new Date(body.fecha) > new Date(Date.now() + 5 * 60000)) return toast('La fecha del movimiento no puede ser futura', 'warn');
         if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
         const obligatorio = body.tipo === 'salida' || ['otro', 'conteo'].includes(body.motivo_tipo);
         if (obligatorio && body.detalle.length < 10) return toast('Describe qué pasó (al menos 10 caracteres)', 'warn');
@@ -236,7 +239,7 @@
     }
 
     window.ScmAcciones = {
-        pedidoReposicion, nuevoMovimiento, abasto, cerrar,
+        pedidoReposicion, nuevoMovimiento, abasto, cerrar, abrirModal,
         _alCambiarProducto: alCambiarProducto, _alCambiarProveedor: alCambiarProveedor, _costo: costo,
         _guardarPedido: guardarPedido, _motivos: motivos, _detalle: detalle, _guardarMovimiento: guardarMovimiento, _guardarAbasto: guardarAbasto,
     };

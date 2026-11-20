@@ -2661,7 +2661,7 @@ const PERMISOS_API = [
     { ruta: /^\/productos(\/|$)/,                      metodos: TODO, permisos: ['productos-editar'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: LEER, permisos: ['proveedores', 'productos', 'inventario', 'ordenes-compra', 'scm'] },
     { ruta: /^\/proveedores(\/|$)/,                    metodos: TODO, permisos: ['proveedores'] },
-    { ruta: /^\/movimientos-inventario(\/(motivos|pendientes))?$/, metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
+    { ruta: /^\/movimientos-inventario(\/(motivos|pendientes|\d+\/fechas?))?$/, metodos: TODO, permisos: ['movimientos', 'inventario', 'scm'] },
     { ruta: /^\/(ordenes-compra|pedidos-scm)(\/|$)/,   metodos: TODO, permisos: ['ordenes-compra', 'inventario', 'scm'] },
     { ruta: /^\/scm\/nivel$/,                            metodos: ['PUT'], permisos: ['nivel-scm'] },
     { ruta: /^\/scm\/(config|reabasto)$/,               metodos: TODO, permisos: ['ordenes-compra'] },
@@ -3539,15 +3539,74 @@ app.get('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     if (tipo) { cond.push(`m.tipo = $${i++}`); values.push(tipo); }
     if (producto_id) { cond.push(`m.producto_id = $${i++}`); values.push(producto_id); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    // fecha = hora real del registro (servidor); fecha_movimiento = la que
+    // indicó el empleado; cambios_fecha = cuántas veces se corrigió.
     const result = await pool.query(`
-        SELECT m.*, p.nombre AS producto_nombre, u.nombre AS usuario_nombre
+        SELECT m.*, COALESCE(m.fecha_movimiento, m.fecha) AS fecha_movimiento, m.fecha AS fecha_registro,
+               p.nombre AS producto_nombre, u.nombre AS usuario_nombre, uc.nombre AS fecha_cambiada_por_nombre,
+               (SELECT COUNT(*)::int FROM movimientos_inventario_fechas f WHERE f.movimiento_id = m.id) AS cambios_fecha
         FROM movimientos_inventario m
         LEFT JOIN productos p ON m.producto_id = p.id
         LEFT JOIN usuarios u ON m.usuario_id = u.id
+        LEFT JOIN usuarios uc ON m.fecha_cambiada_por = uc.id
         ${where}
         ORDER BY m.fecha DESC LIMIT 200
     `, values);
     res.json(result.rows);
+}));
+
+// Fecha que escribe el empleado (input datetime-local o YYYY-MM-DD).
+// null = no mandó fecha; Error = fecha no válida o futura.
+function fechaDeclarada(v) {
+    if (v == null || v === '') return null;
+    const txt = String(v).trim();
+    if (!/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?$/.test(txt)) return new Error('Fecha no válida');
+    const d = new Date(txt.length === 10 ? txt + 'T12:00' : txt.replace(' ', 'T'));
+    if (Number.isNaN(d.getTime())) return new Error('Fecha no válida');
+    if (d.getTime() > Date.now() + 5 * 60000) return new Error('La fecha del movimiento no puede ser futura');
+    if (d.getTime() < Date.now() - 366 * 86400000) return new Error('La fecha del movimiento no puede tener más de un año');
+    return d;
+}
+const diasEntre = (a, b) => Math.round(Math.abs(new Date(a) - new Date(b)) / 86400000);
+
+// Corregir la fecha de un movimiento: la fecha de registro no cambia y la
+// corrección queda en el historial (anterior, nueva, quién, por qué, cuándo).
+// Un empleado corrige solo los suyos; los del sistema y los de otros, un admin.
+app.put('/api/admin/movimientos-inventario/:id/fecha', asyncRoute(async (req, res) => {
+    const nueva = fechaDeclarada(req.body.fecha);
+    const motivo = String(req.body.motivo || '').trim().slice(0, 300);
+    if (!nueva) return res.status(400).json({ message: 'Indica la nueva fecha del movimiento' });
+    if (nueva instanceof Error) return res.status(400).json({ message: nueva.message });
+    if (motivo.length < 10) return res.status(400).json({ message: 'Explica por qué cambia la fecha (al menos 10 caracteres)' });
+    const db = await pool.connect();
+    try {
+        await db.query('BEGIN');
+        const m = (await db.query('SELECT * FROM movimientos_inventario WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!m) { await db.query('ROLLBACK'); return res.status(404).json({ message: 'Movimiento no encontrado' }); }
+        if (req.usuario.rol !== 'admin' && Number(m.usuario_id) !== Number(req.usuario.id)) {
+            await db.query('ROLLBACK');
+            return res.status(403).json({ message: 'Solo puedes corregir la fecha de movimientos que registraste tú; pídeselo a un administrador' });
+        }
+        const anterior = m.fecha_movimiento || m.fecha;
+        await db.query("SELECT set_config('kozmok.motivo_fecha', $1, true)", [motivo]);
+        const r = (await db.query(
+            'UPDATE movimientos_inventario SET fecha_movimiento = $1, fecha_cambiada_por = $2 WHERE id = $3 RETURNING *',
+            [nueva, req.usuario.id, m.id])).rows[0];
+        await auditar(db, req, {
+            accion: 'fecha_movimiento_corregida', entidad: 'movimiento_inventario', entidad_id: m.id,
+            antes: { fecha_movimiento: anterior }, despues: { fecha_movimiento: r.fecha_movimiento, fecha_registro: m.fecha }, motivo,
+        });
+        await db.query('COMMIT');
+        res.json({ ...r, message: 'Fecha corregida. La fecha real de registro y el cambio quedan en el historial.' });
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+}));
+
+// Historial de correcciones de fecha de un movimiento
+app.get('/api/admin/movimientos-inventario/:id/fechas', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT f.*, u.nombre AS usuario_nombre FROM movimientos_inventario_fechas f
+         LEFT JOIN usuarios u ON u.id = f.usuario_id WHERE f.movimiento_id = $1 ORDER BY f.id`, [req.params.id]);
+    res.json(r.rows);
 }));
 
 // Registrar un movimiento manual (ajuste, merma, conteo físico, etc.) —
@@ -3566,8 +3625,11 @@ const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;
 app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS }));
 
 app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
-    // La fecha NO se acepta del navegador: la pone la base de datos.
+    // La fecha de REGISTRO la pone la base de datos; la del movimiento (cuándo
+    // pasó) la puede indicar el empleado y se guarda aparte.
     const { producto_id, tipo } = req.body;
+    const fechaMov = fechaDeclarada(req.body.fecha);
+    if (fechaMov instanceof Error) return res.status(400).json({ message: fechaMov.message });
     const cantidad = Number(req.body.cantidad);
     const motivoTipo = String(req.body.motivo_tipo || '');
     const detalle = String(req.body.detalle || req.body.motivo || '').trim().slice(0, 300);
@@ -3592,16 +3654,18 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
             && (valor >= BAJA_UMBRAL_VALOR || cantidad >= BAJA_UMBRAL_PIEZAS || motivoTipo === 'robo');
         const motivo = `${MOTIVOS_INV[tipo][motivoTipo]}${detalle ? ': ' + detalle : ''}`;
         const mov = (await db.query(
-            `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, estado, valor)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-            [producto_id, tipo, cantidad, motivo, motivoTipo, req.usuario.id, necesitaFirma ? 'pendiente' : 'aplicado', valor])).rows[0];
+            `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, estado, valor, fecha_movimiento)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [producto_id, tipo, cantidad, motivo, motivoTipo, req.usuario.id, necesitaFirma ? 'pendiente' : 'aplicado', valor, fechaMov])).rows[0];
         if (!necesitaFirma) {
             await db.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [(tipo === 'entrada' ? 1 : -1) * cantidad, producto_id]);
         }
         await auditar(db, req, {
             accion: necesitaFirma ? 'baja_solicitada' : (tipo === 'entrada' ? 'entrada_inventario' : 'baja_inventario'),
             entidad: 'producto', entidad_id: producto_id,
-            antes: { stock: prod.stock }, despues: { stock: necesitaFirma ? prod.stock : prod.stock + (tipo === 'entrada' ? cantidad : -cantidad), movimiento: mov.id, valor },
+            antes: { stock: prod.stock }, despues: { stock: necesitaFirma ? prod.stock : prod.stock + (tipo === 'entrada' ? cantidad : -cantidad), movimiento: mov.id, valor,
+                fecha_movimiento: mov.fecha_movimiento, fecha_registro: mov.fecha,
+                ...(diasEntre(mov.fecha_movimiento, mov.fecha) >= 1 ? { registrado_despues_dias: diasEntre(mov.fecha_movimiento, mov.fecha) } : {}) },
             motivo,
         });
         await db.query('COMMIT');
@@ -3618,7 +3682,7 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
 // Bajas pendientes de aprobación (las ve quien puede aprobar: administrador)
 app.get('/api/admin/movimientos-inventario/pendientes', asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `SELECT m.id, m.fecha, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.valor, p.nombre AS producto_nombre, p.stock,
+        `SELECT m.id, m.fecha, COALESCE(m.fecha_movimiento, m.fecha) AS fecha_movimiento, m.tipo, m.cantidad, m.motivo, m.motivo_tipo, m.valor, p.nombre AS producto_nombre, p.stock,
                 u.nombre AS usuario_nombre
          FROM movimientos_inventario m JOIN productos p ON p.id = m.producto_id LEFT JOIN usuarios u ON u.id = m.usuario_id
          WHERE m.estado = 'pendiente' ORDER BY m.fecha`);

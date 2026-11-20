@@ -241,3 +241,89 @@ CREATE INDEX IF NOT EXISTS idx_favoritos_producto    ON favoritos (producto_id);
 CREATE INDEX IF NOT EXISTS idx_auditoria_entidad     ON auditoria (entidad, entidad_id);
 CREATE INDEX IF NOT EXISTS idx_productos_activos     ON productos (nombre) WHERE activo = TRUE;
 ANALYZE;
+
+-- =========================================================
+-- FECHA DEL MOVIMIENTO vs. FECHA DE REGISTRO (inventario)
+--   fecha             = cuándo se capturó, la pone el servidor; nunca cambia.
+--   fecha_movimiento  = cuándo dice el empleado que pasó (se puede escribir
+--                       al registrar y corregir después, con motivo).
+--   movimientos_inventario_fechas = historial de cada corrección:
+--                       fecha anterior, nueva, quién, por qué y la hora real.
+--   Así se puede registrar una merma de ayer, pero siempre se ve que se
+--   capturó hoy y quién movió la fecha.
+-- =========================================================
+ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS fecha_movimiento TIMESTAMP;
+ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS fecha_cambiada_por INTEGER REFERENCES usuarios(id);
+ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS fecha_cambiada_en TIMESTAMP;
+
+CREATE TABLE IF NOT EXISTS movimientos_inventario_fechas (
+    id              SERIAL PRIMARY KEY,
+    movimiento_id   INTEGER NOT NULL REFERENCES movimientos_inventario(id) ON DELETE CASCADE,
+    fecha_anterior  TIMESTAMP NOT NULL,
+    fecha_nueva     TIMESTAMP NOT NULL,
+    usuario_id      INTEGER REFERENCES usuarios(id),
+    motivo          TEXT NOT NULL,
+    fecha           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP   -- hora real del cambio
+);
+CREATE INDEX IF NOT EXISTS idx_movinv_fechas_mov ON movimientos_inventario_fechas (movimiento_id);
+DROP TRIGGER IF EXISTS trg_movinvf_fecha ON movimientos_inventario_fechas;
+CREATE TRIGGER trg_movinvf_fecha BEFORE INSERT ON movimientos_inventario_fechas FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
+DROP TRIGGER IF EXISTS trg_movinvf_cambios ON movimientos_inventario_fechas;
+CREATE TRIGGER trg_movinvf_cambios BEFORE UPDATE OR DELETE ON movimientos_inventario_fechas FOR EACH ROW EXECUTE FUNCTION kz_solo_agregar();
+
+-- Al insertar: fecha de registro del servidor; fecha del movimiento la que
+-- se indicó (o la misma), nunca en el futuro.
+CREATE OR REPLACE FUNCTION kz_movinv_insert() RETURNS trigger AS $$
+BEGIN
+    NEW.fecha := CURRENT_TIMESTAMP;
+    NEW.fecha_movimiento := COALESCE(NEW.fecha_movimiento, NEW.fecha);
+    NEW.fecha_cambiada_por := NULL;
+    NEW.fecha_cambiada_en := NULL;
+    IF NEW.fecha_movimiento > CURRENT_TIMESTAMP + INTERVAL '5 minutes' THEN
+        RAISE EXCEPTION 'La fecha del movimiento no puede ser futura.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_movinv_fecha ON movimientos_inventario;
+CREATE TRIGGER trg_movinv_fecha BEFORE INSERT ON movimientos_inventario FOR EACH ROW EXECUTE FUNCTION kz_movinv_insert();
+
+-- Cambios permitidos: (1) resolver una baja pendiente; (2) corregir la
+-- fecha del movimiento con motivo (kozmok.motivo_fecha) y autor. Todo lo
+-- demás, incluida la fecha de registro, es inmutable.
+CREATE OR REPLACE FUNCTION kz_movinv_cambios() RETURNS trigger AS $$
+DECLARE motivo_f TEXT;
+BEGIN
+    IF current_setting('kozmok.purga', true) = 'si' THEN
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND (NEW.producto_id, NEW.tipo, NEW.cantidad, NEW.motivo, NEW.usuario_id, NEW.fecha, NEW.motivo_tipo, NEW.valor)
+           IS NOT DISTINCT FROM (OLD.producto_id, OLD.tipo, OLD.cantidad, OLD.motivo, OLD.usuario_id, OLD.fecha, OLD.motivo_tipo, OLD.valor) THEN
+        -- (1) Resolver una baja pendiente
+        IF OLD.estado = 'pendiente' AND NEW.estado IN ('aplicado', 'rechazado')
+           AND (NEW.fecha_movimiento, NEW.fecha_cambiada_por, NEW.fecha_cambiada_en)
+               IS NOT DISTINCT FROM (OLD.fecha_movimiento, OLD.fecha_cambiada_por, OLD.fecha_cambiada_en) THEN
+            NEW.resuelto_fecha := CURRENT_TIMESTAMP;
+            RETURN NEW;
+        END IF;
+        -- (2) Corregir la fecha del movimiento
+        IF NEW.estado IS NOT DISTINCT FROM OLD.estado
+           AND (NEW.aprobado_por, NEW.resuelto_fecha, NEW.nota_resolucion) IS NOT DISTINCT FROM (OLD.aprobado_por, OLD.resuelto_fecha, OLD.nota_resolucion)
+           AND NEW.fecha_movimiento IS DISTINCT FROM OLD.fecha_movimiento THEN
+            motivo_f := NULLIF(trim(current_setting('kozmok.motivo_fecha', true)), '');
+            IF NEW.fecha_cambiada_por IS NULL OR motivo_f IS NULL OR length(motivo_f) < 10 THEN
+                RAISE EXCEPTION 'Para corregir la fecha de un movimiento se necesita quién lo hace y el motivo (al menos 10 caracteres).'
+                    USING ERRCODE = 'P0001', HINT = 'control_interno';
+            END IF;
+            IF NEW.fecha_movimiento IS NULL OR NEW.fecha_movimiento > CURRENT_TIMESTAMP + INTERVAL '5 minutes' THEN
+                RAISE EXCEPTION 'La fecha del movimiento no puede ser futura.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+            END IF;
+            NEW.fecha_cambiada_en := CURRENT_TIMESTAMP;
+            INSERT INTO movimientos_inventario_fechas (movimiento_id, fecha_anterior, fecha_nueva, usuario_id, motivo)
+            VALUES (OLD.id, COALESCE(OLD.fecha_movimiento, OLD.fecha), NEW.fecha_movimiento, NEW.fecha_cambiada_por, motivo_f);
+            RETURN NEW;
+        END IF;
+    END IF;
+    RAISE EXCEPTION 'Los movimientos de inventario no se pueden modificar ni borrar (solo corregir su fecha con motivo). Si hubo un error, registra un movimiento contrario.'
+        USING ERRCODE = 'P0001', HINT = 'control_interno';
+END $$ LANGUAGE plpgsql;

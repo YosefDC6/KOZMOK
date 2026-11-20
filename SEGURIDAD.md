@@ -147,8 +147,13 @@ FILTRO_SQLI=registrar npm start
 Las reglas viven en `kozmok/db/control_interno.sql` (se aplica solo al arrancar) para
 que se cumplan aunque alguien llame a la API directo o tenga acceso a la base:
 
-- **Fecha del servidor**: pedidos y movimientos de inventario, puntos, monedero y ERP
-  guardan `CURRENT_TIMESTAMP`; la fecha que mande el cliente o el empleado se ignora.
+- **Fecha del servidor**: pedidos y movimientos de puntos, monedero y ERP guardan
+  `CURRENT_TIMESTAMP`; la fecha que mande el cliente o el empleado se ignora.
+- **Inventario: dos fechas**. `fecha` = hora real del registro (servidor, inmutable) y
+  `fecha_movimiento` = cuándo dice el empleado que pasó (se puede indicar al registrar y
+  corregir con motivo). Cada corrección queda en `movimientos_inventario_fechas` (anterior,
+  nueva, quién, por qué, hora real), tabla de solo agregar. No se aceptan fechas futuras ni
+  de más de un año. Un empleado solo corrige sus propios movimientos.
 - **Solo agregar**: los movimientos no se editan ni se borran; un error se corrige con
   un movimiento compensatorio. Solo cambia el estado de un pendiente.
 - **Pedidos sellados**: folio, fecha y montos inmutables; estados solo hacia adelante;

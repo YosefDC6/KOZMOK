@@ -2418,3 +2418,7 @@ tr.mov-off td { opacity: .7; }
 }
 
 .auth-legal { font-size: .76rem; color: var(--text-muted); margin: 6px 0 10px; text-align: center; }
+
+/* Movimientos: registro tardío o fecha corregida */
+.mv-aviso { color: var(--warning); font-size: .74rem; font-weight: 600; }
+.link-btn.mv-aviso { background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }

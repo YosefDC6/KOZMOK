@@ -82,7 +82,7 @@ document.getElementById('topbar').innerHTML = adminHeader('Auditoría', 'Quién 
     '<button class="btn btn-outline" onclick="todo()">Actualizar</button>');
 
 const ACCION = {
-    baja_inventario: 'Baja de inventario', entrada_inventario: 'Entrada de inventario', baja_solicitada: 'Baja solicitada (por aprobar)',
+    baja_inventario: 'Baja de inventario', entrada_inventario: 'Entrada de inventario', baja_solicitada: 'Baja solicitada (por aprobar)', fecha_movimiento_corregida: 'Fecha de movimiento corregida',
     baja_aprobada: 'Baja aprobada', baja_rechazada: 'Baja rechazada', producto_alta: 'Alta de producto', producto_precio: 'Cambio de precio',
     producto_edicion: 'Edición de producto', producto_desactivado: 'Producto desactivado', producto_eliminado: 'Producto eliminado',
     pedido_estado: 'Cambio de estado de pedido', pedido_cancelado: 'Pedido cancelado', pago_registrado: 'Pago registrado',
@@ -146,7 +146,7 @@ async function pendientes() {
     el.innerHTML = lista.length ? lista.map((m) => `<div class="pend">
         <strong>${m.cantidad} × ${escHTML(m.producto_nombre)}</strong> · <span class="mono">${formatoMoneda(m.valor)}</span>
         <div style="color:var(--text-muted);font-size:.8rem">${escHTML(m.motivo)}</div>
-        <div style="color:var(--text-muted);font-size:.76rem">Pidió: ${escHTML(m.usuario_nombre || '—')} · ${formatoFechaHora(m.fecha)} · stock actual ${m.stock}</div>
+        <div style="color:var(--text-muted);font-size:.76rem">Pidió: ${escHTML(m.usuario_nombre || '—')} · registrado ${formatoFechaHora(m.fecha)}${m.fecha_movimiento && Math.abs(new Date(m.fecha) - new Date(m.fecha_movimiento)) >= 86400000 ? ` · <span class="mv-aviso">dice que pasó el ${formatoFechaHora(m.fecha_movimiento)}</span>` : ''} · stock actual ${m.stock}</div>
         <div class="acc">
             <button class="btn btn-primary btn-sm" onclick="resolver(${m.id}, 'aprobar')" ${m.usuario_nombre === yo ? 'disabled title="Otra persona debe aprobarla"' : ''}>Aprobar baja</button>
             <button class="btn btn-ghost btn-sm" onclick="resolver(${m.id}, 'rechazar')">Rechazar</button>

@@ -139,7 +139,7 @@
                 <h2>9. Registros y fechas</h2>
                 <p>Para que ninguna operación se pueda alterar después, Kozmok aplica estas reglas en la base de datos (no solo en la pantalla):</p>
                 <ul>
-                    <li><b>La fecha y hora la pone el servidor.</b> Pedidos, pagos, movimientos de inventario, de puntos y del monedero guardan la hora del servidor; aunque alguien envíe otra fecha, se ignora.</li>
+                    <li><b>La fecha y hora de registro la pone el servidor.</b> Pedidos, pagos y movimientos de puntos y del monedero guardan la hora del servidor; aunque alguien envíe otra fecha, se ignora. En el inventario se puede indicar cuándo pasó un movimiento (por ejemplo, una merma de ayer), pero se guarda aparte la hora real del registro, quién lo hizo y cada corrección de fecha con su motivo.</li>
                     <li><b>Los movimientos no se editan ni se borran.</b> Un error se corrige con un movimiento nuevo que lo compensa; el original sigue a la vista.</li>
                     <li><b>Bitácora encadenada.</b> Los cambios importantes (precios, estados de pedidos, pagos, bajas de inventario, monederos) se guardan en una bitácora donde cada registro lleva una huella del anterior. Si alguien modificara o borrara uno, la verificación lo detecta.</li>
                     <li>Estos registros sirven como respaldo en cualquier aclaración, tuya o nuestra.</li>
