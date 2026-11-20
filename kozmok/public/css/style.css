@@ -2566,3 +2566,21 @@ tr.mov-off td { opacity: .7; }
     .td-acciones .btn { flex: 1; justify-content: center; }
 }
 .mov-datos { display: inline-flex; gap: 4px; margin-top: 6px; padding: 3px 9px; font-size: .78rem; }
+
+/* Campos numéricos con botones − / + (los arma api.js). Se ocultan las
+   flechitas del navegador, que no combinan con el tema. */
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.num-ctrl { position: relative; display: block; width: 100%; }
+.num-ctrl > input { padding-right: 86px; }
+.num-btns { position: absolute; top: 50%; right: 7px; transform: translateY(-50%); display: flex; gap: 4px; }
+.num-btns button {
+    width: 32px; height: 32px; display: grid; place-items: center; padding: 0; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--bg-panel); color: var(--text);
+    transition: background .15s, border-color .15s, color .15s, transform .08s; touch-action: manipulation; user-select: none;
+}
+.num-btns button:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
+.num-btns button:active:not(:disabled) { transform: scale(.92); }
+.num-btns button:disabled { opacity: .35; cursor: not-allowed; }
+.num-ctrl:focus-within .num-btns button:not(:disabled) { border-color: var(--accent-dim); }
+@media (pointer: coarse) { .num-btns button { width: 36px; height: 36px; } .num-ctrl > input { padding-right: 94px; } }

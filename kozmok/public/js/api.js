@@ -171,6 +171,95 @@ async function copiarTexto(texto) {
 }
 window.copiarTexto = copiarTexto;
 
+// Campos numéricos: en lugar de las flechitas del navegador (un cuadro
+// blanco que no combina con el tema y solo sale al pasar el mouse), cada
+// <input type="number"> lleva botones − y + dentro del campo. Respetan
+// min, max y step, se pueden mantener presionados y avisan con los mismos
+// eventos input/change que si se escribiera el número. Se aplica solo,
+// también a los campos de ventanas que se abren después.
+(function () {
+    const SVG = (d) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">${d}</svg>`;
+    const MENOS = SVG('<line x1="5" y1="12" x2="19" y2="12"/>');
+    const MAS = SVG('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>');
+    const OMITIR = '.qty, .qty-stepper, .mp-qty, [data-sin-stepper]';
+
+    const num = (v) => (v === '' || v == null || isNaN(Number(v)) ? null : Number(v));
+    function paso(input) {
+        const st = num(input.getAttribute('step'));
+        return st && st >= 1 ? st : 1;           // con step 0.01 (precios) los botones avanzan de 1 en 1
+    }
+    function decimales(input) {
+        const st = input.getAttribute('step') || '';
+        return st.includes('.') ? st.split('.')[1].length : 0;
+    }
+    function mover(input, dir) {
+        if (input.disabled || input.readOnly) return false;
+        const min = num(input.min), max = num(input.max), d = paso(input);
+        let v = num(input.value);
+        if (v === null) v = dir > 0 ? (min ?? 0) : (max ?? min ?? 0);
+        else v += dir * d;
+        if (min !== null && v < min) v = min;
+        if (max !== null && v > max) v = max;
+        const dec = decimales(input);
+        const txt = dec ? v.toFixed(dec) : String(Number(v.toFixed(2)));
+        if (txt === input.value) return false;
+        input.value = txt;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+    }
+    function refrescar(input, menos, mas) {
+        const v = num(input.value), min = num(input.min), max = num(input.max);
+        const bloqueado = input.disabled || input.readOnly;
+        menos.disabled = bloqueado || (v !== null && min !== null && v <= min);
+        mas.disabled = bloqueado || (v !== null && max !== null && v >= max);
+    }
+    function mejorar(input) {
+        if (input.dataset.stepper || input.type !== 'number' || input.closest(OMITIR)) return;
+        input.dataset.stepper = '1';
+        const caja = document.createElement('span');
+        caja.className = 'num-ctrl';
+        input.parentNode.insertBefore(caja, input);
+        caja.appendChild(input);
+        const btns = document.createElement('span');
+        btns.className = 'num-btns';
+        btns.innerHTML = `<button type="button" tabindex="-1" aria-label="Disminuir">${MENOS}</button><button type="button" tabindex="-1" aria-label="Aumentar">${MAS}</button>`;
+        caja.appendChild(btns);
+        const [menos, mas] = btns.querySelectorAll('button');
+        const act = () => refrescar(input, menos, mas);
+        let espera = null, repite = null, cambio = false;
+        const parar = () => {
+            clearTimeout(espera); clearInterval(repite); espera = repite = null;
+            if (cambio) { input.dispatchEvent(new Event('change', { bubbles: true })); cambio = false; }
+            act();
+        };
+        [[menos, -1], [mas, 1]].forEach(([b, dir]) => {
+            b.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || b.disabled) return;
+                e.preventDefault();                       // no quita el foco del campo
+                cambio = mover(input, dir) || cambio; act();
+                espera = setTimeout(() => { repite = setInterval(() => { cambio = mover(input, dir) || cambio; act(); if (b.disabled) parar(); }, 70); }, 420);
+            });
+            ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, parar));
+            b.addEventListener('click', (e) => e.preventDefault());
+        });
+        input.addEventListener('input', act);
+        input.addEventListener('change', act);
+        new MutationObserver(act).observe(input, { attributes: true, attributeFilter: ['disabled', 'readonly', 'min', 'max', 'value'] });
+        act();
+    }
+    function revisar(raiz) {
+        if (raiz.nodeType !== 1) return;
+        if (raiz.matches && raiz.matches('input[type="number"]')) mejorar(raiz);
+        raiz.querySelectorAll && raiz.querySelectorAll('input[type="number"]').forEach(mejorar);
+    }
+    function iniciar() {
+        revisar(document.body);
+        new MutationObserver((cambios) => cambios.forEach((c) => c.addedNodes.forEach(revisar)))
+            .observe(document.body, { childList: true, subtree: true });
+    }
+    if (document.body) iniciar(); else document.addEventListener('DOMContentLoaded', iniciar);
+})();
+
 // Tokens de la versión anterior (Base64 en localStorage): ya no sirven.
 try { localStorage.removeItem('kz_token'); localStorage.removeItem('kz_admin_token'); } catch { /* sin almacenamiento */ }
 
