@@ -44,8 +44,22 @@ const encabezado = (t) => (/^[\x20-\x7e]*$/.test(t) ? t : `=?UTF-8?B?${b64(t)}?=
 const lineas76 = (t) => b64(t).replace(/.{1,76}/g, '$&\r\n');
 const limpiarCabecera = (t) => String(t || '').replace(/[\r\n]+/g, ' ').trim();
 
+// Logo KZK incrustado en el correo (Gmail no muestra SVG ni puede abrir
+// imágenes de "localhost"): el HTML lo usa como <img src="cid:kzk-logo">.
+const LOGO_CID = 'kzk-logo';
+let logoPng = null;
+function logo() {
+    if (logoPng === null) {
+        try { logoPng = require('fs').readFileSync(require('path').join(__dirname, 'public', 'img', 'kzk-correo.png')); }
+        catch { logoPng = false; }
+    }
+    return logoPng;
+}
+
 function armarMensaje({ para, asunto, texto, html }) {
     const frontera = 'kz_' + crypto.randomBytes(12).toString('hex');
+    const fronteraRel = 'kzr_' + crypto.randomBytes(12).toString('hex');
+    const conLogo = html && html.includes(`cid:${LOGO_CID}`) && logo();
     const dominio = CFG.usuario.split('@')[1] || 'kozmok.local';
     const cab = [
         `From: ${encabezado(limpiarCabecera(CFG.remitente))} <${CFG.usuario}>`,
@@ -57,14 +71,29 @@ function armarMensaje({ para, asunto, texto, html }) {
     ];
     let cuerpo;
     if (html) {
-        cab.push(`Content-Type: multipart/alternative; boundary="${frontera}"`);
-        cuerpo = [
+        const alternativa = [
             `--${frontera}`,
             'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', lineas76(texto),
             `--${frontera}`,
             'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', lineas76(html),
             `--${frontera}--`, '',
         ].join('\r\n');
+        if (conLogo) {
+            // multipart/related = texto/HTML + la imagen que el HTML cita
+            cab.push(`Content-Type: multipart/related; boundary="${fronteraRel}"; type="multipart/alternative"`);
+            cuerpo = [
+                `--${fronteraRel}`,
+                `Content-Type: multipart/alternative; boundary="${frontera}"`, '', alternativa,
+                `--${fronteraRel}`,
+                'Content-Type: image/png; name="kozmok.png"', 'Content-Transfer-Encoding: base64',
+                `Content-ID: <${LOGO_CID}>`, 'Content-Disposition: inline; filename="kozmok.png"', '',
+                logo().toString('base64').replace(/.{1,76}/g, '$&\r\n'),
+                `--${fronteraRel}--`, '',
+            ].join('\r\n');
+        } else {
+            cab.push(`Content-Type: multipart/alternative; boundary="${frontera}"`);
+            cuerpo = alternativa;
+        }
     } else {
         cab.push('Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64');
         cuerpo = lineas76(texto);

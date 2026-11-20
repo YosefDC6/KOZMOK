@@ -195,6 +195,16 @@ async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', client
 
 // Versión HTML del correo (los clientes de correo no aceptan CSS externo,
 // así que todo va en estilos en línea). El texto se escapa siempre.
+// Paleta y tipografía de la tienda (estilo "arcade" de arcade.css) para
+// los correos. Los clientes de correo no cargan fuentes web ni CSS externo,
+// así que todo va en estilos en línea con fuentes de respaldo parecidas.
+const KZ = {
+    fondo: '#0B0E14', panel: '#151B27', panel2: '#1D2534', linea: '#2A3446',
+    texto: '#EDF0F6', suave: '#8A93A7', acento: '#6E8BF0', acentoClaro: '#8DA4F5', exito: '#4FC98A',
+    titulo: "'Archivo Black','Arial Black','Segoe UI Black',Impact,Arial,sans-serif",
+    cuerpo: "Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+    mono: "'IBM Plex Mono',Consolas,'Courier New',monospace",
+};
 function htmlCorreo({ asunto, cuerpo, boton, bajaUrl = null, extraHtml = '' }) {
     const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     let texto = String(cuerpo || '');
@@ -205,32 +215,54 @@ function htmlCorreo({ asunto, cuerpo, boton, bajaUrl = null, extraHtml = '' }) {
         texto = texto.replace(/(^|\n)(- [^\n]*(\n|$))+/, `$1\n${MARCA}\n\n`);
         tablaPuesta = true;
     }
-    const parrafos = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
-        .map((p) => p === MARCA ? extraHtml : `<p style="margin:0 0 14px;line-height:1.55">${esc(p).replace(/\n/g, '<br>')
-            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#4f46e5">$1</a>')}</p>`).join('');
+    const enlace = (t) => t.replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" style="color:${KZ.acentoClaro};word-break:break-all">$1</a>`);
+    const parrafos = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => {
+        if (p === MARCA) return extraHtml;
+        // Un código de 6 dígitos solo en su párrafo -> caja grande
+        if (/^\d{6}$/.test(p)) return `
+          <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 20px"><tr>
+            <td style="background:${KZ.fondo};border:2px solid ${KZ.acento};border-radius:10px;padding:14px 26px;font-family:${KZ.mono};font-size:32px;font-weight:bold;letter-spacing:10px;color:#ffffff;text-align:center">${p}</td>
+          </tr></table>`;
+        return `<p style="margin:0 0 14px;line-height:1.6;color:${KZ.texto}">${enlace(esc(p).replace(/\n/g, '<br>'))}</p>`;
+    }).join('');
     // El botón va donde estaba el enlace en el texto (o al final).
     const i = boton && boton.url ? texto.indexOf(boton.url) : -1;
     const antes = i >= 0 ? texto.slice(0, i) : texto;
     const despues = i >= 0 ? texto.slice(i + boton.url.length) : '';
+    // Botón como en la tienda: blanco, contorno oscuro y sombra sólida del
+    // color del tema (se arma con bordes porque Gmail ignora box-shadow).
     const btn = boton && boton.url ? `
-        <p style="margin:22px 0;text-align:center">
-          <a href="${esc(boton.url)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 26px;border-radius:10px">${esc(boton.texto || 'Abrir')}</a>
-        </p>
-        <p style="margin:0 0 14px;font-size:12px;color:#6b7280;line-height:1.5">Si el botón no funciona, copia este enlace en tu navegador:<br><span style="word-break:break-all">${esc(boton.url)}</span></p>` : '';
-    return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${esc(asunto)}</title></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px">
+          <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:24px auto 18px"><tr>
+            <td style="background:#ffffff;border:2px solid ${KZ.fondo};border-right:6px solid ${KZ.acento};border-bottom:6px solid ${KZ.acento};border-radius:8px">
+              <a href="${esc(boton.url)}" style="display:inline-block;padding:13px 28px;font-family:${KZ.titulo};font-size:15px;font-style:italic;font-weight:900;text-transform:uppercase;letter-spacing:.3px;color:${KZ.fondo};text-decoration:none">${esc(boton.texto || 'Abrir')}</a>
+            </td>
+          </tr></table>
+          <p style="margin:0 0 16px;font-size:12px;line-height:1.5;color:${KZ.suave};text-align:center">¿No funciona el botón? Copia este enlace:<br><span style="word-break:break-all;color:${KZ.acentoClaro}">${esc(boton.url)}</span></p>` : '';
+    const pie = bajaUrl
+        ? `Recibes este correo porque lo activaste en tus preferencias de Kozmok. <a href="${esc(bajaUrl)}" style="color:${KZ.suave};text-decoration:underline">Dejar de recibir estos correos</a>.`
+        : 'Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.';
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light"><meta name="supported-color-schemes" content="dark light"><title>${esc(asunto)}</title></head>
+<body style="margin:0;padding:0;background:${KZ.fondo};font-family:${KZ.cuerpo};color:${KZ.texto}">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${KZ.fondo}" style="background:${KZ.fondo};padding:28px 12px">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden">
-        <tr><td style="background:#111827;padding:18px 26px;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:.5px">Kozmok</td></tr>
-        <tr><td style="padding:26px;font-size:15px">
-          <h1 style="margin:0 0 16px;font-size:20px">${esc(asunto)}</h1>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${KZ.panel}" style="max-width:580px;background:${KZ.panel};border:2px solid ${KZ.linea};border-radius:14px;overflow:hidden">
+        <tr><td style="padding:20px 28px;border-bottom:2px solid ${KZ.linea}">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td style="vertical-align:middle"><img src="cid:kzk-logo" width="44" height="44" alt="KZK" style="display:block;border:0;border-radius:10px"></td>
+            <td style="vertical-align:middle;padding-left:12px;font-family:${KZ.titulo};font-size:22px;font-style:italic;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#ffffff">Kozmok</td>
+          </tr></table>
+        </td></tr>
+        <tr><td height="4" style="height:4px;line-height:4px;font-size:0;background:${KZ.acento}">&nbsp;</td></tr>
+        <tr><td style="padding:28px 28px 12px;font-size:15px">
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px"><tr>
+            <td style="width:8px;background:${KZ.acento};border:2px solid ${KZ.fondo}">&nbsp;</td>
+            <td style="padding-left:12px;font-family:${KZ.titulo};font-size:22px;line-height:1.15;font-style:italic;font-weight:900;text-transform:uppercase;color:#ffffff">${esc(asunto)}</td>
+          </tr></table>
           ${parrafos(antes)}${tablaPuesta ? '' : extraHtml}${btn}${parrafos(despues)}
         </td></tr>
-        <tr><td style="padding:16px 26px;background:#f9fafb;color:#6b7280;font-size:12px;line-height:1.5">
-          ${bajaUrl
-            ? `Recibes este correo porque lo activaste en tus preferencias de Kozmok. <a href="${esc(bajaUrl)}" style="color:#6b7280">Dejar de recibir estos correos</a>.`
-            : 'Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.'}
+        <tr><td style="padding:16px 28px 20px;background:${KZ.panel2};border-top:2px solid ${KZ.linea};font-size:12px;line-height:1.55;color:${KZ.suave}">
+          ${pie}<br><span style="font-family:${KZ.titulo};font-style:italic;font-weight:900;text-transform:uppercase;color:${KZ.acento}">Kozmok</span> · Cómputo y electrónica
         </td></tr>
       </table>
     </td></tr>
@@ -1369,13 +1401,13 @@ const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&'
 // Tabla de productos dentro del correo (nombre, precio antes / ahora, enlace)
 function tablaProductosCorreo(items) {
     const base = urlBase(null);
-    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 16px;border-collapse:collapse">${items.map((p) => `
-        <tr><td style="padding:9px 0;border-bottom:1px solid #e5e7eb">
-            <a href="${base}/index.html#producto-${Number(p.id)}" style="color:#111827;font-weight:bold;text-decoration:none">${escH(p.nombre)}</a>
-            ${p.nota ? `<div style="font-size:12px;color:#059669">${escH(p.nota)}</div>` : ''}
-        </td><td align="right" style="padding:9px 0;border-bottom:1px solid #e5e7eb;white-space:nowrap">
-            ${p.antes && Number(p.antes) > Number(p.ahora) ? `<span style="color:#9ca3af;text-decoration:line-through;font-size:13px">${precioTxt(p.antes)}</span><br>` : ''}
-            <strong style="color:#4f46e5">${precioTxt(p.ahora)}</strong>
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 18px;border-collapse:separate;border-spacing:0 8px">${items.map((p) => `
+        <tr><td style="padding:12px 14px;background:${KZ.panel2};border:1px solid ${KZ.linea};border-right:0;border-radius:10px 0 0 10px">
+            <a href="${base}/index.html#producto-${Number(p.id)}" style="color:#ffffff;font-weight:bold;text-decoration:none">${escH(p.nombre)}</a>
+            ${p.nota ? `<div style="margin-top:3px;font-size:12px;color:${KZ.exito}">${escH(p.nota)}</div>` : ''}
+        </td><td align="right" style="padding:12px 14px;background:${KZ.panel2};border:1px solid ${KZ.linea};border-left:0;border-radius:0 10px 10px 0;white-space:nowrap">
+            ${p.antes && Number(p.antes) > Number(p.ahora) ? `<span style="color:${KZ.suave};text-decoration:line-through;font-size:13px">${precioTxt(p.antes)}</span><br>` : ''}
+            <strong style="font-family:${KZ.mono};font-size:16px;color:${KZ.acentoClaro}">${precioTxt(p.ahora)}</strong>
         </td></tr>`).join('')}</table>`;
 }
 // Clientes que pueden recibir avisos: correo confirmado y cuenta activa.
