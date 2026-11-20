@@ -43,6 +43,7 @@ let MONEDERO = { saldo: 0, estado: 'activo' };
 const MARCA_LABEL = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', otra: 'Tarjeta' };
 
 async function cargarCarrito() {
+    const y = window.scrollY, pasoPrev = PASO_PINTADO;   // al volver a pintar, la página no brinca
     const [items, dirs, rec, metodos, mon] = await Promise.all([
         api(`/carrito/${cliente.id}`),
         api(`/clientes/${cliente.id}/direcciones`).catch(() => []),
@@ -235,6 +236,7 @@ async function cargarCarrito() {
     usarDireccionGuardada();
     cambioMetodo();
     irPaso(pasoDeURL(), { sinHistorial: true, sinValidar: true });
+    if (pasoPrev === PASO && y) window.scrollTo(0, y);
 }
 
 // =========================================================
@@ -249,6 +251,7 @@ const PASOS = [
     { n: 4, nombre: 'Confirmar', ic: 'check', sig: null },
 ];
 let PASO = 1;
+let PASO_PINTADO = 0;   // paso que está en pantalla (0 = todavía ninguno)
 let PASO_MAX = 1;   // hasta dónde ha llegado (se puede volver a cualquier paso ya visitado)
 
 function pasoDeURL() {
@@ -286,6 +289,7 @@ function validarPaso(n) {
 
 function irPaso(n, { sinHistorial = false, sinValidar = false } = {}) {
     n = Math.min(4, Math.max(1, n));
+    const pasoAntes = PASO_PINTADO;
     if (!document.querySelector('.ck-paso')) return;
     // Para avanzar hay que completar cada paso intermedio
     if (n > PASO && !sinValidar) {
@@ -315,7 +319,10 @@ function irPaso(n, { sinHistorial = false, sinValidar = false } = {}) {
         const url = location.pathname + (q.toString() ? '?' + q : '');
         if (url !== location.pathname + location.search) history.pushState({ kzPaso: n }, '', url);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Solo se sube al cambiar de paso; al volver a pintar el mismo paso (p. ej.
+    // tras cambiar una garantía o una cantidad) la página se queda donde estaba.
+    if (n !== pasoAntes) window.scrollTo({ top: 0, behavior: pasoAntes ? 'smooth' : 'auto' });
+    PASO_PINTADO = n;
 }
 window.addEventListener('popstate', () => { if (cliente) irPaso(pasoDeURL(), { sinHistorial: true, sinValidar: true }); });
 
@@ -554,6 +561,7 @@ async function confirmarCompra() {
 // Se puede revisar y ajustar; para pagar se inicia sesión (o se crea la
 // cuenta) y el carrito se pasa solo a la cuenta.
 async function cargarCarritoInvitado() {
+    const y = window.scrollY;
     const cont = document.getElementById('carrito-contenido');
     const guardados = CarritoInvitado.leer();
     document.getElementById('btn-vaciar').hidden = guardados.length === 0;
@@ -618,6 +626,7 @@ async function cargarCarritoInvitado() {
             <a class="btn btn-outline" style="width:100%;margin-top:8px" href="/registro.html?next=${next}">Crear cuenta</a>
         </div>
         </div>`;
+    if (y) window.scrollTo(0, y);
 }
 function cantidadInvitado(id, n, stock) {
     if (n < 1 || n > stock) return;

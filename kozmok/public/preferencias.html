@@ -43,9 +43,11 @@ montarCuenta('preferencias', async (panel, P) => {
     const prefs = P.preferencias || {};
     panel.innerHTML = `
         <div class="cuenta-head"><h1>Preferencias</h1><p>Elige qué correos quieres recibir en ${escHTML(P.correo)}.</p></div>
-        ${P.correo_verificado === false ? `<div class="card" style="max-width:580px;margin-bottom:12px;border-left:3px solid var(--accent)">
+        ${P.correo_verificado === false ? `<div class="card" style="margin-bottom:12px;border-left:3px solid var(--accent)">
             Para recibir estos correos primero <a href="/verificar.html?next=/preferencias.html">confirma tu correo</a>.</div>` : ''}
-        <div class="card" style="max-width:580px">
+        <div class="cuenta-grid">
+        <div class="card">
+            <h3 style="margin-top:0">Correos</h3>
             ${PREFS_DEF.map((p) => `
                 <div class="pref-row">
                     <div class="pref-text"><strong>${p.label}</strong><span>${p.desc}</span></div>
@@ -53,16 +55,17 @@ montarCuenta('preferencias', async (panel, P) => {
                 </div>
             `).join('')}
             <p style="margin:10px 0 0;font-size:.8rem;color:var(--text-muted)">Los correos de tu cuenta (código de verificación y contraseña) siempre te llegan. Cada correo de promociones trae un enlace para darte de baja.</p>
+            <button class="btn btn-primary" style="margin-top:16px" onclick="guardarPrefs()">Guardar preferencias</button>
         </div>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="guardarPrefs()">Guardar preferencias</button>
 
-        <div class="card" style="max-width:580px;margin-top:24px">
+        <div class="cuenta-grid-col">
+        <div class="card">
             <h3 style="margin-top:0">Apariencia</h3>
             <p style="color:var(--text-muted);font-size:.88rem;margin-top:4px">Elige el tema de color. Se guarda en este navegador y se aplica en toda la tienda.</p>
             <div class="tema-swatches" id="tema-swatches"></div>
         </div>
 
-        <div class="card" style="max-width:580px;margin-top:24px">
+        <div class="card">
             <h3 style="margin-top:0">Tarjeta de socio</h3>
             <p style="color:var(--text-muted);font-size:.88rem;margin-top:4px">Elige cómo se ve tu tarjeta virtual en el Resumen y en el Club de puntos. Se guarda en tu cuenta.</p>
             <div class="tj-previews">
@@ -72,6 +75,8 @@ montarCuenta('preferencias', async (panel, P) => {
                         <span class="tj-prev-nombre">${o.nombre}</span>
                     </button>`).join('')}
             </div>
+        </div>
+        </div>
         </div>
     `;
     pintarTemas();

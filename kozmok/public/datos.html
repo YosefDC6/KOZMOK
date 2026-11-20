@@ -32,18 +32,20 @@ montarCuenta('datos', async (panel, P) => {
     CID = P.id;
     panel.innerHTML = `
         <div class="cuenta-head"><h1>Mis datos</h1><p>Tu información de contacto y facturación.</p></div>
-        <div class="card" style="max-width:580px">
-            <div class="field"><label>Nombre completo</label><input id="p-nombre" value="${escHTML(P.nombre)}" /></div>
-            <div class="field"><label>Correo</label><input value="${escHTML(P.correo)}" disabled /></div>
+        <div class="card" style="max-width:860px">
+            <div class="field-row">
+                <div class="field"><label>Nombre completo</label><input id="p-nombre" value="${escHTML(P.nombre)}" /></div>
+                <div class="field"><label>Correo</label><input value="${escHTML(P.correo)}" disabled /></div>
+            </div>
             <div class="field-row">
                 <div class="field"><label>Teléfono</label><input id="p-tel" value="${escHTML(P.telefono)}" /></div>
                 <div class="field"><label>Empresa <small style="color:var(--text-muted)">(opcional)</small></label><input id="p-empresa" value="${escHTML(P.empresa)}" /></div>
             </div>
-            <div class="field-row">
+            <div class="field-row field-row-3">
                 <div class="field"><label>Ciudad</label><input id="p-ciudad" value="${escHTML(P.ciudad)}" /></div>
                 <div class="field"><label>Estado</label><input id="p-estado" value="${escHTML(P.estado)}" /></div>
+                <div class="field"><label>Código postal</label><input id="p-cp" value="${escHTML(P.codigo_postal)}" /></div>
             </div>
-            <div class="field"><label>Código postal</label><input id="p-cp" value="${escHTML(P.codigo_postal)}" /></div>
             <button class="btn btn-primary" onclick="guardarDatos()">Guardar cambios</button>
         </div>`;
 });

@@ -1808,7 +1808,8 @@ app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
          WHERE g.pedido_id = $1 ORDER BY g.id`,
         [req.params.id]
     );
-    res.json({ ...pedido.rows[0], items: items.rows, garantias: garantias.rows });
+    const pts = await pool.query(`SELECT COALESCE(SUM(puntos), 0)::int AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`, [req.params.id]);
+    res.json({ ...pedido.rows[0], items: items.rows, garantias: garantias.rows, puntos_ganados: pts.rows[0].n });
 }));
 
 // Recibo / comprobante de un pedido. Lo puede ver el cliente dueño o

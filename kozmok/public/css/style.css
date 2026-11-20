@@ -1489,7 +1489,7 @@ body:has(.cookie-bar.show) .cmp-bar { bottom: 76px; }
 /* =========================================================
    PÁGINA "GRACIAS" (confirmación de compra)
 ========================================================= */
-.thanks-wrap { max-width: 620px; margin: 48px auto; padding: 0 20px; text-align: center; }
+.thanks-wrap { max-width: 1120px; margin: 36px auto 48px; padding: 0 20px; }
 .thanks-check {
     width: 76px; height: 76px; border-radius: 50%; margin: 0 auto 20px;
     display: flex; align-items: center; justify-content: center; font-size: 38px;
@@ -2341,3 +2341,49 @@ tr.mov-off td { opacity: .7; }
 /* Cambiar mi contraseña (panel) */
 .au-alerta { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 4px; border-radius: 50%; background: var(--warning); color: #fff; font-size: .7rem; font-weight: 700; }
 .mp-aviso { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); font-size: .86rem; line-height: 1.45; }
+
+/* Confirmación del pedido: dos columnas en pantallas anchas */
+.thanks-head { display: flex; align-items: center; gap: 20px; margin-bottom: 24px; }
+.thanks-head .thanks-check { margin: 0; flex-shrink: 0; }
+.thanks-head h1 { margin: 0 0 4px; }
+.thanks-head .thanks-order { margin-bottom: 6px; }
+.thanks-head p { margin: 0; color: var(--text-muted); max-width: 70ch; }
+.thanks-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
+.thanks-lado { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 88px; }
+.thanks-lado .card { margin: 0; }
+.thanks-tit { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; }
+.thanks-tit span { font-family: var(--font-body); font-style: normal; font-weight: 400; text-transform: none; font-size: .82rem; color: var(--text-muted); }
+.thanks-card .tc-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: .9rem; }
+.thanks-card .tc-item img { width: 52px; height: 52px; object-fit: contain; border-radius: var(--radius-sm); background: var(--bg-panel-2); }
+.thanks-card .tc-nom small { display: block; color: var(--text-muted); font-size: .76rem; margin-top: 2px; }
+.thanks-card .tc-totales { margin-top: 6px; }
+.thanks-card .tc-suave { color: var(--text-muted); }
+.thanks-card .tc-total { font-weight: 700; font-size: 1.1rem; border-bottom: none; padding-top: 12px; }
+.thanks-eti { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin-bottom: 2px; }
+.thanks-datos { display: grid; gap: 12px; font-size: .9rem; }
+.thanks-puntos { display: flex; gap: 10px; align-items: flex-start; font-size: .88rem; line-height: 1.45; border-left: 3px solid var(--accent); }
+.thanks-puntos > svg { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.thanks-gar { font-size: .82rem; color: var(--text-muted); padding: 6px 0; border-bottom: 1px solid var(--line); }
+.thanks-gar:last-of-type { border-bottom: none; }
+.thanks-gar .mono { display: block; color: var(--text); margin-top: 2px; }
+.thanks-lado .thanks-actions { flex-direction: column; margin: 0; }
+.thanks-lado .thanks-actions .btn { width: 100%; }
+.rastreo-step.hecho .rs-ic { background: var(--accent-dim); color: var(--text); }
+@media (max-width: 860px) {
+    .thanks-grid { grid-template-columns: 1fr; }
+    .thanks-lado { position: static; }
+    /* En celular, primero el seguimiento y luego el detalle */
+    .thanks-detalle { order: 2; }
+    .thanks-head { flex-direction: column; text-align: center; }
+}
+
+/* Cuentas: aprovechar el ancho en pantallas grandes */
+.cuenta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items: start; }
+.cuenta-grid > .card, .cuenta-grid-col > .card { margin: 0; }
+.cuenta-grid-col { display: flex; flex-direction: column; gap: 18px; }
+.field-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .field-row-3 { grid-template-columns: 1fr; } }
+.pedido-det-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.pedido-det-grid .pedido-resenas { margin-top: 12px; }
+@media (max-width: 900px) { .pedido-det-grid { grid-template-columns: 1fr; } .pedido-det-grid .pedido-resenas { margin-top: 0; } }
+@media (min-width: 901px) { .pedido-det-grid .pedido-resenas { border-top: none; border-left: 1px solid var(--line); padding: 0 0 0 20px; } }

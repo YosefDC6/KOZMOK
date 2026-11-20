@@ -142,16 +142,20 @@ async function detallePedido(id, irAResenas) {
     const entregado = d.estado === 'entregado';
 
     cont.innerHTML = `
+        <div class="pedido-det-grid">
+        <div>
         <div class="table-wrap" style="margin-top:12px">
             <table>
                 <thead><tr><th>Producto</th><th>Cant.</th><th>Subtotal</th></tr></thead>
                 <tbody>${d.items.map((i) => `<tr><td>${i.nombre}</td><td class="mono">${i.cantidad}</td><td class="mono">${formatoMoneda(i.subtotal)}</td></tr>`).join('')}</tbody>
             </table>
         </div>
-        <div style="font-size:.84rem;color:var(--text-muted);margin-top:8px">Envío a: ${d.direccion_envio || '—'} · Pago: ${d.metodo_pago || '—'}</div>
+        <div style="font-size:.84rem;color:var(--text-muted);margin-top:8px">Envío a: ${escHTML(d.direccion_envio || '—')} · Pago: ${escHTML(d.metodo_pago || '—')}</div>
+        </div>
         <div class="pedido-resenas" id="pr-wrap-${id}">
             <h4>Tu opinión sobre estos productos</h4>
             ${d.items.map((i) => bloqueResena(i, rev[i.producto_id], id, entregado)).join('')}
+        </div>
         </div>
     `;
     if (irAResenas) cont.querySelector('.pedido-resenas').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
