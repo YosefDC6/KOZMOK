@@ -360,3 +360,7 @@ CREATE TRIGGER trg_interacciones_fecha BEFORE INSERT ON interacciones FOR EACH R
 DROP TRIGGER IF EXISTS trg_interacciones_cambios ON interacciones;
 CREATE TRIGGER trg_interacciones_cambios BEFORE UPDATE OR DELETE ON interacciones FOR EACH ROW EXECUTE FUNCTION kz_solo_agregar();
 CREATE INDEX IF NOT EXISTS idx_interacciones_fecha ON interacciones (fecha DESC);
+
+-- Contraseña conocida por otra persona (la inicial del admin o la que puso
+-- quien dio de alta la cuenta): el panel pide cambiarla al entrar.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cambiar_password BOOLEAN NOT NULL DEFAULT FALSE;

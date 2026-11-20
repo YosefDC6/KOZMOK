@@ -9,9 +9,10 @@
 //   g) robar la base: las contraseñas solo están como hash bcrypt
 //
 //   npm run prueba:sesion
-const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C, ES_ESTA_COMPU } = require('./comun');
+//   (con --correo= y --password= de una cuenta de cliente de prueba)
+const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C, ES_ESTA_COMPU, cuentaPrueba } = require('./comun');
 
-const VICTIMA = { correo: 'sofia@correo.com', password: 'Demo#KZ2026' };
+const VICTIMA = cuentaPrueba();
 
 (async () => {
     await servidorArriba();

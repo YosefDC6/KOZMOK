@@ -11,7 +11,8 @@
     "prueba:sesion": "node pruebas-seguridad/3-robo-de-sesion.js",
     "prueba:seguridad": "node pruebas-seguridad/todas.js",
     "desbloquear": "node pruebas-seguridad/desbloquear.js",
-    "prueba:correo": "node prueba-correo.js"
+    "prueba:correo": "node prueba-correo.js",
+    "limpiar:ejemplo": "node limpiar-ejemplo.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

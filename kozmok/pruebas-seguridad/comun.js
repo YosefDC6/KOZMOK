@@ -103,4 +103,22 @@ async function servidorArriba() {
     process.exit(1);
 }
 
-module.exports = { URL_BASE, ES_ESTA_COMPU, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args };
+// Cuenta de cliente para las pruebas. La base ya no trae clientes de
+// ejemplo: crea una cuenta tuya de prueba en la tienda y pásala así
+//   npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1
+// o en el .env como PRUEBA_CORREO y PRUEBA_PASSWORD.
+// Ojo: la prueba de fuerza bruta la deja bloqueada 15 minutos.
+function cuentaPrueba() {
+    const val = (k) => ((args.find((a) => a.startsWith(`--${k}=`)) || '').split('=').slice(1).join('=')) || '';
+    const correo = val('correo') || val('cuenta') || process.env.PRUEBA_CORREO || '';
+    const password = val('password') || val('real') || process.env.PRUEBA_PASSWORD || '';
+    if (!correo || !password) {
+        console.log(`\n${C.aviso}Falta la cuenta de cliente de prueba.${C.fin}`);
+        console.log('Crea una cuenta en la tienda solo para pruebas y córrelo así:');
+        console.log('  npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1\n');
+        process.exit(1);
+    }
+    return { correo, password };
+}
+
+module.exports = { URL_BASE, ES_ESTA_COMPU, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args, cuentaPrueba };

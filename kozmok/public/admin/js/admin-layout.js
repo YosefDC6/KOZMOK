@@ -223,7 +223,7 @@ function abrirCambioPassword(aviso = false) {
     }
     m.innerHTML = `<div class="modal" style="max-width:440px">
         <h3 style="margin-top:0">Cambiar mi contraseña</h3>
-        ${aviso ? `<p class="mp-aviso">${window.icon ? icon('lock', 15) : ''} Tu contraseña es muy sencilla: se creó antes de que pidiéramos contraseñas más seguras. Cámbiala para proteger el panel.</p>` : ''}
+        ${aviso ? `<p class="mp-aviso">${window.icon ? icon('lock', 15) : ''} Tu contraseña es temporal o muy sencilla (por ejemplo, la que te dieron al crear tu cuenta). Cámbiala por una que solo tú conozcas para proteger el panel.</p>` : ''}
         <div class="field"><label for="mp-actual">Contraseña actual</label><input type="password" id="mp-actual" autocomplete="current-password" /></div>
         <div class="field"><label for="mp-nueva">Nueva contraseña</label><input type="password" id="mp-nueva" maxlength="72" autocomplete="new-password" />${ReglasPass.html('mp-reglas')}</div>
         <div class="field"><label for="mp-rep">Repetir nueva contraseña</label><input type="password" id="mp-rep" autocomplete="new-password" /></div>

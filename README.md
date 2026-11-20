@@ -151,14 +151,17 @@ Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, t
 
 > **Actualizar desde una versión anterior (Etapa 4):** vuelve a cargar `db/database.sql` (paso 4). Crea las tablas nuevas (`carrito`, `carrito_detalle`, `pagos`, `promociones`, `impuestos`, `monederos`, `movimientos_monedero`) y reemplaza `carrito_items`. Si faltan, la consola lo avisa al arrancar.
 
-### Cuentas de prueba
+### Cuenta inicial
+
+La base empieza sin datos de ejemplo: sin clientes, pedidos ni interacciones. Todo lo que aparece en CRM, ERP y reportes viene del uso real de la tienda.
 
 | Rol | Correo | Contraseña |
 |---|---|---|
-| Admin | admin@kozmok.mx | `Admin#KZ2026` |
-| Ventas | laura.ventas@kozmok.mx | `Ventas#KZ2026` |
-| Logística | paola.logistica@kozmok.mx | `Logistica#KZ2026` |
-| Cliente | mariana@correo.com | `Demo#KZ2026` |
+| Admin | admin@kozmok.mx | `Admin#KZ2026` (pide cambiarla al entrar) |
+
+Los clientes se registran en la tienda y los empleados se dan de alta en el panel (Cuentas y equipo); a cada empleado nuevo se le pide cambiar la contraseña la primera vez.
+
+**¿Tu base ya tenía los datos de ejemplo?** `npm run limpiar:ejemplo` muestra qué hay y `npm run limpiar:ejemplo -- --confirmar` borra los 4 clientes de prueba con sus pedidos, puntos y monederos, desactiva a los 2 empleados de ejemplo y quita la promoción de ejemplo. No toca productos ni nada que hayas creado tú.
 
 ---
 

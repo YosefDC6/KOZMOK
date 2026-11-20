@@ -78,17 +78,20 @@ npm install
    No hace falta ningún script de Node aparte. El archivo se puede
    volver a ejecutar: borra todo y lo recrea desde cero.
 
-   Cuentas de prueba que quedan cargadas:
+   La base empieza sin datos de ejemplo (sin clientes, pedidos ni
+   interacciones). Solo queda la cuenta inicial del panel, que pide
+   cambiar la contraseña al entrar:
 
-   | Rol       | Correo                         | Contraseña       |
-   |-----------|--------------------------------|------------------|
-   | Admin     | admin@kozmok.mx            | Admin#KZ2026     |
-   | Ventas    | laura.ventas@kozmok.mx     | Ventas#KZ2026    |
-   | Logística | paola.logistica@kozmok.mx  | Logistica#KZ2026 |
-   | Cliente   | mariana@correo.com             | Demo#KZ2026      |
-   | Cliente   | diego@correo.com               | Demo#KZ2026      |
-   | Cliente   | sofia@correo.com               | Demo#KZ2026      |
-   | Cliente   | carlos@correo.com              | Demo#KZ2026      |
+   | Rol       | Correo           | Contraseña    |
+   |-----------|------------------|---------------|
+   | Admin     | admin@kozmok.mx  | Admin#KZ2026  |
+
+   Si tu base es de antes y tiene los clientes de prueba:
+   `npm run limpiar:ejemplo` (muestra) y
+   `npm run limpiar:ejemplo -- --confirmar` (borra).
+
+   Pruebas de seguridad: crea una cuenta de cliente solo para pruebas y
+   `npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1`
 
    Nota: se usan contraseñas con mayúscula/símbolo (no "admin123" tal
    cual) porque los navegadores muestran un aviso nativo de "contraseña

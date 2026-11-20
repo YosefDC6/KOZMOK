@@ -679,7 +679,9 @@ const loginUsuario = asyncRoute(async (req, res) => {
     }
 
     await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: true });
-    const debil = !!seg.validarPassword(password, { correo: usuario.email, nombre: usuario.nombre });
+    // Débil = no cumple la política, o es una contraseña que alguien más
+    // conoce (la inicial del admin o la que puso quien dio de alta la cuenta).
+    const debil = !!seg.validarPassword(password, { correo: usuario.email, nombre: usuario.nombre }) || !!usuario.cambiar_password;
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP, password_debil = $2 WHERE id = $1', [usuario.id, debil]);
     // El panel nunca recuerda la sesión: se cierra al cerrar el navegador
     // (y a las 8 h o tras 2 h sin uso).
@@ -2814,7 +2816,7 @@ app.put('/api/admin/mi-password', limiteAuth, asyncRoute(async (req, res) => {
         return res.status(400).json({ message: 'La contraseña actual no es correcta.' + (r.restantes <= 3 ? ` Quedan ${r.restantes} intento(s).` : '') });
     }
     if (await seg.compararPassword(nueva, u.password_hash)) return res.status(400).json({ message: 'La nueva contraseña debe ser distinta de la actual' });
-    await pool.query('UPDATE usuarios SET password_hash = $1, password_debil = FALSE WHERE id = $2', [await seg.hashPassword(nueva), u.id]);
+    await pool.query('UPDATE usuarios SET password_hash = $1, password_debil = FALSE, cambiar_password = FALSE WHERE id = $2', [await seg.hashPassword(nueva), u.id]);
     const cerradas = await seg.revocarSesionesDe('usuario', u.id, 'cambio de contraseña', req.sesion.id);
     await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', usuario_id: u.id, detalle: `Cambio de contraseña del equipo; ${cerradas} sesión(es) cerradas` });
     res.json({ message: cerradas ? `Contraseña actualizada. Cerramos ${cerradas} sesión(es) en otros equipos.` : 'Contraseña actualizada' });
@@ -5466,11 +5468,11 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
 
     const hash = await seg.hashPassword(password);
     const result = await pool.query(
-        `INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, nombre, email, telefono, rol, activo`,
+        `INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo, cambiar_password)
+         VALUES ($1,$2,$3,$4,$5,$6, TRUE) RETURNING id, nombre, email, telefono, rol, activo`,
         [nombre, email, hash, telefono, rol, activo !== undefined ? activo : true]
     );
-    res.status(201).json({ message: 'Usuario creado', usuario: result.rows[0] });
+    res.status(201).json({ message: 'Usuario creado. Al entrar por primera vez se le pedirá cambiar la contraseña.', usuario: result.rows[0] });
 }));
 
 // Cambiar el rol de un usuario interno (solo admin). El admin no puede

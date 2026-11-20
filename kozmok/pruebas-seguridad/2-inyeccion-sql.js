@@ -20,7 +20,7 @@ const filtra = (r) => /\$2[aby]\$|password_hash|pg_shadow|information_schema|syn
         console.log(`  ${correo.padEnd(34)} → ${r.status}  ${(r.json && r.json.message) || ''}`);
         verificar(`No entra con ${correo}`, r.status !== 200 && !(r.json && r.json.success));
     }
-    const r1 = await nav.post('/api/auth/login', { tipo: 'cliente', correo: 'mariana@correo.com', password: "' OR '1'='1" });
+    const r1 = await nav.post('/api/auth/login', { tipo: 'cliente', correo: 'cualquiera@correo.com', password: "' OR '1'='1" });
     verificar('La contraseña tampoco se puede inyectar', r1.status !== 200);
 
     titulo('2) Leer otras tablas desde el buscador (UNION SELECT)');

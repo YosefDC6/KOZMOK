@@ -120,19 +120,24 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
      2. server.js              -> objeto ROLES_INTERNOS (nombre y descripcion)
      3. admin/js/permisos.js   -> objeto PERMISOS (que secciones ve)
 
-Cuentas de prueba (tras cargar db/database.sql)
+Cuenta inicial (tras cargar db/database.sql)
 
-   +----------+------------------------------+-----------------+----------------------------------+
-   | Rol      | Correo                       | Contraseña      | Notas                            |
-   +----------+------------------------------+-----------------+----------------------------------+
-   | Admin    | admin@kozmok.mx          | Admin#KZ2026    | acceso total al panel            |
-   | Ventas   | laura.ventas@kozmok.mx   | Ventas#KZ2026   | CRM y captura de ordenes ERP     |
-   | Logistica| paola.logistica@kozmok.mx| Logistica#KZ2026| SCM, captura y surtido ERP       |
-   | Cliente  | mariana@correo.com           | Demo#KZ2026     | nivel Oro, con pedidos y puntos  |
-   | Cliente  | diego@correo.com             | Demo#KZ2026     | nivel Oro                        |
-   | Cliente  | sofia@correo.com             | Demo#KZ2026     | prospecto, sin compras           |
-   | Cliente  | carlos@correo.com            | Demo#KZ2026     | inactivo                         |
-   +----------+------------------------------+-----------------+----------------------------------+
+   La base empieza SIN datos de ejemplo: no hay clientes, pedidos,
+   puntos, monederos ni interacciones de prueba. Solo queda:
+
+   +----------+------------------+----------------+--------------------------------+
+   | Rol      | Correo           | Contraseña     | Notas                          |
+   +----------+------------------+----------------+--------------------------------+
+   | Admin    | admin@kozmok.mx  | Admin#KZ2026   | pide cambiarla al entrar       |
+   +----------+------------------+----------------+--------------------------------+
+
+   - Los clientes se registran en la tienda (registro.html).
+   - Los empleados se dan de alta en el panel (Cuentas y equipo); la
+     primera vez que entran se les pide cambiar la contraseña que les dio
+     el administrador.
+   - Base de una version anterior con los clientes de prueba:
+        npm run limpiar:ejemplo               (solo muestra)
+        npm run limpiar:ejemplo -- --confirmar (borra; no se deshace)
 
    Nota: ya no son "admin123"/"demo123" a proposito. Esos patrones estan
    en listas publicas de contrasenas filtradas, y el navegador (Chrome/

@@ -83,6 +83,7 @@ CREATE TABLE usuarios (
     password_hash       VARCHAR(200) NOT NULL,
     -- TRUE si al entrar la contraseña no cumplió la política actual
     password_debil      BOOLEAN NOT NULL DEFAULT FALSE,
+    cambiar_password    BOOLEAN NOT NULL DEFAULT FALSE,   -- contraseña que otra persona conoce: pedir cambio al entrar
     telefono            VARCHAR(30),
     -- Roles empresariales (ERP): administrador, ventas y logística.
     -- Para agregar uno nuevo: añádelo aquí, en ROLES_INTERNOS y
@@ -978,30 +979,22 @@ INSERT INTO categorias (nombre, icono) VALUES
  ('Monitores', ''),
  ('Accesorios', '');
 
--- Usuarios internos. La contraseña se hashea aquí mismo con bcrypt
--- (pgcrypto). Credenciales de acceso (contraseñas de demo, no triviales
--- a propósito: "admin123" y similares están en listas de contraseñas
--- filtradas y el navegador muestra un aviso nativo de "contraseña
--- comprometida" al iniciar sesión con ellas):
---   admin@kozmok.mx          -> Admin#KZ2026     (rol admin)
---   laura.ventas@kozmok.mx   -> Ventas#KZ2026     (rol ventas)
---   paola.logistica@kozmok.mx -> Logistica#KZ2026 (rol logistica)
-INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo) VALUES
- ('Admin Kozmok', 'admin@kozmok.mx',
-  crypt('Admin#KZ2026', gen_salt('bf', 10)), '555-000-0001', 'admin', true),
- ('Laura Méndez', 'laura.ventas@kozmok.mx',
-  crypt('Ventas#KZ2026', gen_salt('bf', 10)), '555-000-0002', 'ventas', true),
- ('Paola Nieto', 'paola.logistica@kozmok.mx',
-  crypt('Logistica#KZ2026', gen_salt('bf', 10)), '555-000-0003', 'logistica', true);
+-- Usuario interno inicial: solo el administrador. La contraseña se hashea
+-- aquí mismo con bcrypt (pgcrypto) y queda marcada como "por cambiar": al
+-- entrar por primera vez el panel pide una nueva. El resto del equipo se da
+-- de alta desde el panel.
+--   admin@kozmok.mx  ->  Admin#KZ2026
+INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo, cambiar_password) VALUES
+ ('Administrador', 'admin@kozmok.mx', crypt('Admin#KZ2026', gen_salt('bf', 10)), NULL, 'admin', true, true);
 
 INSERT INTO estado_erp (id, modo, nivel) VALUES (1, 'auto', 'basico');
 
 INSERT INTO recursos_erp (nombre, tipo, area, descripcion, cantidad, valor, estado, responsable_id) VALUES
- ('Camioneta de reparto Nissan NV200', 'vehiculo',    'logistica',      'Entregas locales en CDMX y área metropolitana', 1, 385000.00, 'en_uso',       3),
- ('Almacén principal Iztapalapa',      'instalacion', 'logistica',      'Bodega de 220 m² con racks y zona de recepción', 1, 28000.00, 'en_uso',        3),
- ('Terminal punto de venta',           'equipo',      'ventas',         'Terminal bancaria para cobro con tarjeta en mostrador', 2, 4200.00, 'disponible', 2),
- ('Laptops del equipo de ventas',      'equipo',      'ventas',         'Equipos para captura de órdenes y seguimiento CRM', 3, 54000.00, 'en_uso',     2),
- ('Lector de código de barras',        'equipo',      'logistica',      'Escaneo de entradas y salidas de inventario', 2, 1800.00, 'mantenimiento',     3),
+ ('Camioneta de reparto Nissan NV200', 'vehiculo',    'logistica',      'Entregas locales en CDMX y área metropolitana', 1, 385000.00, 'en_uso',       1),
+ ('Almacén principal Iztapalapa',      'instalacion', 'logistica',      'Bodega de 220 m² con racks y zona de recepción', 1, 28000.00, 'en_uso',        1),
+ ('Terminal punto de venta',           'equipo',      'ventas',         'Terminal bancaria para cobro con tarjeta en mostrador', 2, 4200.00, 'disponible', 1),
+ ('Laptops del equipo de ventas',      'equipo',      'ventas',         'Equipos para captura de órdenes y seguimiento CRM', 3, 54000.00, 'en_uso',     1),
+ ('Lector de código de barras',        'equipo',      'logistica',      'Escaneo de entradas y salidas de inventario', 2, 1800.00, 'mantenimiento',     1),
  ('Presupuesto de reabasto trimestral','presupuesto', 'logistica',      'Monto asignado para pedidos de reposición a proveedores', 1, 250000.00, 'disponible', 1),
  ('Presupuesto de marketing',          'presupuesto', 'ventas',         'Campañas y promociones del trimestre', 1, 60000.00, 'disponible',          1),
  ('Servidor y hosting de la tienda',   'equipo',      'administracion', 'Infraestructura del sistema (CRM, SCM y ERP)', 1, 3500.00, 'en_uso',         1);
@@ -1351,191 +1344,11 @@ UPDATE productos SET costo_unitario = ROUND(precio * 0.7, 2);
 INSERT INTO config_scm (clave, valor) VALUES ('reabasto_automatico', 'si'), ('entrega', 'fecha');
 
 -- ---------------------------------------------------------
--- CLIENTES DE PRUEBA  (contraseña "Demo#KZ2026" para los 4,
--- hasheada aquí mismo con bcrypt / pgcrypto)
+-- SIN DATOS DE EJEMPLO: no se crean clientes, pedidos, puntos,
+-- monederos, reseñas, tickets ni interacciones de prueba. Todo lo
+-- que aparezca en el CRM, ERP y reportes viene de uso real de la
+-- tienda (registros, compras y atención).
 -- ---------------------------------------------------------
-INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, estado_cliente, etapa_crm, fecha_registro) VALUES
- ('Mariana Torres', 'mariana@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-123-4567', 'Estudio Creativo MT', 'Aguascalientes', 'Aguascalientes', 'activo', 'Frecuente', CURRENT_TIMESTAMP - INTERVAL '120 days'),
- ('Diego Ramírez', 'diego@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-987-6543', NULL, 'León', 'Guanajuato', 'activo', 'Activo', CURRENT_TIMESTAMP - INTERVAL '60 days'),
- ('Sofía Herrera', 'sofia@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-456-7890', 'Herrera Diseño', 'Querétaro', 'Querétaro', 'activo', 'Prospecto', CURRENT_TIMESTAMP - INTERVAL '10 days'),
- ('Carlos Fuentes', 'carlos@correo.com', crypt('Demo#KZ2026', gen_salt('bf', 10)), '555-321-6547', NULL, 'CDMX', 'CDMX', 'activo', 'Inactivo', CURRENT_TIMESTAMP - INTERVAL '200 days');
-
--- Sin interacciones de ejemplo: el CRM solo registra contactos reales
--- (llamadas, correos enviados, reuniones, tickets y uso del asesor en línea).
-
--- Direcciones y favoritos de ejemplo
-INSERT INTO direcciones (cliente_id, alias, destinatario, calle, ciudad, estado, codigo_postal, telefono, predeterminada) VALUES
- (1, 'Casa', 'Mariana Torres', 'Av. Universidad 123, Col. Centro', 'Aguascalientes', 'Aguascalientes', '20000', '555-123-4567', true),
- (2, 'Casa', 'Diego Ramírez', 'Blvd. López Mateos 456, Col. Jardines', 'León', 'Guanajuato', '37000', '555-987-6543', true);
-
-INSERT INTO favoritos (cliente_id, producto_id) VALUES
- (1, 3), (1, 5), (1, 15), (2, 2), (2, 7);
-
--- Código de socio (va en el QR de la tarjeta virtual)
-UPDATE clientes SET codigo_socio = 'KZMX-7K2M9Q' WHERE id = 1;
-UPDATE clientes SET codigo_socio = 'KZMX-4A1P8R' WHERE id = 2;
-UPDATE clientes SET codigo_socio = 'KZMX-3H6D2L' WHERE id = 3;
-UPDATE clientes SET codigo_socio = 'KZMX-9W5C7T' WHERE id = 4;
-
--- Métodos de pago guardados (solo marca + últimos 4, nunca el número completo)
-INSERT INTO metodos_pago (cliente_id, tipo, marca, ultimos4, titular, expira_mes, expira_anio, predeterminada) VALUES
- (1, 'tarjeta', 'visa',       '4821', 'Mariana Torres', 7, 2028, true),
- (1, 'tarjeta', 'mastercard', '1099', 'Mariana Torres', 3, 2027, false),
- (2, 'tarjeta', 'visa',       '5540', 'Diego Ramírez',  11, 2026, true);
-
--- ---------------------------------------------------------
--- PEDIDOS de ejemplo (historial real de compras).
--- Se insertan con estado final; el trigger de métricas solo
--- corre en UPDATE, así que las métricas se cuadran a mano
--- justo debajo con los mismos totales.
--- ---------------------------------------------------------
-INSERT INTO pedidos
- (numero_orden, cliente_id, subtotal, impuestos, envio, descuento, total, estado, metodo_pago, direccion_envio,
-  numero_guia, transportista, fecha_pedido, fecha_confirmacion, fecha_envio, fecha_entrega) VALUES
- ('ORD-24051', 1, 54999.00, 8799.84,   0.00,   0.00, 63798.84, 'entregado', 'Tarjeta Visa ****4821', 'Av. Universidad 123, Col. Centro, Aguascalientes',
-   'TT240510042', 'Estafeta', CURRENT_TIMESTAMP - INTERVAL '58 days', CURRENT_TIMESTAMP - INTERVAL '58 days', CURRENT_TIMESTAMP - INTERVAL '57 days', CURRENT_TIMESTAMP - INTERVAL '55 days'),
- ('ORD-24188', 1, 27999.00, 4479.84,   0.00,   0.00, 32478.84, 'entregado', 'Tarjeta Visa ****4821', 'Av. Universidad 123, Col. Centro, Aguascalientes',
-   'TT241880115', 'DHL', CURRENT_TIMESTAMP - INTERVAL '30 days', CURRENT_TIMESTAMP - INTERVAL '30 days', CURRENT_TIMESTAMP - INTERVAL '29 days', CURRENT_TIMESTAMP - INTERVAL '27 days'),
- ('ORD-24263', 1,  7897.00, 1263.52, 199.00, 440.00,  8919.52, 'entregado', 'Tarjeta Visa ****4821', 'Av. Universidad 123, Col. Centro, Aguascalientes',
-   'TT242630087', 'Estafeta', CURRENT_TIMESTAMP - INTERVAL '8 days', CURRENT_TIMESTAMP - INTERVAL '8 days', CURRENT_TIMESTAMP - INTERVAL '7 days', CURRENT_TIMESTAMP - INTERVAL '5 days'),
- ('ORD-24120', 2, 27999.00, 4479.84,   0.00,   0.00, 32478.84, 'entregado', 'Transferencia SPEI', 'Blvd. López Mateos 456, Col. Jardines, León',
-   'TT241200231', 'DHL', CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP - INTERVAL '14 days', CURRENT_TIMESTAMP - INTERVAL '12 days'),
- ('ORD-24310', 2, 34999.00, 5599.84,   0.00,   0.00, 40598.84, 'enviado', 'Tarjeta Visa ****5540', 'Blvd. López Mateos 456, Col. Jardines, León',
-   'TT243100199', 'Estafeta', CURRENT_TIMESTAMP - INTERVAL '3 days', CURRENT_TIMESTAMP - INTERVAL '3 days', CURRENT_TIMESTAMP - INTERVAL '2 days', NULL),
- ('ORD-24225', 4,  9999.00, 1599.84, 199.00,   0.00, 11797.84, 'entregado', 'Tarjeta de crédito', 'Zona Centro, Querétaro',
-   'TT242250164', 'Fedex', CURRENT_TIMESTAMP - INTERVAL '20 days', CURRENT_TIMESTAMP - INTERVAL '20 days', CURRENT_TIMESTAMP - INTERVAL '19 days', CURRENT_TIMESTAMP - INTERVAL '17 days');
-
-INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'), 8, 1, 54999.00, 54999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24188'), 3, 1, 27999.00, 27999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), 15, 1, 5999.00, 5999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), 17, 1, 1299.00, 1299.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), 18, 1,  599.00,  599.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120'), 2, 1, 27999.00, 27999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24310'), 7, 1, 34999.00, 34999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'), 4, 1,  9999.00,  9999.00);
-
--- ---------------------------------------------------------
--- ÓRDENES DE CLIENTES (ERP) de ejemplo: capturadas desde el
--- panel por el equipo (origen = 'erp'). Tres ya cobradas y una
--- con pago pendiente. Sus importes ya están sumados en las
--- métricas y puntos de abajo.
--- ---------------------------------------------------------
-INSERT INTO pedidos
- (numero_orden, cliente_id, vendedor_id, origen, subtotal, impuestos, envio, descuento, total, estado, metodo_pago,
-  pago_estado, pago_referencia, direccion_envio, notas, fecha_pedido, fecha_confirmacion, fecha_envio, fecha_entrega) VALUES
- ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 4, 2, 'erp',  7197.00, 1151.52, 199.00, 0, 8547.52, 'entregado', 'Efectivo en mostrador',
-   'pagado', NULL, 'Recoge en tienda', 'Venta en mostrador', CURRENT_TIMESTAMP - INTERVAL '140 days', CURRENT_TIMESTAMP - INTERVAL '140 days', CURRENT_TIMESTAMP - INTERVAL '139 days', CURRENT_TIMESTAMP - INTERVAL '138 days'),
- ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 1, 2, 'erp', 14999.00, 2399.84,   0.00, 0, 17398.84, 'entregado', 'Tarjeta en mostrador',
-   'pagado', NULL, 'Av. Universidad 123, Col. Centro, Aguascalientes', 'Pedido por teléfono para el estudio', CURRENT_TIMESTAMP - INTERVAL '100 days', CURRENT_TIMESTAMP - INTERVAL '100 days', CURRENT_TIMESTAMP - INTERVAL '99 days', CURRENT_TIMESTAMP - INTERVAL '97 days'),
- ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 2, 1, 'erp',  3197.00,  511.52, 199.00, 0, 3907.52, 'entregado', 'Transferencia bancaria',
-   'pagado', NULL, 'Blvd. López Mateos 456, Col. Jardines, León', NULL, CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '39 days', CURRENT_TIMESTAMP - INTERVAL '37 days'),
- ('OR-' || LPAD(nextval('folio_erp_seq')::text, 3, '0'), 1, 2, 'erp',  5999.00,  959.84, 199.00, 0, 7157.84, 'pendiente', 'Transferencia bancaria',
-   'pendiente', 'ERP-4471029385', 'Av. Universidad 123, Col. Centro, Aguascalientes', 'Monitor para la segunda estación', CURRENT_TIMESTAMP - INTERVAL '1 days', NULL, NULL, NULL);
--- Plazo de pago de la orden pendiente (3 días desde la captura, igual que
--- una orden nueva): si vence sin pago, el sistema la cancela y libera el stock.
-UPDATE pedidos SET pago_vence = fecha_pedido + INTERVAL '3 days' WHERE pago_estado = 'pendiente' AND pago_vence IS NULL;
-
-INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 15, 1, 5999.00,  5999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-001'), 18, 2,  599.00,  1198.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-002'),  1, 1, 14999.00, 14999.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-003'), 17, 2, 1299.00,  2598.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-003'), 18, 1,  599.00,   599.00),
- ((SELECT id FROM pedidos WHERE numero_orden = 'OR-004'), 15, 1, 5999.00,  5999.00);
-
--- Procesos internos de esas órdenes (lo que el ERP registra al procesarlas).
-INSERT INTO procesos_erp (pedido_id, paso, descripcion, automatico, usuario_id, fecha)
-SELECT p.id, x.paso, x.descripcion, x.automatico, p.vendedor_id, p.fecha_pedido + x.desfase
-FROM pedidos p
-CROSS JOIN (VALUES
-   ('orden',      'Orden creada y validada',                          true,  INTERVAL '0 seconds'),
-   ('stock',      'Stock validado y descontado del inventario (SCM)', true,  INTERVAL '1 second'),
-   ('inventario', 'Movimientos de salida registrados',                true,  INTERVAL '2 seconds'),
-   ('historial',  'Historial del cliente actualizado (CRM)',          true,  INTERVAL '3 seconds')
-) AS x(paso, descripcion, automatico, desfase)
-WHERE p.origen = 'erp';
-
--- Garantías extendidas de ejemplo (certificados de compras anteriores).
--- No se recalculan los totales históricos de esos pedidos: lo que importa
--- para la demo es el certificado. Los pedidos nuevos sí cuadran al centavo.
-INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence, estado, reclamo_fecha, reclamo_desc) VALUES
- ('GAR-100001', 'M9K2-7QTP-4XW8-2LRA',
-  (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051') AND producto_id = 8),
-  1, 8, 'Extendida · 24 meses', 24, 6600.00,
-  (CURRENT_DATE - INTERVAL '58 days')::date, (CURRENT_DATE - INTERVAL '58 days' + INTERVAL '24 months')::date,
-  'activa', NULL, NULL),
- ('GAR-100002', 'T4P8-1CN5-9WQ2-KX7M',
-  (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120') AND producto_id = 2),
-  2, 2, 'Total · 36 meses', 36, 5040.00,
-  (CURRENT_DATE - INTERVAL '15 days')::date, (CURRENT_DATE - INTERVAL '15 days' + INTERVAL '36 months')::date,
-  'activa', (CURRENT_TIMESTAMP - INTERVAL '2 days'), 'La laptop se apaga sola bajo carga. Ya probé con otro cargador.'),
- ('GAR-100003', 'B2L9-6RH0-3PT4-8XKW',
-  (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'),
-  (SELECT id FROM pedido_items WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225') AND producto_id = 4),
-  4, 4, 'Básica · 12 meses', 12, 600.00,
-  (CURRENT_DATE - INTERVAL '400 days')::date, (CURRENT_DATE - INTERVAL '400 days' + INTERVAL '12 months')::date,
-  'vencida', NULL, NULL);
-
-UPDATE pedido_items SET garantia_plan = 'Extendida · 24 meses', garantia_meses = 24, garantia_costo = 6600.00
- WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051') AND producto_id = 8;
-UPDATE pedido_items SET garantia_plan = 'Total · 36 meses', garantia_meses = 36, garantia_costo = 5040.00
- WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120') AND producto_id = 2;
-UPDATE pedido_items SET garantia_plan = 'Básica · 12 meses', garantia_meses = 12, garantia_costo = 600.00
- WHERE pedido_id = (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225') AND producto_id = 4;
-
--- ---------------------------------------------------------
--- MÉTRICAS iniciales — cuadradas con los pedidos de arriba
--- (para que el dashboard y los niveles del Club se vean
---  con datos desde el arranque)
--- ---------------------------------------------------------
-INSERT INTO metricas_clientes (cliente_id, total_compras, valor_total_compras, ticket_promedio) VALUES
- (1, 4, 122596.04, 30649.01),
- (2, 3,  76985.20, 25661.73),
- (3, 0,        0,        0),
- (4, 2,  20345.36, 10172.68)
-ON CONFLICT (cliente_id) DO UPDATE
-    SET total_compras       = EXCLUDED.total_compras,
-        valor_total_compras = EXCLUDED.valor_total_compras,
-        ticket_promedio     = EXCLUDED.ticket_promedio;
-
--- Puntos del Club (100 puntos = $10). El saldo de cada cliente
--- es la suma de sus movimientos.
-UPDATE clientes SET puntos = 1989 WHERE id = 1;
-UPDATE clientes SET puntos = 914  WHERE id = 2;
-UPDATE clientes SET puntos = 476  WHERE id = 4;
-INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id, fecha) VALUES
- (1, 'ganado',   980, 'Compra ORD-24051 · PC Workstation Diseño',   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24051'), CURRENT_TIMESTAMP - INTERVAL '55 days'),
- (1, 'ganado',   700, 'Compra ORD-24188 · MacBook Air M2',          (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24188'), CURRENT_TIMESTAMP - INTERVAL '27 days'),
- (1, 'canjeado', -440, 'Descuento aplicado en ORD-24263',           (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24263'), CURRENT_TIMESTAMP - INTERVAL '8 days'),
- (2, 'ganado',   350, 'Compra ORD-24120 · Laptop Gamer Legion 5',   (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24120'), CURRENT_TIMESTAMP - INTERVAL '12 days'),
- (2, 'ganado',   405, 'Compra ORD-24310 · PC Gamer RTX 4070',       (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24310'), CURRENT_TIMESTAMP - INTERVAL '2 days'),
- (4, 'ganado',   117, 'Compra ORD-24225 · Laptop ASUS VivoBook 15', (SELECT id FROM pedidos WHERE numero_orden = 'ORD-24225'), CURRENT_TIMESTAMP - INTERVAL '17 days'),
- (4, 'ganado',   359, 'Compra OR-001 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-001'),    CURRENT_TIMESTAMP - INTERVAL '140 days'),
- (1, 'ganado',   749, 'Compra OR-002 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-002'),    CURRENT_TIMESTAMP - INTERVAL '100 days'),
- (2, 'ganado',   159, 'Compra OR-003 (orden ERP)',                  (SELECT id FROM pedidos WHERE numero_orden = 'OR-003'),    CURRENT_TIMESTAMP - INTERVAL '40 days');
-
--- Reseñas / Evaluaciones
-INSERT INTO resenas (cliente_id, producto_id, calificacion, comentario, fecha) VALUES
- (1, 3, 5, 'Excelente para diseño, la batería dura todo el día.', CURRENT_TIMESTAMP - INTERVAL '18 days'),
- (1, 15, 4, 'Muy buen monitor, aunque el soporte es algo simple.', CURRENT_TIMESTAMP - INTERVAL '10 days'),
- (2, 2, 5, 'Corre todo a tope, llegó bien empacada.',              CURRENT_TIMESTAMP - INTERVAL '12 days');
-
--- Ticket de soporte de ejemplo
-INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, estado) VALUES
- ('TK-1001', 1, 'Falta un cable en el pedido', 'pedido', 'media', 'en_proceso');
-INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje, fecha) VALUES
- (1, 'cliente', NULL, 'Recibí la laptop pero el cargador no venía en la caja.', CURRENT_TIMESTAMP - INTERVAL '3 days'),
- (1, 'equipo',  1,    'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.', CURRENT_TIMESTAMP - INTERVAL '2 days');
-
-
--- Atención a clientes: mensaje inicial y última respuesta del ticket de ejemplo
-UPDATE tickets SET mensaje = 'Recibí la laptop pero el cargador no venía en la caja.',
-                   respuesta = 'Gracias por avisar, ya programamos el envío del cargador. Llega en 2 días.',
-                   fecha_respuesta = CURRENT_TIMESTAMP - INTERVAL '2 days'
- WHERE folio = 'TK-1001';
 
 -- =========================================================
 -- ETAPA 4: impuestos, promociones, destacados y monedero
@@ -1549,8 +1362,7 @@ INSERT INTO impuestos (nombre, porcentaje, descripcion, estado) VALUES
 -- Productos destacados de la portada
 UPDATE productos SET destacado = true WHERE id IN (2, 30, 7, 63, 56, 15, 41, 47, 51);
 
--- Promociones de ejemplo (la vigencia se calcula desde hoy para que la
--- demo siempre tenga promociones activas)
+-- Promociones de lanzamiento (vigencia desde la fecha de instalación)
 INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id) VALUES
  ('Semana de laptops', '10% de descuento en todas las laptops.', 'porcentaje', 10, 'categoria',
    (SELECT id FROM categorias WHERE nombre = 'Laptops'), NULL,
@@ -1559,31 +1371,15 @@ INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, ca
    (SELECT id FROM categorias WHERE nombre = 'Periféricos'), NULL,
    CURRENT_DATE - INTERVAL '1 days', CURRENT_DATE + INTERVAL '20 days', 'activa', true, 1),
  ('$500 menos en tu monitor', '$500 de descuento por pieza en el monitor seleccionado.', 'monto', 500, 'producto',
-   NULL, 15, CURRENT_DATE - INTERVAL '2 days', CURRENT_DATE + INTERVAL '15 days', 'activa', true, 1),
- ('Regreso a clases', '8% en todo el catálogo (ejemplo de promoción ya vencida).', 'porcentaje', 8, 'todos',
-   NULL, NULL, CURRENT_DATE - INTERVAL '70 days', CURRENT_DATE - INTERVAL '40 days', 'activa', false, 1);
-
--- Monedero: saldo y movimientos de ejemplo (el saldo es la suma de los
--- movimientos aplicados). Los monederos los crea el trigger trg_cliente_monedero.
-INSERT INTO movimientos_monedero (monedero_id, tipo, monto, saldo_resultante, concepto, metodo, referencia, estado, fecha) VALUES
- ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga',  650.00,  650.00, 'Recarga con tarjeta', 'tarjeta', 'REC-1000000001', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '35 days'),
- ((SELECT id FROM monederos WHERE cliente_id = 1), 'recarga', 1000.00, 1650.00, 'Recarga con PayPal',  'paypal',  'REC-1000000002', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '20 days'),
- ((SELECT id FROM monederos WHERE cliente_id = 1), 'ajuste',  -450.00, 1200.00, 'Ajuste: recarga duplicada', NULL, NULL, 'aplicado', CURRENT_TIMESTAMP - INTERVAL '19 days'),
- ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  500.00,  500.00, 'Recarga con tarjeta', 'tarjeta', 'REC-1000000003', 'aplicado', CURRENT_TIMESTAMP - INTERVAL '9 days'),
- ((SELECT id FROM monederos WHERE cliente_id = 2), 'recarga',  300.00,   NULL,  'Recarga por transferencia', 'transferencia', 'REC-1000000004', 'pendiente', CURRENT_TIMESTAMP - INTERVAL '1 days');
-UPDATE movimientos_monedero SET usuario_id = 1 WHERE tipo = 'ajuste';
-UPDATE monederos SET saldo = 1200.00 WHERE cliente_id = 1;
-UPDATE monederos SET saldo =  500.00 WHERE cliente_id = 2;
+   NULL, 15, CURRENT_DATE - INTERVAL '2 days', CURRENT_DATE + INTERVAL '15 days', 'activa', true, 1);
 
 -- =========================================================
---  Listo. Credenciales de prueba:
---    admin@kozmok.mx          / Admin#KZ2026
---    laura.ventas@kozmok.mx    / Ventas#KZ2026     (Ventas)
---    paola.logistica@kozmok.mx / Logistica#KZ2026  (Logística)
---    mariana@correo.com           / Demo#KZ2026   (y diego / sofia / carlos)
+--  Listo. Cuenta inicial del panel:
+--    admin@kozmok.mx  /  Admin#KZ2026
+--  Al entrar la primera vez pide cambiar la contraseña. Los demás
+--  empleados se dan de alta desde el panel (Cuentas y equipo).
 -- =========================================================
 
--- Los datos de ejemplo cuentan como "ya avisados": al configurar Gmail no
--- se mandan correos de pedidos ni promociones que ya existían.
-UPDATE pedidos SET estado_notificado = estado;
+-- Las promociones iniciales cuentan como "ya avisadas": al configurar Gmail
+-- no se manda el boletín de algo que ya existía antes de abrir la tienda.
 UPDATE promociones SET boletin_enviado = CURRENT_TIMESTAMP;

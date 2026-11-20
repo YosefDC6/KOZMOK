@@ -5,14 +5,13 @@
 // Con --ip también prueba "relleno de credenciales" (una contraseña contra
 // muchas cuentas) para ver el límite por conexión y el bloqueo de la IP.
 //
-//   npm run prueba:fuerza-bruta
-//   node pruebas-seguridad/1-fuerza-bruta.js --cuenta=diego@correo.com --ip
-const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, args, C } = require('./comun');
+//   npm run prueba:fuerza-bruta -- --correo=prueba@tucorreo.com --password=TuClave#1
+//   (agrega --ip para probar también el bloqueo por conexión)
+const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, args, C, cuentaPrueba } = require('./comun');
 
-const cuenta = (args.find((a) => a.startsWith('--cuenta=')) || '--cuenta=diego@correo.com').split('=')[1];
-const correcta = (args.find((a) => a.startsWith('--real=')) || '--real=Demo#KZ2026').split('=')[1];
+const { correo: cuenta, password: correcta } = cuentaPrueba();
 // Diccionario corto de contraseñas comunes; la correcta va al final.
-const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Diego2026', 'diego123', 'Mexico2026!', 'Kozmok123', correcta];
+const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Hola2026', 'contrasena1', 'Mexico2026!', 'Kozmok123', correcta];
 
 (async () => {
     await servidorArriba();
@@ -31,7 +30,7 @@ const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Diego2026', 'diego123',
     info('En el panel: Cuenta → Seguridad → Bloqueos (ahí se puede desbloquear).');
 
     paso('Mismo mensaje exista o no el correo (no se puede adivinar quién está registrado)');
-    const a = await navegador().post('/api/auth/login', { tipo: 'cliente', correo: 'mariana@correo.com', password: 'Equivocada#1' });
+    const a = await navegador().post('/api/auth/login', { tipo: 'cliente', correo: cuenta, password: 'Equivocada#1' });
     const b = await navegador().post('/api/auth/login', { tipo: 'cliente', correo: 'no-existe-' + Date.now() + '@correo.com', password: 'Equivocada#1' });
     const limpio = (m) => String(m || '').replace(/ Te quedan.*$/, '');
     verificar('Respuesta igual para un correo real y uno inexistente', a.status === b.status && limpio(a.json.message) === limpio(b.json.message), `"${limpio(a.json.message)}"`);
