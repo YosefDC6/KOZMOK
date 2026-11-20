@@ -305,6 +305,13 @@ async function despacharCorreos() {
     } finally { despachando = false; }
 }
 
+// "Chrome en Windows" a partir del user-agent (para avisos de seguridad).
+function descripcionDispositivo(ua = '') {
+    const nav = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Navegador';
+    const so = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'otro sistema';
+    return `${nav} en ${so}`;
+}
+
 // Dirección pública de la tienda para los enlaces de los correos. Si no se
 // define URL_PUBLICA en el .env se usa la dirección con la que se abrió la
 // página (ojo: "localhost" solo funciona en la misma computadora).
@@ -1512,9 +1519,60 @@ const TEXTO_ESTADO_PEDIDO = {
     entregado: ['Tu pedido fue entregado', '¡Gracias por tu compra! Si algo no está bien, escríbenos desde Soporte.'],
     cancelado: ['Tu pedido se canceló', 'Si ya lo habías pagado, el reembolso se procesa por el mismo medio de pago.'],
 };
+// Detalle del pedido para el correo: productos, totales, envío y pago.
+// Devuelve { texto, html }: el texto va como lista "- …" (versión sin
+// formato) y el HTML la reemplaza por tarjetas (ver htmlCorreo).
+async function detallePedidoCorreo(pedidoId) {
+    const pe = (await pool.query('SELECT * FROM pedidos WHERE id = $1', [pedidoId])).rows[0];
+    const items = (await pool.query(
+        `SELECT pi.cantidad, pi.subtotal, pi.garantia_plan, pi.garantia_meses, p.id AS producto_id, p.nombre
+         FROM pedido_items pi LEFT JOIN productos p ON p.id = pi.producto_id WHERE pi.pedido_id = $1 ORDER BY pi.id`, [pedidoId])).rows;
+    const pts = (await pool.query(`SELECT COALESCE(SUM(puntos),0)::int AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`, [pedidoId])).rows[0].n;
+    const imps = Array.isArray(pe.impuestos_detalle) && pe.impuestos_detalle.length ? pe.impuestos_detalle : [{ nombre: 'IVA', porcentaje: 16, monto: pe.impuestos }];
+    const fecha = (d) => new Date(d).toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Mexico_City' });
+    const totales = [
+        ['Productos', precioTxt(Number(pe.subtotal))],
+        ...(Number(pe.descuento_promocion) > 0 ? [['Promociones', '-' + precioTxt(Number(pe.descuento_promocion))]] : []),
+        ...imps.map((t) => [`${t.nombre} (${Number(t.porcentaje)}%)`, precioTxt(Number(t.monto))]),
+        ['Envío', Number(pe.envio) === 0 ? 'Gratis' : precioTxt(Number(pe.envio))],
+        ...(Number(pe.descuento) > 0 ? [['Puntos canjeados', '-' + precioTxt(Number(pe.descuento))]] : []),
+    ];
+    const datos = [
+        ['Pedido', `${pe.numero_orden} · ${fecha(pe.fecha_pedido)}`],
+        ['Envío a', pe.direccion_envio || '—'],
+        ['Pago', `${pe.metodo_pago || '—'}${pe.pago_estado === 'pendiente' ? ' (pendiente)' : ''}`],
+        ...(pe.pago_estado === 'pendiente' && pe.pago_referencia ? [['Referencia de pago', `${pe.pago_referencia}${pe.pago_vence ? ' · vence ' + fecha(pe.pago_vence) : ''}`]] : []),
+        ...(pe.numero_guia ? [['Guía de envío', `${pe.numero_guia}${pe.transportista ? ' (' + pe.transportista + ')' : ''}`]] : []),
+        ...(pts ? [['Puntos ganados', `${pts.toLocaleString('es-MX')} puntos del Club`]] : []),
+    ];
+    const texto = items.map((i) => `- ${i.nombre || 'Producto'} × ${i.cantidad}: ${precioTxt(Number(i.subtotal))}${i.garantia_plan && i.garantia_meses ? ` (garantía ${i.garantia_plan}, ${i.garantia_meses} meses)` : ''}`)
+        .concat(totales.map(([k, v]) => `- ${k}: ${v}`), [`- TOTAL: ${precioTxt(Number(pe.total))}`], datos.map(([k, v]) => `- ${k}: ${v}`)).join('\n');
+    const fila = (k, v, estilo = '') => `<tr><td style="padding:5px 0;color:${KZ.suave};${estilo}">${escH(k)}</td><td align="right" style="padding:5px 0;font-family:${KZ.mono};color:${KZ.texto};${estilo}">${escH(v)}</td></tr>`;
+    const html = `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 16px;background:${KZ.panel2};border:1px solid ${KZ.linea};border-radius:10px">
+        <tr><td style="padding:14px 16px 6px;font-family:${KZ.titulo};font-style:italic;font-weight:900;text-transform:uppercase;font-size:13px;color:${KZ.acentoClaro}">Tu pedido</td></tr>
+        ${items.map((i) => `<tr><td style="padding:8px 16px;border-top:1px solid ${KZ.linea}">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+              <td style="color:#ffffff;font-weight:bold">${escH(i.nombre || 'Producto')} <span style="color:${KZ.suave};font-weight:normal">× ${i.cantidad}</span>
+                ${i.garantia_plan && i.garantia_meses ? `<div style="font-size:12px;color:${KZ.exito};font-weight:normal">Garantía ${escH(i.garantia_plan)} · ${i.garantia_meses} meses</div>` : ''}</td>
+              <td align="right" style="font-family:${KZ.mono};color:${KZ.texto};white-space:nowrap">${precioTxt(Number(i.subtotal))}</td>
+            </tr></table></td></tr>`).join('')}
+        <tr><td style="padding:8px 16px;border-top:1px solid ${KZ.linea}">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px">
+            ${totales.map(([k, v]) => fila(k, v)).join('')}
+            ${fila('Total', precioTxt(Number(pe.total)), `font-size:17px;font-weight:bold;color:#ffffff;padding-top:9px;border-top:1px solid ${KZ.linea}`)}
+          </table></td></tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;font-size:13px">
+        ${datos.map(([k, v]) => `<tr><td style="padding:6px 0;color:${KZ.suave};white-space:nowrap;vertical-align:top;width:1%;padding-right:14px">${escH(k)}</td><td style="padding:6px 0;color:${KZ.texto}">${escH(v)}</td></tr>`).join('')}
+      </table>`;
+    return { texto, html };
+}
+
 async function avisarEstadoPedidos() {
     const r = await pool.query(
-        `SELECT pe.id, pe.numero_orden, pe.estado, pe.estado_notificado, pe.total, c.id AS cliente_id, c.nombre, c.correo, c.token_baja,
+        `SELECT pe.id, pe.numero_orden, pe.estado, pe.estado_notificado, pe.total, pe.metodo_tipo, pe.pago_estado,
+                c.id AS cliente_id, c.nombre, c.correo, c.token_baja,
                 COALESCE((c.preferencias->>'estado_pedidos')::boolean, TRUE) AS quiere
          FROM pedidos pe JOIN clientes c ON c.id = pe.cliente_id
          WHERE pe.estado IS DISTINCT FROM pe.estado_notificado AND ${CLIENTE_AVISABLE}
@@ -1525,11 +1583,20 @@ async function avisarEstadoPedidos() {
         if (!p.quiere || !t) continue;
         // Al crearse confirmado (pago con tarjeta) se dice "Recibimos tu pedido"
         const titulo = p.estado_notificado == null && p.estado === 'confirmado' ? 'Recibimos tu pedido' : t[0];
+        let extra = t[1];
+        if (p.estado === 'cancelado') {
+            extra = p.pago_estado === 'pendiente' ? 'Como no se había pagado, no hay ningún cargo.'
+                : p.metodo_tipo === 'monedero' ? 'El importe regresó a tu monedero Kozmok.'
+                : 'El reembolso se hace por el mismo medio con el que pagaste; puede tardar de 5 a 10 días hábiles según tu banco.';
+            extra += ' Los puntos que ganaste con este pedido se descontaron y los que canjeaste se te devolvieron.';
+        }
+        const det = await detallePedidoCorreo(p.id);
         await enviarCorreo(pool, {
             para: p.correo, tipo: 'pedido', cliente_id: p.cliente_id, pedido_id: p.id,
             asunto: `${titulo} · ${p.numero_orden}`,
-            cuerpo: `Hola ${p.nombre.split(' ')[0]}:\n\n${titulo}: ${p.numero_orden} por ${precioTxt(p.total)}.\n${t[1]}`,
-            boton: { texto: 'Ver mi pedido', url: `${urlBase(null)}/pedidos.html` },
+            cuerpo: `Hola ${p.nombre.split(' ')[0]}:\n\n${titulo}: ${p.numero_orden} por ${precioTxt(p.total)}.\n${extra}\n\n${det.texto}\n\n¿Algo no cuadra? Responde este correo o escríbenos desde Soporte en tu cuenta.`,
+            extraHtml: det.html,
+            boton: { texto: p.estado === 'pendiente' ? 'Ver mi ficha de pago' : 'Ver mi pedido', url: p.estado === 'pendiente' ? `${urlBase(null)}/recibo.html?id=${p.id}` : `${urlBase(null)}/pedidos.html` },
             bajaUrl: bajaUrlDe(null, p.token_baja, 'estado_pedidos'),
         });
     }
@@ -1963,7 +2030,11 @@ app.put('/api/clientes/:id/password', limiteAuth, asyncRoute(async (req, res) =>
     const cerradas = await seg.revocarSesionesDe('cliente', req.cliente.id, 'cambio de contraseña', req.sesion.id);
     await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: req.cliente.id, detalle: `Cambio de contraseña; ${cerradas} sesión(es) cerradas` });
     await enviarCorreo(pool, { para: c.correo, tipo: 'seguridad', cliente_id: req.cliente.id, asunto: 'Tu contraseña cambió',
-        cuerpo: `Hola ${c.nombre}:\n\nLa contraseña de tu cuenta Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros dispositivos` : ''}. Si no fuiste tú, recupera tu contraseña de inmediato.` });
+        cuerpo: `Hola ${c.nombre}:\n\nLa contraseña de tu cuenta Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros dispositivos` : ''}.\n\n`
+            + `- Fecha: ${new Date().toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Mexico_City' })}\n`
+            + `- Dispositivo: ${descripcionDispositivo(req.headers['user-agent'])}\n\n`
+            + `Si no fuiste tú, recupera tu contraseña de inmediato desde "¿Olvidaste tu contraseña?" y escríbenos.`,
+        boton: { texto: 'Recuperar mi contraseña', url: `${urlPublica(req)}/recuperar.html` } });
     res.json({ message: cerradas ? `Contraseña actualizada. Cerramos ${cerradas} sesión(es) en otros dispositivos.` : 'Contraseña actualizada', sesiones_cerradas: cerradas });
 }));
 
