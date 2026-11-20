@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Devoluciones · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+        <div class="stat-grid" id="kpis"></div>
+        <div class="filters-bar" style="margin-top:18px">
+            <input type="search" id="f-buscar" placeholder="Folio, pedido o cliente…" oninput="pintar()" />
+            <select id="f-estado" onchange="pintar()">
+                <option value="abiertas">Por atender</option>
+                <option value="">Todas</option>
+                <option value="solicitada">Solicitadas</option>
+                <option value="aprobada">Aprobadas (esperando paquete)</option>
+                <option value="recibida">Recibidas</option>
+                <option value="reembolsada">Reembolsadas</option>
+                <option value="cambiada">Cambio enviado</option>
+                <option value="rechazada">Rechazadas</option>
+                <option value="cancelada">Canceladas</option>
+            </select>
+        </div>
+        <div id="lista"></div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-top:10px">
+            Flujo: el cliente la pide desde Mis pedidos → se aprueba o rechaza → al llegar el paquete se registra si cada pieza vuelve a venta
+            (entra al inventario) → se reembolsa o se envía el cambio. El monto lo calcula el sistema con lo que se pagó y no se puede cambiar.
+            Cada paso queda en la auditoría y el cliente recibe un correo.
+        </p>
+    </main>
+</div>
+<div class="modal-overlay" id="modal"><div class="modal" id="modal-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('devoluciones');
+document.getElementById('topbar').innerHTML = adminHeader('Devoluciones', 'Solicitudes de los clientes, recepción de productos y reembolsos.');
+
+const COLOR = { solicitada: 'var(--warning)', aprobada: 'var(--accent-light)', recibida: 'var(--accent-light)', reembolsada: 'var(--success)', cambiada: 'var(--success)', rechazada: 'var(--danger)', cancelada: 'var(--text-muted)' };
+const money2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+let D = { devoluciones: [] };
+const abrir = (html) => { document.getElementById('modal-body').innerHTML = `<button class="modal-close" onclick="cerrar()">${icon('x', 20)}</button>` + html; document.getElementById('modal').classList.add('open'); };
+const cerrar = () => document.getElementById('modal').classList.remove('open');
+const yo = () => Sesion.usuario() || {};
+
+async function cargar() {
+    D = await api('/admin/devoluciones');
+    const n = (e) => D.devoluciones.filter((d) => d.estado === e).length;
+    const reemb = D.devoluciones.filter((d) => d.estado === 'reembolsada').reduce((a, d) => a + Number(d.monto), 0);
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Por revisar</div><div class="stat-value">${n('solicitada')}</div><div class="stat-sub">solicitudes nuevas</div></div>
+        <div class="stat-card"><div class="stat-label">En camino</div><div class="stat-value">${n('aprobada')}</div><div class="stat-sub">aprobadas, esperando paquete</div></div>
+        <div class="stat-card"><div class="stat-label">Por cerrar</div><div class="stat-value">${n('recibida')}</div><div class="stat-sub">recibidas: reembolso o cambio</div></div>
+        <div class="stat-card"><div class="stat-label">Reembolsado</div><div class="stat-value" style="font-size:1.3rem">${money2(reemb)}</div><div class="stat-sub">${n('reembolsada')} devoluciones</div></div>`;
+    pintar();
+}
+
+function pintar() {
+    const q = document.getElementById('f-buscar').value.trim().toLowerCase();
+    const est = document.getElementById('f-estado').value;
+    const lista = D.devoluciones.filter((d) =>
+        (est === 'abiertas' ? ['solicitada', 'aprobada', 'recibida'].includes(d.estado) : !est || d.estado === est) &&
+        (!q || [d.folio, d.numero_orden, d.cliente_nombre, d.cliente_correo].some((x) => String(x || '').toLowerCase().includes(q))));
+    document.getElementById('lista').innerHTML = lista.length ? lista.map((d) => `
+        <div class="card dev-card">
+            <div class="dev-cab">
+                <div><strong class="mono">${escHTML(d.folio)}</strong> <span class="tag" style="color:${COLOR[d.estado]};border-color:${COLOR[d.estado]}">${escHTML(D.estados[d.estado] || d.estado)}</span>
+                    ${d.facturado ? '<span class="tag" title="El reembolso requiere nota de crédito">facturado</span>' : ''}</div>
+                <div class="mono" style="font-size:.8rem;color:var(--text-muted)">${formatoFecha(d.fecha)} · pedido ${escHTML(d.numero_orden)}</div>
+            </div>
+            <div class="dev-cuerpo">
+                <div><span class="dev-lbl">Cliente</span>${escHTML(d.cliente_nombre || '—')}<div class="dev-mut">${escHTML(d.cliente_correo || '')}</div></div>
+                <div><span class="dev-lbl">Productos</span>${d.items.map((i) => `${i.cantidad} × ${escHTML(i.nombre)}${i.reingresa === true ? ' <span class="tag">a venta</span>' : i.reingresa === false ? ' <span class="tag">dañado</span>' : ''}`).join('<br>')}</div>
+                <div><span class="dev-lbl">Motivo</span>${escHTML(D.motivos[d.motivo] || d.motivo)}<div class="dev-mut">${escHTML(d.descripcion)}</div></div>
+                <div><span class="dev-lbl">Quiere</span>${d.resolucion === 'cambio' ? 'Cambio por el mismo producto' : `Reembolso <strong>${money2(d.monto)}</strong>${d.incluye_envio ? ' (incluye envío)' : ''}<div class="dev-mut">${escHTML(D.vias[d.reembolso_via] || '')}</div>`}</div>
+            </div>
+            ${d.nota_equipo || d.reembolso_ref ? `<div class="dev-mut" style="margin-top:6px">${d.nota_equipo ? 'Nota: ' + escHTML(d.nota_equipo) : ''}${d.reembolso_ref ? ' · ' + escHTML(d.reembolso_ref) : ''}${d.cerrado_nombre ? ' · cerró ' + escHTML(d.cerrado_nombre) : ''}</div>` : ''}
+            <div class="dev-acc">${acciones(d)}</div>
+        </div>`).join('') : '<div class="empty-state">No hay devoluciones con este filtro.</div>';
+}
+
+function acciones(d) {
+    if (d.estado === 'solicitada') return `<button class="btn btn-primary btn-sm" onclick="revisar(${d.id}, 'aprobar')">Aprobar</button>
+        <button class="btn btn-ghost btn-sm" onclick="revisar(${d.id}, 'rechazar')">Rechazar</button>`;
+    if (d.estado === 'aprobada') return `<button class="btn btn-primary btn-sm" onclick="recibir(${d.id})">Llegó el paquete</button>`;
+    if (d.estado === 'recibida') {
+        const grande = Number(d.monto) > D.umbral_admin && yo().rol !== 'admin';
+        return `<button class="btn btn-primary btn-sm" onclick="reembolsar(${d.id})" ${grande ? `disabled title="Más de ${money2(D.umbral_admin)}: lo autoriza un administrador"` : ''}>Reembolsar ${money2(d.monto)}</button>
+            <button class="btn btn-outline btn-sm" onclick="cambiar(${d.id})">Enviar cambio</button>`;
+    }
+    return '';
+}
+
+function revisar(id, decision) {
+    const d = D.devoluciones.find((x) => x.id === id);
+    abrir(`<h3 style="margin-bottom:4px">${decision === 'aprobar' ? 'Aprobar' : 'Rechazar'} ${escHTML(d.folio)}</h3>
+        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">${decision === 'aprobar' ? 'El cliente recibe por correo cómo enviarnos el producto.' : 'El cliente recibe este motivo por correo.'}</p>
+        <div class="field"><label>${decision === 'aprobar' ? 'Nota para el cliente (opcional)' : 'Motivo del rechazo'}</label>
+            <textarea id="rv-nota" rows="3" placeholder="${decision === 'aprobar' ? 'Ej. Incluye el cargador y el folio dentro de la caja' : 'Ej. Pasaron más de 30 días; para fallas aplica la garantía'}"></textarea></div>
+        <button class="btn btn-primary" style="width:100%" onclick="enviarRevision(${id}, '${decision}')">${decision === 'aprobar' ? 'Aprobar' : 'Rechazar'}</button>`);
+}
+async function enviarRevision(id, decision) {
+    const nota = document.getElementById('rv-nota').value.trim();
+    if (decision === 'rechazar' && nota.length < 10) return toast('Explica el motivo (al menos 10 caracteres)', 'warn');
+    try { const r = await api(`/admin/devoluciones/${id}/revisar`, { method: 'POST', body: { decision, nota } }); cerrar(); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+function recibir(id) {
+    const d = D.devoluciones.find((x) => x.id === id);
+    abrir(`<h3 style="margin-bottom:4px">Recibir ${escHTML(d.folio)}</h3>
+        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">Revisa cada pieza. Si está en buen estado vuelve a venta (entra al inventario con la fecha de hoy); si está dañada no se suma.</p>
+        ${d.items.map((i) => `<label class="dev-rec"><input type="checkbox" data-rec="${i.id}" style="width:auto" ${d.motivo === 'no_satisface' ? 'checked' : ''} />
+            ${i.cantidad} × ${escHTML(i.nombre)} <span class="dev-mut">— vuelve a venta</span></label>`).join('')}
+        <div class="field" style="margin-top:10px"><label>Nota de la revisión</label><textarea id="rc-nota" rows="2" placeholder="Estado del producto, accesorios que faltan…"></textarea></div>
+        <button class="btn btn-primary" style="width:100%" onclick="enviarRecepcion(${id})">Registrar recepción</button>`);
+}
+async function enviarRecepcion(id) {
+    const items = [...document.querySelectorAll('[data-rec]')].map((c) => ({ id: Number(c.dataset.rec), reingresa: c.checked }));
+    try { const r = await api(`/admin/devoluciones/${id}/recibir`, { method: 'POST', body: { items, nota: document.getElementById('rc-nota').value.trim() } }); cerrar(); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+async function reembolsar(id) {
+    const d = D.devoluciones.find((x) => x.id === id);
+    const body = { accion: 'reembolsar' };
+    if (d.reembolso_via === 'transferencia') {
+        const folio = await pedirDato(`Folio de la transferencia con la que reembolsaste ${money2(d.monto)} a ${d.cliente_nombre}:`, { placeholder: 'Ej. 0099812374', okText: 'Registrar reembolso' });
+        if (folio === null) return;
+        if (folio.trim().length < 4) return toast('Escribe el folio de la transferencia', 'warn');
+        body.comprobante = folio.trim();
+    } else if (!(await confirmar(`Se reembolsarán ${money2(d.monto)} ${d.reembolso_via === 'paypal' ? 'por PayPal' : 'al monedero del cliente'} y se le retiran los puntos de esa parte de la compra. ¿Continuar?`, { okText: 'Reembolsar' }))) return;
+    try { const r = await api(`/admin/devoluciones/${id}/cerrar`, { method: 'POST', body }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function cambiar(id) {
+    const guia = await pedirDato('Número de guía con el que sale el cambio (se descuenta del inventario):', { placeholder: 'Ej. 7781234567', okText: 'Registrar envío' });
+    if (guia === null) return;
+    if (guia.trim().length < 4) return toast('Escribe el número de guía', 'warn');
+    try { const r = await api(`/admin/devoluciones/${id}/cerrar`, { method: 'POST', body: { accion: 'cambiar', guia: guia.trim() } }); toast(r.message, 'ok'); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+cargar();
+</script>
+</body>
+</html>

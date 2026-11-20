@@ -30,7 +30,7 @@
         ventas: [
             'dashboard', 'clientes', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
-            'promociones', 'monedero', 'pagos', 'facturas',
+            'promociones', 'monedero', 'pagos', 'facturas', 'devoluciones',
             'mi-actividad',
         ],
 
@@ -38,7 +38,7 @@
         // captura órdenes nuevas, las surte y las envía) y Reportes.
         logistica: [
             'scm', 'productos', 'productos-editar', 'inventario', 'reposicion',
-            'ordenes-erp', 'orden-nueva', 'reportes-erp',
+            'ordenes-erp', 'orden-nueva', 'reportes-erp', 'devoluciones',
         ],
     };
 

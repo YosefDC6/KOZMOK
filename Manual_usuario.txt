@@ -1251,6 +1251,46 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         deduce de la categoria (laptops 43211503, escritorio 43211507,
         teclados 43211706, mouse 43211708; si no, 01010101).
 
+   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica]
+      - El cliente la pide desde Mis pedidos -> Ver detalle (pedido
+        entregado, hasta 30 dias): productos y cantidades, motivo
+        (defectuoso, danado en el envio, producto equivocado, no me
+        convencio -sin usar y en su empaque-, otro), descripcion, y si
+        quiere REEMBOLSO (a PayPal/tarjeta, al monedero o por transferencia,
+        segun como pago) o CAMBIO por el mismo producto.
+      - El monto lo calcula el sistema con lo que realmente se pago por cada
+        pieza (promocion, garantia, IVA y la parte de los puntos usados) y no
+        se puede cambiar. El envio se incluye si el problema fue de la
+        tienda y se devuelve todo el pedido.
+      - Indicadores: por revisar, en camino, por cerrar y reembolsado.
+      - Flujo y botones:
+          Solicitada -> "Aprobar" (con nota) o "Rechazar" (motivo obligatorio)
+          Aprobada   -> "Llego el paquete": por cada pieza se marca si vuelve
+                        a venta (entra al inventario como "Devolucion de
+                        cliente" con fecha del servidor) o esta danada
+          Recibida   -> "Reembolsar" (PayPal: reembolso real parcial;
+                        monedero: al momento; transferencia: pide el folio)
+                        o "Enviar cambio" (pide guia; descuenta del inventario
+                        como "Reemplazo a cliente"; si no hay existencias,
+                        ofrecer el reembolso).
+      - Reembolsos mayores a $3,000 solo los autoriza un administrador.
+      - Al reembolsar se retiran los puntos que dio esa parte de la compra.
+      - Si el pedido esta facturado aparece la etiqueta "facturado": hay que
+        emitir la nota de credito en Facturama.
+      - El cliente recibe un correo en cada paso y ve el estado en el
+        detalle de su pedido. Cada paso queda en la auditoria. Las
+        devoluciones no se editan ni se borran (la base lo impide).
+
+   PRODUCTOS DESACTIVADOS
+      - Eliminar un producto con ventas o movimientos lo DESACTIVA. El panel
+        avisa cuantos pedidos en proceso lo incluyen (se surten normal) y en
+        cuantos carritos esta.
+      - El cliente ya no lo ve en la tienda. En su carrito aparece aparte como
+        "ya no esta a la venta" (no cuenta en el total y no se puede comprar);
+        en Favoritos sale con esa etiqueta y sin boton de compra.
+      - Sus pedidos ya hechos siguen igual: rastreo, garantia, factura y
+        devolucion.
+
 
 ===============================================================================
  5. ROLES INTERNOS  -  QUE VE Y HACE CADA UNO

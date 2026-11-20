@@ -994,7 +994,7 @@ app.get('/api/club/regla', asyncRoute(async (req, res) => {
 app.post('/api/checkout/cotizar', asyncRoute(async (req, res) => {
     const items = Array.isArray(req.body.items) ? req.body.items : [];
     const ids = items.map((i) => Number(i.producto_id)).filter(Boolean);
-    const prods = ids.length ? (await pool.query('SELECT id, nombre, precio, categoria_id, stock FROM productos WHERE id = ANY($1)', [ids])).rows : [];
+    const prods = ids.length ? (await pool.query('SELECT id, nombre, precio, categoria_id, stock FROM productos WHERE id = ANY($1) AND activo = TRUE', [ids])).rows : [];
     const lineas = items.map((i) => {
         const p = prods.find((x) => x.id === Number(i.producto_id));
         if (!p) return null;
@@ -1234,7 +1234,7 @@ app.get('/api/carrito/:clienteId', mismoCliente, asyncRoute(async (req, res) => 
     const result = await pool.query(
         `SELECT cd.id, cd.cantidad, cd.precio_unitario, cd.garantia_clave, cd.garantia_plan, cd.garantia_meses, cd.garantia_costo,
                 p.id AS producto_id, p.nombre, p.precio, p.imagen_url, p.stock, p.categoria_id, c.nombre AS categoria_nombre,
-                ca.id AS carrito_id, ca.estado AS carrito_estado
+                p.activo, ca.id AS carrito_id, ca.estado AS carrito_estado
          FROM carrito ca
          JOIN carrito_detalle cd ON cd.carrito_id = ca.id
          JOIN productos p ON cd.producto_id = p.id
@@ -1932,7 +1932,8 @@ const procesarCompra = asyncRoute(async (req, res) => {
             const cantidad = Math.floor(Number(item.cantidad));
             if (!(cantidad > 0)) throw new Error('Cantidad inválida en el carrito');
             const prod = await client.query('SELECT id, precio, stock, nombre, categoria_id, activo FROM productos WHERE id = $1 FOR UPDATE', [item.producto_id]);
-            if (prod.rows.length === 0 || !prod.rows[0].activo) throw new Error(`Producto ${item.producto_id} no disponible`);
+            if (prod.rows.length === 0) throw new Error('Uno de los productos de tu carrito ya no existe; quítalo para continuar');
+            if (!prod.rows[0].activo) throw new Error(`"${prod.rows[0].nombre}" ya no está a la venta; quítalo de tu carrito para continuar`);
             const p = prod.rows[0];
             if (p.stock < cantidad) throw new Error(`Stock insuficiente para "${p.nombre}" (disponible: ${p.stock})`);
             const gp = planGarantia(item.garantia);
@@ -2313,6 +2314,285 @@ app.post('/api/admin/facturas/:id/cancelar', asyncRoute(async (req, res) => {
 }));
 
 // =========================================================
+// DEVOLUCIONES
+//   Cliente (detalle del pedido entregado, hasta DEVOLUCION_DIAS):
+//     GET  /api/pedidos/:id/devolucion          qué puede devolver y cuánto le toca
+//     POST /api/pedidos/:id/devolucion          solicitar
+//     POST /api/devoluciones/:id/cancelar       retirar su solicitud
+//   Equipo (Panel > Devoluciones):
+//     GET  /api/admin/devoluciones
+//     POST /api/admin/devoluciones/:id/revisar  aprobar / rechazar
+//     POST /api/admin/devoluciones/:id/recibir  llegó el paquete: ¿vuelve a venta?
+//     POST /api/admin/devoluciones/:id/cerrar   reembolsar o enviar el cambio
+//   El monto lo calcula el servidor con lo que realmente se pagó por cada pieza
+//   (promociones, garantía, IVA y puntos repartidos) y no cambia después.
+// =========================================================
+const DEV = {
+    dias: Number(process.env.DEVOLUCION_DIAS) || 30,
+    umbralAdmin: Number(process.env.DEVOLUCION_UMBRAL_ADMIN) || 3000,   // reembolsos mayores: solo administrador
+    motivos: {
+        defectuoso: 'Llegó defectuoso o falla', danado_envio: 'Llegó dañado por el envío', equivocado: 'Me llegó un producto distinto',
+        no_satisface: 'No me convenció (sin usar, en su empaque)', otro: 'Otro motivo',
+    },
+    culpaTienda: ['defectuoso', 'danado_envio', 'equivocado'],   // en estos casos también se devuelve el envío
+    vias: { paypal: 'A tu PayPal o tarjeta', monedero: 'A tu monedero Kozmok (al momento)', transferencia: 'Por transferencia (te contactamos para tus datos)' },
+    estados: { solicitada: 'Solicitada', aprobada: 'Aprobada: envía el producto', rechazada: 'Rechazada', recibida: 'Recibida, en revisión', reembolsada: 'Reembolsada', cambiada: 'Cambio enviado', cancelada: 'Cancelada' },
+};
+const viasDevolucion = (metodoTipo) => metodoTipo === 'paypal' ? ['paypal', 'monedero'] : metodoTipo === 'monedero' ? ['monedero'] : ['monedero', 'transferencia'];
+
+// Qué se puede devolver de un pedido y cuánto vale cada pieza
+async function opcionesDevolucion(db, pedido) {
+    const items = (await db.query(
+        `SELECT pi.id AS pedido_item_id, pi.producto_id, pi.cantidad, pi.subtotal, pi.descuento, pi.garantia_costo,
+                p.nombre, p.imagen_url, p.activo,
+                COALESCE((SELECT SUM(di.cantidad) FROM devolucion_items di JOIN devoluciones d ON d.id = di.devolucion_id
+                          WHERE di.pedido_item_id = pi.id AND d.estado NOT IN ('rechazada','cancelada')), 0)::int AS devueltas
+         FROM pedido_items pi LEFT JOIN productos p ON p.id = pi.producto_id WHERE pi.pedido_id = $1 ORDER BY pi.id`, [pedido.id])).rows;
+    const neto = (i) => Number(i.subtotal) - Number(i.descuento || 0) + Number(i.garantia_costo || 0);
+    const base = items.reduce((a, i) => a + neto(i), 0);
+    const pagadoProductos = Math.max(0, Number(pedido.total) - Number(pedido.envio || 0));
+    const factor = base > 0 ? pagadoProductos / base : 0;
+    const lista = items.map((i) => ({
+        pedido_item_id: i.pedido_item_id, producto_id: i.producto_id, nombre: i.nombre, imagen_url: i.imagen_url, activo: i.activo,
+        cantidad: i.cantidad, devueltas: i.devueltas, disponibles: Math.max(0, i.cantidad - i.devueltas),
+        monto_unitario: redondear(neto(i) / i.cantidad * factor),
+    }));
+    let razon = null;
+    const limite = pedido.fecha_entrega ? new Date(new Date(pedido.fecha_entrega).getTime() + DEV.dias * 86400000) : null;
+    if (pedido.estado !== 'entregado') razon = 'Podrás pedir una devolución cuando el pedido esté entregado. Si aún no lo recibes, puedes cancelarlo o escribirnos en Soporte.';
+    else if (limite && Date.now() > limite.getTime()) razon = `El plazo de ${DEV.dias} días para devoluciones terminó el ${limite.toLocaleDateString('es-MX')}. Si es por garantía, escríbenos en Soporte.`;
+    else if (!lista.some((i) => i.disponibles > 0)) razon = 'Ya pediste la devolución de todos los productos de este pedido.';
+    return { items: lista, razon, limite, vias: viasDevolucion(pedido.metodo_tipo) };
+}
+
+async function avisarDevolucion(dev, titulo, texto) {
+    if (!correo.configurado() || !dev.cliente_id) return;
+    const c = (await pool.query('SELECT nombre, correo FROM clientes WHERE id = $1', [dev.cliente_id])).rows[0];
+    if (!c || !c.correo) return;
+    await enviarCorreo(pool, {
+        para: c.correo, tipo: 'pedido', cliente_id: dev.cliente_id, pedido_id: dev.pedido_id,
+        asunto: `${titulo} · ${dev.folio}`,
+        cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\n${texto}\n\nFolio de tu devolución: ${dev.folio}. Puedes ver cómo va en Mis pedidos.`,
+        boton: { texto: 'Ver mis pedidos', url: `${urlBase(null)}/pedidos.html` },
+    }).catch(() => {});
+    avisarPronto();
+}
+
+app.get('/api/pedidos/:id/devolucion', requireCliente, asyncRoute(async (req, res) => {
+    const p = (await pool.query('SELECT * FROM pedidos WHERE id = $1 AND cliente_id = $2', [req.params.id, req.cliente.id])).rows[0];
+    if (!p) return res.status(404).json({ message: 'Pedido no encontrado' });
+    const o = await opcionesDevolucion(pool, p);
+    const devs = (await pool.query(
+        `SELECT d.id, d.folio, d.estado, d.motivo, d.resolucion, d.reembolso_via, d.monto, d.incluye_envio, d.nota_equipo, d.fecha, d.fecha_cierre,
+                COALESCE(json_agg(json_build_object('nombre', p.nombre, 'cantidad', di.cantidad)) FILTER (WHERE di.id IS NOT NULL), '[]') AS items
+         FROM devoluciones d LEFT JOIN devolucion_items di ON di.devolucion_id = d.id LEFT JOIN productos p ON p.id = di.producto_id
+         WHERE d.pedido_id = $1 GROUP BY d.id ORDER BY d.id DESC`, [p.id])).rows;
+    res.json({ ...o, envio: Number(p.envio || 0), dias: DEV.dias, motivos: DEV.motivos, vias_txt: DEV.vias, estados: DEV.estados, devoluciones: devs,
+               abierta: devs.some((d) => ['solicitada', 'aprobada', 'recibida'].includes(d.estado)) });
+}));
+
+app.post('/api/pedidos/:id/devolucion', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    const b = req.body || {};
+    const motivo = DEV.motivos[b.motivo] ? b.motivo : null;
+    const descripcion = String(b.descripcion || '').trim().slice(0, 2000);
+    const resolucion = b.resolucion === 'cambio' ? 'cambio' : 'reembolso';
+    if (!motivo) return res.status(400).json({ message: 'Elige el motivo de la devolución' });
+    if (descripcion.length < 15) return res.status(400).json({ message: 'Cuéntanos qué pasó (al menos 15 caracteres)' });
+    if (motivo === 'no_satisface' && !b.condicion) return res.status(400).json({ message: 'Para devolver un producto que no te convenció debe estar sin usar y en su empaque original' });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1 AND cliente_id = $2 FOR UPDATE', [req.params.id, req.cliente.id])).rows[0];
+        if (!p) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pedido no encontrado' }); }
+        const o = await opcionesDevolucion(client, p);
+        if (o.razon) { await client.query('ROLLBACK'); return res.status(400).json({ message: o.razon }); }
+        const abierta = (await client.query(`SELECT folio FROM devoluciones WHERE pedido_id = $1 AND estado IN ('solicitada','aprobada','recibida')`, [p.id])).rows[0];
+        if (abierta) { await client.query('ROLLBACK'); return res.status(400).json({ message: `Ya tienes la devolución ${abierta.folio} en curso para este pedido` }); }
+        const via = resolucion === 'cambio' ? null : (o.vias.includes(b.reembolso_via) ? b.reembolso_via : null);
+        if (resolucion === 'reembolso' && !via) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Elige cómo quieres tu reembolso' }); }
+        const partidas = [];
+        for (const it of Array.isArray(b.items) ? b.items : []) {
+            const x = o.items.find((i) => i.pedido_item_id === Number(it.pedido_item_id));
+            const cant = Math.floor(Number(it.cantidad));
+            if (!x || !(cant > 0)) continue;
+            if (cant > x.disponibles) { await client.query('ROLLBACK'); return res.status(400).json({ message: `De "${x.nombre}" puedes devolver hasta ${x.disponibles}` }); }
+            partidas.push({ ...x, cant, monto: redondear(x.monto_unitario * cant) });
+        }
+        if (!partidas.length) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Elige qué productos quieres devolver' }); }
+        // Si fue culpa de la tienda y se devuelve todo lo que quedaba, también se reembolsa el envío
+        const todo = o.items.every((i) => (partidas.find((x) => x.pedido_item_id === i.pedido_item_id) || { cant: 0 }).cant === i.disponibles);
+        const sinDevolverAntes = o.items.every((i) => i.devueltas === 0);
+        const incluyeEnvio = resolucion === 'reembolso' && DEV.culpaTienda.includes(motivo) && todo && sinDevolverAntes && Number(p.envio) > 0;
+        const monto = redondear(partidas.reduce((a, x) => a + x.monto, 0) + (incluyeEnvio ? Number(p.envio) : 0));
+        const folio = 'DEV-' + String((await client.query("SELECT nextval('folio_devolucion_seq') AS n")).rows[0].n).padStart(5, '0');
+        const d = (await client.query(
+            `INSERT INTO devoluciones (folio, pedido_id, cliente_id, motivo, descripcion, resolucion, reembolso_via, monto, incluye_envio)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [folio, p.id, req.cliente.id, motivo, descripcion, resolucion, via, monto, incluyeEnvio])).rows[0];
+        for (const x of partidas) {
+            await client.query('INSERT INTO devolucion_items (devolucion_id, pedido_item_id, producto_id, cantidad, monto) VALUES ($1,$2,$3,$4,$5)',
+                [d.id, x.pedido_item_id, x.producto_id, x.cant, x.monto]);
+        }
+        await client.query(`INSERT INTO interacciones (cliente_id, tipo, descripcion, origen) VALUES ($1, 'soporte', $2, 'cliente')`,
+            [req.cliente.id, `Solicitó la devolución ${folio} del pedido ${p.numero_orden} (${DEV.motivos[motivo]}; ${resolucion === 'cambio' ? 'quiere cambio' : 'reembolso ' + formatoMXN(monto)})`]);
+        await client.query('COMMIT');
+        avisarDevolucion(d, 'Recibimos tu solicitud de devolución',
+            `Recibimos tu solicitud para ${resolucion === 'cambio' ? 'cambiar' : 'devolver'} ${partidas.map((x) => `${x.cant} × ${x.nombre}`).join(', ')} del pedido ${p.numero_orden}.`
+            + (resolucion === 'reembolso' ? ` Si se aprueba, te reembolsaremos ${formatoMXN(monto)} (${DEV.vias[via].toLowerCase()}).` : '')
+            + ' La revisamos en 1 a 2 días hábiles y te avisamos por correo cómo enviarnos el producto.');
+        res.status(201).json({ message: `Solicitud ${folio} enviada. Te avisamos por correo cuando la revisemos.`, devolucion: d });
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+}));
+
+app.post('/api/devoluciones/:id/cancelar', requireCliente, asyncRoute(async (req, res) => {
+    const d = (await pool.query('SELECT * FROM devoluciones WHERE id = $1 AND cliente_id = $2', [req.params.id, req.cliente.id])).rows[0];
+    if (!d) return res.status(404).json({ message: 'Devolución no encontrada' });
+    if (!['solicitada', 'aprobada'].includes(d.estado)) return res.status(400).json({ message: 'Esta devolución ya no se puede cancelar' });
+    await pool.query(`UPDATE devoluciones SET estado = 'cancelada', nota_equipo = COALESCE(nota_equipo || ' · ', '') || 'Cancelada por el cliente' WHERE id = $1`, [d.id]);
+    res.json({ message: `Cancelaste la devolución ${d.folio}` });
+}));
+
+// ---- Equipo
+app.get('/api/admin/devoluciones', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT d.*, p.numero_orden, p.metodo_tipo, p.total AS total_pedido, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
+                ur.nombre AS revisado_nombre, uc.nombre AS cerrado_nombre,
+                EXISTS (SELECT 1 FROM facturas f WHERE f.pedido_id = p.id AND f.estado = 'timbrada') AS facturado,
+                COALESCE(json_agg(json_build_object('id', di.id, 'nombre', pr.nombre, 'producto_id', di.producto_id, 'cantidad', di.cantidad,
+                                                    'monto', di.monto, 'reingresa', di.reingresa, 'stock', pr.stock, 'activo', pr.activo) ORDER BY di.id)
+                         FILTER (WHERE di.id IS NOT NULL), '[]') AS items
+         FROM devoluciones d JOIN pedidos p ON p.id = d.pedido_id LEFT JOIN clientes c ON c.id = d.cliente_id
+         LEFT JOIN usuarios ur ON ur.id = d.revisado_por LEFT JOIN usuarios uc ON uc.id = d.cerrado_por
+         LEFT JOIN devolucion_items di ON di.devolucion_id = d.id LEFT JOIN productos pr ON pr.id = di.producto_id
+         GROUP BY d.id, p.id, c.id, ur.id, uc.id ORDER BY d.id DESC LIMIT 300`);
+    res.json({ devoluciones: r.rows, motivos: DEV.motivos, vias: DEV.vias, estados: DEV.estados, umbral_admin: DEV.umbralAdmin });
+}));
+
+app.post('/api/admin/devoluciones/:id/revisar', asyncRoute(async (req, res) => {
+    const aprobar = req.body.decision === 'aprobar';
+    const nota = String(req.body.nota || '').trim().slice(0, 1000);
+    if (!aprobar && nota.length < 10) return res.status(400).json({ message: 'Explica al cliente por qué se rechaza (al menos 10 caracteres)' });
+    const d = (await pool.query('SELECT * FROM devoluciones WHERE id = $1', [req.params.id])).rows[0];
+    if (!d) return res.status(404).json({ message: 'Devolución no encontrada' });
+    if (d.estado !== 'solicitada') return res.status(400).json({ message: 'Esta devolución ya se revisó' });
+    await pool.query('UPDATE devoluciones SET estado = $2, nota_equipo = $3, revisado_por = $4 WHERE id = $1', [d.id, aprobar ? 'aprobada' : 'rechazada', nota || null, req.usuario.id]);
+    await auditar(pool, req, { accion: aprobar ? 'devolucion_aprobada' : 'devolucion_rechazada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto }, motivo: nota || null });
+    const dir = process.env.DEVOLUCIONES_DIRECCION || 'la dirección que te indicaremos por correo';
+    avisarDevolucion(d, aprobar ? 'Tu devolución fue aprobada' : 'Tu devolución no fue aprobada', aprobar
+        ? `Aprobamos tu devolución. Empaca el producto con sus accesorios, escribe el folio ${d.folio} en la caja y envíalo a ${dir}. Cuando lo recibamos y lo revisemos, ${d.resolucion === 'cambio' ? 'te enviamos el cambio' : `te reembolsamos ${formatoMXN(d.monto)}`}.${nota ? '\n\nNota del equipo: ' + nota : ''}`
+        : `Revisamos tu solicitud y no pudimos aprobarla: ${nota}\n\nSi tienes dudas, responde este correo o escríbenos en Soporte.`);
+    res.json({ message: aprobar ? 'Devolución aprobada; le avisamos al cliente cómo enviarla' : 'Devolución rechazada; le avisamos al cliente' });
+}));
+
+app.post('/api/admin/devoluciones/:id/recibir', asyncRoute(async (req, res) => {
+    const nota = String(req.body.nota || '').trim().slice(0, 1000);
+    const marcas = Array.isArray(req.body.items) ? req.body.items : [];
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
+        if (d.estado !== 'aprobada') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Solo se recibe una devolución aprobada' }); }
+        const items = (await client.query('SELECT di.*, p.costo_unitario, p.precio FROM devolucion_items di LEFT JOIN productos p ON p.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
+        let reingresan = 0;
+        for (const it of items) {
+            const vuelve = !!(marcas.find((m) => Number(m.id) === it.id) || {}).reingresa;
+            await client.query('UPDATE devolucion_items SET reingresa = $2 WHERE id = $1', [it.id, vuelve]);
+            if (vuelve && it.producto_id) {
+                // La pieza vuelve a venta: entrada de inventario con fecha del servidor
+                await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
+                await client.query(
+                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
+                     VALUES ($1,'entrada',$2,$3,'devolucion_cliente',$4,$5)`,
+                    [it.producto_id, it.cantidad, `Devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
+                reingresan += it.cantidad;
+            }
+        }
+        await client.query(`UPDATE devoluciones SET estado = 'recibida', nota_equipo = COALESCE(NULLIF($2, ''), nota_equipo) WHERE id = $1`, [d.id, nota]);
+        await auditar(client, req, { accion: 'devolucion_recibida', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, piezas_a_venta: reingresan }, motivo: nota || null });
+        await client.query('COMMIT');
+        avisarDevolucion(d, 'Recibimos tu devolución', `Ya llegó tu devolución y la estamos revisando. ${d.resolucion === 'cambio' ? 'En cuanto salga tu cambio te mandamos la guía.' : `En breve te reembolsamos ${formatoMXN(d.monto)}.`}`);
+        res.json({ message: `Recibida. ${reingresan ? reingresan + ' pieza(s) regresaron a inventario.' : 'Ninguna pieza regresó a venta.'}` });
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+}));
+
+app.post('/api/admin/devoluciones/:id/cerrar', limiteDinero, asyncRoute(async (req, res) => {
+    const accion = req.body.accion === 'cambiar' ? 'cambiar' : 'reembolsar';
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const d = (await client.query('SELECT * FROM devoluciones WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!d) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Devolución no encontrada' }); }
+        if (d.estado !== 'recibida') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Primero registra que se recibió el producto' }); }
+        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1', [d.pedido_id])).rows[0];
+        const items = (await client.query('SELECT di.*, pr.nombre, pr.stock, pr.costo_unitario, pr.precio FROM devolucion_items di LEFT JOIN productos pr ON pr.id = di.producto_id WHERE di.devolucion_id = $1', [d.id])).rows;
+
+        if (accion === 'cambiar') {
+            const guia = String(req.body.guia || '').trim().slice(0, 60);
+            if (guia.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el número de guía del envío del cambio' }); }
+            for (const it of items) {
+                const pr = (await client.query('SELECT stock FROM productos WHERE id = $1 FOR UPDATE', [it.producto_id])).rows[0];
+                if (!pr || pr.stock < it.cantidad) { await client.query('ROLLBACK'); return res.status(400).json({ message: `No hay existencias de "${it.nombre}" para el cambio; ofrécele el reembolso` }); }
+                await client.query('UPDATE productos SET stock = stock - $1 WHERE id = $2', [it.cantidad, it.producto_id]);
+                await client.query(
+                    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, motivo, motivo_tipo, usuario_id, valor)
+                     VALUES ($1,'salida',$2,$3,'reemplazo_cliente',$4,$5)`,
+                    [it.producto_id, it.cantidad, `Cambio por devolución ${d.folio}`, req.usuario.id, redondear(Number(it.costo_unitario || it.precio || 0) * it.cantidad)]);
+            }
+            await client.query(`UPDATE devoluciones SET estado = 'cambiada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, `Guía ${guia}`, req.usuario.id]);
+            await auditar(client, req, { accion: 'devolucion_cambio', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, guia } });
+            await client.query('COMMIT');
+            avisarDevolucion(d, 'Tu cambio va en camino', `Enviamos tu cambio de ${items.map((i) => `${i.cantidad} × ${i.nombre}`).join(', ')}. Número de guía: ${guia}.`);
+            return res.json({ message: 'Cambio registrado; se descontó del inventario y le avisamos al cliente' });
+        }
+
+        // Reembolso
+        if (Number(d.monto) > DEV.umbralAdmin && req.usuario.rol !== 'admin') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: `Los reembolsos mayores a ${formatoMXN(DEV.umbralAdmin)} los autoriza un administrador` });
+        }
+        const via = d.reembolso_via || viasDevolucion(p.metodo_tipo)[0];
+        let ref = null;
+        if (via === 'paypal') {
+            const pp = (await client.query(`SELECT * FROM pagos_paypal WHERE pedido_id = $1 AND estado = 'capturada' ORDER BY id DESC LIMIT 1`, [p.id])).rows[0];
+            if (!pp) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'No encontré el cobro de PayPal de este pedido; reembolsa al monedero' }); }
+            if (!paypal.configurado()) { await client.query('ROLLBACK'); return res.status(503).json({ message: 'PayPal no está configurado en el servidor' }); }
+            const r = await paypal.reembolsar(pp.captura_id, { monto: d.monto, nota: `Devolución ${d.folio}`, requestId: `kz-dev-${d.id}` });
+            ref = `PayPal ${r.id || ''}`.trim();
+        } else if (via === 'monedero') {
+            const m = await monederoDe(client, p.cliente_id, { bloquear: true });
+            const mov = await moverMonedero(client, m, { tipo: 'reembolso', monto: Number(d.monto), concepto: `Devolución ${d.folio}`, pedidoId: p.id, usuarioId: req.usuario.id });
+            ref = `Monedero mov. ${mov.id}`;
+        } else {
+            const comp = String(req.body.comprobante || '').trim().slice(0, 60);
+            if (comp.length < 4) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Escribe el folio de la transferencia del reembolso' }); }
+            const dup = (await client.query(`SELECT folio FROM devoluciones WHERE reembolso_ref = $1`, [`Transferencia ${comp}`])).rows[0];
+            if (dup) { await client.query('ROLLBACK'); return res.status(400).json({ message: `Ese folio ya se usó en la devolución ${dup.folio}` }); }
+            ref = `Transferencia ${comp}`;
+        }
+        // Se retiran los puntos que dio la parte devuelta de la compra
+        const ganados = Number((await client.query(`SELECT COALESCE(SUM(puntos), 0) AS n FROM movimientos_puntos WHERE pedido_id = $1 AND tipo = 'ganado'`, [p.id])).rows[0].n);
+        const pagado = Math.max(1, Number(p.total) - Number(p.envio || 0));
+        const retirar = Math.floor(ganados * Math.min(1, (Number(d.monto) - (d.incluye_envio ? Number(p.envio) : 0)) / pagado));
+        if (retirar > 0 && p.cliente_id) {
+            await client.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [retirar, p.cliente_id]);
+            await client.query(`INSERT INTO movimientos_puntos (cliente_id, tipo, puntos, motivo, pedido_id) VALUES ($1,'ajuste',$2,$3,$4)`,
+                [p.cliente_id, -retirar, `Devolución ${d.folio}`, p.id]);
+        }
+        await client.query(`UPDATE devoluciones SET estado = 'reembolsada', reembolso_ref = $2, cerrado_por = $3 WHERE id = $1`, [d.id, ref, req.usuario.id]);
+        await auditar(client, req, { accion: 'devolucion_reembolsada', entidad: 'pedido', entidad_id: d.pedido_id, despues: { folio: d.folio, monto: d.monto, via, ref, puntos_retirados: retirar } });
+        await client.query('COMMIT');
+        const facturado = (await pool.query(`SELECT 1 FROM facturas WHERE pedido_id = $1 AND estado = 'timbrada'`, [p.id])).rows.length > 0;
+        avisarDevolucion(d, 'Te reembolsamos tu devolución', `Te reembolsamos ${formatoMXN(d.monto)} ${via === 'paypal' ? 'por PayPal (si pagaste con tarjeta, tu banco puede tardar de 5 a 10 días hábiles en reflejarlo)' : via === 'monedero' ? 'en tu monedero Kozmok; ya puedes usarlo' : 'por transferencia'}.${retirar ? ` Se descontaron ${retirar} puntos que te había dado esa parte de la compra.` : ''}`);
+        res.json({ message: `Reembolso de ${formatoMXN(d.monto)} hecho (${ref}).${retirar ? ` Se retiraron ${retirar} puntos.` : ''}${facturado ? ' Este pedido tiene factura: emite la nota de crédito en Facturama.' : ''}` });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (e.paypal || e.publico) return res.status(e.status && e.status < 600 ? e.status : 502).json({ message: e.message });
+        throw e;
+    } finally { client.release(); }
+}));
+
+// =========================================================
 // PAYPAL (cuenta PayPal o tarjeta) — sandbox: sin dinero real
 //   GET  /api/pagos/paypal/config            si está activo y el client-id público
 //   POST /api/pagos/paypal/orden   {pedido_id}           crea la orden en PayPal
@@ -2441,7 +2721,7 @@ app.get('/api/pedidos/:id/detalle', asyncRoute(async (req, res) => {
         return res.status(404).json({ message: 'Pedido no encontrado' });
     }
     const items = await pool.query(
-        `SELECT pi.*, p.nombre, p.imagen_url FROM pedido_items pi JOIN productos p ON pi.producto_id = p.id WHERE pi.pedido_id = $1`,
+        `SELECT pi.*, p.nombre, p.imagen_url, p.activo FROM pedido_items pi JOIN productos p ON pi.producto_id = p.id WHERE pi.pedido_id = $1`,
         [req.params.id]
     );
     const garantias = await pool.query(
@@ -3002,7 +3282,7 @@ app.get('/api/clientes/:id/favoritos', asyncRoute(async (req, res) => {
          WHERE f.cliente_id = $1 ORDER BY f.fecha DESC`,
         [req.params.id]
     );
-    res.json(result.rows);
+    res.json(result.rows.map(productoPublico));
 }));
 
 app.post('/api/clientes/:id/favoritos', asyncRoute(async (req, res) => {
@@ -3087,6 +3367,7 @@ const PERMISOS_API = [
     // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
     { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
     { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['pedidos', 'ordenes-erp'] },
+    { ruta: /^\/devoluciones(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'inventario'] },
     { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
     // SCM
     { ruta: /^\/metricas-productos$/,                  metodos: LEER, permisos: ['dashboard', 'scm', 'inventario', 'reportes-scm', 'productos'] },
@@ -4014,10 +4295,21 @@ app.delete('/api/admin/productos/:id', asyncRoute(async (req, res) => {
     // Con ventas o movimientos no se borra: su historia debe seguir completa.
     const enUso = await pool.query(
         `SELECT 1 FROM pedido_items WHERE producto_id = $1 UNION ALL SELECT 1 FROM movimientos_inventario WHERE producto_id = $1 LIMIT 1`, [req.params.id]);
+    // Lo que queda en curso con este producto. Los pedidos ya hechos se
+    // respetan (tienen sus piezas apartadas y se surten normal); en los
+    // carritos aparece como "ya no está a la venta" y no se puede comprar.
+    const enCurso = (await pool.query(
+        `SELECT (SELECT COUNT(DISTINCT pe.id)::int FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+                  WHERE pi.producto_id = $1 AND pe.estado IN ('pendiente','confirmado','procesando','enviado')) AS pedidos,
+                (SELECT COUNT(*)::int FROM carrito_detalle WHERE producto_id = $1) AS carritos,
+                (SELECT COUNT(*)::int FROM favoritos WHERE producto_id = $1) AS favoritos`, [req.params.id])).rows[0];
     if (enUso.rows.length > 0) {
         await pool.query('UPDATE productos SET activo = false WHERE id = $1', [req.params.id]);
-        await auditar(pool, req, { accion: 'producto_desactivado', entidad: 'producto', entidad_id: previo.id, antes: previo });
-        return res.json({ message: 'El producto tiene ventas o movimientos; se desactivó en lugar de eliminarlo' });
+        await auditar(pool, req, { accion: 'producto_desactivado', entidad: 'producto', entidad_id: previo.id, antes: previo, despues: { en_curso: enCurso } });
+        const partes = [];
+        if (enCurso.pedidos) partes.push(`${enCurso.pedidos} pedido(s) en proceso lo incluyen y se surtirán normalmente`);
+        if (enCurso.carritos) partes.push(`está en ${enCurso.carritos} carrito(s), donde aparecerá como "ya no está a la venta"`);
+        return res.json({ message: 'El producto tiene ventas o movimientos; se desactivó en lugar de eliminarlo' + (partes.length ? '. ' + partes.join('; ') + '.' : '.'), en_curso: enCurso });
     }
     await pool.query('DELETE FROM productos WHERE id = $1', [req.params.id]);
     await auditar(pool, req, { accion: 'producto_eliminado', entidad: 'producto', entidad_id: previo.id, antes: previo });
@@ -4131,7 +4423,7 @@ app.put('/api/admin/movimientos-inventario/:id/fecha', asyncRoute(async (req, re
 // las apruebe: así nadie puede dar de baja mercancía valiosa solo.
 const MOTIVOS_INV = {
     entrada: { compra: 'Compra a proveedor', devolucion_cliente: 'Devolución de cliente', conteo: 'Ajuste por conteo físico', otro: 'Otro' },
-    salida: { merma: 'Merma / daño', robo: 'Robo o extravío', conteo: 'Ajuste por conteo físico', uso_interno: 'Muestra o uso interno', devolucion_proveedor: 'Devolución a proveedor', otro: 'Otro' },
+    salida: { merma: 'Merma / daño', robo: 'Robo o extravío', conteo: 'Ajuste por conteo físico', uso_interno: 'Muestra o uso interno', devolucion_proveedor: 'Devolución a proveedor', reemplazo_cliente: 'Reemplazo a cliente (cambio)', otro: 'Otro' },
 };
 const BAJA_UMBRAL_VALOR = Number(process.env.BAJA_UMBRAL_VALOR) || 3000;   // pesos
 const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;

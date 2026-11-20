@@ -489,3 +489,92 @@ DROP TRIGGER IF EXISTS trg_facturas_fecha ON facturas;
 CREATE TRIGGER trg_facturas_fecha BEFORE INSERT ON facturas FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
 DROP TRIGGER IF EXISTS trg_facturas_cambios ON facturas;
 CREATE TRIGGER trg_facturas_cambios BEFORE UPDATE OR DELETE ON facturas FOR EACH ROW EXECUTE FUNCTION kz_facturas_cambios();
+
+-- =========================================================
+-- DEVOLUCIONES (solicitud del cliente desde el detalle del pedido)
+--   solicitada -> aprobada | rechazada | cancelada (por el cliente)
+--   aprobada   -> recibida | cancelada
+--   recibida   -> reembolsada | cambiada
+--   El monto se calcula en el servidor al solicitar y no cambia. Las
+--   partidas no se editan. Fechas del servidor; nada se borra.
+-- =========================================================
+CREATE SEQUENCE IF NOT EXISTS folio_devolucion_seq START 1;
+CREATE TABLE IF NOT EXISTS devoluciones (
+    id               SERIAL PRIMARY KEY,
+    folio            VARCHAR(20) NOT NULL UNIQUE,
+    pedido_id        INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE RESTRICT,
+    cliente_id       INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    estado           VARCHAR(12) NOT NULL DEFAULT 'solicitada'
+                     CHECK (estado IN ('solicitada','aprobada','rechazada','recibida','reembolsada','cambiada','cancelada')),
+    motivo           VARCHAR(20) NOT NULL CHECK (motivo IN ('defectuoso','danado_envio','equivocado','no_satisface','otro')),
+    descripcion      TEXT NOT NULL,
+    resolucion       VARCHAR(10) NOT NULL CHECK (resolucion IN ('reembolso','cambio')),
+    reembolso_via    VARCHAR(15) CHECK (reembolso_via IN ('paypal','monedero','transferencia')),
+    monto            NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+    incluye_envio    BOOLEAN NOT NULL DEFAULT FALSE,
+    reembolso_ref    VARCHAR(80),
+    nota_equipo      TEXT,
+    revisado_por     INTEGER REFERENCES usuarios(id),
+    cerrado_por      INTEGER REFERENCES usuarios(id),
+    fecha            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_revision   TIMESTAMP,
+    fecha_recibida   TIMESTAMP,
+    fecha_cierre     TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_devoluciones_pedido ON devoluciones (pedido_id);
+CREATE INDEX IF NOT EXISTS idx_devoluciones_estado ON devoluciones (estado, fecha DESC);
+CREATE TABLE IF NOT EXISTS devolucion_items (
+    id              SERIAL PRIMARY KEY,
+    devolucion_id   INTEGER NOT NULL REFERENCES devoluciones(id) ON DELETE CASCADE,
+    pedido_item_id  INTEGER NOT NULL REFERENCES pedido_items(id),
+    producto_id     INTEGER REFERENCES productos(id),
+    cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
+    monto           NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+    reingresa       BOOLEAN            -- al recibir: true = vuelve a venta, false = dañado
+);
+CREATE INDEX IF NOT EXISTS idx_devolucion_items_dev ON devolucion_items (devolucion_id);
+
+CREATE OR REPLACE FUNCTION kz_devoluciones_cambios() RETURNS trigger AS $$
+DECLARE ok BOOLEAN;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Las devoluciones no se borran.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF current_setting('kozmok.purga', true) = 'si' AND NEW.cliente_id IS NULL AND OLD.cliente_id IS NOT NULL THEN RETURN NEW; END IF;
+    IF (NEW.folio, NEW.pedido_id, NEW.cliente_id, NEW.motivo, NEW.descripcion, NEW.resolucion, NEW.monto, NEW.incluye_envio, NEW.fecha)
+       IS DISTINCT FROM (OLD.folio, OLD.pedido_id, OLD.cliente_id, OLD.motivo, OLD.descripcion, OLD.resolucion, OLD.monto, OLD.incluye_envio, OLD.fecha) THEN
+        RAISE EXCEPTION 'Los datos de una devolución no se pueden cambiar.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF NEW.estado IS DISTINCT FROM OLD.estado THEN
+        ok := (OLD.estado = 'solicitada' AND NEW.estado IN ('aprobada','rechazada','cancelada'))
+           OR (OLD.estado = 'aprobada'   AND NEW.estado IN ('recibida','cancelada'))
+           OR (OLD.estado = 'recibida'   AND NEW.estado IN ('reembolsada','cambiada'));
+        IF NOT ok THEN
+            RAISE EXCEPTION 'Una devolución no puede pasar de "%" a "%".', OLD.estado, NEW.estado USING ERRCODE = 'P0001', HINT = 'control_interno';
+        END IF;
+        IF NEW.estado IN ('aprobada','rechazada') THEN NEW.fecha_revision := CURRENT_TIMESTAMP; END IF;
+        IF NEW.estado = 'recibida' THEN NEW.fecha_recibida := CURRENT_TIMESTAMP; END IF;
+        IF NEW.estado IN ('reembolsada','cambiada','cancelada','rechazada') THEN NEW.fecha_cierre := CURRENT_TIMESTAMP; END IF;
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_devoluciones_fecha ON devoluciones;
+CREATE TRIGGER trg_devoluciones_fecha BEFORE INSERT ON devoluciones FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
+DROP TRIGGER IF EXISTS trg_devoluciones_cambios ON devoluciones;
+CREATE TRIGGER trg_devoluciones_cambios BEFORE UPDATE OR DELETE ON devoluciones FOR EACH ROW EXECUTE FUNCTION kz_devoluciones_cambios();
+
+-- Partidas: solo se puede anotar si la pieza vuelve a venta (una vez)
+CREATE OR REPLACE FUNCTION kz_devitems_cambios() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Las partidas de una devolución no se borran.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF (NEW.devolucion_id, NEW.pedido_item_id, NEW.producto_id, NEW.cantidad, NEW.monto) IS DISTINCT FROM
+       (OLD.devolucion_id, OLD.pedido_item_id, OLD.producto_id, OLD.cantidad, OLD.monto)
+       OR (OLD.reingresa IS NOT NULL AND NEW.reingresa IS DISTINCT FROM OLD.reingresa) THEN
+        RAISE EXCEPTION 'Las partidas de una devolución no se pueden cambiar.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_devitems_cambios ON devolucion_items;
+CREATE TRIGGER trg_devitems_cambios BEFORE UPDATE OR DELETE ON devolucion_items FOR EACH ROW EXECUTE FUNCTION kz_devitems_cambios();

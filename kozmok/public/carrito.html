@@ -43,7 +43,7 @@ let MONEDERO = { saldo: 0, estado: 'activo' };
 
 async function cargarCarrito() {
     const y = window.scrollY, pasoPrev = PASO_PINTADO;   // al volver a pintar, la página no brinca
-    const [items, dirs, rec, pp, mon] = await Promise.all([
+    let [items, dirs, rec, pp, mon] = await Promise.all([
         api(`/carrito/${cliente.id}`),
         api(`/clientes/${cliente.id}/direcciones`).catch(() => []),
         api(`/clientes/${cliente.id}/recompensas`).catch(() => ({ puntos: 0, valor_punto: 0.10 })),
@@ -51,6 +51,10 @@ async function cargarCarrito() {
         api('/monedero').catch(() => ({ saldo: 0, estado: 'activo' })),
     ]);
     MONEDERO = { saldo: Number(mon.saldo) || 0, estado: mon.estado };
+    // Los productos que el equipo desactivó siguen en el carrito, pero ya no
+    // se pueden comprar: se muestran aparte y no cuentan en el total.
+    const inactivos = items.filter((i) => i.activo === false);
+    items = items.filter((i) => i.activo !== false);
     ITEMS = items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, garantia: i.garantia_clave || 'none' }));
     DIRECCIONES = dirs;
     PAYPAL = pp;
@@ -58,8 +62,14 @@ async function cargarCarrito() {
     const cont = document.getElementById('carrito-contenido');
     document.getElementById('btn-vaciar').hidden = items.length === 0;
 
+    const bloqueInactivos = inactivos.length ? `
+        <div class="card cart-inactivos">
+            <strong>${icon('alert', 15)} ${inactivos.length === 1 ? 'Este producto ya no está a la venta' : 'Estos productos ya no están a la venta'}</strong>
+            <span>No se incluyen en tu compra. Puedes quitarlos o buscar uno parecido en el catálogo.</span>
+            ${inactivos.map((i) => `<div class="ci-linea"><span>${escHTML(i.nombre)}</span><button class="btn btn-ghost btn-sm" onclick="quitarDelCarrito(${i.id})">Quitar</button></div>`).join('')}
+        </div>` : '';
     if (items.length === 0) {
-        cont.innerHTML = `
+        cont.innerHTML = bloqueInactivos + `
             <div class="vacio-card">
                 <span class="vacio-ico">${icon('cart', 30)}</span>
                 <h3>Tu carrito está vacío</h3>
@@ -154,6 +164,7 @@ async function cargarCarrito() {
     const nPiezas = items.reduce((a, i) => a + i.cantidad, 0);
     cont.innerHTML = `
         ${stepperHTML()}
+        ${bloqueInactivos}
         <div class="cart-layout">
         <div class="cart-pasos">
             <section class="ck-paso" data-paso="1">
@@ -474,7 +485,10 @@ function irAVerificar() {
 
 async function confirmarCompra() {
     if ((Sesion.cliente() || {}).correo_verificado === false) return irAVerificar();
-    const items = await api(`/carrito/${cliente.id}`);
+    const todos = await api(`/carrito/${cliente.id}`);
+    const fuera = todos.filter((i) => i.activo === false);
+    if (fuera.length) { toast(`"${fuera[0].nombre}" ya no está a la venta. Quítalo de tu carrito para continuar.`, 'warn'); cargarCarrito(); return; }
+    const items = todos;
     const direccion = document.getElementById('direccion').value.trim();
     if (!direccion) { toast('Ingresa o elige una dirección de envío', 'warn'); return; }
 

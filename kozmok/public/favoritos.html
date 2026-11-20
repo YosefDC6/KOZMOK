@@ -54,7 +54,7 @@ montarCuenta('favoritos', async (panel, P) => {
             <button class="btn btn-outline btn-sm" id="btn-fav-avisos">Sí, avisarme</button></div>`}
         <div class="grid-products" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
         ${favs.map((p) => `
-            <div class="product-card">
+            <div class="product-card ${p.activo === false ? 'is-off' : ''}">
                 <button class="fav-btn on" title="Quitar de favoritos" onclick="quitarFav(${p.id})">${icon('heart', 16)}</button>
                 <img src="${imagenProducto(p)}" referrerpolicy="no-referrer" alt="${p.nombre}" onerror="this.onerror=null;this.src='${ilustracionProducto(p)}'" onclick="location.href='/index.html#producto-${p.id}'" style="cursor:pointer" />
                 <div class="product-body">
@@ -62,7 +62,9 @@ montarCuenta('favoritos', async (panel, P) => {
                     <span class="product-name">${p.nombre}</span>
                     <span class="product-price">${formatoMoneda(p.precio)}</span>
                     <div class="card-actions">
-                        <button class="btn btn-primary btn-sm" ${p.stock === 0 ? 'disabled' : ''} onclick="favAlCarrito(${p.id})">${p.stock === 0 ? 'Sin stock' : 'Agregar al carrito'}</button>
+                        ${p.activo === false
+                            ? '<span class="tag" style="color:var(--warning);border-color:var(--warning)">Ya no está a la venta</span>'
+                            : `<button class="btn btn-primary btn-sm" ${p.stock === 0 ? 'disabled' : ''} onclick="favAlCarrito(${p.id})">${p.stock === 0 ? 'Sin stock' : 'Agregar al carrito'}</button>`}
                     </div>
                 </div>
             </div>

@@ -158,10 +158,11 @@ async function detallePedido(id, irAResenas) {
         <div class="table-wrap" style="margin-top:12px">
             <table>
                 <thead><tr><th>Producto</th><th>Cant.</th><th>Subtotal</th></tr></thead>
-                <tbody>${d.items.map((i) => `<tr><td>${i.nombre}</td><td class="mono">${i.cantidad}</td><td class="mono">${formatoMoneda(i.subtotal)}</td></tr>`).join('')}</tbody>
+                <tbody>${d.items.map((i) => `<tr><td>${escHTML(i.nombre)}${i.activo === false ? ' <span class="tag" title="Tu compra y su garantía siguen vigentes">ya no está a la venta</span>' : ''}</td><td class="mono">${i.cantidad}</td><td class="mono">${formatoMoneda(i.subtotal)}</td></tr>`).join('')}</tbody>
             </table>
         </div>
         <div style="font-size:.84rem;color:var(--text-muted);margin-top:8px">Envío a: ${escHTML(d.direccion_envio || '—')} · Pago: ${escHTML(d.metodo_pago || '—')}</div>
+        <div id="dev-${id}" class="dev-bloque"></div>
         </div>
         <div class="pedido-resenas" id="pr-wrap-${id}">
             <h4>Tu opinión sobre estos productos</h4>
@@ -170,6 +171,96 @@ async function detallePedido(id, irAResenas) {
         </div>
     `;
     if (irAResenas) cont.querySelector('.pedido-resenas').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (d.estado === 'entregado') pintarDevoluciones(id);
+}
+
+/* ---------- Devoluciones ---------- */
+const DEVS = {};
+const ESTADO_DEV_COLOR = { solicitada: 'var(--warning)', aprobada: 'var(--accent-light)', recibida: 'var(--accent-light)', reembolsada: 'var(--success)', cambiada: 'var(--success)', rechazada: 'var(--danger)', cancelada: 'var(--text-muted)' };
+async function pintarDevoluciones(pedidoId) {
+    const caja = document.getElementById('dev-' + pedidoId);
+    if (!caja) return;
+    let o;
+    try { o = await api(`/pedidos/${pedidoId}/devolucion`); } catch { return; }
+    DEVS[pedidoId] = o;
+    const lista = o.devoluciones.map((v) => {
+        const col = ESTADO_DEV_COLOR[v.estado] || 'var(--text-muted)';
+        return `<div class="dev-item">
+            <div><strong class="mono">${escHTML(v.folio)}</strong> <span class="tag" style="color:${col};border-color:${col}">${escHTML(o.estados[v.estado] || v.estado)}</span></div>
+            <div class="dev-sub">${v.items.map((x) => `${x.cantidad} × ${escHTML(x.nombre)}`).join(', ')} · ${v.resolucion === 'cambio' ? 'Cambio por el mismo producto' : 'Reembolso ' + formatoMoneda(v.monto) + ({ paypal: ' a tu PayPal o tarjeta', monedero: ' a tu monedero', transferencia: ' por transferencia' }[v.reembolso_via] || '')}</div>
+            ${v.nota_equipo ? `<div class="dev-sub">Nota: ${escHTML(v.nota_equipo)}</div>` : ''}
+            ${['solicitada', 'aprobada'].includes(v.estado) ? `<button class="btn btn-ghost btn-sm" onclick="cancelarDevolucion(${v.id}, ${pedidoId})">Cancelar solicitud</button>` : ''}
+        </div>`;
+    }).join('');
+    const puede = !o.razon && !o.abierta;
+    caja.innerHTML = `
+        <h4 style="margin:16px 0 6px">${icon('undo', 15)} Devoluciones y cambios</h4>
+        ${lista}
+        ${puede ? `<button class="btn btn-outline btn-sm" onclick="formDevolucion(${pedidoId})">Solicitar devolución o cambio</button>
+            <div class="dev-sub" style="margin-top:6px">Tienes hasta el ${new Date(o.limite).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })} para pedirla.</div>`
+          : !o.devoluciones.length && o.razon ? `<div class="dev-sub">${escHTML(o.razon)}</div>` : ''}`;
+}
+function formDevolucion(pedidoId) {
+    const o = DEVS[pedidoId];
+    const opt = (obj) => Object.entries(obj).map(([k, v]) => `<option value="${k}">${escHTML(v)}</option>`).join('');
+    document.getElementById('modal-generico-body').innerHTML = `
+        <button class="modal-close" onclick="cerrarModal()">${icon('x', 20)}</button>
+        <h3 style="margin-bottom:4px">Devolución o cambio</h3>
+        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.85rem">Elige qué productos y cuántos. El monto es lo que pagaste por cada pieza (con promociones, garantía, impuestos y puntos).</p>
+        <div class="dev-lista">${o.items.map((i) => `
+            <label class="dev-linea ${i.disponibles ? '' : 'off'}">
+                <input type="checkbox" data-it="${i.pedido_item_id}" ${i.disponibles ? '' : 'disabled'} onchange="totalDevolucion(${pedidoId})" style="width:auto" />
+                <span class="dev-nom">${escHTML(i.nombre)}${i.activo === false ? ' <span class="tag">ya no está a la venta</span>' : ''}
+                    <small>${formatoMoneda(i.monto_unitario)} c/u${i.devueltas ? ` · ya devolviste ${i.devueltas}` : ''}</small></span>
+                <select data-cant="${i.pedido_item_id}" onchange="totalDevolucion(${pedidoId})" ${i.disponibles ? '' : 'disabled'}>
+                    ${Array.from({ length: Math.max(1, i.disponibles) }, (_, k) => `<option value="${k + 1}">${k + 1}</option>`).join('')}</select>
+            </label>`).join('')}
+        </div>
+        <div class="field"><label>Motivo</label><select id="dv-motivo" onchange="totalDevolucion(${pedidoId})">${opt(o.motivos)}</select></div>
+        <label id="dv-cond-wrap" class="dev-cond" hidden><input type="checkbox" id="dv-cond" style="width:auto" /> El producto está sin usar, completo y en su empaque original</label>
+        <div class="field"><label>¿Qué pasó?</label><textarea id="dv-desc" rows="3" placeholder="Describe el problema: qué falla, desde cuándo, cómo llegó el paquete…"></textarea></div>
+        <div class="field"><label>¿Qué prefieres?</label>
+            <select id="dv-res" onchange="totalDevolucion(${pedidoId})"><option value="reembolso">Reembolso</option><option value="cambio">Cambio por el mismo producto</option></select></div>
+        <div class="field" id="dv-via-wrap"><label>Reembolso</label><select id="dv-via">${o.vias.map((v) => `<option value="${v}">${escHTML(o.vias_txt[v])}</option>`).join('')}</select></div>
+        <div class="dev-total" id="dv-total"></div>
+        <button class="btn btn-primary" style="width:100%" id="dv-btn" onclick="enviarDevolucion(${pedidoId})">Enviar solicitud</button>
+        <p style="font-size:.76rem;color:var(--text-muted);margin:10px 0 0">La revisamos en 1 a 2 días hábiles y te decimos por correo cómo enviarnos el producto. El costo del envío se reembolsa cuando el problema fue nuestro (defecto, daño o producto equivocado) y devuelves todo el pedido.</p>`;
+    document.getElementById('modal-generico').classList.add('open');
+    totalDevolucion(pedidoId);
+}
+function seleccionDevolucion() {
+    return [...document.querySelectorAll('.dev-lista input[type=checkbox]:checked')].map((c) => ({
+        pedido_item_id: Number(c.dataset.it), cantidad: Number(document.querySelector(`[data-cant="${c.dataset.it}"]`).value) }));
+}
+function totalDevolucion(pedidoId) {
+    const o = DEVS[pedidoId];
+    const motivo = document.getElementById('dv-motivo').value, res = document.getElementById('dv-res').value;
+    document.getElementById('dv-cond-wrap').hidden = motivo !== 'no_satisface';
+    document.getElementById('dv-via-wrap').hidden = res === 'cambio';
+    const sel = seleccionDevolucion();
+    const monto = sel.reduce((a, x) => a + (o.items.find((i) => i.pedido_item_id === x.pedido_item_id).monto_unitario * x.cantidad), 0);
+    document.getElementById('dv-total').innerHTML = !sel.length ? 'Elige al menos un producto.'
+        : res === 'cambio' ? `Cambio de ${sel.reduce((a, x) => a + x.cantidad, 0)} pieza(s) por el mismo producto.`
+        : `Reembolso estimado: <strong>${formatoMoneda(monto)}</strong>${['defectuoso', 'danado_envio', 'equivocado'].includes(motivo) && o.envio > 0 ? ' (más el envío si devuelves todo el pedido)' : ''}`;
+}
+async function enviarDevolucion(pedidoId) {
+    const body = {
+        items: seleccionDevolucion(), motivo: document.getElementById('dv-motivo').value, descripcion: document.getElementById('dv-desc').value.trim(),
+        resolucion: document.getElementById('dv-res').value, reembolso_via: document.getElementById('dv-via').value, condicion: document.getElementById('dv-cond').checked,
+    };
+    if (!body.items.length) return toast('Elige qué productos quieres devolver', 'warn');
+    if (body.descripcion.length < 15) return toast('Cuéntanos qué pasó (al menos 15 caracteres)', 'warn');
+    if (body.motivo === 'no_satisface' && !body.condicion) return toast('Confirma que está sin usar y en su empaque', 'warn');
+    const b = document.getElementById('dv-btn'); b.disabled = true; b.textContent = 'Enviando…';
+    try {
+        const r = await api(`/pedidos/${pedidoId}/devolucion`, { method: 'POST', body });
+        cerrarModal(); toast(r.message, 'ok'); pintarDevoluciones(pedidoId);
+    } catch (e) { toast(e.message, 'error'); b.disabled = false; b.textContent = 'Enviar solicitud'; }
+}
+async function cancelarDevolucion(devId, pedidoId) {
+    if (!(await confirmar('¿Cancelar esta solicitud de devolución?', { okText: 'Sí, cancelar' }))) return;
+    try { const r = await api(`/devoluciones/${devId}/cancelar`, { method: 'POST' }); toast(r.message, 'ok'); pintarDevoluciones(pedidoId); }
+    catch (e) { toast(e.message, 'error'); }
 }
 
 function bloqueResena(item, ex, orderId, entregado) {

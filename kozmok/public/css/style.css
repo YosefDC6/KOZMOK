@@ -2474,3 +2474,30 @@ tr.mov-off td { opacity: .7; }
 .forma-pago { display: flex; gap: 12px; padding: 14px; }
 .forma-pago p { margin: 4px 0 0; font-size: .82rem; color: var(--text-muted); line-height: 1.45; }
 .fp-ico { color: var(--accent-light); flex: none; margin-top: 2px; }
+
+/* Devoluciones (cliente) */
+.dev-bloque h4 { display: flex; align-items: center; gap: 6px; font-size: .92rem; }
+.dev-item { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-panel-2); margin-bottom: 8px; font-size: .86rem; }
+.dev-sub { font-size: .78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+.dev-lista { display: grid; gap: 8px; margin-bottom: 12px; }
+.dev-linea { display: grid; grid-template-columns: auto 1fr 70px; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; }
+.dev-linea.off { opacity: .45; cursor: not-allowed; }
+.dev-nom { font-size: .88rem; }
+.dev-nom small { display: block; color: var(--text-muted); font-size: .76rem; margin-top: 2px; }
+.dev-cond { display: flex; gap: 8px; align-items: center; font-size: .84rem; margin: -4px 0 12px; }
+.dev-total { margin: 4px 0 12px; font-size: .9rem; }
+.cart-inactivos { display: grid; gap: 6px; padding: 14px 16px; margin-bottom: 14px; border-left: 3px solid var(--warning); }
+.cart-inactivos > strong { display: flex; align-items: center; gap: 6px; color: var(--warning); font-size: .9rem; }
+.cart-inactivos > span { font-size: .8rem; color: var(--text-muted); }
+.ci-linea { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .86rem; }
+.product-card.is-off img { filter: grayscale(1); opacity: .6; }
+/* Devoluciones (panel) */
+.dev-card { padding: 14px 16px; margin-bottom: 10px; }
+.dev-cab { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.dev-cuerpo { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: .86rem; }
+.dev-lbl { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 3px; }
+.dev-mut { font-size: .78rem; color: var(--text-muted); line-height: 1.45; }
+.dev-acc { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.dev-acc:empty { display: none; }
+.dev-rec { display: flex; gap: 8px; align-items: center; padding: 8px 0; font-size: .88rem; border-bottom: 1px solid var(--line); }
+.dev-cond[hidden], #dv-via-wrap[hidden] { display: none !important; }
