@@ -985,7 +985,9 @@ INSERT INTO categorias (nombre, icono) VALUES
 -- de alta desde el panel.
 --   admin@kozmok.mx  ->  Admin#KZ2026
 INSERT INTO usuarios (nombre, email, password_hash, telefono, rol, activo, cambiar_password) VALUES
- ('Administrador', 'admin@kozmok.mx', crypt('Admin#KZ2026', gen_salt('bf', 10)), NULL, 'admin', true, true);
+ ('Administrador', 'admin@kozmok.mx', crypt('Admin#KZ2026', gen_salt('bf', 10)), NULL, 'admin', true, true),
+ ('Laura Méndez',  'laura.ventas@kozmok.mx', crypt('Ventas#KZ2026', gen_salt('bf', 10)), NULL, 'ventas', true, true),
+ ('Paola Nieto',   'paola.logistica@kozmok.mx', crypt('Logistica#KZ2026', gen_salt('bf', 10)), NULL, 'logistica', true, true);
 
 INSERT INTO estado_erp (id, modo, nivel) VALUES (1, 'auto', 'basico');
 

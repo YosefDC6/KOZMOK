@@ -151,17 +151,21 @@ Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, t
 
 > **Actualizar desde una versión anterior (Etapa 4):** vuelve a cargar `db/database.sql` (paso 4). Crea las tablas nuevas (`carrito`, `carrito_detalle`, `pagos`, `promociones`, `impuestos`, `monederos`, `movimientos_monedero`) y reemplaza `carrito_items`. Si faltan, la consola lo avisa al arrancar.
 
-### Cuenta inicial
+### Cuentas del panel
 
-La base empieza sin datos de ejemplo: sin clientes, pedidos ni interacciones. Todo lo que aparece en CRM, ERP y reportes viene del uso real de la tienda.
+La base empieza sin datos de ejemplo: sin clientes, pedidos ni interacciones. Todo lo que aparece en CRM, ERP y reportes viene del uso real de la tienda. El panel trae una cuenta por rol; las tres piden cambiar la contraseña la primera vez que entran:
 
-| Rol | Correo | Contraseña |
-|---|---|---|
-| Admin | admin@kozmok.mx | `Admin#KZ2026` (pide cambiarla al entrar) |
+| Rol | Nombre | Correo | Contraseña inicial |
+|---|---|---|---|
+| Administrador | Administrador | admin@kozmok.mx | `Admin#KZ2026` |
+| Ventas | Laura Méndez | laura.ventas@kozmok.mx | `Ventas#KZ2026` |
+| Logística | Paola Nieto | paola.logistica@kozmok.mx | `Logistica#KZ2026` |
 
-Los clientes se registran en la tienda y los empleados se dan de alta en el panel (Cuentas y equipo); a cada empleado nuevo se le pide cambiar la contraseña la primera vez.
+Si tu base es de una versión que no tenía las cuentas de Ventas y Logística (o `limpiar:ejemplo` las desactivó), el servidor las crea o reactiva una sola vez al arrancar. Si después el administrador las desactiva, se quedan desactivadas.
 
-**¿Tu base ya tenía los datos de ejemplo?** `npm run limpiar:ejemplo` muestra qué hay y `npm run limpiar:ejemplo -- --confirmar` borra los 4 clientes de prueba con sus pedidos, puntos y monederos, desactiva a los 2 empleados de ejemplo y quita la promoción de ejemplo. No toca productos ni nada que hayas creado tú.
+Los clientes se registran en la tienda y más empleados se dan de alta en el panel (Cuentas y equipo); a cada empleado nuevo se le pide cambiar la contraseña la primera vez.
+
+**¿Tu base ya tenía los datos de ejemplo?** `npm run limpiar:ejemplo` muestra qué hay y `npm run limpiar:ejemplo -- --confirmar` borra los 4 clientes de prueba con sus pedidos, puntos y monederos y quita la promoción de ejemplo. No toca productos, empleados ni nada que hayas creado tú.
 
 ---
 

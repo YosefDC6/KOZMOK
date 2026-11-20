@@ -96,12 +96,15 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
                      Dashboard CRM.
    - VENTAS        : Inicio (Dashboard CRM), Clientes (CRM), Productos
                      (SCM, solo consulta), Ordenes de clientes (ERP, SI
-                     CAPTURA ordenes), Reportes (ERP) y Mi actividad.
+                     CAPTURA ordenes), Reportes (ERP), Promociones,
+                     Monedero, Pagos, Facturas, Devoluciones y Mi actividad.
+                     Cuenta: laura.ventas@kozmok.mx
    - LOGISTICA     : Inicio (Dashboard SCM), Productos (SCM, con alta y
                      edicion), Inventario (SCM, con movimientos y pedidos de
                      reposicion en ventana), Ordenes de clientes (ERP: SI
-                     CAPTURA ordenes, las surte, envia y registra pagos) y
-                     Reportes (ERP).
+                     CAPTURA ordenes, las surte, envia y registra pagos),
+                     Reportes (ERP) y Devoluciones (recibe los paquetes).
+                     Cuenta: paola.logistica@kozmok.mx
    Son exactamente los menus de la lamina "Panel por rol (Menu dinamico)".
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda a su inicio.
@@ -120,16 +123,28 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
      2. server.js              -> objeto ROLES_INTERNOS (nombre y descripcion)
      3. admin/js/permisos.js   -> objeto PERMISOS (que secciones ve)
 
-Cuenta inicial (tras cargar db/database.sql)
+Cuentas del panel (tras cargar db/database.sql)
 
    La base empieza SIN datos de ejemplo: no hay clientes, pedidos,
-   puntos, monederos ni interacciones de prueba. Solo queda:
+   puntos, monederos ni interacciones de prueba. Trae una cuenta por rol:
 
-   +----------+------------------+----------------+--------------------------------+
-   | Rol      | Correo           | Contraseña     | Notas                          |
-   +----------+------------------+----------------+--------------------------------+
-   | Admin    | admin@kozmok.mx  | Admin#KZ2026   | pide cambiarla al entrar       |
-   +----------+------------------+----------------+--------------------------------+
+   +---------------+--------------+----------------------------+------------------+
+   | Rol           | Nombre       | Correo                     | Contraseña       |
+   +---------------+--------------+----------------------------+------------------+
+   | Administrador | Administrador| admin@kozmok.mx            | Admin#KZ2026     |
+   | Ventas        | Laura Méndez | laura.ventas@kozmok.mx     | Ventas#KZ2026    |
+   | Logistica     | Paola Nieto  | paola.logistica@kozmok.mx  | Logistica#KZ2026 |
+   +---------------+--------------+----------------------------+------------------+
+
+   - Las tres entran por /admin/login.html y las tres piden cambiar la
+     contraseña la primera vez (esas contraseñas iniciales vienen en este
+     manual, asi que cualquiera que lo lea las conoce).
+   - Ventas entra al Dashboard CRM; Logistica entra al Dashboard SCM. Lo
+     que ve cada una esta en "ROLES EMPRESARIALES" (arriba).
+   - Si la base es de una version que no tenia estas dos cuentas (o
+     "limpiar:ejemplo" las desactivo), el servidor las crea o reactiva UNA
+     sola vez al arrancar. Si despues el administrador las desactiva en
+     Cuentas y equipo, se quedan desactivadas.
 
    - Los clientes se registran en la tienda (registro.html).
    - Los empleados se dan de alta en el panel (Cuentas y equipo); la

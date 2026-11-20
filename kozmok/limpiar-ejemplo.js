@@ -16,7 +16,6 @@ const { Pool } = require('pg');
 const { usaValoresPorDefecto, ...configPg } = require('./db.config.js');
 
 const CORREOS_DEMO = ['mariana@correo.com', 'diego@correo.com', 'sofia@correo.com', 'carlos@correo.com'];
-const EMPLEADOS_DEMO = ['laura.ventas@kozmok.mx', 'paola.logistica@kozmok.mx'];
 const confirmar = process.argv.includes('--confirmar');
 
 (async () => {
@@ -27,15 +26,12 @@ const confirmar = process.argv.includes('--confirmar');
             `SELECT c.id, c.nombre, c.correo,
                     (SELECT COUNT(*)::int FROM pedidos p WHERE p.cliente_id = c.id) AS pedidos
              FROM clientes c WHERE LOWER(c.correo) = ANY($1) ORDER BY c.id`, [CORREOS_DEMO])).rows;
-        const emp = (await db.query(
-            'SELECT id, nombre, email, activo FROM usuarios WHERE LOWER(email) = ANY($1) ORDER BY id', [EMPLEADOS_DEMO])).rows;
         const promo = (await db.query(
             "SELECT id, nombre FROM promociones WHERE nombre = 'Regreso a clases' AND descripcion ILIKE '%ejemplo%'")).rows;
 
         console.log('\nDatos de ejemplo encontrados:\n');
-        if (!cli.length && !emp.length && !promo.length) { console.log('  Ninguno. La base ya está limpia.\n'); return; }
+        if (!cli.length && !promo.length) { console.log('  Ninguno. La base ya está limpia.\n'); return; }
         cli.forEach((c) => console.log(`  Cliente   ${c.nombre} <${c.correo}> · ${c.pedidos} pedido(s)  -> se borra`));
-        emp.forEach((u) => console.log(`  Empleado  ${u.nombre} <${u.email}>${u.activo ? '' : ' (ya inactivo)'}  -> se desactiva`));
         promo.forEach((p) => console.log(`  Promoción ${p.nombre} (ejemplo vencida)  -> se borra`));
 
         if (!confirmar) {
@@ -52,8 +48,6 @@ const confirmar = process.argv.includes('--confirmar');
         const ped = await db.query('DELETE FROM pedidos WHERE cliente_id = ANY($1) RETURNING id', [ids]);
         await db.query('UPDATE chatbot_consultas SET cliente_id = NULL WHERE cliente_id = ANY($1)', [ids]);
         const borrados = await db.query('DELETE FROM clientes WHERE id = ANY($1) RETURNING id', [ids]);
-        await db.query("UPDATE usuarios SET activo = FALSE WHERE LOWER(email) = ANY($1)", [EMPLEADOS_DEMO]);
-        await db.query('DELETE FROM sesiones WHERE usuario_id = ANY($1)', [emp.map((u) => u.id)]);
         for (const p of promo) {
             await db.query('DELETE FROM promociones WHERE id = $1', [p.id]).catch(() =>
                 db.query("UPDATE promociones SET estado = 'inactiva' WHERE id = $1", [p.id]));
@@ -61,11 +55,11 @@ const confirmar = process.argv.includes('--confirmar');
         await db.query(
             `INSERT INTO auditoria (usuario_nombre, rol, accion, entidad, antes, despues, motivo)
              VALUES ('Script limpiar-ejemplo', 'sistema', 'limpieza_datos_ejemplo', 'base', $1, $2, $3)`,
-            [JSON.stringify({ clientes: cli, empleados: emp, promociones: promo }),
-                JSON.stringify({ clientes_borrados: borrados.rowCount, pedidos_borrados: ped.rowCount, empleados_desactivados: emp.length }),
+            [JSON.stringify({ clientes: cli, promociones: promo }),
+                JSON.stringify({ clientes_borrados: borrados.rowCount, pedidos_borrados: ped.rowCount }),
                 'Se quitaron los datos de ejemplo del script inicial']);
         await db.query('COMMIT');
-        console.log(`\nListo: ${borrados.rowCount} cliente(s) y ${ped.rowCount} pedido(s) de ejemplo borrados, ${emp.length} empleado(s) desactivado(s).`);
+        console.log(`\nListo: ${borrados.rowCount} cliente(s) y ${ped.rowCount} pedido(s) de ejemplo borrados.`);
         console.log('Las existencias de productos no se tocaron.\n');
     } catch (e) {
         await db.query('ROLLBACK').catch(() => {});

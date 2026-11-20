@@ -79,12 +79,17 @@ npm install
    volver a ejecutar: borra todo y lo recrea desde cero.
 
    La base empieza sin datos de ejemplo (sin clientes, pedidos ni
-   interacciones). Solo queda la cuenta inicial del panel, que pide
-   cambiar la contraseña al entrar:
+   interacciones). Quedan las tres cuentas del panel, una por rol; todas
+   piden cambiar la contraseña al entrar:
 
-   | Rol       | Correo           | Contraseña    |
-   |-----------|------------------|---------------|
-   | Admin     | admin@kozmok.mx  | Admin#KZ2026  |
+   | Rol        | Correo                     | Contraseña inicial |
+   |------------|----------------------------|--------------------|
+   | Admin      | admin@kozmok.mx            | Admin#KZ2026       |
+   | Ventas     | laura.ventas@kozmok.mx     | Ventas#KZ2026      |
+   | Logística  | paola.logistica@kozmok.mx  | Logistica#KZ2026   |
+
+   En una base de antes sin estas cuentas, el servidor las crea (o las
+   reactiva) una sola vez al arrancar.
 
    Si tu base es de antes y tiene los clientes de prueba:
    `npm run limpiar:ejemplo` (muestra) y

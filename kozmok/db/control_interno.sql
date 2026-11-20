@@ -578,3 +578,26 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_devitems_cambios ON devolucion_items;
 CREATE TRIGGER trg_devitems_cambios BEFORE UPDATE OR DELETE ON devolucion_items FOR EACH ROW EXECUTE FUNCTION kz_devitems_cambios();
+
+-- =========================================================
+-- Cuentas de Ventas y Logística (una sola vez por base).
+-- Bases nuevas ya las traen de database.sql. En bases que venían de la
+-- versión sin ellas (o donde limpiar:ejemplo las desactivó) se crean o
+-- se reactivan UNA vez, con cambio de contraseña obligatorio. La marca en
+-- auditoría evita que se repita: si después el admin las desactiva, se
+-- quedan desactivadas.
+-- =========================================================
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM auditoria WHERE accion = 'alta_cuentas_ventas_logistica') THEN
+        INSERT INTO usuarios (nombre, email, password_hash, rol, activo, cambiar_password) VALUES
+            ('Laura Méndez', 'laura.ventas@kozmok.mx', crypt('Ventas#KZ2026', gen_salt('bf', 10)), 'ventas', TRUE, TRUE),
+            ('Paola Nieto', 'paola.logistica@kozmok.mx', crypt('Logistica#KZ2026', gen_salt('bf', 10)), 'logistica', TRUE, TRUE)
+        ON CONFLICT (email) DO NOTHING;
+        UPDATE usuarios SET activo = TRUE, cambiar_password = TRUE
+         WHERE email IN ('laura.ventas@kozmok.mx', 'paola.logistica@kozmok.mx') AND activo = FALSE;
+        INSERT INTO auditoria (usuario_nombre, rol, accion, entidad, motivo)
+        VALUES ('Sistema', 'sistema', 'alta_cuentas_ventas_logistica', 'usuarios',
+                'Cuentas base de Ventas y Logística');
+    END IF;
+END $$;
