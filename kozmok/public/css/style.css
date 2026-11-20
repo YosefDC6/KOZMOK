@@ -2631,3 +2631,52 @@ input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner
 .dp-reco { background: var(--accent-dim); color: var(--accent-light); }
 .dp-uso { background: var(--success); color: #fff; }
 @media (max-width: 560px) { .dp-opciones { grid-template-columns: 1fr; } .dp-codigo { font-size: 1.45rem; } }
+
+/* ---------------------------------------------------------
+   Casillas y opciones con el estilo de Kozmok (en lugar de las del
+   navegador). No toca los interruptores (.switch) ni los segmentados (.seg).
+   --------------------------------------------------------- */
+input[type="checkbox"]:not(.switch > input, .seg input),
+input[type="radio"]:not(.switch > input, .seg input) {
+    appearance: none; -webkit-appearance: none;
+    /* !important: varias pantallas traen style="width:auto;display:inline-block" en línea */
+    width: 18px !important; height: 18px !important; min-width: 18px; padding: 0 !important; margin: 0 2px 0 0;
+    display: inline-grid !important; place-content: center; vertical-align: -3px; flex-shrink: 0;
+    background: var(--bg-panel-2); border: 1.5px solid color-mix(in srgb, var(--text-muted) 55%, var(--line));
+    cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+input[type="checkbox"]:not(.switch > input, .seg input) { border-radius: 5px; }
+input[type="radio"]:not(.switch > input, .seg input) { border-radius: 50%; }
+input[type="checkbox"]:not(.switch > input, .seg input)::after {
+    content: ''; width: 10px; height: 10px; transform: scale(0); transition: transform .12s ease;
+    background: #fff; clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%);
+}
+input[type="radio"]:not(.switch > input, .seg input)::after {
+    content: ''; width: 8px; height: 8px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform .12s ease;
+}
+input[type="checkbox"]:not(.switch > input, .seg input):checked,
+input[type="radio"]:not(.switch > input, .seg input):checked { background: var(--accent); border-color: var(--accent); }
+input[type="checkbox"]:not(.switch > input, .seg input):checked::after,
+input[type="radio"]:not(.switch > input, .seg input):checked::after { transform: scale(1); }
+input[type="checkbox"]:not(.switch > input, .seg input):hover:not(:disabled),
+input[type="radio"]:not(.switch > input, .seg input):hover:not(:disabled) { border-color: var(--accent); }
+input[type="checkbox"]:not(.switch > input, .seg input):focus-visible,
+input[type="radio"]:not(.switch > input, .seg input):focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-glow); }
+input[type="checkbox"]:not(.switch > input, .seg input):disabled,
+input[type="radio"]:not(.switch > input, .seg input):disabled { opacity: .45; cursor: not-allowed; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { cursor: pointer; }
+
+/* Selector segmentado (p. ej. Entrada / Salida) */
+.seg { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg-panel-2); border: 1px solid var(--line); border-radius: 999px; }
+.seg .seg-op { position: relative; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 7px 18px; border-radius: 999px;
+    font-size: .88rem; font-weight: 600; color: var(--text-muted); cursor: pointer; transition: background .15s ease, color .15s ease; }
+.seg .seg-op input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.seg .seg-op:hover { color: var(--text); }
+.seg .seg-op:has(input:checked) { background: var(--accent); color: #fff; box-shadow: var(--shadow-sm); }
+.seg .seg-salida:has(input:checked) { background: var(--danger); }
+.seg .seg-op:has(input:focus-visible) { box-shadow: 0 0 0 3px var(--accent-glow); }
+
+/* Opción en tarjeta (radio + título + explicación) */
+.op-tarjeta { display: block; flex: 1; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.op-tarjeta > input { margin-right: 6px; }
+.op-tarjeta:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }

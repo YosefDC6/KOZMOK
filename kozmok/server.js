@@ -4889,7 +4889,8 @@ app.post('/api/admin/productos/:id/eliminar-definitivo', limiteAuth, asyncRoute(
 // Restock manual desde el admin
 app.post('/api/admin/productos/:id/restock', asyncRoute(async (req, res) => {
     const cantidad = Number(req.body.cantidad);
-    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 10000) return res.status(400).json({ message: 'Cantidad inválida' });
+    if (!Number.isInteger(cantidad) || cantidad < 1) return res.status(400).json({ message: 'Cantidad inválida' });
+    if (cantidad > INV_MAX_MOVIMIENTO) return res.status(400).json({ message: `Máximo ${INV_MAX_MOVIMIENTO} piezas por movimiento` });
     const motivo = String(req.body.motivo || 'Restock manual desde admin').slice(0, 300);
     const db = await pool.connect();
     let nuevoStock;
@@ -4997,7 +4998,10 @@ const MOTIVOS_INV = {
 };
 const BAJA_UMBRAL_VALOR = Number(process.env.BAJA_UMBRAL_VALOR) || 3000;   // pesos
 const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;
-app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS }));
+// Piezas máximas en un solo movimiento, restock u orden de compra (contra
+// errores de dedo: 1000 en vez de 10). Configurable en el .env.
+const INV_MAX_MOVIMIENTO = Math.max(1, Math.min(100000, Number(process.env.INVENTARIO_MAX_POR_MOVIMIENTO) || 500));
+app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS, max_movimiento: INV_MAX_MOVIMIENTO }));
 
 app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     // La fecha de REGISTRO la pone la base de datos; la del movimiento (cuándo
@@ -5008,8 +5012,11 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     const cantidad = Number(req.body.cantidad);
     const motivoTipo = String(req.body.motivo_tipo || '');
     const detalle = String(req.body.detalle || req.body.motivo || '').trim().slice(0, 300);
-    if (!producto_id || !['entrada', 'salida'].includes(tipo) || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 10000) {
+    if (!producto_id || !['entrada', 'salida'].includes(tipo) || !Number.isInteger(cantidad) || cantidad < 1) {
         return res.status(400).json({ message: 'Producto, tipo y una cantidad entera mayor a 0 son obligatorios' });
+    }
+    if (cantidad > INV_MAX_MOVIMIENTO) {
+        return res.status(400).json({ message: `Máximo ${INV_MAX_MOVIMIENTO} piezas por movimiento. Si de verdad son más, regístralo en varios movimientos.` });
     }
     if (!MOTIVOS_INV[tipo][motivoTipo]) return res.status(400).json({ message: 'Elige el motivo del movimiento' });
     if ((tipo === 'salida' || ['otro', 'conteo'].includes(motivoTipo)) && detalle.length < 10) {
@@ -5318,8 +5325,11 @@ app.get('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
 
 app.post('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
     const { producto_id, proveedor_id, cantidad, notas, fecha_estimada } = req.body;
-    if (!producto_id || !cantidad || cantidad < 1) {
-        return res.status(400).json({ message: 'Producto y cantidad son obligatorios' });
+    if (!producto_id || !Number.isInteger(Number(cantidad)) || Number(cantidad) < 1) {
+        return res.status(400).json({ message: 'Producto y una cantidad entera mayor a 0 son obligatorios' });
+    }
+    if (Number(cantidad) > INV_MAX_MOVIMIENTO) {
+        return res.status(400).json({ message: `Máximo ${INV_MAX_MOVIMIENTO} piezas por orden de compra` });
     }
     const prod = await pool.query('SELECT proveedor_id FROM productos WHERE id = $1', [producto_id]);
     if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
@@ -5337,6 +5347,9 @@ app.put('/api/admin/ordenes-compra/:id', asyncRoute(async (req, res) => {
     const { cantidad, proveedor_id, fecha_estimada, notas } = req.body;
     if (cantidad !== undefined && (!Number.isInteger(Number(cantidad)) || Number(cantidad) < 1)) {
         return res.status(400).json({ message: 'La cantidad debe ser mayor a 0' });
+    }
+    if (cantidad !== undefined && Number(cantidad) > INV_MAX_MOVIMIENTO) {
+        return res.status(400).json({ message: `Máximo ${INV_MAX_MOVIMIENTO} piezas por orden de compra` });
     }
     const oc = await pool.query('SELECT estado FROM ordenes_compra WHERE id = $1', [req.params.id]);
     if (oc.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });

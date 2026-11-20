@@ -68,7 +68,7 @@
                 </select>
             </div>
             <div class="field-row">
-                <div class="field"><label>Cantidad</label><input type="number" min="1" id="msa-cantidad" value="${pedido ? pedido.cantidad : sugerirCantidad(p)}" oninput="ScmAcciones._costo()" /></div>
+                <div class="field"><label>Cantidad</label><input type="number" min="1" max="${Number(UMBRAL.max_movimiento) || 500}" step="1" id="msa-cantidad" value="${pedido ? pedido.cantidad : sugerirCantidad(p)}" oninput="ScmAcciones._costo()" /></div>
                 <div class="field"><label>Tipo</label><select disabled><option>Reposición</option></select></div>
             </div>
             <div class="field"><label>Proveedor</label>
@@ -112,7 +112,8 @@
             notas: $('msa-notas').value,
         };
         if (!body.producto_id) return toast('Selecciona un producto', 'warn');
-        if (!body.cantidad || body.cantidad < 1) return toast('La cantidad debe ser mayor a 0', 'warn');
+        if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
+        if (body.cantidad > (Number(UMBRAL.max_movimiento) || 500)) return toast(`Máximo ${Number(UMBRAL.max_movimiento) || 500} piezas por orden`, 'warn');
         try {
             const r = id ? await api(`/admin/ordenes-compra/${id}`, { method: 'PUT', body })
                 : await api('/admin/ordenes-compra', { method: 'POST', body });
@@ -124,7 +125,7 @@
     // Movimiento manual de inventario
     // ------------------------------------------------------------
     // Motivos y umbrales vienen del servidor (la misma lista que valida)
-    let MOTIVOS = null, UMBRAL = { umbral_valor: 3000, umbral_piezas: 3 };
+    let MOTIVOS = null, UMBRAL = { umbral_valor: 3000, umbral_piezas: 3, max_movimiento: 500 };
     async function nuevoMovimiento({ productoId = null, tipo = 'entrada', onListo: cb = null } = {}) {
         onListo = cb;
         try {
@@ -132,15 +133,16 @@
             if (!MOTIVOS) { const r = await api('/admin/movimientos-inventario/motivos'); MOTIVOS = r.motivos; UMBRAL = r; }
         } catch (e) { toast(e.message, 'error'); return; }
         const esAdmin = (Sesion.usuario() || {}).rol === 'admin';
-        const radio = (t, txt) => `<label style="display:flex;align-items:center;gap:6px;width:auto;margin:0"><input type="radio" name="msa-tipo" value="${t}" ${t === tipo ? 'checked' : ''} style="width:auto" onchange="ScmAcciones._motivos()" /> ${txt}</label>`;
+        const radio = (t, txt, ic) => `<label class="seg-op seg-${t}"><input type="radio" name="msa-tipo" value="${t}" ${t === tipo ? 'checked' : ''} onchange="ScmAcciones._motivos()" />${icon(ic, 15)} ${txt}</label>`;
         abrirModal(`
             <h3>Nuevo movimiento</h3>
             <div class="field"><label>Producto</label>
-                <select id="msa-producto">${PRODUCTOS.map((p) => `<option value="${p.id}" ${Number(productoId) === p.id ? 'selected' : ''}>${p.nombre} (stock ${p.stock})</option>`).join('')}</select>
+                <select id="msa-producto" onchange="ScmAcciones._limite()">${PRODUCTOS.map((p) => `<option value="${p.id}" ${Number(productoId) === p.id ? 'selected' : ''}>${p.nombre} (stock ${p.stock})</option>`).join('')}</select>
             </div>
-            <div class="field"><label>Tipo</label><div style="display:flex;gap:18px;align-items:center;padding:6px 0">${radio('entrada', 'Entrada')}${radio('salida', 'Salida')}</div></div>
+            <div class="field"><label>Tipo</label><div class="seg" role="radiogroup" aria-label="Tipo de movimiento">${radio('entrada', 'Entrada', 'plus')}${radio('salida', 'Salida', 'minus')}</div></div>
             <div class="field-row">
-                <div class="field"><label>Cantidad</label><input type="number" min="1" step="1" id="msa-cantidad" value="1" /></div>
+                <div class="field"><label>Cantidad</label><input type="number" min="1" step="1" id="msa-cantidad" value="1" />
+                    <small id="msa-cant-nota" style="color:var(--text-muted);font-size:.76rem"></small></div>
                 <div class="field"><label>Motivo</label><select id="msa-motivo" onchange="ScmAcciones._detalle()"></select></div>
             </div>
             <div class="field"><label id="msa-detalle-lbl">Detalle</label>
@@ -149,8 +151,7 @@
                 <div class="field"><label>Fecha del movimiento</label><input type="datetime-local" id="msa-fecha-mov" value="${ahoraLocal()}" max="${ahoraLocal()}" /></div>
                 <div class="field"><label>Usuario</label><input value="${(Sesion.usuario() || {}).nombre || ''}" disabled /></div>
             </div>
-            <p style="font-size:.76rem;color:var(--text-muted);margin:0">Si pasó antes (por ejemplo, una merma de ayer), cambia la fecha del movimiento.
-                El movimiento queda con tu nombre y no se puede borrar; un error se corrige con un movimiento contrario.
+            <p style="font-size:.76rem;color:var(--text-muted);margin:0">El movimiento queda con tu nombre y no se puede borrar; un error se corrige con un movimiento contrario.
                 ${esAdmin ? '' : `Las salidas de ${UMBRAL.umbral_piezas} piezas o más, de ${formatoMoneda(UMBRAL.umbral_valor)} o más, o por robo, necesitan la aprobación de un administrador.`}</p>
             <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="ScmAcciones._guardarMovimiento()">Registrar movimiento</button>`);
         motivos();
@@ -159,6 +160,26 @@
         const t = document.querySelector('input[name="msa-tipo"]:checked').value;
         $('msa-motivo').innerHTML = Object.entries(MOTIVOS[t]).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
         detalle();
+        limite();
+    }
+    // Tope de la cantidad: en una salida, lo que hay en stock; en una entrada,
+    // el máximo por movimiento del servidor.
+    function topeCantidad() {
+        const t = document.querySelector('input[name="msa-tipo"]:checked').value;
+        const p = producto(Number($('msa-producto').value));
+        const max = Number(UMBRAL.max_movimiento) || 500;
+        return t === 'salida' ? Math.min(max, p ? Number(p.stock) : 0) : max;
+    }
+    function limite() {
+        const c = $('msa-cantidad'); if (!c) return;
+        const t = document.querySelector('input[name="msa-tipo"]:checked').value;
+        const tope = topeCantidad();
+        c.max = String(Math.max(1, tope));
+        if (Number(c.value) > tope && tope > 0) c.value = String(tope);
+        $('msa-cant-nota').textContent = t === 'salida'
+            ? (tope > 0 ? `Máximo ${tope} (lo que hay en stock)` : 'No hay piezas en stock para sacar')
+            : `Máximo ${tope} por movimiento`;
+        c.dispatchEvent(new Event('change'));
     }
     // Las salidas y los ajustes siempre llevan el detalle escrito
     function detalle() {
@@ -177,6 +198,9 @@
         };
         if (body.fecha && new Date(body.fecha) > new Date(Date.now() + 5 * 60000)) return toast('La fecha del movimiento no puede ser futura', 'warn');
         if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
+        const tope = topeCantidad();
+        if (body.cantidad > tope) return toast(body.tipo === 'salida' && tope < (Number(UMBRAL.max_movimiento) || 500)
+            ? `Solo hay ${tope} en stock; no puedes sacar más` : `Máximo ${tope} piezas por movimiento`, 'warn');
         const obligatorio = body.tipo === 'salida' || ['otro', 'conteo'].includes(body.motivo_tipo);
         if (obligatorio && body.detalle.length < 10) return toast('Describe qué pasó (al menos 10 caracteres)', 'warn');
         try {
@@ -194,8 +218,8 @@
         const p = producto(productoId);
         if (!p) return toast('Producto no encontrado', 'error');
         const tarjeta = (v, titulo, txt) => `
-            <label style="display:block;cursor:pointer;padding:10px 12px;border:1px solid var(--line);border-radius:10px;flex:1">
-                <input type="radio" name="msa-restock" value="${v}" ${p.restock === v ? 'checked' : ''} style="width:auto;margin-right:6px" />
+            <label class="op-tarjeta">
+                <input type="radio" name="msa-restock" value="${v}" ${p.restock === v ? 'checked' : ''} />
                 <strong>${titulo}</strong><span style="display:block;font-size:.76rem;color:var(--text-muted);margin-top:2px">${txt}</span>
             </label>`;
         abrirModal(`
@@ -241,6 +265,6 @@
     window.ScmAcciones = {
         pedidoReposicion, nuevoMovimiento, abasto, cerrar, abrirModal,
         _alCambiarProducto: alCambiarProducto, _alCambiarProveedor: alCambiarProveedor, _costo: costo,
-        _guardarPedido: guardarPedido, _motivos: motivos, _detalle: detalle, _guardarMovimiento: guardarMovimiento, _guardarAbasto: guardarAbasto,
+        _guardarPedido: guardarPedido, _motivos: motivos, _detalle: detalle, _limite: limite, _guardarMovimiento: guardarMovimiento, _guardarAbasto: guardarAbasto,
     };
 })();
