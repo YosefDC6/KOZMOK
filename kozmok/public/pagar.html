@@ -67,7 +67,6 @@ async function cargar() {
             <div class="pagar-total"><span>Total a pagar</span><strong>${formatoMoneda2(P.total)}</strong></div>
         </div>
         <p class="pagar-reloj" id="pg-reloj"></p>
-        ${cfg.modo === 'sandbox' ? `<div class="pago-prueba">${icon('alert', 14)} Modo de prueba de PayPal: no se cobra dinero real. Usa una cuenta o tarjeta de prueba del sandbox.</div>` : ''}
         <div id="paypal-botones" class="pagar-botones"><div class="empty-state" style="padding:20px">Cargando PayPal…</div></div>
         <p class="pagar-nota">Puedes pagar con tu cuenta PayPal o con tarjeta de débito o crédito sin crear cuenta. Los datos de tu tarjeta los captura PayPal; Kozmok nunca los ve ni los guarda.</p>
         <p class="pagar-nota">Si cierras esta página, puedes terminar de pagar desde <a href="/pedidos.html">Mis pedidos</a> antes de las ${venceTxt(P.pago_vence)}</p>`;

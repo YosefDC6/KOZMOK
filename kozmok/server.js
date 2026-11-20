@@ -2274,7 +2274,7 @@ app.post('/api/pedidos/:id/factura', limiteDinero, requireCliente, asyncRoute(as
                  ON CONFLICT (cliente_id) DO UPDATE SET rfc = $2, razon_social = $3, regimen_fiscal = $4, codigo_postal = $5, uso_cfdi = $6, actualizado = CURRENT_TIMESTAMP`,
                 [req.cliente.id, d.rfc, d.razon_social, d.regimen_fiscal, d.codigo_postal, d.uso_cfdi]);
         }
-        res.status(201).json({ message: `Factura generada${f.modo === 'sandbox' ? ' (de prueba, sin validez fiscal)' : ''}. También te la enviamos por correo.`, factura: f });
+        res.status(201).json({ message: `Factura generada. También te la enviamos por correo.`, factura: f });
     } catch (e) { errorFactura(res, e); }
 }));
 

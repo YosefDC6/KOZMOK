@@ -115,7 +115,6 @@ function pintarRecarga() {
                 </label>`).join('')}
         </div>
         <p class="mon-nota" id="mon-nota"></p>
-        ${PPCFG.modo === 'sandbox' ? '<div class="pago-prueba" id="mon-prueba">Modo de prueba de PayPal: no se cobra dinero real.</div>' : ''}
         <div id="mon-paypal" class="pagar-botones" hidden></div>
         <button class="btn btn-primary btn-block" id="mon-btn" onclick="recargar()">${icon('wallet', 16)} Recargar ${formatoMoneda(MONTO)}</button>
         <p class="mon-nota">Tu saldo se usa como forma de pago al finalizar tu compra.</p>`;
@@ -143,10 +142,10 @@ function elegirMetodo(k) {
 // Con PayPal / tarjeta los botones de PayPal reemplazan al botón "Recargar"
 let BOTONES_PP = false;
 function pintarPagoRecarga() {
-    const caja = document.getElementById('mon-paypal'), btn = document.getElementById('mon-btn'), prueba = document.getElementById('mon-prueba');
+    const caja = document.getElementById('mon-paypal'), btn = document.getElementById('mon-btn');
     if (!caja || !btn) return;
     const pp = METODO === 'paypal' && PPCFG.activo;
-    caja.hidden = !pp; btn.hidden = pp; if (prueba) prueba.hidden = !pp;
+    caja.hidden = !pp; btn.hidden = pp;
     if (!pp || BOTONES_PP) return;
     BOTONES_PP = true;
     PayPalKZ.botones(caja, {

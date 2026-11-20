@@ -202,7 +202,6 @@ async function cargarCarrito() {
                     <h4>${icon('lock', 15)} PayPal o tarjeta</h4>
                     <div class="pb-sub" style="margin:0">Al confirmar pasas a pagar con tu cuenta PayPal o con tarjeta de débito o crédito, sin necesidad de cuenta.
                         Los datos de tu tarjeta los captura PayPal: Kozmok nunca los ve ni los guarda. Tu pedido queda apartado ${PAYPAL.minutos_para_pagar || 60} minutos mientras pagas.</div>
-                    ${PAYPAL.modo === 'sandbox' ? '<div class="pago-prueba">Modo de prueba: no se cobra dinero real.</div>' : ''}
                 </div>
                 ${bloquePuntos}
                 <div class="ck-acciones">

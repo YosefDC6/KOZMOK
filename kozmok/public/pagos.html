@@ -42,7 +42,7 @@ montarCuenta('pagos', async (panel) => {
         <div class="cuenta-head"><h1>Formas de pago</h1><p>Cómo puedes pagar en Kozmok y tus pagos con PayPal o tarjeta.</p></div>
         <div class="formas-pago">
             ${metodo('card', 'PayPal o tarjeta de débito / crédito', cfg.activo
-                ? 'Pagas en la ventana segura de PayPal, con tu cuenta o con tarjeta sin crear cuenta. Kozmok nunca ve ni guarda los datos de tu tarjeta.' + (cfg.modo === 'sandbox' ? ' <span class="pago-prueba" style="display:inline-block;margin:4px 0 0">Modo de prueba: no se cobra dinero real.</span>' : '')
+                ? 'Pagas en la ventana segura de PayPal, con tu cuenta o con tarjeta sin crear cuenta. Kozmok nunca ve ni guarda los datos de tu tarjeta.'
                 : 'No disponible por ahora.')}
             ${metodo('download', 'Transferencia SPEI', 'Te damos una referencia; el pedido se confirma cuando recibimos el depósito (3 días para pagar).')}
             ${metodo('pin', 'Pago en tienda', 'Pagas en caja con tu ficha (5 días para pagar).')}
@@ -59,7 +59,7 @@ montarCuenta('pagos', async (panel) => {
                     <td>${x.tipo === 'recarga' ? 'Recarga de monedero' : `Pedido <a href="/pedidos.html">${escHTML(x.numero_orden || '')}</a>`}</td>
                     <td class="mono" style="font-size:.8rem">${escHTML(x.captura_id || '—')}</td>
                     <td class="mono" style="text-align:right">${formatoMoneda(x.monto)}</td>
-                    <td><span class="tag" style="color:${col};border-color:${col}">${et}</span>${x.modo === 'sandbox' ? ' <span class="tag" title="Pago de prueba: no movió dinero real">prueba</span>' : ''}</td>
+                    <td><span class="tag" style="color:${col};border-color:${col}">${et}</span></td>
                 </tr>`; }).join('')}</tbody>
         </table></div>`}`;
 });

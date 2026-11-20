@@ -350,7 +350,7 @@ function botonesFactura(p) {
     if (f && f.estado !== 'cancelada') {
         return `<a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/pdf">${icon('download', 14)} Factura PDF</a>
                 <a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/xml">XML</a>
-                ${f.estado === 'cancelando' ? '<span class="tag">Factura en cancelación</span>' : ''}${f.modo === 'sandbox' ? '<span class="tag" title="Factura de prueba: sin validez fiscal">prueba</span>' : ''}`;
+                ${f.estado === 'cancelando' ? '<span class="tag">Factura en cancelación</span>' : ''}`;
     }
     if (p.pago_estado !== 'pagado') return '';
     const ref = p.fecha_confirmacion || p.fecha_pedido;
@@ -366,7 +366,6 @@ async function pedirFactura(id) {
         <button class="modal-close" onclick="cerrarModal()">${icon('x', 20)}</button>
         <h3 style="margin-bottom:2px">Facturar pedido ${escHTML(p.numero_orden)}</h3>
         <p style="margin:0 0 14px;color:var(--text-muted);font-size:.85rem">Total ${formatoMoneda(p.total)}. Escribe tus datos tal como aparecen en tu constancia de situación fiscal.</p>
-        ${FACT.modo === 'sandbox' ? '<div class="pago-prueba" style="margin-bottom:12px">Facturación de prueba: el CFDI se timbra en el sandbox del PAC y no tiene validez fiscal.</div>' : ''}
         <div class="field-row">
             <div class="field"><label>RFC</label><input id="ff-rfc" maxlength="13" value="${escHTML(g.rfc || '')}" placeholder="XAXX010101000" style="text-transform:uppercase" /></div>
             <div class="field"><label>Código postal fiscal</label><input id="ff-cp" maxlength="5" inputmode="numeric" value="${escHTML(g.codigo_postal || '')}" placeholder="20000" /></div>
