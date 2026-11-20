@@ -17,6 +17,7 @@
 </div>
 
 <div id="footer-placeholder"></div>
+<div class="modal-overlay" id="modal-generico"><div class="modal" id="modal-generico-body"></div></div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
@@ -101,7 +102,8 @@ function estrellas(n, editable, orderId, pid) {
 
 montarCuenta('pedidos', async (panel, P) => {
     CID = P.id;
-    const pedidos = await api(`/pedidos/cliente/${P.id}`);
+    const [pedidos, fact] = await Promise.all([api(`/pedidos/cliente/${P.id}`), api('/facturacion/config').catch(() => ({ activo: false }))]);
+    window.PEDIDOS = pedidos; FACT = fact;
     if (pedidos.length === 0) {
         panel.innerHTML = `<div class="cuenta-head"><h1>Mis pedidos</h1></div>
             <div class="empty-state">Todavía no has hecho ningún pedido.<br><a href="/index.html?ver=todo">Explorar el catálogo</a></div>`;
@@ -124,6 +126,7 @@ montarCuenta('pedidos', async (panel, P) => {
                 ${pendientePago && p.metodo_tipo === 'paypal' && p.estado !== 'cancelado' ? `<a class="btn btn-primary btn-sm" href="/pagar.html?id=${p.id}">Pagar ahora</a>` : `<a class="btn btn-ghost btn-sm" href="/recibo.html?id=${p.id}">${pendientePago ? 'Ficha de pago' : 'Comprobante'}</a>`}
                 ${pendientePago && p.metodo_tipo !== 'paypal' && !p.pago_reportado ? `<button class="btn btn-primary btn-sm" onclick="reportarPago(${p.id})">Ya realicé el pago</button>` : ''}
                 ${p.estado === 'entregado' ? `<button class="btn btn-primary btn-sm" onclick="detallePedido(${p.id}, true)">Dejar reseña</button>` : ''}
+                ${botonesFactura(p)}
                 ${CANCELABLES.includes(p.estado) ? `<button class="btn btn-ghost btn-sm" onclick="cancelarPedido(${p.id})">Cancelar</button>` : ''}
             </div>
             <div id="det-${p.id}"></div>
@@ -238,12 +241,66 @@ async function reportarPago(id) {
 }
 
 async function cancelarPedido(id) {
-    if (!(await confirmar('¿Cancelar este pedido? Se devolverá el stock.', { okText: 'Sí, cancelar', peligro: true }))) return;
+    const p = (window.PEDIDOS || []).find((x) => x.id === id) || {};
+    const conFactura = p.factura && p.factura.estado === 'timbrada';
+    if (!(await confirmar(`¿Cancelar este pedido? Se devolverá el stock${p.pago_estado === 'pagado' ? ' y tu pago' : ''}${conFactura ? ', y su factura se cancelará ante el SAT' : ''}.`, { okText: 'Sí, cancelar', peligro: true }))) return;
     try {
-        await api(`/pedidos/${id}/cancelar`, { method: 'PUT', body: { cliente_id: CID } });
-        toast('Pedido cancelado', 'ok');
-        setTimeout(() => location.reload(), 600);
+        const r = await api(`/pedidos/${id}/cancelar`, { method: 'PUT', body: { cliente_id: CID } });
+        toast(r.message || 'Pedido cancelado', 'ok');
+        setTimeout(() => location.reload(), 1200);
     } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ---------- Factura electrónica (CFDI 4.0) ---------- */
+let FACT = null;   // configuración: activo, modo, regímenes, usos, días
+function botonesFactura(p) {
+    if (!FACT || !FACT.activo || p.estado === 'cancelado') return '';
+    const f = p.factura;
+    if (f && f.estado !== 'cancelada') {
+        return `<a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/pdf">${icon('download', 14)} Factura PDF</a>
+                <a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/xml">XML</a>
+                ${f.estado === 'cancelando' ? '<span class="tag">Factura en cancelación</span>' : ''}${f.modo === 'sandbox' ? '<span class="tag" title="Factura de prueba: sin validez fiscal">prueba</span>' : ''}`;
+    }
+    if (p.pago_estado !== 'pagado') return '';
+    const ref = p.fecha_confirmacion || p.fecha_pedido;
+    if (ref && Date.now() - new Date(ref).getTime() > FACT.dias * 86400000) return '';
+    return `<button class="btn btn-outline btn-sm" onclick="pedirFactura(${p.id})">${icon('clipboard', 14)} Facturar</button>`;
+}
+const cerrarModal = () => document.getElementById('modal-generico').classList.remove('open');
+async function pedirFactura(id) {
+    const p = (window.PEDIDOS || []).find((x) => x.id === id);
+    const g = (await api(`/clientes/${CID}/datos-fiscales`).catch(() => null)) || {};
+    const opts = (obj, sel) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${String(k) === String(sel) ? 'selected' : ''}>${k} · ${escHTML(v)}</option>`).join('');
+    document.getElementById('modal-generico-body').innerHTML = `
+        <button class="modal-close" onclick="cerrarModal()">${icon('x', 20)}</button>
+        <h3 style="margin-bottom:2px">Facturar pedido ${escHTML(p.numero_orden)}</h3>
+        <p style="margin:0 0 14px;color:var(--text-muted);font-size:.85rem">Total ${formatoMoneda(p.total)}. Escribe tus datos tal como aparecen en tu constancia de situación fiscal.</p>
+        ${FACT.modo === 'sandbox' ? '<div class="pago-prueba" style="margin-bottom:12px">Facturación de prueba: el CFDI se timbra en el sandbox del PAC y no tiene validez fiscal.</div>' : ''}
+        <div class="field-row">
+            <div class="field"><label>RFC</label><input id="ff-rfc" maxlength="13" value="${escHTML(g.rfc || '')}" placeholder="XAXX010101000" style="text-transform:uppercase" /></div>
+            <div class="field"><label>Código postal fiscal</label><input id="ff-cp" maxlength="5" inputmode="numeric" value="${escHTML(g.codigo_postal || '')}" placeholder="20000" /></div>
+        </div>
+        <div class="field"><label>Nombre o razón social (sin "S.A. de C.V.")</label><input id="ff-razon" value="${escHTML(g.razon_social || '')}" style="text-transform:uppercase" /></div>
+        <div class="field"><label>Régimen fiscal</label><select id="ff-regimen"><option value="">Elige…</option>${opts(FACT.regimenes, g.regimen_fiscal)}</select></div>
+        <div class="field"><label>Uso del CFDI</label><select id="ff-uso">${opts(FACT.usos, g.uso_cfdi || 'G03')}</select></div>
+        <label style="display:flex;align-items:center;gap:8px;margin:4px 0 14px;font-size:.88rem"><input type="checkbox" id="ff-guardar" style="width:auto" checked /> Guardar estos datos para mis próximas facturas</label>
+        <button class="btn btn-primary" style="width:100%" id="ff-btn" onclick="enviarFactura(${id})">Generar factura</button>
+        <p style="font-size:.76rem;color:var(--text-muted);margin:10px 0 0">Se puede facturar dentro de los ${FACT.dias} días siguientes al pago. Te enviamos el PDF y el XML por correo y quedan aquí para descargar.</p>`;
+    document.getElementById('modal-generico').classList.add('open');
+}
+async function enviarFactura(id) {
+    const v = (k) => document.getElementById(k).value.trim();
+    const body = { rfc: v('ff-rfc').toUpperCase(), razon_social: v('ff-razon').toUpperCase(), regimen_fiscal: v('ff-regimen'), codigo_postal: v('ff-cp'), uso_cfdi: v('ff-uso'), guardar: document.getElementById('ff-guardar').checked };
+    if (!/^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/.test(body.rfc)) return toast('Revisa tu RFC (12 o 13 caracteres)', 'warn');
+    if (!/^\d{5}$/.test(body.codigo_postal)) return toast('El código postal debe tener 5 dígitos', 'warn');
+    if (!body.razon_social) return toast('Escribe tu nombre o razón social', 'warn');
+    if (!body.regimen_fiscal) return toast('Elige tu régimen fiscal', 'warn');
+    const b = document.getElementById('ff-btn'); b.disabled = true; b.textContent = 'Timbrando…';
+    try {
+        const r = await api(`/pedidos/${id}/factura`, { method: 'POST', body });
+        cerrarModal(); toast(r.message, 'ok');
+        setTimeout(() => location.reload(), 1200);
+    } catch (e) { toast(e.message, 'error'); b.disabled = false; b.textContent = 'Generar factura'; }
 }
 </script>
 </body>

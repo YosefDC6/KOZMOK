@@ -26,8 +26,8 @@
             </select>
             <select id="f-metodo">
                 <option value="">Todos los métodos</option>
-                <option value="tarjeta">Tarjeta</option>
-                <option value="paypal">PayPal</option>
+                <option value="paypal">PayPal o tarjeta</option>
+                <option value="tarjeta">Tarjeta (mostrador)</option>
                 <option value="monedero">Monedero</option>
                 <option value="spei">SPEI</option>
                 <option value="tienda">Pago en tienda</option>
@@ -63,7 +63,7 @@ requireAuthAdmin();
 renderAdminSidebar('pagos');
 document.getElementById('topbar').innerHTML = adminHeader('Pagos', 'El pago de cada pedido: método, monto, estado y referencia.');
 
-const METODO = { tarjeta: 'Tarjeta', paypal: 'PayPal', monedero: 'Monedero', spei: 'SPEI', tienda: 'Pago en tienda', efectivo: 'Efectivo', transferencia: 'Transferencia' };
+const METODO = { tarjeta: 'Tarjeta (mostrador)', paypal: 'PayPal o tarjeta', monedero: 'Monedero', spei: 'SPEI', tienda: 'Pago en tienda', efectivo: 'Efectivo', transferencia: 'Transferencia' };
 const ESTADO = { pagado: ['Pagado', 'var(--success)'], pendiente: ['Pendiente', 'var(--warning)'], reembolsado: ['Reembolsado', 'var(--accent-light)'], cancelado: ['Cancelado', 'var(--text-muted)'] };
 const money2 = (v) => Number(v || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 let PAGOS = [];

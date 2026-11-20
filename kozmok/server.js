@@ -12,7 +12,8 @@ const dbConfig = require('./db.config.js');   // lee el .env (contraseña de la 
 const seg = require('./seguridad.js');
 // Envío real de correos por Gmail (SMTP); sin configurar, solo se guardan.
 const correo = require('./correo.js');
-const paypal = require('./paypal.js');   // pagos con PayPal / tarjeta (sandbox por defecto)
+const paypal = require('./paypal.js');
+const facturama = require('./facturama.js');   // factura electrónica CFDI 4.0 (sandbox por defecto)   // pagos con PayPal / tarjeta (sandbox por defecto)
 const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
@@ -1434,6 +1435,14 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
             reembolso_paypal = { monto: Number(pp.monto), id: r.id };
         }
     }
+    // Si el pedido ya tenía factura, se cancela ante el SAT (motivo 03: la
+    // operación no se llevó a cabo). Si el PAC no lo acepta, no se cancela el pedido.
+    const fac = (await client.query(`SELECT * FROM facturas WHERE pedido_id = $1 AND estado = 'timbrada' FOR UPDATE`, [pedido.id])).rows[0];
+    if (fac) {
+        if (!facturama.configurado()) throw new Error('El pedido tiene factura y no se puede cancelar ante el SAT: falta configurar la facturación');
+        const rc = await facturama.cancelar(fac.facturama_id, '03');
+        await client.query('UPDATE facturas SET estado = $2, motivo_cancelacion = $3 WHERE id = $1', [fac.id, rc.estado === 'canceled' ? 'cancelada' : 'cancelando', '03']);
+    }
     const items = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [pedido.id]);
     for (const it of items.rows) {
         await client.query('UPDATE productos SET stock = stock + $1 WHERE id = $2', [it.cantidad, it.producto_id]);
@@ -2043,6 +2052,267 @@ app.post('/api/pedidos', limiteDinero, requireCliente, (req, res, next) => { res
 app.post('/api/pagos/procesar', limiteDinero, requireCliente, procesarCompra);
 
 // =========================================================
+// FACTURA ELECTRÓNICA (CFDI 4.0) con Facturama — sandbox: sin validez fiscal
+//   GET  /api/facturacion/config
+//   GET/PUT /api/clientes/:id/datos-fiscales
+//   POST /api/pedidos/:id/factura            (cliente, pedido pagado y suyo)
+//   GET  /api/facturas/:id/(pdf|xml)          (cliente dueño o equipo)
+//   GET  /api/admin/facturas · POST /api/admin/facturas {numero_orden, datos fiscales}
+//   POST /api/admin/facturas/:id/cancelar
+// Los montos salen del pedido guardado (no del navegador) y la factura queda
+// sellada: no se edita ni se borra, solo se cancela ante el SAT.
+// =========================================================
+const FISCAL = {
+    regimenes: {
+        601: 'General de Ley Personas Morales', 603: 'Personas Morales con Fines no Lucrativos',
+        605: 'Sueldos y Salarios e Ingresos Asimilados a Salarios', 606: 'Arrendamiento', 608: 'Demás ingresos',
+        612: 'Personas Físicas con Actividades Empresariales y Profesionales', 616: 'Sin obligaciones fiscales',
+        620: 'Sociedades Cooperativas de Producción', 621: 'Incorporación Fiscal', 625: 'Actividades Empresariales con ingresos a través de Plataformas Tecnológicas',
+        626: 'Régimen Simplificado de Confianza',
+    },
+    usos: { G01: 'Adquisición de mercancías', G03: 'Gastos en general', I04: 'Equipo de cómputo y accesorios', S01: 'Sin efectos fiscales' },
+    // Forma de pago del SAT (c_FormaPago) según cómo se pagó el pedido
+    formaPago: { paypal: '31', spei: '03', tienda: '01', monedero: '05', efectivo: '01', tarjeta: '04', transferencia: '03' },
+    diasParaFacturar: Number(process.env.FACTURA_DIAS_LIMITE) || 30,
+};
+const RFC_RE = /^([A-ZÑ&]{3,4})(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([A-Z\d]{2})([A\d])$/;
+
+function validarFiscales(b) {
+    const d = {
+        rfc: String(b.rfc || '').trim().toUpperCase().replace(/[\s-]/g, ''),
+        razon_social: String(b.razon_social || '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 254),
+        regimen_fiscal: String(b.regimen_fiscal || '').trim(),
+        codigo_postal: String(b.codigo_postal || '').trim(),
+        uso_cfdi: String(b.uso_cfdi || 'G03').trim().toUpperCase(),
+    };
+    if (!RFC_RE.test(d.rfc)) return { error: 'El RFC no tiene un formato válido (12 caracteres para empresas, 13 para personas)' };
+    if (d.rfc === 'XAXX010101000' || d.rfc === 'XEXX010101000') return { error: 'Ese RFC es el genérico de público en general; escribe el tuyo' };
+    if (d.razon_social.length < 3) return { error: 'Escribe tu nombre o razón social tal como aparece en tu constancia de situación fiscal' };
+    if (/\b(S\.?\s?A\.?(\s?DE\s?C\.?\s?V\.?)?|S\.?\s?DE\s?R\.?\s?L\.?)$/.test(d.razon_social)) return { error: 'Escribe la razón social sin el régimen societario (sin "S.A. de C.V."), como pide el CFDI 4.0' };
+    if (!FISCAL.regimenes[d.regimen_fiscal]) return { error: 'Elige tu régimen fiscal' };
+    if (!/^\d{5}$/.test(d.codigo_postal)) return { error: 'El código postal fiscal debe tener 5 dígitos' };
+    if (!FISCAL.usos[d.uso_cfdi]) return { error: 'Elige el uso del CFDI' };
+    const moral = d.rfc.length === 12;
+    if (moral && ['605', '606', '608', '612', '616', '621', '625'].includes(d.regimen_fiscal)) return { error: 'Ese régimen es para personas físicas, pero el RFC es de empresa' };
+    if (!moral && ['601', '603', '620'].includes(d.regimen_fiscal)) return { error: 'Ese régimen es para empresas, pero el RFC es de persona física' };
+    return { datos: d };
+}
+
+// Clave de producto del SAT: la del producto o una por categoría
+function claveSat(p) {
+    if (p.clave_sat && /^\d{8}$/.test(p.clave_sat)) return p.clave_sat;
+    const t = `${p.categoria || ''} ${p.nombre || ''}`.toLowerCase();
+    if (/laptop|port[aá]til|notebook/.test(t)) return '43211503';
+    if (/escritorio|desktop|\bpc\b|workstation|all.?in.?one/.test(t)) return '43211507';
+    if (/teclado/.test(t)) return '43211706';
+    if (/mouse|rat[oó]n/.test(t)) return '43211708';
+    return '01010101';   // "No existe en el catálogo" (válido para el SAT)
+}
+
+const r2 = (n) => Math.round(Number(n) * 100) / 100;
+
+// Arma el JSON del CFDI 4.0 a partir del pedido guardado.
+async function armarCFDI(db, pedido, fiscales) {
+    const items = (await db.query(
+        `SELECT pi.*, p.nombre, p.clave_sat, c.nombre AS categoria FROM pedido_items pi
+         LEFT JOIN productos p ON p.id = pi.producto_id LEFT JOIN categorias c ON c.id = p.categoria_id
+         WHERE pi.pedido_id = $1 ORDER BY pi.id`, [pedido.id])).rows;
+    const imps = Array.isArray(pedido.impuestos_detalle) ? pedido.impuestos_detalle : [];
+    const iva = imps.find((t) => /iva/i.test(t.nombre || ''));
+    const tasa = iva ? Number(iva.porcentaje) / 100 : (Number(pedido.impuestos) > 0 ? 0.16 : 0);
+
+    // Conceptos antes de impuestos: productos (con su descuento de promoción) y garantías
+    const conceptos = [];
+    for (const it of items) {
+        conceptos.push({ clave: claveSat(it), id: `P${it.producto_id || ''}`, desc: it.nombre || 'Producto', unidad: 'Pieza', claveUnidad: 'H87',
+            precio: Number(it.precio_unitario), cantidad: Number(it.cantidad), descuento: Number(it.descuento || 0) });
+        if (Number(it.garantia_costo) > 0) {
+            conceptos.push({ clave: '81111812', id: `G${it.producto_id || ''}`, desc: `Garantía extendida ${it.garantia_meses} meses — ${it.nombre || ''}`.slice(0, 1000),
+                unidad: 'Servicio', claveUnidad: 'E48', precio: Number(it.garantia_costo), cantidad: 1, descuento: 0 });
+        }
+    }
+    // Los puntos se descontaron del total (con IVA): se reparten como descuento antes de impuestos
+    let puntosBase = r2(Number(pedido.descuento || 0) / (1 + tasa));
+    const bases = conceptos.map((c) => r2(c.precio * c.cantidad - c.descuento));
+    const sumaBases = bases.reduce((a, b) => a + b, 0);
+    conceptos.forEach((c, i) => {
+        if (puntosBase <= 0 || sumaBases <= 0) return;
+        const parte = i === conceptos.length - 1 ? puntosBase : Math.min(puntosBase, r2(Number(pedido.descuento || 0) / (1 + tasa) * bases[i] / sumaBases));
+        const cabe = Math.min(parte, bases[i]);
+        c.descuento = r2(c.descuento + cabe);
+        puntosBase = r2(puntosBase - cabe);
+    });
+    // Envío: lo cobrado ya incluye IVA
+    if (Number(pedido.envio) > 0) {
+        conceptos.push({ clave: '78102203', id: 'ENVIO', desc: 'Envío a domicilio', unidad: 'Servicio', claveUnidad: 'E48',
+            precio: r2(Number(pedido.envio) / (1 + tasa)), cantidad: 1, descuento: 0 });
+    }
+
+    const Items = conceptos.map((c) => {
+        const subtotal = r2(c.precio * c.cantidad);
+        const base = r2(subtotal - c.descuento);
+        const imp = r2(base * tasa);
+        return {
+            ProductCode: c.clave, IdentificationNumber: c.id, Description: c.desc, Unit: c.unidad, UnitCode: c.claveUnidad,
+            UnitPrice: c.precio, Quantity: c.cantidad, Subtotal: subtotal, ...(c.descuento > 0 ? { Discount: c.descuento } : {}),
+            TaxObject: tasa > 0 ? '02' : '01',
+            ...(tasa > 0 ? { Taxes: [{ Total: imp, Name: 'IVA', Base: base, Rate: tasa, IsRetention: false }] } : {}),
+            Total: r2(base + imp),
+        };
+    });
+    return {
+        cfdi: {
+            NameId: '1', CfdiType: 'I', Currency: 'MXN', Serie: facturama.CFG.serie, Folio: String(pedido.id),
+            ExpeditionPlace: facturama.CFG.lugar,
+            PaymentForm: FISCAL.formaPago[pedido.metodo_tipo] || '99',
+            PaymentMethod: 'PUE',
+            OrderNumber: pedido.numero_orden, Exportation: '01',
+            Receiver: { Rfc: fiscales.rfc, Name: fiscales.razon_social, CfdiUse: fiscales.uso_cfdi, FiscalRegime: fiscales.regimen_fiscal, TaxZipCode: fiscales.codigo_postal },
+            Items,
+        },
+        total: r2(Items.reduce((a, i) => a + i.Total, 0)),
+    };
+}
+
+// Revisa si un pedido se puede facturar
+function puedeFacturar(p) {
+    if (!p) return 'Pedido no encontrado';
+    if (p.estado === 'cancelado') return 'Un pedido cancelado no se factura';
+    if (p.pago_estado !== 'pagado') return 'Primero hay que pagar el pedido';
+    const ref = p.fecha_confirmacion || p.fecha_pedido;
+    if (ref && Date.now() - new Date(ref).getTime() > FISCAL.diasParaFacturar * 86400000) {
+        return `Solo se puede facturar dentro de los ${FISCAL.diasParaFacturar} días siguientes al pago`;
+    }
+    return null;
+}
+
+// Timbra la factura de un pedido y la guarda. quien = { cliente_id } o { usuario_id }.
+async function facturarPedido(pedidoId, fiscales, quien, req) {
+    if (!facturama.configurado()) throw Object.assign(new Error('La facturación electrónica no está configurada en el servidor'), { status: 503, publico: true });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const p = (await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [pedidoId])).rows[0];
+        const no = puedeFacturar(p);
+        if (no) throw Object.assign(new Error(no), { status: 400, publico: true });
+        if (quien.cliente_id && Number(p.cliente_id) !== Number(quien.cliente_id)) throw Object.assign(new Error('Pedido no encontrado'), { status: 404, publico: true });
+        const vigente = (await client.query(`SELECT id FROM facturas WHERE pedido_id = $1 AND estado <> 'cancelada'`, [p.id])).rows[0];
+        if (vigente) throw Object.assign(new Error('Este pedido ya tiene factura'), { status: 409, publico: true });
+        const { cfdi, total } = await armarCFDI(client, p, fiscales);
+        const t = await facturama.timbrar(cfdi);
+        const f = (await client.query(
+            `INSERT INTO facturas (pedido_id, cliente_id, facturama_id, uuid, serie, folio, rfc, razon_social, regimen_fiscal, codigo_postal,
+                                   uso_cfdi, forma_pago, total, modo, solicitada_por, usuario_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+            [p.id, p.cliente_id, t.id, t.uuid, t.serie, t.folio, fiscales.rfc, fiscales.razon_social, fiscales.regimen_fiscal, fiscales.codigo_postal,
+                fiscales.uso_cfdi, cfdi.PaymentForm, t.total ?? total, facturama.CFG.modo, quien.usuario_id ? 'equipo' : 'cliente', quien.usuario_id || null])).rows[0];
+        await registrarProceso(client, p.id, 'factura', `Factura ${t.serie || ''}${t.folio || ''} timbrada (UUID ${t.uuid || '—'}) para ${fiscales.rfc}`, { automatico: !quien.usuario_id, usuarioId: quien.usuario_id || null });
+        if (req && quien.usuario_id) {
+            await auditar(client, req, { accion: 'factura_emitida', entidad: 'pedido', entidad_id: p.id, despues: { factura: f.id, uuid: f.uuid, rfc: f.rfc, total: f.total } });
+        }
+        await client.query('COMMIT');
+        // Facturama manda el PDF y XML al correo del cliente (si falla, igual se puede descargar)
+        const c = p.cliente_id ? (await pool.query('SELECT correo FROM clientes WHERE id = $1', [p.cliente_id])).rows[0] : null;
+        if (c && c.correo) facturama.enviarPorCorreo(t.id, c.correo, `Tu factura del pedido ${p.numero_orden} · Kozmok`).catch(() => {});
+        return f;
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+    } finally { client.release(); }
+}
+const errorFactura = (res, e) => {
+    if (!e.publico) throw e;
+    res.status(e.status && e.status < 600 ? e.status : 502).json({ message: e.message });
+};
+
+app.get('/api/facturacion/config', (req, res) => {
+    res.json({ activo: facturama.configurado(), modo: facturama.CFG.modo, regimenes: FISCAL.regimenes, usos: FISCAL.usos, dias: FISCAL.diasParaFacturar });
+});
+
+app.get('/api/clientes/:id/datos-fiscales', asyncRoute(async (req, res) => {
+    const r = await pool.query('SELECT rfc, razon_social, regimen_fiscal, codigo_postal, uso_cfdi FROM datos_fiscales WHERE cliente_id = $1', [req.params.id]);
+    res.json(r.rows[0] || null);
+}));
+app.put('/api/clientes/:id/datos-fiscales', asyncRoute(async (req, res) => {
+    const v = validarFiscales(req.body || {});
+    if (v.error) return res.status(400).json({ message: v.error });
+    const d = v.datos;
+    await pool.query(
+        `INSERT INTO datos_fiscales (cliente_id, rfc, razon_social, regimen_fiscal, codigo_postal, uso_cfdi) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (cliente_id) DO UPDATE SET rfc = $2, razon_social = $3, regimen_fiscal = $4, codigo_postal = $5, uso_cfdi = $6, actualizado = CURRENT_TIMESTAMP`,
+        [req.params.id, d.rfc, d.razon_social, d.regimen_fiscal, d.codigo_postal, d.uso_cfdi]);
+    res.json({ message: 'Datos fiscales guardados', datos: d });
+}));
+
+app.post('/api/pedidos/:id/factura', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
+    const v = validarFiscales(req.body || {});
+    if (v.error) return res.status(400).json({ message: v.error });
+    try {
+        const f = await facturarPedido(Number(req.params.id), v.datos, { cliente_id: req.cliente.id }, req);
+        if (req.body.guardar) {
+            const d = v.datos;
+            await pool.query(
+                `INSERT INTO datos_fiscales (cliente_id, rfc, razon_social, regimen_fiscal, codigo_postal, uso_cfdi) VALUES ($1,$2,$3,$4,$5,$6)
+                 ON CONFLICT (cliente_id) DO UPDATE SET rfc = $2, razon_social = $3, regimen_fiscal = $4, codigo_postal = $5, uso_cfdi = $6, actualizado = CURRENT_TIMESTAMP`,
+                [req.cliente.id, d.rfc, d.razon_social, d.regimen_fiscal, d.codigo_postal, d.uso_cfdi]);
+        }
+        res.status(201).json({ message: `Factura generada${f.modo === 'sandbox' ? ' (de prueba, sin validez fiscal)' : ''}. También te la enviamos por correo.`, factura: f });
+    } catch (e) { errorFactura(res, e); }
+}));
+
+// Descarga del PDF o XML: el cliente dueño del pedido o alguien del equipo
+app.get('/api/facturas/:id/:formato(pdf|xml)', asyncRoute(async (req, res) => {
+    const f = (await pool.query('SELECT f.*, p.numero_orden FROM facturas f JOIN pedidos p ON p.id = f.pedido_id WHERE f.id = $1', [req.params.id])).rows[0];
+    const sc = await seg.leerSesion(req, 'cliente').catch(() => null);
+    const su = await seg.leerSesion(req, 'usuario').catch(() => null);
+    const equipo = su ? (await pool.query('SELECT activo FROM usuarios WHERE id = $1', [su.usuario_id])).rows[0] : null;
+    const permitido = f && ((sc && Number(sc.cliente_id) === Number(f.cliente_id)) || (equipo && equipo.activo));
+    if (!permitido) return res.status(404).json({ message: 'Factura no encontrada' });
+    try {
+        const a = await facturama.descargar(f.facturama_id, req.params.formato);
+        res.set('Content-Type', a.tipo);
+        res.set('Content-Disposition', `attachment; filename="Factura-${f.serie || 'KZ'}${f.folio || f.id}-${f.numero_orden}.${req.params.formato}"`);
+        res.set('Cache-Control', 'private, no-store');
+        res.send(a.contenido);
+    } catch (e) { errorFactura(res, e); }
+}));
+
+app.get('/api/admin/facturas', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT f.*, p.numero_orden, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre FROM facturas f
+         JOIN pedidos p ON p.id = f.pedido_id LEFT JOIN clientes c ON c.id = f.cliente_id LEFT JOIN usuarios u ON u.id = f.usuario_id
+         ORDER BY f.id DESC LIMIT 300`);
+    res.json({ facturas: r.rows, activo: facturama.configurado(), modo: facturama.CFG.modo });
+}));
+// El equipo factura un pedido por su número (p. ej. una venta de mostrador del ERP)
+app.post('/api/admin/facturas', asyncRoute(async (req, res) => {
+    const v = validarFiscales(req.body || {});
+    if (v.error) return res.status(400).json({ message: v.error });
+    const p = (await pool.query('SELECT id FROM pedidos WHERE numero_orden = $1', [String(req.body.numero_orden || '').trim().toUpperCase()])).rows[0];
+    if (!p) return res.status(404).json({ message: 'No encontré ese número de pedido' });
+    try {
+        const f = await facturarPedido(p.id, v.datos, { usuario_id: req.usuario.id }, req);
+        res.status(201).json({ message: 'Factura generada', factura: f });
+    } catch (e) { errorFactura(res, e); }
+}));
+app.post('/api/admin/facturas/:id/cancelar', asyncRoute(async (req, res) => {
+    const motivo = ['02', '03'].includes(req.body.motivo) ? req.body.motivo : null;
+    const detalle = String(req.body.detalle || '').trim();
+    if (!motivo) return res.status(400).json({ message: 'Elige el motivo de cancelación' });
+    if (detalle.length < 10) return res.status(400).json({ message: 'Explica por qué se cancela (al menos 10 caracteres)' });
+    const f = (await pool.query('SELECT * FROM facturas WHERE id = $1', [req.params.id])).rows[0];
+    if (!f) return res.status(404).json({ message: 'Factura no encontrada' });
+    if (f.estado === 'cancelada') return res.status(400).json({ message: 'La factura ya estaba cancelada' });
+    try {
+        const r = await facturama.cancelar(f.facturama_id, motivo);
+        const estado = r.estado === 'canceled' ? 'cancelada' : 'cancelando';
+        await pool.query('UPDATE facturas SET estado = $2, motivo_cancelacion = $3 WHERE id = $1', [f.id, estado, motivo]);
+        await auditar(pool, req, { accion: 'factura_cancelada', entidad: 'pedido', entidad_id: f.pedido_id, antes: { estado: f.estado }, despues: { estado, uuid: f.uuid }, motivo: `${motivo}: ${detalle}` });
+        res.json({ message: estado === 'cancelada' ? 'Factura cancelada ante el SAT' : 'Cancelación enviada; el SAT la está procesando', estado });
+    } catch (e) { errorFactura(res, e); }
+}));
+
+// =========================================================
 // PAYPAL (cuenta PayPal o tarjeta) — sandbox: sin dinero real
 //   GET  /api/pagos/paypal/config            si está activo y el client-id público
 //   POST /api/pagos/paypal/orden   {pedido_id}           crea la orden en PayPal
@@ -2148,7 +2418,9 @@ app.post('/api/pagos/paypal/capturar', limiteDinero, requireCliente, asyncRoute(
 
 app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRoute(async (req, res) => {
     const result = await pool.query(
-        `SELECT p.*, STRING_AGG(pr.nombre, ', ') AS productos
+        `SELECT p.*, STRING_AGG(pr.nombre, ', ') AS productos,
+                (SELECT json_build_object('id', f.id, 'estado', f.estado, 'uuid', f.uuid, 'serie', f.serie, 'folio', f.folio, 'rfc', f.rfc, 'modo', f.modo)
+                   FROM facturas f WHERE f.pedido_id = p.id ORDER BY f.id DESC LIMIT 1) AS factura
          FROM pedidos p LEFT JOIN pedido_items pi ON p.id = pi.pedido_id
          LEFT JOIN productos pr ON pi.producto_id = pr.id
          WHERE p.cliente_id = $1 GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
@@ -2814,6 +3086,7 @@ const PERMISOS_API = [
     { ruta: /^\/garantias(\/|$)/,                      metodos: TODO, permisos: ['garantias'] },
     // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
     { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
+    { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['pedidos', 'ordenes-erp'] },
     { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
     // SCM
     { ruta: /^\/metricas-productos$/,                  metodos: LEER, permisos: ['dashboard', 'scm', 'inventario', 'reportes-scm', 'productos'] },

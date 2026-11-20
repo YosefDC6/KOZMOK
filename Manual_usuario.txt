@@ -463,6 +463,15 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
       - "Comprobante" / "Ficha de pago" abre el recibo del pedido.
       - En pedidos con pago pendiente: boton "Ya realice el pago".
       - En pedidos entregados: "Dejar resena" para calificar cada producto.
+      - En pedidos con PayPal sin pagar: "Pagar ahora" (lleva a pagar.html).
+      - FACTURA (CFDI 4.0): en pedidos pagados, hasta 30 dias despues del
+        pago, boton "Facturar". Pide RFC, nombre o razon social (sin
+        "S.A. de C.V."), regimen fiscal, codigo postal fiscal y uso del
+        CFDI (G01, G03, I04 equipo de computo, S01); puede guardarlos para
+        la proxima vez. Se timbra al momento con el PAC (Facturama) y llega
+        el PDF y XML por correo. Despues aparecen "Factura PDF" y "XML".
+        En modo de prueba (sandbox) el CFDI no tiene validez fiscal.
+        Si el SAT rechaza los datos se muestra el motivo para corregirlos.
    La pantalla de agradecimiento (gracias.html) tambien muestra un mini
    rastreo de las 4 etapas.
 
@@ -1221,6 +1230,26 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Filtros por estado, metodo y busqueda; "Exportar CSV".
       - "Gestionar" abre el gestor del pedido (4.8) para registrar el cobro,
         moverlo de estado o cancelarlo.
+
+   4.15e FACTURAS  (admin/facturas.html)  [Admin y Ventas]
+      - Lista de CFDI 4.0 emitidos: fecha, serie/folio y UUID, pedido,
+        receptor (RFC, razon social, uso), total, estado (Vigente / En
+        cancelacion / Cancelada) y si la pidio el cliente o quien del equipo.
+      - PDF y XML de cada factura.
+      - "Facturar un pedido": el equipo factura por numero de pedido (por
+        ejemplo una venta de mostrador del ERP) con los datos del cliente.
+      - "Cancelar": motivo ante el SAT (02 con errores / 03 no se llevo a
+        cabo) y detalle obligatorio; queda en la auditoria.
+      - Control interno: una factura timbrada no se edita ni se borra (la
+        base lo impide); solo una vigente por pedido. Al cancelar un pedido
+        facturado, la factura se cancela sola ante el SAT.
+      - Configuracion en el .env: FACTURAMA_USUARIO, FACTURAMA_PASSWORD
+        (cuenta del sandbox de Facturama), FACTURA_LUGAR_EXPEDICION (C.P.
+        fiscal de la tienda) y FACTURA_SERIE. En el perfil de Facturama va
+        el emisor (en sandbox, RFC EKU9003173C9 con sus sellos de prueba).
+      - La clave SAT de cada producto se toma de productos.clave_sat o se
+        deduce de la categoria (laptops 43211503, escritorio 43211507,
+        teclados 43211706, mouse 43211708; si no, 01010101).
 
 
 ===============================================================================

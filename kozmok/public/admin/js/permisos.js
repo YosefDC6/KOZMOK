@@ -30,7 +30,7 @@
         ventas: [
             'dashboard', 'clientes', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
-            'promociones', 'monedero', 'pagos',
+            'promociones', 'monedero', 'pagos', 'facturas',
             'mi-actividad',
         ],
 

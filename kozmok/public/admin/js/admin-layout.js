@@ -57,6 +57,7 @@ const ADMIN_SECCIONES = [
         { href: '/admin/impuestos.html',   key: 'impuestos',   ic: 'layers',  label: 'Impuestos',   desc: 'Configuración del cálculo' },
         { href: '/admin/monedero.html',    key: 'monedero',    ic: 'wallet',  label: 'Monedero',    desc: 'Saldos, recargas y ajustes' },
         { href: '/admin/pagos.html',       key: 'pagos',       ic: 'card',    label: 'Pagos',       desc: 'Pago de cada pedido' },
+        { href: '/admin/facturas.html',    key: 'facturas',    ic: 'clipboard', label: 'Facturas',  desc: 'CFDI emitidos y cancelaciones' },
     ] },
     { titulo: 'Cuenta', links: [
         { href: '/admin/mi-actividad.html',  key: 'mi-actividad',  ic: 'clock',    label: 'Mi actividad' },

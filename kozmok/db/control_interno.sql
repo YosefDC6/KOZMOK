@@ -419,3 +419,73 @@ DROP TRIGGER IF EXISTS trg_paypal_fecha ON pagos_paypal;
 CREATE TRIGGER trg_paypal_fecha BEFORE INSERT ON pagos_paypal FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
 DROP TRIGGER IF EXISTS trg_paypal_cambios ON pagos_paypal;
 CREATE TRIGGER trg_paypal_cambios BEFORE UPDATE OR DELETE ON pagos_paypal FOR EACH ROW EXECUTE FUNCTION kz_paypal_cambios();
+
+-- =========================================================
+-- FACTURA ELECTRÓNICA (CFDI 4.0, timbrado con Facturama)
+--   datos_fiscales: lo que el cliente guarda para facturar (uno por cliente).
+--   productos.clave_sat: clave del catálogo c_ClaveProdServ (si está vacía se
+--     deduce de la categoría al facturar).
+--   facturas: un CFDI vigente por pedido. No se borra ni cambia su contenido;
+--     solo pasa de timbrada a cancelada (o en cancelación).
+-- =========================================================
+CREATE TABLE IF NOT EXISTS datos_fiscales (
+    cliente_id      INTEGER PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+    rfc             VARCHAR(13) NOT NULL,
+    razon_social    VARCHAR(254) NOT NULL,
+    regimen_fiscal  VARCHAR(3) NOT NULL,
+    codigo_postal   VARCHAR(5) NOT NULL,
+    uso_cfdi        VARCHAR(4) NOT NULL DEFAULT 'G03',
+    actualizado     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS clave_sat VARCHAR(8);
+
+CREATE TABLE IF NOT EXISTS facturas (
+    id                 SERIAL PRIMARY KEY,
+    pedido_id          INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE RESTRICT,
+    cliente_id         INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
+    facturama_id       VARCHAR(60) NOT NULL UNIQUE,
+    uuid               VARCHAR(40) UNIQUE,
+    serie              VARCHAR(25),
+    folio              VARCHAR(40),
+    rfc                VARCHAR(13) NOT NULL,
+    razon_social       VARCHAR(254) NOT NULL,
+    regimen_fiscal     VARCHAR(3) NOT NULL,
+    codigo_postal      VARCHAR(5) NOT NULL,
+    uso_cfdi           VARCHAR(4) NOT NULL,
+    forma_pago         VARCHAR(2) NOT NULL,
+    total              NUMERIC(12,2) NOT NULL,
+    modo               VARCHAR(8) NOT NULL DEFAULT 'sandbox',
+    estado             VARCHAR(16) NOT NULL DEFAULT 'timbrada' CHECK (estado IN ('timbrada','cancelando','cancelada')),
+    motivo_cancelacion VARCHAR(2),
+    solicitada_por     VARCHAR(10) NOT NULL DEFAULT 'cliente' CHECK (solicitada_por IN ('cliente','equipo')),
+    usuario_id         INTEGER REFERENCES usuarios(id),
+    fecha              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_cancelacion  TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_facturas_pedido ON facturas (pedido_id);
+-- Solo una factura vigente (timbrada o en cancelación) por pedido
+CREATE UNIQUE INDEX IF NOT EXISTS uq_factura_vigente ON facturas (pedido_id) WHERE estado <> 'cancelada';
+
+CREATE OR REPLACE FUNCTION kz_facturas_cambios() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Las facturas no se borran; se cancelan ante el SAT.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF current_setting('kozmok.purga', true) = 'si' AND NEW.cliente_id IS NULL AND OLD.cliente_id IS NOT NULL THEN RETURN NEW; END IF;
+    IF (NEW.pedido_id, NEW.facturama_id, NEW.uuid, NEW.serie, NEW.folio, NEW.rfc, NEW.razon_social, NEW.regimen_fiscal, NEW.codigo_postal,
+        NEW.uso_cfdi, NEW.forma_pago, NEW.total, NEW.modo, NEW.fecha, NEW.cliente_id, NEW.solicitada_por, NEW.usuario_id)
+       IS DISTINCT FROM
+       (OLD.pedido_id, OLD.facturama_id, OLD.uuid, OLD.serie, OLD.folio, OLD.rfc, OLD.razon_social, OLD.regimen_fiscal, OLD.codigo_postal,
+        OLD.uso_cfdi, OLD.forma_pago, OLD.total, OLD.modo, OLD.fecha, OLD.cliente_id, OLD.solicitada_por, OLD.usuario_id) THEN
+        RAISE EXCEPTION 'Los datos de una factura timbrada no se pueden cambiar; cancélala y emite otra.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF OLD.estado = 'cancelada' AND NEW.estado <> 'cancelada' THEN
+        RAISE EXCEPTION 'Una factura cancelada no se puede reactivar.' USING ERRCODE = 'P0001', HINT = 'control_interno';
+    END IF;
+    IF NEW.estado = 'cancelada' AND OLD.estado <> 'cancelada' THEN NEW.fecha_cancelacion := CURRENT_TIMESTAMP; END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_facturas_fecha ON facturas;
+CREATE TRIGGER trg_facturas_fecha BEFORE INSERT ON facturas FOR EACH ROW EXECUTE FUNCTION kz_fecha_servidor();
+DROP TRIGGER IF EXISTS trg_facturas_cambios ON facturas;
+CREATE TRIGGER trg_facturas_cambios BEFORE UPDATE OR DELETE ON facturas FOR EACH ROW EXECUTE FUNCTION kz_facturas_cambios();
