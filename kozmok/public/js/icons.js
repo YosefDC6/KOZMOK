@@ -119,7 +119,11 @@
     // inclinado). mascotaKZK(alto) -> <svg> de ese alto.
     //   <span data-mascota="120"></span> en HTML estático.
     // ---------------------------------------------------------
-    window.mascotaKZK = function (alto = 40, { titulo = 'Fantasmita de Kozmok', saluda = true } = {}) {
+    //   Variantes: 'clasico' (saluda; portada y avisos), 'gamer' (con
+    //   audífonos; el asesor) y 'pixel' (8-bit; página 404).
+    window.mascotaKZK = function (alto = 40, { titulo = 'Fantasmita de Kozmok', saluda = true, variante = 'clasico' } = {}) {
+        if (variante === 'pixel') return mascotaPixel(alto, titulo);
+        if (variante === 'gamer') saluda = false;
         const cuerpo = 'M7 25C7 12.5 14.4 5 24 5s17 7.5 17 20v22.5l-5.6-5.2-5.6 6-5.8-6-5.8 6-5.6-6L7 47.5z';
         const brazo = saluda ? '<path d="M40.4 27.5c3.6-.6 6.2-3.4 6.8-7.4" fill="none" stroke-width="3.4" stroke-linecap="round"/>' : '';
         const tinta = 'stroke:var(--kzk-contorno,#0B0E14)';
@@ -135,10 +139,26 @@
                 <path d="M21 31.2q2.8 2.6 5.6 0" fill="none" style="${tinta}" stroke-width="2.2" stroke-linecap="round"/>
                 <ellipse cx="14.6" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
                 <ellipse cx="33.2" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
-                <path d="M47 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z" style="fill:var(--kzk-sombra,#6E8BF0)"/>
+                ${variante === 'gamer' ? `
+                <path d="M7.5 24C7.5 2 40.5 2 40.5 24" fill="none" style="${tinta}" stroke-width="5.4" stroke-linecap="round"/>
+                <path d="M7.5 24C7.5 2 40.5 2 40.5 24" fill="none" style="stroke:var(--kzk-sombra,#6E8BF0)" stroke-width="2.2" stroke-linecap="round"/>
+                <rect x="2.5" y="18" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
+                <rect x="37.5" y="18" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
+                <path d="M6.5 31c0 5 4 7 9 7" fill="none" style="${tinta}" stroke-width="2"/>
+                <circle cx="16" cy="38" r="2" style="fill:var(--kzk-contorno,#0B0E14)"/>`
+                : '<path d="M47 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z" style="fill:var(--kzk-sombra,#6E8BF0)"/>'}
             </g>
         </svg>`;
     };
+    // Versión 8-bit: silueta escalonada con sombra sólida del tema.
+    function mascotaPixel(alto, titulo) {
+        const silueta = 'M16.5 4h16.6v4H37v4h4v4h4v4h4.1v32.6H40.5v-4h-4v4h-8v-4h-4v4h-4v-4h-8v4h-8v-4H.5V20h4v-8h4v-4h8z';
+        return `<svg class="kzk-mascota kzk-mascota-pixel" viewBox="-1 2 54 56" width="${Math.round(alto * 54 / 56)}" height="${alto}" role="img" aria-label="${titulo}" shape-rendering="crispEdges"><title>${titulo}</title>
+            <path transform="translate(3 3)" d="${silueta}" style="fill:var(--kzk-sombra,#6E8BF0)"/>
+            <path d="${silueta}" style="fill:var(--kzk-tinta,#fff);stroke:var(--kzk-contorno,#0B0E14)" stroke-width="2" paint-order="stroke"/>
+            <g style="fill:var(--kzk-contorno,#0B0E14)"><rect x="8.5" y="20" width="8.6" height="8.6"/><rect x="32.5" y="20" width="8.6" height="8.6"/><rect x="16.5" y="32" width="16.6" height="4.6"/></g>
+        </svg>`;
+    }
 
     // Rellena íconos en HTML estático: <span data-ic="cart" data-ic-size="18"></span>
     // El ícono se antepone al contenido existente del elemento.
@@ -147,7 +167,7 @@
             el.innerHTML = window.logoKZK(Number(el.dataset.logo) || 16);
         });
         document.querySelectorAll('[data-mascota]').forEach((el) => {
-            el.innerHTML = window.mascotaKZK(Number(el.dataset.mascota) || 40);
+            el.innerHTML = window.mascotaKZK(Number(el.dataset.mascota) || 40, { variante: el.dataset.variante || 'clasico' });
         });
         // En la tienda, los avisos de "no hay nada aquí" llevan al fantasmita.
         if (!location.pathname.startsWith('/admin/')) {

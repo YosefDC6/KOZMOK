@@ -145,7 +145,7 @@
     function crearWidget() {
         const toggle = document.createElement('button');
         toggle.id = 'chatbot-toggle';
-        toggle.innerHTML = window.mascotaKZK ? mascotaKZK(38, { titulo: 'Asesor Kozmok' }) : (window.icon ? icon('chat', 24) : '');
+        toggle.innerHTML = window.mascotaKZK ? mascotaKZK(38, { titulo: 'Asesor Kozmok', variante: 'gamer' }) : (window.icon ? icon('chat', 24) : '');
         toggle.title = 'Asistente de compra';
         toggle.setAttribute('aria-label', 'Abrir asesor de compra');
 
@@ -153,7 +153,7 @@
         panel.id = 'chatbot-panel';
         panel.innerHTML = `
             <div class="chatbot-header">
-                <strong class="chatbot-titulo">${window.mascotaKZK ? mascotaKZK(26, { saluda: false }) : ''} Asistente Kozmok</strong>
+                <strong class="chatbot-titulo">${window.mascotaKZK ? mascotaKZK(26, { variante: 'gamer' }) : ''} Asistente Kozmok</strong>
                 <button class="modal-close" id="chatbot-close" aria-label="Cerrar">${window.icon ? icon('x', 18) : ''}</button>
             </div>
             <div class="chatbot-body" id="chatbot-body"></div>
@@ -197,7 +197,7 @@
             const nudge = document.createElement('div');
             nudge.className = 'chatbot-nudge';
             nudge.innerHTML = `<button aria-label="Cerrar">${window.icon ? icon('x', 14) : '×'}</button>
-                ${window.mascotaKZK ? `<span class="nudge-mascota" aria-hidden="true">${mascotaKZK(34)}</span>` : ''}¿No sabes qué comprar? Pregúntame según tu presupuesto y te digo qué hay disponible.`;
+                ${window.mascotaKZK ? `<span class="nudge-mascota" aria-hidden="true">${mascotaKZK(34, { variante: 'gamer' })}</span>` : ''}¿No sabes qué comprar? Pregúntame según tu presupuesto y te digo qué hay disponible.`;
             document.body.appendChild(nudge);
             setTimeout(() => nudge.classList.add('show'), 1200);
             nudge.querySelector('button').addEventListener('click', quitarNudge);
