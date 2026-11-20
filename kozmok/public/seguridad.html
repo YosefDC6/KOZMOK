@@ -25,16 +25,18 @@
 <script src="/js/layout.js"></script>
 <script src="/js/chatbot.js"></script>
 <script src="/js/cuenta.js"></script>
+<script src="/js/vendor/qrcode-generator.js"></script>
+<script src="/js/dos-pasos.js"></script>
 <script>
 let CID = null;
-const MOTIVO = { credenciales: 'contraseña incorrecta', bloqueado: 'cuenta bloqueada por intentos', cuenta_inactiva: 'cuenta inactiva', registro: 'registro' };
+const MOTIVO = { credenciales: 'contraseña o código incorrecto', bloqueado: 'cuenta bloqueada por intentos', cuenta_inactiva: 'cuenta inactiva', registro: 'registro' };
 
 montarCuenta('seguridad', async (panel, P) => {
     CID = P.id;
     const [sesiones, actividad] = await Promise.all([api('/auth/sesiones'), api('/auth/actividad')]);
     const fallidos = actividad.filter((a) => !a.exito).length;
     panel.innerHTML = `
-        <div class="cuenta-head"><h1>Seguridad</h1><p>Cambia tu contraseña y revisa dónde está abierta tu cuenta.</p></div>
+        <div class="cuenta-head"><h1>Seguridad</h1><p>Cambia tu contraseña, activa la verificación en dos pasos y revisa dónde está abierta tu cuenta.</p></div>
         ${P.password_debil ? `<div class="seg-alerta" role="status" id="aviso-debil">${icon('lock', 18)}<div><strong>Tu contraseña es muy sencilla</strong>
             <span>Tu cuenta se creó antes de que pidiéramos contraseñas más seguras. Cámbiala aquí abajo: debe tener al menos 8 caracteres, mayúsculas, minúsculas, un número y un símbolo.
             ${new URLSearchParams(location.search).get('next') ? `<a href="${escHTML(destinoSeg())}">Ahora no</a>` : ''}</span></div></div>` : ''}
@@ -65,6 +67,10 @@ montarCuenta('seguridad', async (panel, P) => {
                     </div>`).join('')}
             </section>
         </div>
+        <section class="card" style="margin-top:18px" id="sec-2fa">
+            <h3 class="seg-tit">${icon('lock', 18)} Verificación en dos pasos</h3>
+            <div id="dos-pasos"></div>
+        </section>
         <section class="card" style="margin-top:18px">
             <h3 class="seg-tit">${icon('clock', 18)} Inicios de sesión recientes</h3>
             ${actividad.length === 0 ? '<p style="margin:0;color:var(--text-muted)">Sin registros todavía.</p>' : actividad.map((a) => `
@@ -74,6 +80,7 @@ montarCuenta('seguridad', async (panel, P) => {
                 </div>`).join('')}
         </section>`;
     ReglasPass.enlazar(document.getElementById('s-nueva'), document.getElementById('pass-reglas'));
+    DosPasos.montarConfig(document.getElementById('dos-pasos'), `/clientes/${P.id}/2fa`);
     const otras = document.getElementById('btn-otras');
     if (otras) otras.addEventListener('click', async () => {
         try { const r = await api('/auth/sesiones/cerrar-otras', { method: 'POST' }); toast(r.message, 'ok'); montarDeNuevo(); }

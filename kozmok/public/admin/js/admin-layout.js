@@ -197,6 +197,7 @@ function renderAdminSidebar(activo) {
                 </div>
             </div>
             <button class="btn btn-ghost btn-sm au-salir" onclick="abrirCambioPassword()" title="Cambiar mi contraseña">${ic('lock', 15)} <span>Cambiar contraseña${usuario && usuario.password_debil ? ' <span class="au-alerta" title="Tu contraseña es muy sencilla">!</span>' : ''}</span></button>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="abrirDosPasos()" title="Verificación en dos pasos">${ic('shield', 15)} <span>Verificación en dos pasos</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
     `;
@@ -256,6 +257,35 @@ function abrirCambioPassword(aviso = false) {
     setTimeout(() => document.getElementById('mp-actual').focus(), 50);
 }
 window.abrirCambioPassword = abrirCambioPassword;
+
+// Ventana "Verificación en dos pasos" (cualquier rol): elegir app o correo.
+// Carga dos-pasos.js y el generador de QR solo cuando se abre.
+function cargarScript(src) {
+    return new Promise((ok, mal) => {
+        if (document.querySelector(`script[src="${src}"]`)) return ok();
+        const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => mal(new Error('No se pudo cargar ' + src));
+        document.head.appendChild(s);
+    });
+}
+async function abrirDosPasos() {
+    try { await cargarScript('/js/vendor/qrcode-generator.js'); await cargarScript('/js/dos-pasos.js'); }
+    catch (e) { return toast(e.message, 'error'); }
+    let m = document.getElementById('modal-2fa');
+    if (!m) {
+        m = document.createElement('div');
+        m.className = 'modal-overlay';
+        m.id = 'modal-2fa';
+        document.body.appendChild(m);
+        m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('open'); });
+    }
+    m.innerHTML = `<div class="modal" style="max-width:620px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><h3 style="margin:0">Verificación en dos pasos</h3>
+            <button class="btn btn-ghost btn-sm" type="button" style="margin-left:auto" onclick="document.getElementById('modal-2fa').classList.remove('open')">Cerrar</button></div>
+        <div id="dp-panel"></div></div>`;
+    m.classList.add('open');
+    DosPasos.montarConfig(document.getElementById('dp-panel'), '/admin/mi-2fa');
+}
+window.abrirDosPasos = abrirDosPasos;
 
 async function cerrarSesionAdmin() {
     await Sesion.cerrarSesionUsuario();

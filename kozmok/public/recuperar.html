@@ -24,6 +24,7 @@
                 <label for="correo">Correo electrónico</label>
                 <input type="email" id="correo" required placeholder="tucorreo@ejemplo.com" autocomplete="email" />
             </div>
+            <div id="captcha" hidden></div>
             <div id="rec-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-enviar">Enviar enlace</button>
         </form>
@@ -43,7 +44,9 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/layout.js"></script>
+<script src="/js/dos-pasos.js"></script>
 <script>
+const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
 // Llega con el correo ya escrito desde "¿Olvidaste tu contraseña?" del login.
 (() => {
     const c = new URLSearchParams(location.search).get('correo');
@@ -55,14 +58,17 @@ document.getElementById('form-recuperar').addEventListener('submit', async (e) =
     const btn = document.getElementById('btn-enviar');
     const err = document.getElementById('rec-error');
     err.hidden = true;
+    const cap = await CAPTCHA;
+    if (cap.activo && !cap.token()) { err.textContent = 'Marca la casilla "No soy un robot".'; err.hidden = false; return; }
     btn.disabled = true; btn.textContent = 'Enviando…';
     try {
-        const r = await api('/auth/recuperar', { method: 'POST', body: { correo: document.getElementById('correo').value } });
+        const r = await api('/auth/recuperar', { method: 'POST', body: { correo: document.getElementById('correo').value, captcha: cap.token() } });
         document.getElementById('enviado-txt').textContent = r.message;
         document.getElementById('form-card').hidden = true;
         document.getElementById('enviado').hidden = false;
     } catch (ex) {
         err.textContent = ex.message; err.hidden = false;
+        cap.reiniciar();
         btn.disabled = false; btn.textContent = 'Enviar enlace';
     }
 });

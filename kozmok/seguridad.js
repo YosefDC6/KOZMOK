@@ -90,14 +90,18 @@ async function registrarEvento(req, { tipo, severidad = 'media', detalle = '', c
 // ---------------------------------------------------------
 // Cabeceras de seguridad (todas las respuestas)
 // ---------------------------------------------------------
+// Google reCAPTCHA (solo si hay claves en el .env): su script y su iframe.
+const RECAPTCHA = (process.env.RECAPTCHA_SITE_KEY || '').trim() && (process.env.RECAPTCHA_SECRET_KEY || '').trim()
+    ? { script: ' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/', frame: ' https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/' }
+    : { script: '', frame: '' };
 const CSP = [
     "default-src 'self'",
     // PayPal: su SDK (botones) y las ventanas/iframes donde el cliente paga.
-    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com" + RECAPTCHA.script,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com https://*.paypalobjects.com",
     "img-src 'self' data: https:",
-    "frame-src https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",
+    "frame-src https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com" + RECAPTCHA.frame,
     "connect-src 'self' https://www.paypal.com https://*.paypal.com https://*.paypalobjects.com",   // solo PayPal además del propio servidor
     "frame-ancestors 'none'",      // nadie puede meter la tienda en un iframe (clickjacking)
     "base-uri 'self'",

@@ -15,7 +15,7 @@
 
         <div class="table-wrap">
             <table>
-                <thead><tr><th>ID</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th>Último acceso</th></tr></thead>
+                <thead><tr><th>ID</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th>Dos pasos</th><th>Último acceso</th></tr></thead>
                 <tbody id="tabla-usuarios"><tr><td colspan="7">Cargando…</td></tr></tbody>
             </table>
         </div>
@@ -70,9 +70,19 @@ async function cargarUsuarios() {
             <td>${u.activo
                 ? '<span class="tag" style="color:var(--success);border-color:var(--success)">Activo</span>'
                 : '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Inactivo</span>'}</td>
+            <td>${u.dosf_metodo === 'app' ? '<span class="tag">App</span>' : '<span class="tag">Correo</span>'}
+                ${esAdmin && u.dosf_metodo === 'app' && u.id !== usuarioActual.id ? `<button class="btn btn-ghost btn-sm" title="Si perdió su celular: vuelve a recibir el código por correo" onclick="reiniciar2fa(${u.id}, '${escHTML(u.nombre).replace(/'/g, '&#39;')}')">Reiniciar</button>` : ''}</td>
             <td>${u.ultimo_login ? formatoFecha(u.ultimo_login) : 'Nunca'}</td>
         </tr>
     `).join('');
+}
+
+// Si alguien perdió el celular con su app autenticadora, vuelve a recibir el
+// código por correo hasta que la configure otra vez.
+async function reiniciar2fa(id, nombre) {
+    if (!(await confirmar(`¿Reiniciar la verificación en dos pasos de ${nombre}? Al entrar recibirá el código por correo hasta que vuelva a configurar su app.`, { okText: 'Reiniciar' }))) return;
+    try { const r = await api(`/admin/usuarios/${id}/reiniciar-2fa`, { method: 'POST' }); toast(r.message, 'ok'); cargarUsuarios(); }
+    catch (e) { toast(e.message, 'error'); }
 }
 
 async function cambiarRol(id, sel) {

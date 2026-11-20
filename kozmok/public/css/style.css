@@ -2584,3 +2584,50 @@ input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner
 .num-btns button:disabled { opacity: .35; cursor: not-allowed; }
 .num-ctrl:focus-within .num-btns button:not(:disabled) { border-color: var(--accent-dim); }
 @media (pointer: coarse) { .num-btns button { width: 36px; height: 36px; } .num-ctrl > input { padding-right: 94px; } }
+
+/* Verificación en dos pasos y captcha (js/dos-pasos.js) */
+.captcha-caja { margin: 4px 0 16px; min-height: 78px; display: flex; justify-content: center; }
+.captcha-caja[hidden] { display: none; }
+.captcha-cargando, .captcha-error { font-size: .82rem; color: var(--text-muted); align-self: center; }
+.captcha-error { color: var(--danger, #e5484d); }
+.dp-box { text-align: left; padding: 22px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.dp-cab { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: var(--accent-light); }
+.dp-cab h3 { margin: 0; color: var(--text); font-size: 1.1rem; }
+.dp-cerrar { margin-left: auto; background: none; border: 0; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 8px; }
+.dp-cerrar:hover { color: var(--text); background: var(--bg-panel-2); }
+.dp-texto { color: var(--text-muted) !important; font-size: .9rem; margin: 0 0 14px !important; line-height: 1.5; }
+.dp-texto strong { color: var(--text); }
+.dp-form { display: flex; flex-direction: column; gap: 12px; }
+.dp-codigo { text-align: center; font-family: var(--font-mono); font-size: 1.7rem; letter-spacing: .45em; padding: 12px 10px 12px calc(10px + .45em); }
+.dp-ancho { width: 100%; justify-content: center; }
+.dp-error { color: var(--danger, #e5484d); font-size: .84rem; }
+.dp-error[hidden] { display: none; }
+.dp-acciones { display: flex; gap: 10px; justify-content: flex-end; }
+.dp-alterno { margin-top: 12px; text-align: center; }
+.dp-link { background: none; border: 0; padding: 4px; color: var(--accent-light); font: inherit; font-size: .85rem; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.dp-link:disabled { color: var(--text-muted); cursor: default; text-decoration: none; }
+.dp-link[hidden] { display: none; }
+.dp-peligro { color: var(--danger, #e5484d); margin-top: 10px; }
+.dp-pasos { margin: 0 0 10px; padding-left: 20px; font-size: .88rem; color: var(--text); }
+.dp-pasos li { margin-bottom: 4px; }
+.dp-qr { display: flex; justify-content: center; margin: 4px 0 12px; }
+.dp-qr svg { width: 190px; height: 190px; background: #fff; border-radius: 12px; padding: 4px; }
+.dp-manual { margin-bottom: 12px; font-size: .85rem; color: var(--text-muted); }
+.dp-manual summary { cursor: pointer; color: var(--accent-light); }
+.dp-clave { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-panel-2); }
+.dp-clave code { font-family: var(--font-mono); font-size: .95rem; color: var(--text); letter-spacing: .05em; word-break: break-all; }
+.dp-nota { font-size: .78rem; color: var(--text-muted); margin: 6px 0 0; }
+.dp-resumen { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.dp-estado { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid var(--line); color: var(--text-muted); }
+.dp-estado.on { border-color: var(--success); color: var(--success); }
+.dp-estado.nota { border-color: var(--accent); color: var(--accent-light); }
+.dp-opciones { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.dp-opcion { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px; background: var(--bg-panel-2); display: flex; flex-direction: column; gap: 8px; }
+.dp-opcion.activa { border-color: var(--success); }
+.dp-opcion p { margin: 0; font-size: .84rem; color: var(--text-muted); line-height: 1.45; }
+.dp-opcion .btn { align-self: flex-start; }
+.dp-op-tit { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 600; color: var(--text); }
+.dp-reco, .dp-uso { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 7px; border-radius: 999px; }
+.dp-reco { background: var(--accent-dim); color: var(--accent-light); }
+.dp-uso { background: var(--success); color: #fff; }
+@media (max-width: 560px) { .dp-opciones { grid-template-columns: 1fr; } .dp-codigo { font-size: 1.45rem; } }

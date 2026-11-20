@@ -54,6 +54,7 @@
 
             <label class="auth-recordar"><input type="checkbox" id="recordar" checked /> Mantener sesión iniciada en este dispositivo</label>
             <label class="auth-recordar"><input type="checkbox" id="boletin" /> Quiero recibir por correo las promociones y avisos de mis favoritos</label>
+            <div id="captcha" hidden></div>
             <div id="registro-error" class="auth-error" role="alert" hidden></div>
             <p class="auth-legal">Al crear tu cuenta aceptas los <a href="/terminos.html" target="_blank">Términos y condiciones</a> y el <a href="/terminos.html#privacidad" target="_blank">uso de tus datos</a>.</p>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-registrar">Crear cuenta</button>
@@ -68,6 +69,7 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/layout.js"></script>
+<script src="/js/dos-pasos.js"></script>
 <script>
 const sesion = Sesion.cliente();
 if (sesion) {
@@ -142,6 +144,8 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     const falta = ReglasPass.faltante(password);
     if (falta) return mostrar(falta);
     if (password !== password2) return mostrar('Las contraseñas no coinciden.');
+    const cap = await CAPTCHA;
+    if (cap.activo && !cap.token()) return mostrar('Marca la casilla "No soy un robot".');
     const btn = document.getElementById('btn-registrar');
     btn.disabled = true; btn.textContent = 'Creando cuenta…';
 
@@ -152,6 +156,7 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
         telefono: document.getElementById('telefono').value,
         recordar: document.getElementById('recordar').checked,
         boletin: document.getElementById('boletin').checked,
+        captcha: cap.token(),
     };
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
@@ -177,9 +182,12 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
             caja.hidden = false;
         } else caja.hidden = true;
         if (err.datos && err.datos.campo === 'correo') document.getElementById('correo').focus();
+        cap.reiniciar();
         btn.disabled = false; btn.textContent = 'Crear cuenta';
     }
 });
+
+const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
 
 // Lista de reglas de la contraseña (se van marcando al escribir).
 document.getElementById('reglas-slot').outerHTML = ReglasPass.html('pass-reglas');

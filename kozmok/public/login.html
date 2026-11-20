@@ -44,6 +44,7 @@
                 <label class="auth-recordar"><input type="checkbox" id="recordar" checked /> Mantener sesión iniciada</label>
                 <div class="auth-olvide"><a href="/recuperar.html" id="link-olvide">¿Olvidaste tu contraseña?</a></div>
             </div>
+            <div id="captcha" hidden></div>
             <div id="login-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-entrar">Entrar</button>
         </form>
@@ -58,7 +59,9 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/layout.js"></script>
+<script src="/js/dos-pasos.js"></script>
 <script>
+const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
 function destinoNext() {
     const n = new URLSearchParams(location.search).get('next');
     if (n && n.startsWith('/') && !n.startsWith('//')) return n;
@@ -129,9 +132,18 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     const errorBox = document.getElementById('login-error');
     const btn = document.getElementById('btn-entrar');
     errorBox.hidden = true;
+    const cap = await CAPTCHA;
+    const captcha = cap.token();
+    if (cap.activo && !captcha) { errorBox.textContent = 'Marca la casilla "No soy un robot".'; errorBox.hidden = false; return; }
     btn.disabled = true; btn.textContent = 'Verificando…';
     try {
-        const data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password, recordar } });
+        let data = await api('/auth/login-cliente', { method: 'POST', body: { correo, password, recordar, captcha } });
+        // Verificación en dos pasos: falta el código de la app o del correo.
+        if (data.requiere_2fa) {
+            btn.textContent = 'Esperando el código…';
+            data = await DosPasos.pedir(data);
+            if (!data) { cap.reiniciar(); btn.disabled = false; btn.textContent = 'Entrar'; return; }
+        }
         Sesion.guardarCliente({ ...data.cliente, recordar });
         if (recordar) { CuentasRecordadas.guardar('cliente', data.cliente); await guardarCredencial(correo, password, data.cliente.nombre); }
         else CuentasRecordadas.olvidar('cliente', data.cliente.correo);
@@ -147,6 +159,7 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
         errorBox.classList.toggle('bloqueado', /bloquead/i.test(err.message));
         errorBox.hidden = false;
         document.getElementById('password').value = '';
+        cap.reiniciar();   // cada marca de "No soy un robot" sirve una sola vez
         btn.disabled = false; btn.textContent = 'Entrar';
     }
 });

@@ -10,6 +10,8 @@ const dbConfig = require('./db.config.js');   // lee el .env (contraseña de la 
 // Etapa 5: defensas contra fuerza bruta, robo de sesión/credenciales e
 // inyección SQL (ver SEGURIDAD.md).
 const seg = require('./seguridad.js');
+const dosf = require('./dosfactores.js');
+const captcha = require('./captcha.js');   // Google reCAPTCHA en login, registro y recuperar contraseña   // verificación en dos pasos (app autenticadora y código por correo)
 // Envío real de correos por Gmail (SMTP); sin configurar, solo se guardan.
 const correo = require('./correo.js');
 const paypal = require('./paypal.js');
@@ -549,6 +551,73 @@ async function enviarCodigoVerificacion(db, req, cliente, { bienvenida = false }
     });
 }
 
+// ---------------------------------------------------------
+// VERIFICACIÓN EN DOS PASOS (2FA)
+//   Después de la contraseña se pide un código: de la app autenticadora o
+//   uno que se manda al correo. Obligatoria en el panel (si la persona no
+//   eligió, se usa el correo) y opcional en la tienda.
+// ---------------------------------------------------------
+const DOSF = {
+    panelObligatorio: String(process.env.DOSF_PANEL_OBLIGATORIO || 'true').toLowerCase() !== 'false',
+    minutosDesafio: 10,           // tiempo para escribir el código
+    minutosCodigo: 10,            // vigencia del código por correo
+    maxIntentos: 5,               // códigos equivocados por inicio de sesión
+    maxEnvios: 5,                 // correos con código por inicio de sesión
+    esperaReenvioS: 30,
+};
+const hashToken2fa = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
+const hashCodigo2fa = (desafioId, codigo) => crypto.createHash('sha256').update(`2fa:${desafioId}:${codigo}`).digest('hex');
+const correoDe = (tipo, cuenta) => (tipo === 'cliente' ? cuenta.correo : cuenta.email);
+
+// Qué método pide esta cuenta al entrar (null = no pide segundo paso).
+function metodo2fa(req, tipo, cuenta) {
+    let m = cuenta.dosf_metodo || null;
+    if (tipo === 'usuario' && DOSF.panelObligatorio && !m) m = 'correo';
+    if (m === 'app' && !cuenta.totp_secreto) m = 'correo';
+    if (m === 'correo' && !correo_.configurado()) {
+        // Sin correo configurado no hay cómo mandar el código: se deja entrar
+        // (si no, el equipo quedaría fuera del panel) y se avisa en Seguridad.
+        console.warn(`2FA por correo omitido para ${tipo} ${cuenta.id}: falta configurar SMTP en el .env`);
+        seg.registrarEvento(req, { tipo: 'segundo_factor', severidad: 'media', ...(tipo === 'cliente' ? { cliente_id: cuenta.id } : { usuario_id: cuenta.id }),
+            detalle: 'No se pidió el código de dos pasos porque el correo (SMTP) no está configurado' }).catch(() => {});
+        return null;
+    }
+    return m;
+}
+
+async function mandarCodigo2fa(req, desafioId, tipo, cuenta) {
+    const codigo = dosf.codigoCorreo();
+    await pool.query(
+        `UPDATE desafios_2fa SET codigo_hash = $2, codigo_expira = CURRENT_TIMESTAMP + ($3 || ' minutes')::interval,
+             codigos_enviados = codigos_enviados + 1, ultimo_envio = CURRENT_TIMESTAMP WHERE id = $1`,
+        [desafioId, hashCodigo2fa(desafioId, codigo), String(DOSF.minutosCodigo)]);
+    await enviarCorreo(pool, {
+        para: correoDe(tipo, cuenta), tipo: 'verificacion', cliente_id: tipo === 'cliente' ? cuenta.id : null,
+        asunto: `${codigo} es tu código para entrar a Kozmok`,
+        cuerpo: `Hola ${cuenta.nombre}:\n\nAlguien escribió bien tu contraseña para entrar a ${tipo === 'cliente' ? 'tu cuenta de Kozmok' : 'el panel de Kozmok'}. Para terminar de entrar, escribe este código:\n\n${codigo}\n\n`
+            + `Vence en ${DOSF.minutosCodigo} minutos.\n`
+            + `- Dispositivo: ${descripcionDispositivo(req.headers['user-agent'])}\n\n`
+            + 'Si no fuiste tú, no compartas el código con nadie y cambia tu contraseña: alguien la conoce.',
+    });
+}
+
+// La contraseña fue correcta y la cuenta pide segundo paso: se crea el
+// desafío y se responde qué falta (sin abrir sesión todavía).
+async function iniciarDesafio2fa(req, res, tipo, cuenta, metodo, { recordar = false } = {}) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    const r = await pool.query(
+        `INSERT INTO desafios_2fa (token_hash, tipo, sujeto_id, metodo, recordar, ip, expira)
+         VALUES ($1,$2,$3,$4,$5,$6, CURRENT_TIMESTAMP + ($7 || ' minutes')::interval) RETURNING id`,
+        [hashToken2fa(token), tipo, cuenta.id, metodo, !!recordar, seg.ipDe(req), String(DOSF.minutosDesafio)]);
+    if (metodo === 'correo') await mandarCodigo2fa(req, r.rows[0].id, tipo, cuenta);
+    res.json({
+        requiere_2fa: true, desafio: token, metodo,
+        correo: dosf.enmascararCorreo(correoDe(tipo, cuenta)),
+        puede_correo: correo_.configurado(),
+        minutos: DOSF.minutosDesafio,
+    });
+}
+
 // Casilla "Mantener sesión iniciada" del login. Acepta true/false o "1"/"0";
 // si no viene (Postman, scripts), se usa el valor por defecto.
 function quiereRecordar(body, porDefecto) {
@@ -594,17 +663,24 @@ const loginCliente = asyncRoute(async (req, res) => {
         });
     }
 
-    await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true });
     // Las contraseñas solo se ven al entrar: si no cumple las reglas actuales
     // (cuentas creadas antes de la política), se le pide cambiarla.
     const debil = !!seg.validarPassword(password, { correo: cliente.correo, nombre: cliente.nombre });
-    await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP, password_debil = $2 WHERE id = $1', [cliente.id, debil]);
-    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(req.body, true) });
+    await pool.query('UPDATE clientes SET password_debil = $2 WHERE id = $1', [cliente.id, debil]);
+    const recordar = quiereRecordar(req.body, true);
+    const m2 = metodo2fa(req, 'cliente', cliente);
+    if (m2) return iniciarDesafio2fa(req, res, 'cliente', cliente, m2, { recordar });
+    return abrirSesionCliente(req, res, cliente, { recordar });
+});
+async function abrirSesionCliente(req, res, cliente, { recordar }) {
+    await seg.registrarIntento(req, { ambito: 'cliente', correo: seg.normalizarCorreo(cliente.correo), exito: true });
+    await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar });
     const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
     // El token va en la cookie HttpOnly. Solo se devuelve en el cuerpo si
     // lo pide un cliente de API (Postman, pruebas): { "modo": "token" }.
     res.json({ success: true, cliente: datos, expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
-});
+}
 
 // Registro de cliente: correo único y contraseña fuerte cifrada con bcrypt.
 const registrarCliente = asyncRoute(async (req, res) => {
@@ -696,22 +772,104 @@ const loginUsuario = asyncRoute(async (req, res) => {
         });
     }
 
-    await seg.registrarIntento(req, { ambito: 'usuario', correo: email, exito: true });
     // Débil = no cumple la política, o es una contraseña que alguien más
     // conoce (la inicial del admin o la que puso quien dio de alta la cuenta).
     const debil = !!seg.validarPassword(password, { correo: usuario.email, nombre: usuario.nombre }) || !!usuario.cambiar_password;
-    await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP, password_debil = $2 WHERE id = $1', [usuario.id, debil]);
+    await pool.query('UPDATE usuarios SET password_debil = $2 WHERE id = $1', [usuario.id, debil]);
+    const m2 = metodo2fa(req, 'usuario', usuario);
+    if (m2) return iniciarDesafio2fa(req, res, 'usuario', usuario, m2);
+    return abrirSesionUsuario(req, res, { ...usuario, password_debil: debil });
+});
+async function abrirSesionUsuario(req, res, usuario) {
+    await seg.registrarIntento(req, { ambito: 'usuario', correo: seg.normalizarCorreo(usuario.email), exito: true });
+    await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
     // El panel nunca recuerda la sesión: se cierra al cerrar el navegador
     // (y a las 8 h o tras 2 h sin uso).
     const s = await seg.crearSesion(req, res, 'usuario', usuario.id, { recordar: false });
-    const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo, password_debil: debil };
+    const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo, password_debil: !!usuario.password_debil };
     res.json({ success: true, usuario: datos, permisos: PERMISOS[usuario.rol] || [], expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
+}
+
+// Segundo paso del inicio de sesión: código de la app o del correo.
+app.post('/api/auth/2fa/verificar', limiteAuth, asyncRoute(async (req, res) => {
+    const token = String(req.body.desafio || '');
+    const codigo = dosf.limpiarCodigo(req.body.codigo);
+    if (!token || token.length > 100) return res.status(400).json({ message: 'Vuelve a iniciar sesión', reiniciar: true });
+    if (codigo.length !== dosf.DIGITOS) return res.status(400).json({ message: `Escribe el código de ${dosf.DIGITOS} dígitos` });
+    const db = await pool.connect();
+    let d, cuenta;
+    try {
+        await db.query('BEGIN');
+        d = (await db.query(
+            `SELECT *, COALESCE(codigo_expira > CURRENT_TIMESTAMP, FALSE) AS codigo_vigente FROM desafios_2fa
+             WHERE token_hash = $1 AND NOT usado AND expira > CURRENT_TIMESTAMP FOR UPDATE`, [hashToken2fa(token)])).rows[0];
+        if (!d) { await db.query('ROLLBACK'); return res.status(410).json({ message: 'El tiempo para escribir el código terminó. Vuelve a iniciar sesión.', reiniciar: true }); }
+        cuenta = (await db.query(d.tipo === 'cliente' ? 'SELECT * FROM clientes WHERE id = $1' : 'SELECT * FROM usuarios WHERE id = $1', [d.sujeto_id])).rows[0];
+        const activa = cuenta && (d.tipo === 'cliente' ? cuenta.estado_cliente === 'activo' : cuenta.activo);
+        if (!activa) {
+            await db.query('UPDATE desafios_2fa SET usado = TRUE WHERE id = $1', [d.id]);
+            await db.query('COMMIT');
+            return res.status(403).json({ message: 'La cuenta no está activa', reiniciar: true });
+        }
+        // Vale el de la app o, si se mandó uno, el del correo.
+        let pasoApp = null;
+        if (cuenta.dosf_metodo === 'app' && cuenta.totp_secreto) pasoApp = dosf.verificarTOTP(cuenta.totp_secreto, codigo, { ultimoPaso: cuenta.totp_ultimo_paso });
+        const okCorreo = !!(d.codigo_hash && d.codigo_vigente && d.codigo_hash === hashCodigo2fa(d.id, codigo));
+        if (pasoApp === null && !okCorreo) {
+            const intentos = d.intentos + 1;
+            const agotado = intentos >= DOSF.maxIntentos;
+            await db.query('UPDATE desafios_2fa SET intentos = $2, usado = $3 WHERE id = $1', [d.id, intentos, agotado]);
+            await db.query('COMMIT');
+            // Cuenta como contraseña equivocada para el bloqueo de la cuenta.
+            const r = await seg.registrarFallo(req, { ambito: d.tipo, correo: seg.normalizarCorreo(correoDe(d.tipo, cuenta)), motivo: 'credenciales' });
+            if (r.bloqueo) return respuestaBloqueo(res, { tipo: r.bloqueo.tipo, hasta: new Date(Date.now() + r.bloqueo.minutos * 60000) });
+            if (agotado) return res.status(401).json({ message: 'Demasiados códigos equivocados. Vuelve a iniciar sesión.', reiniciar: true });
+            return res.status(401).json({ message: `Código incorrecto o vencido. Te quedan ${DOSF.maxIntentos - intentos} intento(s).`, intentos_restantes: DOSF.maxIntentos - intentos });
+        }
+        await db.query('UPDATE desafios_2fa SET usado = TRUE WHERE id = $1', [d.id]);
+        if (pasoApp !== null) await db.query(`UPDATE ${d.tipo === 'cliente' ? 'clientes' : 'usuarios'} SET totp_ultimo_paso = $2 WHERE id = $1`, [cuenta.id, pasoApp]);
+        await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+    return d.tipo === 'cliente' ? abrirSesionCliente(req, res, cuenta, { recordar: d.recordar }) : abrirSesionUsuario(req, res, cuenta);
+}));
+
+// Manda (o vuelve a mandar) el código al correo. También sirve cuando la
+// persona usa la app pero no la tiene a la mano.
+app.post('/api/auth/2fa/correo', limiteAuth, asyncRoute(async (req, res) => {
+    const token = String(req.body.desafio || '');
+    if (!correo_.configurado()) return res.status(503).json({ message: 'Por ahora no se pueden mandar códigos por correo.' });
+    const d = (await pool.query(
+        `SELECT *, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ultimo_envio))::int AS hace FROM desafios_2fa
+         WHERE token_hash = $1 AND NOT usado AND expira > CURRENT_TIMESTAMP`, [hashToken2fa(token)])).rows[0];
+    if (!d) return res.status(410).json({ message: 'El tiempo para escribir el código terminó. Vuelve a iniciar sesión.', reiniciar: true });
+    if (d.codigos_enviados >= DOSF.maxEnvios) return res.status(429).json({ message: 'Ya mandamos varios códigos. Revisa tu correo (también la carpeta de spam) o vuelve a iniciar sesión más tarde.' });
+    if (d.hace !== null && d.hace < DOSF.esperaReenvioS) return res.status(429).json({ message: `Espera ${DOSF.esperaReenvioS - d.hace} segundos para pedir otro código.`, espera: DOSF.esperaReenvioS - d.hace });
+    const cuenta = (await pool.query(d.tipo === 'cliente' ? 'SELECT * FROM clientes WHERE id = $1' : 'SELECT * FROM usuarios WHERE id = $1', [d.sujeto_id])).rows[0];
+    if (!cuenta) return res.status(410).json({ message: 'Vuelve a iniciar sesión.', reiniciar: true });
+    await mandarCodigo2fa(req, d.id, d.tipo, cuenta);
+    res.json({ message: `Te mandamos un código a ${dosf.enmascararCorreo(correoDe(d.tipo, cuenta))}`, espera: DOSF.esperaReenvioS });
+}));
+
+app.post('/api/auth/login-cliente', limiteAuth, captchaMw, loginCliente);
+app.post('/api/auth/registro-cliente', limiteAuth, captchaMw, registrarCliente);
+// Casilla "No soy un robot" (Google reCAPTCHA) en iniciar sesión, crear
+// cuenta y recuperar contraseña. Si no hay claves en el .env no se pide.
+async function pedirCaptcha(req, res, next) {
+    if (!captcha.configurado()) return next();
+    const r = await captcha.verificar(req.body && req.body.captcha, seg.ipDe(req));
+    if (r.ok) return next();
+    if (r.sinConexion) return res.status(503).json({ message: 'No pudimos comprobar la casilla "No soy un robot" (sin conexión con Google). Intenta de nuevo.', captcha: true });
+    await seg.registrarEvento(req, { tipo: 'captcha', severidad: 'baja', detalle: `Captcha rechazado en ${req.path}: ${(r.errores || []).join(', ') || 'sin token'}` });
+    return res.status(400).json({ message: req.body && req.body.captcha ? 'La casilla "No soy un robot" venció o no es válida. Márcala otra vez.' : 'Marca la casilla "No soy un robot".', captcha: true });
+}
+function captchaMw(req, res, next) { pedirCaptcha(req, res, next).catch(next); }
+app.get('/api/config/captcha', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ activo: captcha.configurado(), site_key: captcha.configurado() ? captcha.CFG.sitio : null });
 });
 
-app.post('/api/auth/login-cliente', limiteAuth, loginCliente);
-app.post('/api/auth/registro-cliente', limiteAuth, registrarCliente);
-app.post('/api/auth/registro', limiteAuth, registrarCliente);
-app.post('/api/auth/login-usuario', limiteAuth, loginUsuario);
+app.post('/api/auth/registro', limiteAuth, captchaMw, registrarCliente);
+app.post('/api/auth/login-usuario', limiteAuth, captchaMw, loginUsuario);
 
 // Confirmar el correo con el código de 6 dígitos.
 app.post('/api/auth/verificar-correo', limiteAuth, requireCliente, asyncRoute(async (req, res) => {
@@ -755,7 +913,7 @@ app.post('/api/auth/reenviar-verificacion', limiteAuth, requireCliente, asyncRou
 }));
 // POST /api/auth/login sirve a los dos: con { "tipo": "cliente" | "usuario" };
 // sin tipo, "correo" = cliente de la tienda y "email" = equipo (ERP).
-app.post('/api/auth/login', limiteAuth, (req, res, next) => {
+app.post('/api/auth/login', limiteAuth, captchaMw, (req, res, next) => {
     const tipo = req.body.tipo || ((req.body.correo && !req.body.email) ? 'cliente' : 'usuario');
     return (tipo === 'cliente' ? loginCliente : loginUsuario)(req, res, next);
 });
@@ -2808,6 +2966,91 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
 // =========================================================
 app.use('/api/clientes/:id', requireCliente, mismoCliente);
 
+// ---------------------------------------------------------
+// Configurar la verificación en dos pasos (la propia cuenta).
+// Lo usan la tienda (/api/clientes/:id/2fa) y el panel (/api/admin/mi-2fa).
+// Cambiar el método pide la contraseña.
+// ---------------------------------------------------------
+function rutasConfig2fa({ tipo, cuentaDe }) {
+    const tabla = tipo === 'cliente' ? 'clientes' : 'usuarios';
+    const colPass = tipo === 'cliente' ? 'password' : 'password_hash';
+    const leer = async (req) => (await pool.query(`SELECT * FROM ${tabla} WHERE id = $1`, [cuentaDe(req)])).rows[0];
+    const obligatoria = tipo === 'usuario' && DOSF.panelObligatorio;
+    const evento = (req, c, detalle, severidad = 'baja') => seg.registrarEvento(req, { tipo: 'segundo_factor', severidad, detalle, ...(tipo === 'cliente' ? { cliente_id: c.id } : { usuario_id: c.id }) });
+    const aviso = (req, c, texto) => enviarCorreo(pool, {
+        para: correoDe(tipo, c), tipo: 'seguridad', cliente_id: tipo === 'cliente' ? c.id : null,
+        asunto: 'Cambió la verificación en dos pasos de tu cuenta de Kozmok',
+        cuerpo: `Hola ${c.nombre}:\n\n${texto}\n\n- Fecha: ${new Date().toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Mexico_City' })}\n`
+            + `- Dispositivo: ${descripcionDispositivo(req.headers['user-agent'])}\n\nSi no fuiste tú, cambia tu contraseña de inmediato${tipo === 'usuario' ? ' y avisa a un administrador' : ''}.`,
+    });
+    // La contraseña confirma que quien cambia esto es el dueño de la cuenta.
+    async function revisarPassword(req, res, c) {
+        if (await seg.compararPassword(String(req.body.password || ''), c[colPass])) return true;
+        const r = await seg.registrarFallo(req, { ambito: tipo, correo: seg.normalizarCorreo(correoDe(tipo, c)), motivo: 'credenciales' });
+        if (r.bloqueo) respuestaBloqueo(res, { tipo: r.bloqueo.tipo, hasta: new Date(Date.now() + r.bloqueo.minutos * 60000) });
+        else res.status(401).json({ message: 'La contraseña no es correcta' });
+        return false;
+    }
+    const estado = (c) => ({
+        metodo: c.dosf_metodo || (obligatoria ? 'correo' : null),
+        elegido: c.dosf_metodo || null,
+        obligatoria, puede_correo: correo_.configurado(),
+        correo: dosf.enmascararCorreo(correoDe(tipo, c)),
+        correo_verificado: tipo === 'cliente' ? !!c.correo_verificado : true,
+        activado: c.dosf_activado,
+    });
+    return {
+        estado: asyncRoute(async (req, res) => res.json(estado(await leer(req)))),
+        // Paso 1 para la app: secreto nuevo (todavía sin activar) y su QR.
+        appIniciar: asyncRoute(async (req, res) => {
+            const c = await leer(req);
+            if (!(await revisarPassword(req, res, c))) return;
+            const secreto = dosf.generarSecreto();
+            await pool.query(`UPDATE ${tabla} SET totp_pendiente = $2 WHERE id = $1`, [c.id, secreto]);
+            res.json({ secreto, uri: dosf.uriApp({ secreto, cuenta: correoDe(tipo, c), emisor: tipo === 'cliente' ? 'Kozmok' : 'Kozmok Panel' }) });
+        }),
+        // Paso 2: el primer código de la app confirma que quedó bien dada de alta.
+        appConfirmar: asyncRoute(async (req, res) => {
+            const c = await leer(req);
+            if (!c.totp_pendiente) return res.status(400).json({ message: 'Primero escanea el código QR' });
+            const paso = dosf.verificarTOTP(c.totp_pendiente, req.body.codigo);
+            if (paso === null) return res.status(400).json({ message: 'El código no coincide. Revisa que la hora de tu celular sea automática y escribe el código que se ve ahora.' });
+            await pool.query(`UPDATE ${tabla} SET totp_secreto = totp_pendiente, totp_pendiente = NULL, totp_ultimo_paso = $2,
+                                  dosf_metodo = 'app', dosf_activado = CURRENT_TIMESTAMP WHERE id = $1`, [c.id, paso]);
+            await evento(req, c, 'Activó la verificación en dos pasos con app autenticadora');
+            await aviso(req, c, 'Activaste la verificación en dos pasos con una app autenticadora. Al entrar te pediremos el código que muestra la app.');
+            res.json({ message: 'Listo: al entrar te pediremos el código de tu app', ...estado({ ...c, dosf_metodo: 'app', dosf_activado: new Date() }) });
+        }),
+        usarCorreo: asyncRoute(async (req, res) => {
+            const c = await leer(req);
+            if (!correo_.configurado()) return res.status(503).json({ message: 'Por ahora no se pueden mandar códigos por correo' });
+            if (tipo === 'cliente' && !c.correo_verificado) return res.status(400).json({ message: 'Primero confirma tu correo para recibir ahí los códigos' });
+            if (!(await revisarPassword(req, res, c))) return;
+            await pool.query(`UPDATE ${tabla} SET dosf_metodo = 'correo', totp_secreto = NULL, totp_pendiente = NULL, totp_ultimo_paso = NULL,
+                                  dosf_activado = CURRENT_TIMESTAMP WHERE id = $1`, [c.id]);
+            await evento(req, c, 'Activó la verificación en dos pasos por correo');
+            await aviso(req, c, 'Activaste la verificación en dos pasos por correo. Al entrar te mandaremos un código a este correo.');
+            res.json({ message: 'Listo: al entrar te mandaremos un código a tu correo', ...estado({ ...c, dosf_metodo: 'correo', dosf_activado: new Date() }) });
+        }),
+        desactivar: asyncRoute(async (req, res) => {
+            const c = await leer(req);
+            if (obligatoria) return res.status(400).json({ message: 'En el panel la verificación en dos pasos es obligatoria. Puedes cambiar entre correo y app.' });
+            if (!(await revisarPassword(req, res, c))) return;
+            await pool.query(`UPDATE ${tabla} SET dosf_metodo = NULL, totp_secreto = NULL, totp_pendiente = NULL, totp_ultimo_paso = NULL, dosf_activado = NULL WHERE id = $1`, [c.id]);
+            await evento(req, c, 'Desactivó la verificación en dos pasos', 'media');
+            await aviso(req, c, 'Desactivaste la verificación en dos pasos. Desde ahora basta tu contraseña para entrar.');
+            res.json({ message: 'Verificación en dos pasos desactivada', ...estado({ ...c, dosf_metodo: null, dosf_activado: null }) });
+        }),
+    };
+}
+const cfg2faCliente = rutasConfig2fa({ tipo: 'cliente', cuentaDe: (req) => Number(req.params.id) });
+app.get('/api/clientes/:id/2fa', cfg2faCliente.estado);
+app.post('/api/clientes/:id/2fa/app', limiteAuth, cfg2faCliente.appIniciar);
+app.post('/api/clientes/:id/2fa/app/confirmar', limiteAuth, cfg2faCliente.appConfirmar);
+app.post('/api/clientes/:id/2fa/correo', limiteAuth, cfg2faCliente.usarCorreo);
+app.post('/api/clientes/:id/2fa/desactivar', limiteAuth, cfg2faCliente.desactivar);
+
+
 app.get('/api/clientes/:id', asyncRoute(async (req, res) => {
     const result = await pool.query(
         `SELECT id, nombre, correo, telefono, empresa, direccion, ciudad, estado, codigo_postal,
@@ -3359,6 +3602,7 @@ const PERMISOS_API = [
     // Cualquier usuario interno
     { ruta: /^\/(whoami|roles)$/,                     metodos: LEER, permisos: ['*'] },
     { ruta: /^\/mi-password$/,                         metodos: ['PUT'], permisos: ['*'] },
+    { ruta: /^\/mi-2fa(\/|$)/,                          metodos: TODO, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
     { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
@@ -3439,7 +3683,7 @@ app.use('/api/admin', (req, res, next) => {
 const AUDITORIA_PROPIA = [
     /^\/movimientos-inventario/, /^\/productos(\/\d+)?(\/restock)?$/, /^\/(pedidos|erp\/ordenes)\/\d+\/estado$/,
     /^\/pedidos\/\d+\/registrar-pago$/, /^\/clientes\/\d+$/, /^\/mi-password$/, /^\/monederos\//,
-    /^\/facturas(\/|$)/, /^\/devoluciones\//,
+    /^\/facturas(\/|$)/, /^\/devoluciones\//, /^\/mi-2fa(\/|$)/,   // mi-2fa lleva la contraseña: no va a la bitácora genérica
 ];
 function limpiarParaBitacora(obj, nivel = 0) {
     if (obj == null || typeof obj !== 'object' || nivel > 3) return obj;
@@ -3690,6 +3934,23 @@ app.get('/api/admin/auditoria/verificar', asyncRoute(async (req, res) => {
 app.get('/api/admin/whoami', (req, res) => res.json(req.usuario));
 
 // Cada persona del equipo cambia su propia contraseña (menú del panel).
+const cfg2faUsuario = rutasConfig2fa({ tipo: 'usuario', cuentaDe: (req) => req.usuario.id });
+app.get('/api/admin/mi-2fa', cfg2faUsuario.estado);
+app.post('/api/admin/mi-2fa/app', limiteAuth, cfg2faUsuario.appIniciar);
+app.post('/api/admin/mi-2fa/app/confirmar', limiteAuth, cfg2faUsuario.appConfirmar);
+app.post('/api/admin/mi-2fa/correo', limiteAuth, cfg2faUsuario.usarCorreo);
+app.post('/api/admin/mi-2fa/desactivar', limiteAuth, cfg2faUsuario.desactivar);
+// El administrador puede reiniciarla si alguien del equipo perdió su celular:
+// vuelve a pedir el código por correo hasta que configure su app otra vez.
+app.post('/api/admin/usuarios/:id/reiniciar-2fa', requireAdmin, asyncRoute(async (req, res) => {
+    const u = (await pool.query('UPDATE usuarios SET dosf_metodo = NULL, totp_secreto = NULL, totp_pendiente = NULL, totp_ultimo_paso = NULL, dosf_activado = NULL WHERE id = $1 RETURNING id, nombre, email', [req.params.id])).rows[0];
+    if (!u) return res.status(404).json({ message: 'Usuario no encontrado' });
+    await seg.registrarEvento(req, { tipo: 'segundo_factor', severidad: 'media', usuario_id: u.id, detalle: `${req.usuario.nombre} reinició la verificación en dos pasos de ${u.nombre}` });
+    await enviarCorreo(pool, { para: u.email, tipo: 'seguridad', asunto: 'Se reinició tu verificación en dos pasos del panel de Kozmok',
+        cuerpo: `Hola ${u.nombre}:\n\n${req.usuario.nombre} reinició la verificación en dos pasos de tu cuenta del panel. Al entrar te mandaremos el código a este correo; si usabas una app autenticadora, vuelve a configurarla desde tu menú de usuario.` });
+    res.json({ message: `Listo: ${u.nombre} recibirá el código por correo al entrar` });
+}));
+
 app.put('/api/admin/mi-password', limiteAuth, asyncRoute(async (req, res) => {
     const actual = String(req.body.actual || '');
     const nueva = String(req.body.nueva || '');
@@ -6351,7 +6612,7 @@ app.put('/api/admin/garantias/:id', asyncRoute(async (req, res) => {
 // =========================================================
 
 app.get('/api/admin/usuarios', asyncRoute(async (req, res) => {
-    const result = await pool.query('SELECT id, nombre, email, telefono, rol, activo, ultimo_login FROM usuarios ORDER BY id ASC');
+    const result = await pool.query('SELECT id, nombre, email, telefono, rol, activo, ultimo_login, dosf_metodo FROM usuarios ORDER BY id ASC');
     res.json(result.rows);
 }));
 
@@ -7156,7 +7417,7 @@ app.get('/api/auth/estado', asyncRoute(async (req, res) => {
 // existe). Si existe, "envía" un enlace de un solo uso que vence en 30 min.
 // Enlaces de recuperación que puede recibir una misma cuenta por hora.
 const RECUPERACION_MAX_HORA = Math.max(1, Number(process.env.RECUPERACION_MAX_POR_HORA) || 10);
-app.post('/api/auth/recuperar', limiteAuth, asyncRoute(async (req, res) => {
+app.post('/api/auth/recuperar', limiteAuth, captchaMw, asyncRoute(async (req, res) => {
     const correo = seg.normalizarCorreo(req.body.correo);
     const generico = { message: 'Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja.' };
     if (!seg.correoValido(correo)) return res.status(400).json({ message: 'Escribe un correo válido' });
@@ -7422,6 +7683,35 @@ async function migrarEsquema() {
     await pool.query(`CREATE TABLE IF NOT EXISTS reportes_erp (
         id SERIAL PRIMARY KEY, nombre VARCHAR(120) NOT NULL, desde DATE, hasta DATE, datos JSONB NOT NULL,
         usuario_id INTEGER REFERENCES usuarios(id), fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    // Verificación en dos pasos: método elegido por cada cuenta (correo o
+    // app), secreto de la app y el último código usado (no se puede repetir).
+    for (const t of ['clientes', 'usuarios']) {
+        await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS dosf_metodo VARCHAR(10) CHECK (dosf_metodo IN ('correo','app'))`);
+        await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS totp_secreto VARCHAR(64)`);
+        await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS totp_pendiente VARCHAR(64)`);
+        await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS totp_ultimo_paso BIGINT`);
+        await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS dosf_activado TIMESTAMP`);
+    }
+    // Inicios de sesión a medias: la contraseña ya fue correcta y falta el
+    // código. El token viaja al navegador; aquí solo queda su huella.
+    await pool.query(`CREATE TABLE IF NOT EXISTS desafios_2fa (
+        id SERIAL PRIMARY KEY,
+        token_hash CHAR(64) UNIQUE NOT NULL,
+        tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('cliente','usuario')),
+        sujeto_id INTEGER NOT NULL,
+        metodo VARCHAR(10) NOT NULL CHECK (metodo IN ('correo','app')),
+        codigo_hash CHAR(64),
+        codigo_expira TIMESTAMP,
+        codigos_enviados INTEGER NOT NULL DEFAULT 0,
+        ultimo_envio TIMESTAMP,
+        intentos INTEGER NOT NULL DEFAULT 0,
+        recordar BOOLEAN NOT NULL DEFAULT FALSE,
+        ip VARCHAR(64),
+        expira TIMESTAMP NOT NULL,
+        usado BOOLEAN NOT NULL DEFAULT FALSE,
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_desafios_2fa_sujeto ON desafios_2fa(tipo, sujeto_id)');
+
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
     await pool.query(require('fs').readFileSync(path.join(__dirname, 'db', 'control_interno.sql'), 'utf8'));
