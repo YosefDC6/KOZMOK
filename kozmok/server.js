@@ -17,6 +17,13 @@ const correo_ = correo;   // alias para funciones donde "correo" es la direcció
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
 
 const app = express();
+// Detrás de un túnel o proxy en la misma computadora (Cloudflare Tunnel,
+// ngrok, Nginx) la conexión llega desde 127.0.0.1: se confía solo en ese
+// proxy local para leer la IP real del visitante (X-Forwarded-For) y si
+// entró por HTTPS (X-Forwarded-Proto). Así los bloqueos por intentos
+// fallidos siguen siendo por persona y las cookies salen con Secure.
+// Un cliente externo no puede falsificar su IP: solo se cree a loopback.
+app.set('trust proxy', process.env.TRUST_PROXY || 'loopback');
 const PORT = process.env.PORT || 3000;
 // 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
 // prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
