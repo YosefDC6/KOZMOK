@@ -643,8 +643,8 @@ async function compartirProducto(id) {
     const url = location.origin + '/index.html?ver=todo#producto-' + id;
     try {
         if (navigator.share && matchMedia('(pointer: coarse)').matches) { await navigator.share({ url }); return; }
-        await navigator.clipboard.writeText(url);
-        toast('Enlace del producto copiado', 'ok');
+        if (await copiarTexto(url)) toast('Enlace del producto copiado', 'ok');
+        else toast(url, 'info');
     } catch { toast(url, 'info'); }
 }
 

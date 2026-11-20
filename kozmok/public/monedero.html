@@ -288,13 +288,12 @@ function verDatosTransferencia({ referencia, monto, fecha, banco, clabe, benefic
     ov.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', cerrar));
     ov.addEventListener('click', (e) => { if (e.target === ov) cerrar(); });
     const copiar = async (texto, boton) => {
-        try {
-            await navigator.clipboard.writeText(texto);
+        if (await copiarTexto(texto)) {
             const antes = boton.innerHTML;
             boton.classList.add('copiado');
             boton.innerHTML = `${icon('check', 15)}<span>Copiado</span>`;
             setTimeout(() => { boton.classList.remove('copiado'); boton.innerHTML = antes; }, 1600);
-        } catch { toast('No se pudo copiar; selecciónalo y cópialo a mano', 'warn'); }
+        } else { toast('No se pudo copiar; selecciónalo y cópialo a mano', 'warn'); }
     };
     ov.querySelectorAll('[data-copiar]').forEach((b) => b.addEventListener('click', () => copiar(b.dataset.copiar, b)));
     ov.querySelector('[data-todo]').addEventListener('click', (e) => copiar(todo, e.currentTarget));

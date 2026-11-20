@@ -147,6 +147,30 @@ async function guardarCredencial(correo, password, nombre) {
 }
 window.guardarCredencial = guardarCredencial;
 
+// Copia texto al portapapeles. navigator.clipboard solo existe en https o
+// localhost; si la tienda se abre por la IP de la red (http://192.168…) o
+// desde el celular, se usa el método clásico con un textarea temporal, que
+// sí funciona en http. Devuelve true si se copió.
+async function copiarTexto(texto) {
+    texto = String(texto ?? '');
+    try {
+        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(texto); return true; }
+    } catch { /* se intenta el método clásico */ }
+    const ta = document.createElement('textarea');
+    ta.value = texto;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px';   // 16px: iPhone no hace zoom
+    const activo = document.activeElement;
+    (document.querySelector('.confirm-overlay.open') || document.body).appendChild(ta);   // dentro del modal para no perder el foco
+    ta.focus(); ta.select(); ta.setSelectionRange(0, texto.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    if (activo && activo.focus) activo.focus({ preventScroll: true });
+    return ok;
+}
+window.copiarTexto = copiarTexto;
+
 // Tokens de la versión anterior (Base64 en localStorage): ya no sirven.
 try { localStorage.removeItem('kz_token'); localStorage.removeItem('kz_admin_token'); } catch { /* sin almacenamiento */ }
 
