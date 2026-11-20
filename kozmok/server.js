@@ -5635,6 +5635,18 @@ const MON = {
     pendienteDias: 3,                                                    // después se cancelan solas
     ajusteUmbral: Number(process.env.MONEDERO_AJUSTE_UMBRAL) || 500,    // arriba de esto, segunda firma
 };
+// Cifras del reglamento (las muestra terminos.html, así el texto legal
+// siempre dice lo mismo que el sistema aplica).
+app.get('/api/reglamento', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({
+        monedero: { recarga_min: MON.recargaMin, recarga_max: MON.recargaMax, dia_max: MON.diaMax, dia_operaciones: MON.diaOps,
+                    mes_max: MON.mesMax, saldo_max: MON.saldoMax, transferencias_max: MON.pendientesMax, transferencia_dias: MON.pendienteDias },
+        puntos: { pesos_por_punto: PESOS_POR_PUNTO, valor_punto: VALOR_PUNTO, niveles: NIVELES },
+        compras: { piezas_por_producto: MAX_PIEZAS_POR_PRODUCTO, pedidos_sin_pagar: MAX_PEDIDOS_SIN_PAGAR,
+                   plazo_spei_dias: METODOS_TIENDA.spei.dias, plazo_tienda_dias: METODOS_TIENDA.tienda.dias },
+    });
+});
 const MOTIVOS_ESTADO_MONEDERO = {
     revision: 'Revisión de movimientos inusuales', contracargo: 'Contracargo o desconocimiento de un cargo',
     fraude: 'Fraude comprobado', titular: 'A solicitud del titular', autoridad: 'Requerimiento de autoridad',

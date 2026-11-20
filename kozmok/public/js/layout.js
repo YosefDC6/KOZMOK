@@ -801,6 +801,7 @@ function renderFooter() {
                     <a href="/ayuda.html#devoluciones">Devoluciones</a>
                     <a href="/ayuda.html#garantia">Garantía</a>
                     <a href="/ayuda.html#contacto">Contacto</a>
+                    <a href="/terminos.html">Términos y condiciones</a>
                 </div>
                 <div>
                     <h4>Cuenta</h4>
@@ -817,7 +818,7 @@ function renderFooter() {
                     <select id="tema-quick" aria-label="Cambiar tema de color">
                         ${(window.Tema ? Tema.lista : []).map((t) => `<option value="${t.clave}">${t.nombre}</option>`).join('')}
                     </select>
-                    · <a href="/ayuda.html#cookies">Cookies</a>
+                    · <a href="/terminos.html">Términos</a> · <a href="/terminos.html#privacidad">Privacidad</a> · <a href="/ayuda.html#cookies">Cookies</a>
                 </span>
             </div>
         </footer>
