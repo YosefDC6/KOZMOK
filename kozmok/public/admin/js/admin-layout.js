@@ -5,6 +5,16 @@ function requireAuthAdmin() {
     // guardan los datos para pintar el menú y se confirman con el servidor.
     const usuario = Sesion.usuario();
     if (!usuario) { window.location.href = '/admin/login.html'; return null; }
+    // Pestaña nueva sin otra del panel abierta = se cerró la anterior: la
+    // sesión termina y se pide entrar otra vez.
+    if (!PestanaPanel.tiene()) {
+        document.documentElement.style.visibility = 'hidden';
+        PestanaPanel.verificar().then(async (ok) => {
+            if (ok) { document.documentElement.style.visibility = ''; return; }
+            await Sesion.cerrarSesionUsuario();
+            window.location.replace('/admin/login.html');
+        });
+    } else PestanaPanel.escuchar();
     api('/admin/whoami')
         .then((u) => {
             if (!u || !u.rol) return;

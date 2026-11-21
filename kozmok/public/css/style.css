@@ -2687,3 +2687,34 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { cursor: 
 .auth-mascota .kzk-mascota { display: block; }
 @keyframes kz-flotar-sm { 0%, 100% { transform: translateY(0) rotate(6deg); } 50% { transform: translateY(-5px) rotate(2deg); } }
 @media (prefers-reduced-motion: reduce) { .auth-mascota { animation: none; } }
+
+/* Ticket del panel: conversación + caso y pedido al lado */
+.tk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; align-items: start; }
+.tk-lado { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
+.tk-lado .card { margin: 0; }
+.tk-mini-pipe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.tk-mini-pipe span { height: 6px; border-radius: 4px; background: var(--line); }
+.tk-mini-pipe span.on { background: var(--accent); }
+.tk-mini-pipe span.actual { box-shadow: 0 0 0 2px var(--accent-glow); }
+.tk-kv { display: flex; justify-content: space-between; gap: 12px; font-size: .84rem; padding: 4px 0; color: var(--text-muted); }
+.tk-kv > span:last-child { color: var(--text); }
+.tk-items { list-style: none; margin: 8px 0 12px; padding: 8px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.tk-items li { display: flex; justify-content: space-between; gap: 10px; font-size: .82rem; }
+@media (max-width: 1100px) { .tk-layout { grid-template-columns: minmax(0, 1fr); } .tk-lado { position: static; order: -1; } }
+
+/* ---------------------------------------------------------
+   Pantallas grandes: el contenido usa más ancho en lugar de dejar
+   franjas vacías a los lados (tienda) o a la derecha (panel).
+   --------------------------------------------------------- */
+@media (min-width: 1500px) {
+    .container, .navbar-inner, body .hero-inner, .cmp-bar-in { max-width: 1400px; }
+    .cuenta-shell { max-width: 1400px; grid-template-columns: 270px 1fr; }
+    .thanks-wrap { max-width: 1320px; }
+    .container[style*="max-width:1080px"], .container[style*="max-width:1160px"] { max-width: 1400px !important; }
+    .admin-main { max-width: none; padding-left: 40px; padding-right: 40px; }
+}
+@media (min-width: 1900px) {
+    .container, .navbar-inner, body .hero-inner, .cmp-bar-in { max-width: 1600px; }
+    .cuenta-shell { max-width: 1600px; }
+    .container[style*="max-width:1080px"], .container[style*="max-width:1160px"] { max-width: 1600px !important; }
+}

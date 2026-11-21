@@ -80,6 +80,7 @@ const Sesion = {
     },
     cerrarSesionUsuario() {
         localStorage.removeItem('kz_usuario');
+        if (window.PestanaPanel) PestanaPanel.olvidar();
         return Sesion._salir('usuario');
     },
     _salir(tipo) {
@@ -89,6 +90,41 @@ const Sesion = {
         }).catch(() => {});
     },
 };
+// ---- Sesión del panel por pestaña ----
+// La sesión del panel dura lo que dure la pestaña: si la cierras y vuelves
+// a abrir el panel, se cierra la sesión y pide entrar otra vez. Las pestañas
+// que abres desde el panel mientras sigue abierto sí comparten la sesión
+// (se preguntan entre ellas con BroadcastChannel).
+const PestanaPanel = {
+    CLAVE: 'kz_panel_pestana',
+    _canal: (() => { try { return 'BroadcastChannel' in window ? new BroadcastChannel('kz-panel') : null; } catch { return null; } })(),
+    tiene() { try { return sessionStorage.getItem(this.CLAVE) === '1'; } catch { return false; } },
+    marcar() { try { sessionStorage.setItem(this.CLAVE, '1'); } catch { /* nada */ } this.escuchar(); },
+    olvidar() { try { sessionStorage.removeItem(this.CLAVE); } catch { /* nada */ } },
+    escuchar() {
+        if (!this._canal || this._escuchando) return;
+        this._escuchando = true;
+        this._canal.addEventListener('message', (e) => { if (e.data === 'kz-panel?' && this.tiene()) this._canal.postMessage('kz-panel!'); });
+    },
+    otraAbierta(ms = 400) {
+        return new Promise((resolver) => {
+            if (!this._canal) { resolver(false); return; }
+            const alResponder = (e) => { if (e.data === 'kz-panel!') { fin(true); } };
+            const fin = (v) => { this._canal.removeEventListener('message', alResponder); clearTimeout(reloj); resolver(v); };
+            const reloj = setTimeout(() => fin(false), ms);
+            this._canal.addEventListener('message', alResponder);
+            this._canal.postMessage('kz-panel?');
+        });
+    },
+    // true si esta pestaña puede seguir con la sesión del panel.
+    async verificar() {
+        if (this.tiene()) { this.escuchar(); return true; }
+        if (await this.otraAbierta()) { this.marcar(); return true; }
+        return false;
+    },
+};
+window.PestanaPanel = PestanaPanel;
+
 // ---- Cuentas recordadas ----
 // Al entrar con "Mantener sesión iniciada" el navegador recuerda el correo
 // y el nombre (nunca la contraseña). Después de cerrar sesión, el login

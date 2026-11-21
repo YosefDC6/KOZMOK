@@ -4452,6 +4452,20 @@ app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
 
 app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const { estado, prioridad, asignado_a } = req.body;
+    // Ligar (o quitar con 0) el pedido del caso: solo pedidos del mismo cliente.
+    if (req.body.pedido_id !== undefined) {
+        const t = (await pool.query('SELECT cliente_id FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+        if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+        const pid = Number(req.body.pedido_id) || 0;
+        if (pid) {
+            const p = await pool.query('SELECT 1 FROM pedidos WHERE id = $1 AND cliente_id = $2', [pid, t.cliente_id]);
+            if (!p.rows.length) return res.status(400).json({ message: 'Ese pedido no es de este cliente' });
+        }
+        await pool.query('UPDATE tickets SET pedido_id = $1 WHERE id = $2', [pid || null, req.params.id]);
+        if (estado === undefined && prioridad === undefined && asignado_a === undefined) {
+            return res.json({ message: pid ? 'Pedido ligado al ticket' : 'Se quitó el pedido del ticket' });
+        }
+    }
     const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
     const pri = ['baja', 'media', 'alta'];
     const r = await pool.query(
