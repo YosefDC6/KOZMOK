@@ -26,73 +26,158 @@
 <script src="/js/layout.js"></script>
 <script src="/js/chatbot.js"></script>
 <script src="/js/cuenta.js"></script>
+<script src="/js/fotos.js"></script>
 <script>
 let CID = null;
-const EST_LABEL = { activa: 'Activa', usada: 'Usada', vencida: 'Vencida', cancelada: 'Cancelada' };
+const EST_LABEL = { activa: 'Activa', usada: 'Concluida', vencida: 'Vencida', cancelada: 'Cancelada' };
+const REC_PASOS = ['recibido', 'diagnostico', 'reparacion', 'listo', 'cerrado'];
+const REC_TXT = { recibido: 'Recibido', diagnostico: 'En diagnóstico', reparacion: 'En reparación', reemplazo: 'Reemplazo en proceso',
+    listo: 'Listo para entregar', cerrado: 'Cerrado', rechazado: 'No procede' };
+const RES_TXT = { reparacion: 'Reparación', reemplazo: 'Reemplazo del equipo', reembolso: 'Reembolso', sin_falla: 'Sin falla encontrada', no_cubierto: 'No lo cubre la garantía' };
+const ABIERTOS = ['recibido', 'diagnostico', 'reparacion', 'reemplazo', 'listo'];
 
 montarCuenta('garantias', async (panel, P) => {
     CID = P.id;
-    await pintar(panel);
+    const rec = new URLSearchParams(location.search).get('reclamo');
+    if (rec) await vistaReclamo(panel, rec);
+    else await vistaLista(panel);
 });
 
-async function pintar(panel) {
-    const list = await api(`/clientes/${CID}/garantias`);
+// ---------- Lista de garantías ----------
+let GARANTIAS = [];
+async function vistaLista(panel) {
+    GARANTIAS = await api(`/clientes/${CID}/garantias`);
+    const vigentes = GARANTIAS.filter((g) => g.vigente);
+    const otras = GARANTIAS.filter((g) => !g.vigente);
     panel.innerHTML = `
-        <div class="cuenta-head"><h1>Mis garantías</h1><p>Garantías extendidas de tus compras. Usa el código para validarlas en servicio.</p></div>
-        ${list.length === 0
-            ? '<div class="empty-state">Aún no tienes garantías extendidas.<br>Puedes agregar una al elegir un producto en el catálogo.</div>'
-            : list.map((g) => {
-                const activa = g.vigente;
-                return `
-                <div class="gar-card ${activa ? '' : 'inactiva'}">
-                    <div class="gar-top">
-                        <div>
-                            <div class="gar-prod">${g.producto || 'Producto'}</div>
-                            <div class="gar-sub">${g.plan} · pedido <span class="mono">${g.numero_orden || '—'}</span></div>
-                        </div>
-                        <span class="estado-pill gar-est-${g.estado}">${EST_LABEL[g.estado] || g.estado}${(g.estado === 'activa' && !g.vigente) ? ' (vencida)' : ''}</span>
-                    </div>
-                    <div class="gar-grid">
-                        <div><span>Folio</span><strong class="mono">${g.folio}</strong></div>
-                        <div><span>Código para validar</span><strong class="mono gar-codigo">${g.codigo}</strong></div>
-                        <div><span>Vigencia</span><strong>${formatoFecha(g.inicio)} → ${formatoFecha(g.vence)}</strong></div>
-                        <div><span>Cobertura</span><strong>${g.meses} meses · ${formatoMoneda(g.costo)}</strong></div>
-                    </div>
-                    ${g.reclamo_fecha ? `
-                        <div class="gar-reclamo">
-                            ${icon('clock', 13)} Reclamo enviado el ${formatoFecha(g.reclamo_fecha)}${g.resuelto_fecha ? ` · resuelto el ${formatoFecha(g.resuelto_fecha)}` : ' · en revisión'}
-                            <div style="color:var(--text-muted);margin-top:2px">${g.reclamo_desc || ''}</div>
-                            ${g.resuelto_nota ? `<div style="margin-top:4px"><strong>Respuesta:</strong> ${g.resuelto_nota}</div>` : ''}
-                        </div>` : ''}
-                    ${(activa && !g.reclamo_fecha) ? `<div class="gar-acts"><button class="btn btn-primary btn-sm" onclick='usarGarantia(${g.id})'>Usar la garantía</button></div>` : ''}
-                </div>`;
-            }).join('')}
+        <div class="cuenta-head"><h1>Mis garantías</h1>
+            <p>Todo lo que compras en Kozmok trae <strong>12 meses de Garantía Kozmok</strong> desde que lo recibes; si compraste una extendida, la cobertura es mayor. Si algo falla, solicita el servicio aquí.</p></div>
+        ${GARANTIAS.length === 0
+            ? '<div class="empty-state">Aún no tienes garantías.<br>Aparecen aquí en cuanto recibes tu pedido.</div>'
+            : `${vigentes.map(tarjeta).join('')}
+               ${otras.length ? `<details class="gar-otras"><summary>Garantías vencidas o concluidas (${otras.length})</summary>${otras.map(tarjeta).join('')}</details>` : ''}`}
     `;
 }
-function refrescar() { pintar(document.getElementById('cuenta-panel')); }
 
-function usarGarantia(id) {
+function tarjeta(g) {
+    const total = Math.max(1, (new Date(g.vence) - new Date(g.inicio)) / 86400000);
+    const pct = g.vigente ? Math.max(3, Math.min(100, Math.round(g.dias_restantes / total * 100))) : 0;
+    const abierto = g.reclamos.find((r) => ABIERTOS.includes(r.estado));
+    const porVencer = g.vigente && g.dias_restantes <= 30;
+    return `
+    <div class="gar-card ${g.vigente ? '' : 'inactiva'}">
+        <div class="gar-top">
+            <div>
+                <div class="gar-prod">${escHTML(g.producto || 'Producto')}</div>
+                <div class="gar-sub"><span class="gar-tipo ${g.incluida ? 'incluida' : 'extendida'}">${g.incluida ? 'Incluida' : 'Extendida'}</span> ${escHTML(g.plan)} · pedido <span class="mono">${escHTML(g.numero_orden || '—')}</span></div>
+            </div>
+            <span class="estado-pill gar-est-${g.vigente ? 'activa' : (g.estado === 'activa' ? 'vencida' : g.estado)}">${g.vigente ? 'Vigente' : (g.estado === 'activa' ? 'Vencida' : EST_LABEL[g.estado] || g.estado)}</span>
+        </div>
+        ${g.vigente ? `
+        <div class="gar-vida"><div class="gar-vida-bar ${porVencer ? 'pronto' : ''}" style="width:${pct}%"></div></div>
+        <p class="gar-vida-txt">${porVencer ? `${icon('clock', 13)} ` : ''}Te quedan <strong>${g.dias_restantes} día${g.dias_restantes === 1 ? '' : 's'}</strong> de cobertura · vence el ${formatoFecha(g.vence)}</p>` : ''}
+        <div class="gar-grid">
+            <div><span>Folio</span><strong class="mono">${escHTML(g.folio)}</strong></div>
+            <div><span>Código para validar</span><strong class="mono gar-codigo">${escHTML(g.codigo)}</strong></div>
+            <div><span>Desde</span><strong>${formatoFecha(g.inicio)}</strong></div>
+            <div><span>Cobertura</span><strong>${g.meses} meses${g.incluida ? ' · sin costo' : ' · ' + formatoMoneda(g.costo)}</strong></div>
+        </div>
+        ${g.reclamos.length ? `<div class="gar-recl-lista">${g.reclamos.map((r) => `
+            <a class="gar-recl" href="/garantias.html?reclamo=${r.id}">
+                <span class="mono">${escHTML(r.folio)}</span>
+                <span class="gar-recl-est est-${r.estado}">${REC_TXT[r.estado]}${r.resolucion && !ABIERTOS.includes(r.estado) ? ' · ' + RES_TXT[r.resolucion] : ''}</span>
+                ${ABIERTOS.includes(r.estado) && r.ultimo_autor !== 'cliente' ? '<span class="gar-recl-nuevo">Respuesta nueva</span>' : ''}
+                <span class="gar-recl-fecha">${formatoFecha(r.fecha)}</span>
+            </a>`).join('')}</div>` : ''}
+        <div class="gar-acts">
+            ${abierto ? `<a class="btn btn-primary btn-sm" href="/garantias.html?reclamo=${abierto.id}">Ver mi reclamo en curso</a>`
+              : g.vigente ? `<button class="btn btn-primary btn-sm" onclick="nuevoReclamo(${g.id})">${icon('shield', 14)} Solicitar servicio</button>` : ''}
+            <button class="btn btn-ghost btn-sm" onclick="copiarCodigo('${escHTML(g.codigo)}')">${icon('clipboard', 14)} Copiar código</button>
+        </div>
+    </div>`;
+}
+
+async function copiarCodigo(c) {
+    try { await copiarTexto(c); toast('Código copiado', 'ok'); } catch { toast('No se pudo copiar', 'error'); }
+}
+
+let SEL_FOTOS = null;
+function nuevoReclamo(id) {
+    const g = GARANTIAS.find((x) => x.id === id);
     document.getElementById('modal-generico-body').innerHTML = `
         <button class="modal-close" onclick="document.getElementById('modal-generico').classList.remove('open')">${icon('x', 20)}</button>
-        <h3>Usar garantía</h3>
-        <p style="font-size:.86rem;color:var(--text-muted)">Cuéntanos qué falla presenta el producto. El equipo revisará tu garantía y te contactará.</p>
-        <div class="field"><label>Descripción del problema</label><textarea id="gr-desc" rows="4" placeholder="Ej. La pantalla dejó de encender, hace un ruido al arrancar…"></textarea></div>
+        <h3>Solicitar servicio de garantía</h3>
+        <p style="font-size:.86rem;color:var(--text-muted);margin-top:0">${escHTML(g.producto || '')} · ${escHTML(g.folio)}</p>
+        <div class="field"><label>¿Qué falla tiene?</label><textarea id="gr-desc" rows="4" maxlength="4000" placeholder="Qué pasa, desde cuándo y qué ya intentaste."></textarea></div>
+        <div class="field"><label>Fotos o video corto en foto <span style="font-weight:400;color:var(--text-muted)">(opcional, hasta 3)</span></label>
+            <label class="btn btn-outline btn-sm foto-btn">${icon('plus', 14)} Agregar fotos<input type="file" id="gr-fotos" accept="image/*" multiple hidden /></label>
+            <div class="foto-lista" id="gr-prev"></div></div>
         <div id="gr-err" style="color:var(--danger);font-size:.83rem;margin-bottom:10px;display:none"></div>
-        <button class="btn btn-primary" style="width:100%" onclick="enviarReclamo(${id})">Enviar solicitud</button>
+        <button class="btn btn-primary" style="width:100%" id="gr-btn" onclick="enviarReclamo(${id})">Enviar solicitud</button>
+        <p style="font-size:.78rem;color:var(--text-muted);margin:10px 0 0">Te contestaremos por aquí y por correo con los pasos para revisar el equipo.</p>
     `;
+    const err = document.getElementById('gr-err');
+    SEL_FOTOS = FotosReclamo.selector(document.getElementById('gr-fotos'), document.getElementById('gr-prev'),
+        { alError: (m) => { err.textContent = m; err.style.display = 'block'; } });
     document.getElementById('modal-generico').classList.add('open');
 }
 async function enviarReclamo(id) {
     const desc = document.getElementById('gr-desc').value.trim();
     const err = document.getElementById('gr-err');
     err.style.display = 'none';
-    if (!desc) { err.textContent = 'Describe el problema.'; err.style.display = 'block'; return; }
+    if (desc.length < 10) { err.textContent = 'Describe la falla con un poco más de detalle.'; err.style.display = 'block'; return; }
+    const btn = document.getElementById('gr-btn'); btn.disabled = true; btn.textContent = 'Enviando…';
     try {
-        const r = await api(`/clientes/${CID}/garantias/${id}/reclamo`, { method: 'POST', body: { descripcion: desc } });
+        const r = await api(`/clientes/${CID}/garantias/${id}/reclamo`, { method: 'POST', body: { descripcion: desc, fotos: SEL_FOTOS.fotos() } });
         document.getElementById('modal-generico').classList.remove('open');
-        toast(r.message || 'Reclamo registrado', 'ok');
-        refrescar();
-    } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+        toast(r.message, 'ok');
+        location.href = `/garantias.html?reclamo=${r.id}`;
+    } catch (e) { err.textContent = e.message; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Enviar solicitud'; }
+}
+
+// ---------- Detalle de un reclamo ----------
+async function vistaReclamo(panel, id) {
+    let r;
+    try { r = await api(`/clientes/${CID}/reclamos/${id}`); }
+    catch (e) { panel.innerHTML = `<div class="empty-state">${escHTML(e.message)}<br><a href="/garantias.html">Volver a mis garantías</a></div>`; return; }
+    const pasos = r.estado === 'reemplazo' ? ['recibido', 'diagnostico', 'reemplazo', 'listo', 'cerrado'] : REC_PASOS;
+    const actual = r.estado === 'rechazado' ? -1 : pasos.indexOf(r.estado);
+    panel.innerHTML = `
+        <a href="/garantias.html" style="font-size:.85rem">← Mis garantías</a>
+        <div class="cuenta-head" style="margin-top:6px"><h1>Reclamo ${escHTML(r.folio)}</h1>
+            <p>${escHTML(r.producto || '')} · garantía <span class="mono">${escHTML(r.garantia_folio)}</span> · pedido <span class="mono">${escHTML(r.numero_orden || '—')}</span></p></div>
+        ${r.estado === 'rechazado'
+            ? `<div class="rec-aviso no">${icon('alert', 16)} Este reclamo no procede. Abajo está la explicación del equipo.</div>`
+            : `<ol class="rec-pasos">${pasos.map((p, k) => `<li class="${k < actual ? 'hecho' : ''} ${k === actual ? 'actual' : ''}"><span>${k < actual ? icon('check', 13) : k + 1}</span>${REC_TXT[p]}</li>`).join('')}</ol>`}
+        ${r.estado === 'cerrado' && r.resolucion ? `<div class="rec-aviso ok">${icon('check', 16)} Resuelto: ${RES_TXT[r.resolucion]}.</div>` : ''}
+        <div class="hilo" style="margin-top:16px">
+            ${r.mensajes.map((m) => `
+                <div class="hilo-msg ${m.autor === 'cliente' ? 'mio' : 'equipo'} ${m.autor === 'sistema' ? 'sistema' : ''}">
+                    <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : m.autor === 'sistema' ? 'Kozmok' : 'Equipo Kozmok'} · ${formatoFechaHora(m.fecha)}</div>
+                    ${m.mensaje ? `<div class="hm-txt">${escHTML(m.mensaje)}</div>` : ''}
+                    ${m.fotos.length ? `<div class="foto-lista">${m.fotos.map((f) => `<a href="/api/clientes/${CID}/reclamos/${r.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/clientes/${CID}/reclamos/${r.id}/fotos/${f.id}" alt="${escHTML(f.nombre)}" loading="lazy" /></a>`).join('')}</div>` : ''}
+                </div>`).join('')}
+        </div>
+        ${r.abierto ? `
+            <div class="field" style="margin-top:16px"><textarea id="rc-txt" rows="3" maxlength="4000" placeholder="Escribe al equipo…"></textarea></div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <button class="btn btn-primary" id="rc-btn" onclick="responderReclamo(${r.id})">Enviar</button>
+                <label class="btn btn-ghost btn-sm foto-btn">${icon('plus', 14)} Fotos<input type="file" id="rc-fotos" accept="image/*" multiple hidden /></label>
+                <div class="foto-lista" id="rc-prev"></div>
+            </div>`
+          : `<p style="margin-top:16px;color:var(--text-muted);font-size:.88rem">Este reclamo está cerrado. Si el producto vuelve a fallar y la garantía sigue vigente, solicita un servicio nuevo desde <a href="/garantias.html">Mis garantías</a>.</p>`}
+    `;
+    if (r.abierto) SEL_FOTOS = FotosReclamo.selector(document.getElementById('rc-fotos'), document.getElementById('rc-prev'), { alError: (m) => toast(m, 'warn') });
+}
+async function responderReclamo(id) {
+    const txt = document.getElementById('rc-txt').value.trim();
+    const fotos = SEL_FOTOS.fotos();
+    if (!txt && !fotos.length) { toast('Escribe un mensaje o agrega una foto', 'warn'); return; }
+    const btn = document.getElementById('rc-btn'); btn.disabled = true;
+    try {
+        await api(`/clientes/${CID}/reclamos/${id}/mensajes`, { method: 'POST', body: { mensaje: txt, fotos } });
+        await vistaReclamo(document.getElementById('cuenta-panel'), id);
+    } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
 }
 </script>
 </body>

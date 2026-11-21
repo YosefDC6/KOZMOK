@@ -106,7 +106,7 @@ async function cargarCarrito() {
                 <div class="cart-gar">
                     <span class="ic-gar">${icon('shield', 13)}</span>
                     <select onchange="cambiarGarantia(${i.id}, this.value)">
-                        ${PLANES_GARANTIA.map((g) => {
+                        ${planesOfrecidos(claveActual).map((g) => {
                             const c = costoGarantia(i.precio, g.clave) * i.cantidad;
                             return `<option value="${g.clave}" ${g.clave === claveActual ? 'selected' : ''}>${g.label}${c > 0 ? ' · +' + formatoMoneda(c) : ''}</option>`;
                         }).join('')}
@@ -619,7 +619,7 @@ async function cargarCarritoInvitado() {
                 <div class="cart-gar">
                     <span class="ic-gar">${icon('shield', 13)}</span>
                     <select onchange="garantiaInvitado(${i.producto_id}, this.value)">
-                        ${PLANES_GARANTIA.map((g) => `<option value="${g.clave}" ${g.clave === i.garantia ? 'selected' : ''}>${g.label}${g.factor ? ' · +' + formatoMoneda(costoGarantia(i.p.precio, g.clave)) : ''}</option>`).join('')}
+                        ${planesOfrecidos(i.garantia).map((g) => `<option value="${g.clave}" ${g.clave === i.garantia ? 'selected' : ''}>${g.label}${g.factor ? ' · +' + formatoMoneda(costoGarantia(i.p.precio, g.clave)) : ''}</option>`).join('')}
                     </select>
                 </div>
             </div>

@@ -10,36 +10,7 @@
 <body>
 <div class="admin-shell">
     <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
-    <main class="admin-main">
-        <div id="topbar"></div>
-
-        <div class="card" style="max-width:760px;margin-bottom:18px">
-            <h3 style="margin-top:0">Validar garantía</h3>
-            <p style="color:var(--text-muted);font-size:.86rem;margin-top:0">Escribe el código que presenta el cliente para verificar cobertura.</p>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <input id="v-cod" placeholder="AB3C-9KTP-2MQ7-XY4Z" style="flex:1;min-width:220px;text-transform:uppercase" onkeydown="if(event.key==='Enter')validar()" />
-                <button class="btn btn-primary" onclick="validar()">Validar</button>
-            </div>
-            <div id="v-res" style="margin-top:14px"></div>
-        </div>
-
-        <div class="stat-grid" id="stat" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"></div>
-
-        <div class="filters-bar">
-            <input type="text" id="f-busqueda" placeholder="Folio, código, cliente, producto, pedido…" />
-            <select id="f-estado">
-                <option>Todas</option>
-                <option value="activa">Activa</option><option value="usada">Usada</option>
-                <option value="vencida">Vencida</option><option value="cancelada">Cancelada</option>
-            </select>
-        </div>
-        <div class="table-wrap">
-            <table>
-                <thead><tr><th>Folio</th><th>Cliente</th><th>Producto</th><th>Plan</th><th>Vigencia</th><th>Estado</th><th></th></tr></thead>
-                <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
-            </table>
-        </div>
-    </main>
+    <main class="admin-main" id="main"></main>
 </div>
 
 <div class="modal-overlay" id="modal"><div class="modal" id="modal-body"></div></div>
@@ -48,117 +19,305 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/js/fotos.js"></script>
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('garantias');
-document.getElementById('topbar').innerHTML = adminHeader('Garantías extendidas', 'Certificados vendidos con los pedidos: validación y reclamos.');
 
-const EST_LABEL = { activa: 'Activa', usada: 'Usada', vencida: 'Vencida', cancelada: 'Cancelada' };
-let GARANTIAS = [];
+const EST_GAR = { activa: 'Activa', usada: 'Concluida', vencida: 'Vencida', cancelada: 'Cancelada' };
+const REC_TXT = { recibido: 'Recibido', diagnostico: 'En diagnóstico', reparacion: 'En reparación', reemplazo: 'Reemplazo en proceso',
+    listo: 'Listo para entregar', cerrado: 'Cerrado', rechazado: 'No procede' };
+const RES_TXT = { reparacion: 'Reparación', reemplazo: 'Reemplazo del equipo', reembolso: 'Reembolso', sin_falla: 'Sin falla encontrada', no_cubierto: 'No lo cubre la garantía' };
+const ABIERTOS = ['recibido', 'diagnostico', 'reparacion', 'reemplazo', 'listo'];
+const $ = (id) => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
 
-async function cargar() {
-    const q = new URLSearchParams();
-    const b = document.getElementById('f-busqueda').value.trim();
-    const e = document.getElementById('f-estado').value;
-    if (b) q.set('busqueda', b);
-    if (e && e !== 'Todas') q.set('estado', e);
-    const d = await api('/admin/garantias?' + q.toString());
-    GARANTIAS = d.garantias;
+if (qs.get('reclamo')) vistaReclamo(qs.get('reclamo'));
+else vistaPrincipal(qs.get('vista') === 'garantias' ? 'garantias' : 'reclamos');
 
-    document.getElementById('stat').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Activas</div><div class="stat-value" style="color:var(--success)">${d.conteos.activas}</div></div>
-        <div class="stat-card"><div class="stat-label">Con reclamo</div><div class="stat-value" style="color:var(--warning)">${d.conteos.con_reclamo}</div></div>
-        <div class="stat-card"><div class="stat-label">Usadas</div><div class="stat-value">${d.conteos.usadas}</div></div>
-        <div class="stat-card"><div class="stat-label">Vencidas / canceladas</div><div class="stat-value">${d.conteos.inactivas}</div></div>
-    `;
+// =========================================================
+// Vista principal: pestañas Reclamos / Garantías
+// =========================================================
+function vistaPrincipal(pestana) {
+    $('main').innerHTML = `
+        ${adminHeader('Garantías', 'Reclamos de clientes, garantías vendidas e incluidas, y validación en mostrador.')}
+        <div class="tabs-seg" role="tablist">
+            <button role="tab" class="${pestana === 'reclamos' ? 'on' : ''}" onclick="cambiarPestana('reclamos')">${icon('chat', 15)} Reclamos</button>
+            <button role="tab" class="${pestana === 'garantias' ? 'on' : ''}" onclick="cambiarPestana('garantias')">${icon('shield', 15)} Garantías</button>
+        </div>
+        <div id="contenido"></div>`;
+    if (pestana === 'reclamos') pintarReclamos(); else pintarGarantias();
+}
+function cambiarPestana(p) {
+    history.replaceState(null, '', p === 'garantias' ? '?vista=garantias' : location.pathname);
+    vistaPrincipal(p);
+}
 
-    document.getElementById('tabla').innerHTML = d.garantias.length === 0
-        ? '<tr><td colspan="7">Sin resultados.</td></tr>'
-        : d.garantias.map((g) => `
-            <tr onclick="abrir(${g.id})" style="cursor:pointer">
-                <td class="mono">${g.folio}${g.reclamo_fecha && g.estado === 'activa' ? ` <span class="tag" style="color:var(--warning);border-color:currentColor">reclamo</span>` : ''}</td>
-                <td>${g.cliente_nombre || '—'}<div style="font-size:.76rem;color:var(--text-muted)">${g.cliente_correo || ''}</div></td>
-                <td>${g.producto || '—'}</td>
-                <td>${g.plan}</td>
-                <td>${formatoFecha(g.inicio)} → ${formatoFecha(g.vence)}</td>
-                <td><span class="estado-pill gar-est-${g.estado}">${EST_LABEL[g.estado]}${(g.estado === 'activa' && g.vencida) ? ' (venc.)' : ''}</span></td>
-                <td><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();abrir(${g.id})">Gestionar</button></td>
+// ---------- Reclamos ----------
+async function pintarReclamos() {
+    $('contenido').innerHTML = `
+        <div class="filters-bar">
+            <input type="text" id="r-busqueda" placeholder="Folio, cliente, producto, pedido…" />
+            <select id="r-estado">
+                <option value="abiertos">En curso</option>
+                ${Object.entries(REC_TXT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+                <option value="todos">Todos</option>
+            </select>
+        </div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Folio</th><th>Cliente</th><th>Producto</th><th>Garantía</th><th>Etapa</th><th>Antigüedad</th><th></th></tr></thead>
+            <tbody id="r-tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+        </table></div>`;
+    $('r-estado').addEventListener('change', cargarReclamos);
+    $('r-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargarReclamos(); });
+    cargarReclamos();
+}
+async function cargarReclamos() {
+    const q = new URLSearchParams({ estado: $('r-estado').value });
+    const b = $('r-busqueda').value.trim(); if (b) q.set('busqueda', b);
+    const lista = await api('/admin/reclamos?' + q);
+    $('r-tabla').innerHTML = lista.length === 0
+        ? `<tr><td colspan="7"><div class="empty-state" style="padding:18px">No hay reclamos ${$('r-estado').value === 'abiertos' ? 'en curso' : 'con ese filtro'}.</div></td></tr>`
+        : lista.map((r) => `
+            <tr onclick="location.href='?reclamo=${r.id}'" style="cursor:pointer">
+                <td class="mono">${escHTML(r.folio)}${ABIERTOS.includes(r.estado) && r.ultimo_autor === 'cliente' ? ' <span class="aviso-punto" title="El cliente escribió" style="display:inline-block;margin-left:6px"></span>' : ''}</td>
+                <td>${escHTML(r.cliente_nombre)}<div style="font-size:.76rem;color:var(--text-muted)">${escHTML(r.cliente_correo)}</div></td>
+                <td>${escHTML(r.producto || '—')}<div style="font-size:.76rem;color:var(--text-muted)" class="mono">${escHTML(r.numero_orden || '')}</div></td>
+                <td>${Number(r.costo) > 0 ? 'Extendida' : 'Incluida'}<div style="font-size:.76rem;color:var(--text-muted)" class="mono">${escHTML(r.garantia_folio)}</div></td>
+                <td><span class="rec-chip est-${r.estado}">${REC_TXT[r.estado]}</span>${r.resolucion && !ABIERTOS.includes(r.estado) ? `<div style="font-size:.74rem;color:var(--text-muted)">${RES_TXT[r.resolucion]}</div>` : ''}</td>
+                <td>${ABIERTOS.includes(r.estado) ? `<span style="${r.dias >= 7 ? 'color:var(--danger);font-weight:600' : r.dias >= 3 ? 'color:var(--warning)' : ''}">${r.dias} día${r.dias === 1 ? '' : 's'}</span>` : formatoFecha(r.fecha_cierre || r.fecha)}</td>
+                <td><a class="btn btn-outline btn-sm" href="?reclamo=${r.id}" onclick="event.stopPropagation()">Atender</a></td>
             </tr>`).join('');
 }
 
-function tarjetaValidacion(g) {
-    const ok = g.valida !== undefined ? g.valida : (g.estado === 'activa' && !g.vencida);
-    return `
-        <div class="gar-valida ${ok ? 'ok' : 'no'}">
-            <div class="gv-head">${icon(ok ? 'check' : 'alert', 18)} ${ok ? 'Garantía válida' : 'Garantía no vigente'}</div>
-            <div class="gar-grid">
-                <div><span>Folio</span><strong class="mono">${g.folio}</strong></div>
-                <div><span>Estado</span><strong>${EST_LABEL[g.estado]}${g.vencida ? ' (vencida)' : ''}</strong></div>
-                <div><span>Producto</span><strong>${g.producto || '—'}</strong></div>
-                <div><span>Cliente</span><strong>${g.cliente_nombre || '—'}</strong></div>
-                <div><span>Vigencia</span><strong>${formatoFecha(g.inicio)} → ${formatoFecha(g.vence)}</strong></div>
-                <div><span>Días restantes</span><strong>${g.dias_restantes > 0 ? g.dias_restantes : 0}</strong></div>
-                <div><span>Pedido</span><strong class="mono">${g.numero_orden || '—'}</strong></div>
-                <div><span>Cobertura</span><strong>${g.meses} meses</strong></div>
+// ---------- Garantías ----------
+async function pintarGarantias() {
+    $('contenido').innerHTML = `
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="margin-top:0">Validar garantía</h3>
+            <p style="color:var(--text-muted);font-size:.86rem;margin-top:0">Escribe el código que presenta el cliente para verificar su cobertura y, si hace falta, abrir el reclamo en mostrador.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;max-width:620px">
+                <input id="v-cod" placeholder="Código de 16 caracteres" style="flex:1;min-width:220px;text-transform:uppercase" onkeydown="if(event.key==='Enter')validar()" />
+                <button class="btn btn-primary" onclick="validar()">Validar</button>
             </div>
-            ${g.reclamo_fecha ? `<div class="gar-reclamo">${icon('clock', 13)} Reclamo del ${formatoFecha(g.reclamo_fecha)}: ${g.reclamo_desc || ''}</div>` : ''}
-            <div class="gar-acts" style="margin-top:10px">
-                ${g.estado === 'activa' ? `
-                    <button class="btn btn-primary btn-sm" onclick="resolver(${g.id}, 'usada')">Marcar como usada</button>
-                    ${g.reclamo_fecha ? `<button class="btn btn-ghost btn-sm" onclick="resolver(${g.id}, 'activa')">Cerrar reclamo (sin usar)</button>` : ''}
-                    ${g.vencida ? `<button class="btn btn-ghost btn-sm" onclick="resolver(${g.id}, 'vencida')">Marcar vencida</button>` : ''}
-                ` : `<span style="color:var(--text-muted);font-size:.85rem">Sin acciones disponibles.</span>`}
+            <div id="v-res" style="margin-top:14px"></div>
+        </div>
+        <div class="stat-grid" id="stat" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+        <div class="filters-bar">
+            <input type="text" id="f-busqueda" placeholder="Folio, código, cliente, producto, pedido…" />
+            <select id="f-tipo"><option value="">Incluidas y extendidas</option><option value="incluida">Solo incluidas</option><option value="extendida">Solo extendidas</option></select>
+            <select id="f-estado">
+                <option>Todas</option><option value="activa">Vigentes</option><option value="vencida">Vencidas</option>
+                <option value="usada">Concluidas</option><option value="cancelada">Canceladas</option>
+            </select>
+        </div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Folio</th><th>Cliente</th><th>Producto</th><th>Plan</th><th>Vigencia</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="tabla"><tr><td colspan="7">Cargando…</td></tr></tbody>
+        </table></div>`;
+    ['f-estado', 'f-tipo'].forEach((id) => $(id).addEventListener('change', cargarGarantias));
+    $('f-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargarGarantias(); });
+    cargarGarantias();
+}
+let GARANTIAS = [];
+async function cargarGarantias() {
+    const q = new URLSearchParams();
+    const b = $('f-busqueda').value.trim(), e = $('f-estado').value, t = $('f-tipo').value;
+    if (b) q.set('busqueda', b);
+    if (e && e !== 'Todas') q.set('estado', e);
+    if (t) q.set('tipo', t);
+    const d = await api('/admin/garantias?' + q);
+    GARANTIAS = d.garantias;
+    $('stat').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Vigentes</div><div class="stat-value" style="color:var(--success)">${d.conteos.activas}</div></div>
+        <div class="stat-card"><div class="stat-label">Vencen en 30 días</div><div class="stat-value" style="color:var(--warning)">${d.conteos.por_vencer}</div></div>
+        <div class="stat-card"><div class="stat-label">Extendidas vendidas</div><div class="stat-value">${d.conteos.extendidas}</div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="cambiarPestana('reclamos')"><div class="stat-label">Reclamos en curso</div><div class="stat-value" style="color:var(--accent-light)">${d.conteos.reclamos_abiertos}</div></div>`;
+    $('tabla').innerHTML = d.garantias.length === 0
+        ? '<tr><td colspan="7">Sin resultados.</td></tr>'
+        : d.garantias.map((g) => `
+            <tr onclick="abrirGarantia(${g.id})" style="cursor:pointer">
+                <td class="mono">${escHTML(g.folio)}${g.reclamo_abierto ? ' <span class="rec-chip est-recibido">reclamo</span>' : ''}</td>
+                <td>${escHTML(g.cliente_nombre || '—')}<div style="font-size:.76rem;color:var(--text-muted)">${escHTML(g.cliente_correo || '')}</div></td>
+                <td>${escHTML(g.producto || '—')}</td>
+                <td>${Number(g.costo) > 0 ? '' : '<span class="gar-tipo incluida">Incluida</span> '}${escHTML(g.plan)}</td>
+                <td>${formatoFecha(g.inicio)} → ${formatoFecha(g.vence)}</td>
+                <td>${estadoGar(g)}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();abrirGarantia(${g.id})">Ver</button></td>
+            </tr>`).join('');
+}
+function estadoGar(g) {
+    const vigente = g.estado === 'activa' && !g.vencida;
+    const txt = vigente ? `Vigente · ${g.dias_restantes} d` : (g.estado === 'activa' ? 'Vencida' : EST_GAR[g.estado]);
+    return `<span class="estado-pill gar-est-${vigente ? 'activa' : (g.estado === 'activa' ? 'vencida' : g.estado)}">${txt}</span>`;
+}
+
+function tarjetaGarantia(g) {
+    const vigente = g.estado === 'activa' && !g.vencida;
+    return `
+        <div class="gar-valida ${vigente ? 'ok' : 'no'}">
+            <div class="gv-head">${icon(vigente ? 'check' : 'alert', 18)} ${vigente ? 'Garantía vigente' : 'Garantía no vigente'}</div>
+            <div class="gar-grid">
+                <div><span>Folio</span><strong class="mono">${escHTML(g.folio)}</strong></div>
+                <div><span>Plan</span><strong>${escHTML(g.plan)}${Number(g.costo) > 0 ? ' · ' + formatoMoneda(g.costo) : ' · incluida'}</strong></div>
+                <div><span>Producto</span><strong>${escHTML(g.producto || '—')}</strong></div>
+                <div><span>Cliente</span><strong>${escHTML(g.cliente_nombre || '—')}</strong></div>
+                <div><span>Vigencia</span><strong>${formatoFecha(g.inicio)} → ${formatoFecha(g.vence)}</strong></div>
+                <div><span>Días restantes</span><strong>${Math.max(0, g.dias_restantes)}</strong></div>
+                <div><span>Pedido</span><strong class="mono">${escHTML(g.numero_orden || '—')}</strong></div>
+                <div><span>Reclamos</span><strong>${g.reclamos || 0}</strong></div>
+            </div>
+            <div class="gar-acts">
+                ${g.reclamo_abierto ? `<a class="btn btn-primary btn-sm" href="?reclamo=${g.reclamo_abierto}">Ver reclamo en curso</a>`
+                  : vigente ? `<button class="btn btn-primary btn-sm" onclick="reclamoMostrador(${g.id})">Abrir reclamo en mostrador</button>` : ''}
+                ${g.estado === 'activa' ? `<button class="btn btn-ghost btn-sm" onclick="cancelarGarantia(${g.id})">Cancelar garantía</button>` : ''}
             </div>
         </div>`;
 }
-
 async function validar() {
-    const cod = document.getElementById('v-cod').value.trim();
-    const box = document.getElementById('v-res');
+    const cod = $('v-cod').value.trim();
+    const box = $('v-res');
     if (!cod) { box.innerHTML = ''; return; }
     box.innerHTML = '<span style="color:var(--text-muted)">Buscando…</span>';
-    try {
-        const g = await api('/admin/garantias/validar/' + encodeURIComponent(cod));
-        box.innerHTML = tarjetaValidacion(g);
-    } catch (e) {
-        box.innerHTML = `<div class="gar-valida no"><div class="gv-head">${icon('x', 18)} ${e.message}</div></div>`;
-    }
+    try { box.innerHTML = tarjetaGarantia(await api('/admin/garantias/validar/' + encodeURIComponent(cod))); }
+    catch (e) { box.innerHTML = `<div class="gar-valida no"><div class="gv-head">${icon('x', 18)} ${escHTML(e.message)}</div></div>`; }
 }
-
-function abrir(id) {
+function abrirGarantia(id) {
     const g = GARANTIAS.find((x) => x.id === id);
     if (!g) return;
-    document.getElementById('modal-body').innerHTML = `
-        <button class="modal-close" onclick="document.getElementById('modal').classList.remove('open')">${icon('x', 20)}</button>
-        <h3 style="margin-bottom:2px">${g.folio}</h3>
-        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.84rem">Código <span class="mono">${g.codigo}</span></p>
-        ${tarjetaValidacion(g)}
-        ${g.resuelto_nota ? `<p style="font-size:.83rem;margin-top:10px"><strong>Nota de resolución:</strong> ${g.resuelto_nota}${g.resuelto_por_nombre ? ' — ' + g.resuelto_por_nombre : ''}</p>` : ''}
-    `;
-    document.getElementById('modal').classList.add('open');
+    $('modal-body').innerHTML = `
+        <button class="modal-close" onclick="$('modal').classList.remove('open')">${icon('x', 20)}</button>
+        <h3 style="margin-bottom:2px">${escHTML(g.folio)}</h3>
+        <p style="margin:0 0 12px;color:var(--text-muted);font-size:.84rem">Código <span class="mono">${escHTML(g.codigo)}</span></p>
+        ${tarjetaGarantia(g)}`;
+    $('modal').classList.add('open');
 }
-
-async function resolver(id, estado) {
-    let nota = '';
-    if (estado === 'usada') {
-        nota = await pedirDato('Nota de la resolución (qué se hizo con la garantía):', { placeholder: 'Reemplazo de equipo / reparación en centro de servicio…' });
-        if (nota === null) return;
-    }
+async function reclamoMostrador(id) {
+    const desc = await pedirDato('Falla que reporta el cliente:', { placeholder: 'Qué falla, desde cuándo, estado físico del equipo al recibirlo…' });
+    if (desc === null) return;
     try {
-        await api(`/admin/garantias/${id}`, { method: 'PUT', body: { estado, nota } });
-        toast('Garantía actualizada', 'ok');
-        document.getElementById('modal').classList.remove('open');
-        const cod = document.getElementById('v-cod').value.trim();
-        if (cod) validar();
-        cargar();
+        const r = await api(`/admin/garantias/${id}/reclamo`, { method: 'POST', body: { descripcion: desc } });
+        location.href = `?reclamo=${r.id}`;
     } catch (e) { toast(e.message, 'error'); }
 }
+async function cancelarGarantia(id) {
+    const nota = await pedirDato('Motivo de la cancelación (queda en la auditoría):', { placeholder: 'Venta anulada, error de captura…' });
+    if (nota === null) return;
+    try { const r = await api(`/admin/garantias/${id}`, { method: 'PUT', body: { estado: 'cancelada', nota } }); toast(r.message, 'ok'); $('modal').classList.remove('open'); cargarGarantias(); }
+    catch (e) { toast(e.message, 'error'); }
+}
 
-document.getElementById('f-estado').addEventListener('change', cargar);
-document.getElementById('f-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargar(); });
-cargar();
+// =========================================================
+// Detalle de un reclamo
+// =========================================================
+let REC = null, SEL_FOTOS = null;
+async function vistaReclamo(id) {
+    let r;
+    try { r = await api(`/admin/reclamos/${id}`); }
+    catch (e) { $('main').innerHTML = `<p>${escHTML(e.message)}</p><a href="/admin/garantias.html">Volver</a>`; return; }
+    REC = r;
+    const borrador = ($('rc-txt') || {}).value || '';
+    const pasos = r.estado === 'reemplazo' ? ['recibido', 'diagnostico', 'reemplazo', 'listo', 'cerrado'] : ['recibido', 'diagnostico', 'reparacion', 'listo', 'cerrado'];
+    const i = pasos.indexOf(r.estado);
+    const vigente = r.garantia_estado === 'activa' && new Date(r.vence) >= new Date(new Date().toDateString());
+    $('main').innerHTML = `
+        <a href="/admin/garantias.html" style="font-size:.85rem">← Reclamos</a>
+        ${adminHeader(`Reclamo ${escHTML(r.folio)}`, `${escHTML(r.producto || '')} · <a href="/admin/cliente.html?id=${r.cliente_id}">${escHTML(r.cliente_nombre)}</a> · abierto el ${formatoFechaHora(r.fecha)}`)}
+        <div class="tk-layout">
+            <section>
+                <div class="hilo">
+                    ${r.mensajes.map((m) => `
+                        <div class="hilo-msg ${m.autor === 'cliente' ? 'equipo' : 'mio'} ${m.autor === 'sistema' ? 'sistema' : ''} ${m.interno ? 'interno' : ''}">
+                            <div class="hm-meta">${m.autor === 'cliente' ? escHTML(r.cliente_nombre) : escHTML(m.usuario_nombre || 'Kozmok')}${m.interno ? ' · nota interna' : ''} · ${formatoFechaHora(m.fecha)}</div>
+                            ${m.mensaje ? `<div class="hm-txt">${escHTML(m.mensaje)}</div>` : ''}
+                            ${m.fotos.length ? `<div class="foto-lista">${m.fotos.map((f) => `<a href="/api/admin/reclamos/${r.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/admin/reclamos/${r.id}/fotos/${f.id}" alt="${escHTML(f.nombre)}" loading="lazy" /></a>`).join('')}</div>` : ''}
+                        </div>`).join('')}
+                </div>
+                <div class="field" style="margin-top:16px"><textarea id="rc-txt" rows="3" maxlength="4000" placeholder="Responder al cliente…">${escHTML(borrador)}</textarea></div>
+                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                    <button class="btn btn-primary" id="rc-btn" onclick="responder()">Enviar</button>
+                    <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:.86rem"><input type="checkbox" id="rc-interno" onchange="$('rc-btn').textContent = this.checked ? 'Guardar nota interna' : 'Enviar'" /> Nota interna (el cliente no la ve)</label>
+                    <label class="btn btn-ghost btn-sm foto-btn">${icon('plus', 14)} Fotos<input type="file" id="rc-fotos" accept="image/*" multiple hidden /></label>
+                    <div class="foto-lista" id="rc-prev" style="margin:0"></div>
+                </div>
+            </section>
+            <aside class="tk-lado">
+                <div class="card">
+                    <h3 style="margin:0 0 10px;font-size:1rem">Etapa</h3>
+                    ${r.estado === 'rechazado' ? '<span class="rec-chip est-rechazado">No procede</span>' : `
+                    <div class="tk-mini-pipe">${pasos.map((p, k) => `<span class="${k <= i ? 'on' : ''} ${k === i ? 'actual' : ''}" title="${REC_TXT[p]}"></span>`).join('')}</div>
+                    <p style="margin:6px 0 0;font-size:.88rem"><strong>${REC_TXT[r.estado]}</strong>${r.resolucion ? ' · ' + RES_TXT[r.resolucion] : ''}</p>`}
+                    ${r.abierto ? `
+                    <div class="field" style="margin-top:12px"><label>Pasar a</label>
+                        <select id="rc-estado" onchange="opcionesCierre()">
+                            ${['diagnostico', 'reparacion', 'reemplazo', 'listo', 'cerrado', 'rechazado'].filter((e) => e !== r.estado).map((e) => `<option value="${e}">${REC_TXT[e]}</option>`).join('')}
+                        </select></div>
+                    <div id="rc-cierre"></div>
+                    <div class="field"><label>Nota para el cliente <span style="font-weight:400;color:var(--text-muted)">(se le manda por correo)</span></label>
+                        <textarea id="rc-nota" rows="2" maxlength="2000"></textarea></div>
+                    <button class="btn btn-outline btn-sm" style="width:100%" onclick="cambiarEtapa()">Actualizar etapa</button>`
+                    : `<p style="margin:10px 0 0;font-size:.8rem;color:var(--text-muted)">Cerrado ${r.fecha_cierre ? 'el ' + formatoFecha(r.fecha_cierre) : ''}${r.cerrado_por_nombre ? ' por ' + escHTML(r.cerrado_por_nombre) : ''}.</p>`}
+                </div>
+                <div class="card">
+                    <h3 style="margin:0 0 8px;font-size:1rem">Garantía</h3>
+                    <div class="tk-kv"><span>Folio</span><span class="mono">${escHTML(r.garantia_folio)}</span></div>
+                    <div class="tk-kv"><span>Plan</span><span>${escHTML(r.plan)}${Number(r.costo) > 0 ? '' : ' (incluida)'}</span></div>
+                    <div class="tk-kv"><span>Vigencia</span><span>${formatoFecha(r.inicio)} → ${formatoFecha(r.vence)}</span></div>
+                    <div class="tk-kv"><span>Estado</span><span>${vigente ? '<span style="color:var(--success)">Vigente</span>' : escHTML(EST_GAR[r.garantia_estado] || r.garantia_estado)}</span></div>
+                    <div class="tk-kv"><span>Código</span><span class="mono">${escHTML(r.codigo)}</span></div>
+                    ${r.previos.length ? `<p style="margin:10px 0 4px;font-size:.8rem;color:var(--text-muted)">Reclamos anteriores de esta garantía:</p>
+                        ${r.previos.map((p) => `<div class="tk-kv"><a href="?reclamo=${p.id}" class="mono">${escHTML(p.folio)}</a><span>${REC_TXT[p.estado]}${p.resolucion ? ' · ' + RES_TXT[p.resolucion] : ''}</span></div>`).join('')}` : ''}
+                </div>
+                <div class="card">
+                    <h3 style="margin:0 0 8px;font-size:1rem">Cliente y pedido</h3>
+                    <div class="tk-kv"><span>Cliente</span><a href="/admin/cliente.html?id=${r.cliente_id}">${escHTML(r.cliente_nombre)}</a></div>
+                    <div class="tk-kv"><span>Correo</span><span>${escHTML(r.cliente_correo)}</span></div>
+                    ${r.cliente_telefono ? `<div class="tk-kv"><span>Teléfono</span><span>${escHTML(r.cliente_telefono)}</span></div>` : ''}
+                    <div class="tk-kv"><span>Pedido</span>${r.pedido_id ? `<a class="mono" href="/admin/pedidos.html?open=${r.pedido_id}">${escHTML(r.numero_orden)}</a>` : '<span>—</span>'}</div>
+                    ${r.fecha_entrega ? `<div class="tk-kv"><span>Entregado</span><span>${formatoFecha(r.fecha_entrega)}</span></div>` : ''}
+                    ${r.direccion_envio ? `<div class="tk-kv"><span>Dirección</span><span style="text-align:right">${escHTML(r.direccion_envio)}</span></div>` : ''}
+                </div>
+            </aside>
+        </div>`;
+    SEL_FOTOS = FotosReclamo.selector($('rc-fotos'), $('rc-prev'), { alError: (m) => toast(m, 'warn') });
+    if (r.abierto) opcionesCierre();
+}
+function opcionesCierre() {
+    const e = $('rc-estado').value;
+    $('rc-cierre').innerHTML = e === 'cerrado' ? `
+        <div class="field"><label>Resolución</label>
+            <select id="rc-res" onchange="$('rc-term-wrap').hidden = !['reemplazo','reembolso'].includes(this.value)">
+                ${['reparacion', 'reemplazo', 'reembolso', 'sin_falla'].map((k) => `<option value="${k}">${RES_TXT[k]}</option>`).join('')}
+            </select></div>
+        <label id="rc-term-wrap" hidden style="display:flex;gap:6px;align-items:flex-start;font-size:.82rem;margin:-4px 0 12px">
+            <input type="checkbox" id="rc-terminar" /> Concluir la garantía (se reemplazó el equipo o se reembolsó). Si no, sigue vigente hasta su fecha.</label>`
+        : e === 'rechazado' ? '<p style="font-size:.8rem;color:var(--warning);margin:-4px 0 10px">Explica al cliente por qué no procede (obligatorio).</p>' : '';
+}
+async function cambiarEtapa() {
+    const estado = $('rc-estado').value;
+    const body = { estado, nota: $('rc-nota').value.trim() };
+    if (estado === 'cerrado') { body.resolucion = $('rc-res').value; body.terminar_garantia = $('rc-terminar').checked; }
+    const txt = estado === 'cerrado' ? `¿Cerrar el reclamo como "${RES_TXT[body.resolucion]}"?${body.terminar_garantia ? ' La garantía quedará concluida.' : ''}`
+        : estado === 'rechazado' ? '¿Marcar el reclamo como "No procede"? Se le avisa al cliente.' : `¿Pasar el reclamo a "${REC_TXT[estado]}"? Se le avisa al cliente por correo.`;
+    if (!(await confirmar(txt, { okText: 'Actualizar' }))) return;
+    try { const r = await api(`/admin/reclamos/${REC.id}`, { method: 'PUT', body }); toast(r.message, 'ok'); vistaReclamo(REC.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function responder() {
+    const mensaje = $('rc-txt').value.trim();
+    const fotos = SEL_FOTOS.fotos();
+    const interno = $('rc-interno').checked;
+    if (!mensaje && !fotos.length) { toast('Escribe un mensaje', 'warn'); return; }
+    $('rc-btn').disabled = true;
+    try {
+        const r = await api(`/admin/reclamos/${REC.id}/mensajes`, { method: 'POST', body: { mensaje, fotos, interno } });
+        toast(r.message, 'ok');
+        $('rc-txt').value = '';
+        vistaReclamo(REC.id);
+    } catch (e) { toast(e.message, 'error'); $('rc-btn').disabled = false; }
+}
 </script>
 </body>
 </html>

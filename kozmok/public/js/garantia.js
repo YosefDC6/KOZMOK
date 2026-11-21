@@ -4,11 +4,14 @@
 // Debe estar en sincronía con PLANES_GARANTIA en server.js.
 (function () {
     window.PLANES_GARANTIA = [
-        { clave: 'none', label: 'Sin garantía extendida', corto: 'Sin garantía',  meses: 0,  factor: 0 },
-        { clave: 'b12',  label: 'Básica · 12 meses',       corto: 'Básica 12m',    meses: 12, factor: 0.06 },
+        // Todo producto ya trae 12 meses de Garantía Kozmok sin costo.
+        { clave: 'none', label: 'Garantía Kozmok · 12 meses (incluida)', corto: 'Kozmok 12m', meses: 0, factor: 0 },
+        { clave: 'b12',  label: 'Básica · 12 meses',       corto: 'Básica 12m',    meses: 12, factor: 0.06, ofrecer: false },
         { clave: 'e24',  label: 'Extendida · 24 meses',    corto: 'Extendida 24m', meses: 24, factor: 0.12 },
         { clave: 't36',  label: 'Total · 36 meses',        corto: 'Total 36m',     meses: 36, factor: 0.18 },
     ];
+    // Planes que se ofrecen hoy (más el que ya traiga una partida vieja).
+    window.planesOfrecidos = (actual) => PLANES_GARANTIA.filter((p) => p.ofrecer !== false || p.clave === actual);
     window.planGarantia = (clave) =>
         PLANES_GARANTIA.find((p) => p.clave === clave) || PLANES_GARANTIA[0];
     window.costoGarantia = (precio, clave) =>

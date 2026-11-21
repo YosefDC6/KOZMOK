@@ -588,9 +588,9 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
             </div>
         </div>
         <div class="field" style="margin-top:6px">
-            <label>Garantía extendida <span style="font-weight:400;color:var(--text-muted)">(el producto ya incluye la del fabricante)</span></label>
+            <label>Garantía <span style="font-weight:400;color:var(--text-muted)">(todo producto incluye 12 meses de Garantía Kozmok; puedes ampliarla)</span></label>
             <select id="modal-garantia">
-                ${PLANES_GARANTIA.map((g) => {
+                ${planesOfrecidos().map((g) => {
                     const c = costoGarantia(p.precio, g.clave);
                     return `<option value="${g.clave}">${g.label}${c > 0 ? ' · +' + formatoMoneda(c) : ''}</option>`;
                 }).join('')}

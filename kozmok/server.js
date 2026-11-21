@@ -98,7 +98,12 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // internet (antes venía solo de cdnjs y sin conexión salía "Chart is not defined").
 app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist'), { fallthrough: false, maxAge: '7d' }));
 // Cuerpos JSON de máximo 100 KB (evita peticiones gigantes).
-app.use(express.json({ limit: '100kb' }));
+// Cuerpo JSON: 100 KB en general; los reclamos de garantía llevan hasta 3
+// fotos (ya reducidas en el navegador), así que esas rutas aceptan más.
+const jsonChico = express.json({ limit: '100kb' });
+const jsonFotos = express.json({ limit: '6mb' });
+const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes)|admin\/reclamos\/\d+\/mensajes)$/;
+app.use((req, res, next) => (RUTAS_CON_FOTOS.test(req.path) ? jsonFotos : jsonChico)(req, res, next));
 
 // Capas de protección de la API, en orden:
 //   1) límite de peticiones por IP, 2) origen (CSRF),
@@ -1454,7 +1459,9 @@ const agregarAlCarrito = asyncRoute(async (req, res) => {
     const cantidad = Math.floor(Number(req.body.cantidad ?? 1));
     if (!producto_id) return res.status(400).json({ message: 'Falta el producto' });
     if (!(cantidad > 0)) return res.status(400).json({ message: 'La cantidad debe ser mayor a cero' });
-    const gClave = planGarantia(req.body.garantia).clave;
+    // Un plan que ya no se ofrece (b12) no se puede elegir en partidas nuevas.
+    const gPedido = planGarantia(req.body.garantia);
+    const gClave = gPedido.ofrecer === false ? 'none' : gPedido.clave;
 
     const prod = await pool.query('SELECT precio, stock, nombre FROM productos WHERE id = $1 AND activo = true', [producto_id]);
     if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
@@ -2098,9 +2105,14 @@ function generarReferenciaPago(tipo) {
 //   El costo es un % del precio del producto. Debe estar en
 //   sincronía con public/js/garantia.js (solo para mostrar).
 // =========================================================
+// Todo producto entregado ya trae la GARANTÍA KOZMOK de 12 meses sin costo
+// (GARANTIA_BASE). Los planes extendidos amplían la cobertura total a 24 o
+// 36 meses. 'b12' ya no se ofrece (igualaba a la incluida); se conserva
+// para los pedidos viejos que la compraron.
+const GARANTIA_BASE = { plan: 'Garantía Kozmok · 12 meses', meses: Math.max(1, Number(process.env.GARANTIA_BASE_MESES) || 12) };
 const PLANES_GARANTIA = [
-    { clave: 'none', label: 'Sin garantía extendida', meses: 0,  factor: 0 },
-    { clave: 'b12',  label: 'Básica · 12 meses',      meses: 12, factor: 0.06 },
+    { clave: 'none', label: `Garantía Kozmok · ${GARANTIA_BASE.meses} meses (incluida)`, meses: 0, factor: 0 },
+    { clave: 'b12',  label: 'Básica · 12 meses',      meses: 12, factor: 0.06, ofrecer: false },
     { clave: 'e24',  label: 'Extendida · 24 meses',   meses: 24, factor: 0.12 },
     { clave: 't36',  label: 'Total · 36 meses',       meses: 36, factor: 0.18 },
 ];
@@ -2111,7 +2123,24 @@ function costoGarantia(precio, clave) {
     return Math.round(Number(precio || 0) * planGarantia(clave).factor);
 }
 function planesParaProducto(precio) {
-    return PLANES_GARANTIA.map((p) => ({ ...p, costo: Math.round(Number(precio || 0) * p.factor) }));
+    return PLANES_GARANTIA.filter((p) => p.ofrecer !== false).map((p) => ({ ...p, costo: Math.round(Number(precio || 0) * p.factor) }));
+}
+// Garantía Kozmok incluida: se emite al entregar el pedido para cada partida
+// que no compró una extendida (y que no tenga ya garantía). Corre desde la
+// entrega del producto.
+async function emitirGarantiasBase(db, pedidoId) {
+    const items = await db.query(
+        `SELECT pi.id, pi.producto_id, pe.cliente_id FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+         WHERE pi.pedido_id = $1 AND pe.cliente_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM garantias g WHERE g.pedido_item_id = pi.id)`, [pedidoId]);
+    for (const it of items.rows) {
+        const g = await db.query(
+            `INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence)
+             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7, 0, CURRENT_DATE, (CURRENT_DATE + ($7 || ' months')::interval)::date) RETURNING id`,
+            [codigoGarantia(), pedidoId, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, String(GARANTIA_BASE.meses)]);
+        await db.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
+    }
+    return items.rows.length;
 }
 function codigoGarantia() {
     const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -3411,34 +3440,146 @@ app.post('/api/clientes/:id/pedidos/:pedidoId/reportar-pago', asyncRoute(async (
 // =========================================================
 // GARANTÍAS EXTENDIDAS DEL CLIENTE
 // =========================================================
+const RECLAMO_ESTADOS = ['recibido', 'diagnostico', 'reparacion', 'reemplazo', 'listo', 'cerrado', 'rechazado'];
+const RECLAMO_ABIERTOS = ['recibido', 'diagnostico', 'reparacion', 'reemplazo', 'listo'];
+const SQL_ABIERTOS = `('recibido','diagnostico','reparacion','reemplazo','listo')`;   // para usar dentro de SQL
+const RECLAMO_TXT = { recibido: 'Recibido', diagnostico: 'En diagnóstico', reparacion: 'En reparación', reemplazo: 'Reemplazo en proceso',
+    listo: 'Listo para entregar', cerrado: 'Cerrado', rechazado: 'No procede' };
+const RESOLUCION_TXT = { reparacion: 'Reparación', reemplazo: 'Reemplazo del equipo', reembolso: 'Reembolso', sin_falla: 'Sin falla encontrada', no_cubierto: 'No lo cubre la garantía' };
+const garantiaVigente = (g) => g.estado === 'activa' && new Date(g.vence) >= new Date(new Date().toDateString());
+
+// Fotos de un reclamo: data URL de imagen (JPEG/PNG/WebP) que manda el
+// navegador ya reducida. Se revisa el tipo real por sus primeros bytes.
+const ADJ = { max: 3, maxBytes: 1.5 * 1024 * 1024 };
+function leerFotos(lista) {
+    const fotos = [];
+    for (const f of (Array.isArray(lista) ? lista : []).slice(0, ADJ.max)) {
+        const m = /^data:(image\/(jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(f && f.datos || ''));
+        if (!m) throw Object.assign(new Error('Solo se aceptan fotos JPG, PNG o WebP'), { status: 400 });
+        const buf = Buffer.from(m[3], 'base64');
+        if (buf.length > ADJ.maxBytes) throw Object.assign(new Error('Cada foto puede pesar hasta 1.5 MB'), { status: 400 });
+        const firma = buf.subarray(0, 12);
+        const ok = (m[2] === 'jpeg' && firma[0] === 0xFF && firma[1] === 0xD8)
+            || (m[2] === 'png' && firma.subarray(1, 4).toString() === 'PNG')
+            || (m[2] === 'webp' && firma.subarray(8, 12).toString() === 'WEBP');
+        if (!ok) throw Object.assign(new Error('Una de las fotos no es una imagen válida'), { status: 400 });
+        fotos.push({ nombre: String(f.nombre || 'foto').replace(/[^\w.\- ]/g, '').slice(0, 80) || 'foto', tipo: m[1], datos: m[3], tamano: buf.length });
+    }
+    return fotos;
+}
+async function guardarMensajeReclamo(db, reclamoId, { autor, usuarioId = null, mensaje, interno = false, fotos = [] }) {
+    const m = await db.query(
+        `INSERT INTO reclamo_mensajes (reclamo_id, autor, usuario_id, mensaje, interno) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+        [reclamoId, autor, usuarioId, String(mensaje || '').slice(0, 4000), !!interno]);
+    for (const f of fotos) {
+        await db.query(`INSERT INTO reclamo_adjuntos (reclamo_id, mensaje_id, nombre, tipo, datos, tamano) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [reclamoId, m.rows[0].id, f.nombre, f.tipo, f.datos, f.tamano]);
+    }
+    await db.query('UPDATE reclamos_garantia SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [reclamoId]);
+    return m.rows[0].id;
+}
+// Hilo de un reclamo (sin las notas internas si lo ve el cliente).
+async function hiloReclamo(reclamoId, { conInternos }) {
+    const msgs = await pool.query(
+        `SELECT m.id, m.autor, m.mensaje, m.interno, m.fecha, u.nombre AS usuario_nombre FROM reclamo_mensajes m
+         LEFT JOIN usuarios u ON u.id = m.usuario_id WHERE m.reclamo_id = $1 ${conInternos ? '' : 'AND NOT m.interno'} ORDER BY m.fecha, m.id`, [reclamoId]);
+    const adj = await pool.query('SELECT id, mensaje_id, nombre, tipo, tamano FROM reclamo_adjuntos WHERE reclamo_id = $1 ORDER BY id', [reclamoId]);
+    return msgs.rows.map((m) => ({ ...m, fotos: adj.rows.filter((a) => a.mensaje_id === m.id) }));
+}
+async function avisarClienteReclamo(req, reclamoId, { asunto, texto }) {
+    const r = (await pool.query(
+        `SELECT r.folio, r.id, c.id AS cliente_id, c.nombre, c.correo, pr.nombre AS producto FROM reclamos_garantia r
+         JOIN clientes c ON c.id = r.cliente_id JOIN garantias g ON g.id = r.garantia_id LEFT JOIN productos pr ON pr.id = g.producto_id
+         WHERE r.id = $1`, [reclamoId])).rows[0];
+    if (!r || !r.correo) return;
+    const enlace = `${urlPublica(req)}/garantias.html?reclamo=${r.id}`;
+    await enviarCorreo(pool, { para: r.correo, tipo: 'garantia', cliente_id: r.cliente_id,
+        asunto: `${asunto} · ${r.folio}`,
+        cuerpo: `Hola ${r.nombre}:\n\n${texto}\n\nProducto: ${r.producto || '—'}\nReclamo: ${r.folio}`,
+        boton: { texto: 'Ver mi reclamo', url: enlace } });
+}
+
 app.get('/api/clientes/:id/garantias', asyncRoute(async (req, res) => {
     const r = await pool.query(
         `SELECT g.id, g.folio, g.codigo, g.plan, g.meses, g.costo, g.inicio, g.vence, g.estado,
-                g.reclamo_fecha, g.reclamo_desc, g.resuelto_fecha, g.resuelto_nota,
-                pr.nombre AS producto, ped.numero_orden
+                pr.id AS producto_id, pr.nombre AS producto, pr.imagen_url, ped.numero_orden
          FROM garantias g
          LEFT JOIN productos pr ON pr.id = g.producto_id
          LEFT JOIN pedidos ped ON ped.id = g.pedido_id
-         WHERE g.cliente_id = $1 ORDER BY g.id DESC`,
+         WHERE g.cliente_id = $1 ORDER BY (g.estado = 'activa' AND g.vence >= CURRENT_DATE) DESC, g.vence DESC, g.id DESC`,
         [req.params.id]
     );
-    res.json(r.rows.map((g) => ({ ...g, vigente: g.estado === 'activa' && new Date(g.vence) >= new Date(new Date().toDateString()) })));
+    const recl = await pool.query(
+        `SELECT r.id, r.folio, r.garantia_id, r.estado, r.resolucion, r.fecha, r.fecha_actualizacion, r.fecha_cierre,
+                (SELECT m.autor FROM reclamo_mensajes m WHERE m.reclamo_id = r.id AND NOT m.interno ORDER BY m.fecha DESC, m.id DESC LIMIT 1) AS ultimo_autor
+         FROM reclamos_garantia r WHERE r.cliente_id = $1 ORDER BY r.fecha DESC`, [req.params.id]);
+    res.json(r.rows.map((g) => ({
+        ...g,
+        incluida: Number(g.costo) === 0,
+        vigente: garantiaVigente(g),
+        dias_restantes: Math.max(0, Math.ceil((new Date(g.vence) - new Date(new Date().toDateString())) / 86400000)),
+        reclamos: recl.rows.filter((x) => x.garantia_id === g.id),
+    })));
 }));
 
+// Abrir un reclamo (una garantía vigente puede tener varios, pero solo uno abierto a la vez).
 app.post('/api/clientes/:id/garantias/:garId/reclamo', asyncRoute(async (req, res) => {
-    const { descripcion } = req.body;
-    if (!descripcion || !descripcion.trim()) return res.status(400).json({ message: 'Describe el problema para levantar el reclamo' });
-    const g = await pool.query('SELECT id, estado, vence, reclamo_fecha FROM garantias WHERE id = $1 AND cliente_id = $2', [req.params.garId, req.params.id]);
-    if (g.rows.length === 0) return res.status(404).json({ message: 'Garantía no encontrada' });
-    const row = g.rows[0];
-    if (row.estado !== 'activa') return res.status(400).json({ message: `Esta garantía está ${row.estado} y no admite reclamos` });
-    if (new Date(row.vence) < new Date(new Date().toDateString())) return res.status(400).json({ message: 'Esta garantía ya venció' });
-    if (row.reclamo_fecha) return res.status(400).json({ message: 'Ya hay un reclamo en curso para esta garantía' });
-    await pool.query(
-        `UPDATE garantias SET reclamo_fecha = CURRENT_TIMESTAMP, reclamo_desc = $1 WHERE id = $2`,
-        [descripcion.trim().slice(0, 800), req.params.garId]
-    );
-    res.json({ message: 'Reclamo registrado. El equipo lo revisará y te contactará.' });
+    const descripcion = String(req.body.descripcion || '').trim();
+    if (descripcion.length < 10) return res.status(400).json({ message: 'Describe con un poco más de detalle qué falla tiene el producto' });
+    const g = (await pool.query('SELECT id, estado, vence, folio FROM garantias WHERE id = $1 AND cliente_id = $2', [req.params.garId, req.params.id])).rows[0];
+    if (!g) return res.status(404).json({ message: 'Garantía no encontrada' });
+    if (!garantiaVigente(g)) return res.status(400).json({ message: g.estado === 'activa' ? 'Esta garantía ya venció' : 'Esta garantía ya no está activa' });
+    const abierto = await pool.query(`SELECT folio FROM reclamos_garantia WHERE garantia_id = $1 AND estado IN ${SQL_ABIERTOS}`, [g.id]);
+    if (abierto.rows[0]) return res.status(400).json({ message: `Ya tienes el reclamo ${abierto.rows[0].folio} en curso para este producto` });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const client = await pool.connect();
+    let rec;
+    try {
+        await client.query('BEGIN');
+        rec = (await client.query(
+            `INSERT INTO reclamos_garantia (folio, garantia_id, cliente_id, descripcion) VALUES ('RG-TMP', $1, $2, $3) RETURNING id`,
+            [g.id, req.params.id, descripcion.slice(0, 4000)])).rows[0];
+        await client.query(`UPDATE reclamos_garantia SET folio = 'RG-' || (1000 + id) WHERE id = $1`, [rec.id]);
+        await guardarMensajeReclamo(client, rec.id, { autor: 'cliente', mensaje: descripcion, fotos });
+        await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    await avisarClienteReclamo(req, rec.id, { asunto: 'Recibimos tu reclamo de garantía',
+        texto: 'Recibimos tu solicitud. El equipo la revisará y te escribirá por este medio con los siguientes pasos (cómo enviar o llevar el equipo).' });
+    res.status(201).json({ message: 'Reclamo enviado. Te avisaremos por correo de cada avance.', id: rec.id });
+}));
+
+app.get('/api/clientes/:id/reclamos/:recId', asyncRoute(async (req, res) => {
+    const r = (await pool.query(
+        `SELECT r.*, g.folio AS garantia_folio, g.plan, g.vence, pr.nombre AS producto, ped.numero_orden
+         FROM reclamos_garantia r JOIN garantias g ON g.id = r.garantia_id
+         LEFT JOIN productos pr ON pr.id = g.producto_id LEFT JOIN pedidos ped ON ped.id = g.pedido_id
+         WHERE r.id = $1 AND r.cliente_id = $2`, [req.params.recId, req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ message: 'Reclamo no encontrado' });
+    delete r.asignado_a; delete r.cerrado_por;
+    res.json({ ...r, abierto: RECLAMO_ABIERTOS.includes(r.estado), mensajes: await hiloReclamo(r.id, { conInternos: false }) });
+}));
+
+app.post('/api/clientes/:id/reclamos/:recId/mensajes', asyncRoute(async (req, res) => {
+    const r = (await pool.query('SELECT id, folio, estado FROM reclamos_garantia WHERE id = $1 AND cliente_id = $2', [req.params.recId, req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ message: 'Reclamo no encontrado' });
+    if (!RECLAMO_ABIERTOS.includes(r.estado)) return res.status(409).json({ message: `El reclamo ${r.folio} ya está cerrado. Si el producto vuelve a fallar, abre uno nuevo desde Mis garantías.` });
+    const texto = String(req.body.mensaje || '').trim();
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    if (!texto && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
+    await guardarMensajeReclamo(pool, r.id, { autor: 'cliente', mensaje: texto, fotos });
+    res.status(201).json({ message: 'Mensaje enviado' });
+}));
+
+app.get('/api/clientes/:id/reclamos/:recId/fotos/:fotoId', asyncRoute(async (req, res) => {
+    const f = (await pool.query(
+        `SELECT a.tipo, a.datos FROM reclamo_adjuntos a JOIN reclamos_garantia r ON r.id = a.reclamo_id
+         JOIN reclamo_mensajes m ON m.id = a.mensaje_id
+         WHERE a.id = $1 AND r.id = $2 AND r.cliente_id = $3 AND NOT m.interno`, [req.params.fotoId, req.params.recId, req.params.id])).rows[0];
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+    res.send(Buffer.from(f.datos, 'base64'));
 }));
 
 // =========================================================
@@ -3651,6 +3792,7 @@ const PERMISOS_API = [
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
     { ruta: /^\/chatbot-consultas$/,                   metodos: LEER, permisos: ['chatbot'] },
     { ruta: /^\/garantias(\/|$)/,                      metodos: TODO, permisos: ['garantias'] },
+    { ruta: /^\/reclamos(\/|$)/,                       metodos: TODO, permisos: ['garantias'] },
     // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
     { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
     { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['pedidos', 'ordenes-erp'] },
@@ -3988,7 +4130,9 @@ const AVISOS_SQL = {
     pagos: `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos
              WHERE estado = 'pendiente' AND pago_reportado AND pago_estado <> 'pagado'`,
     'ordenes-erp': `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos WHERE estado IN ('confirmado','procesando')`,
-    garantias: `SELECT COUNT(*)::int AS n, MAX(reclamo_fecha) AS ultimo FROM garantias WHERE estado = 'activa' AND reclamo_fecha IS NOT NULL`,
+    garantias: `SELECT COUNT(*)::int AS n, MAX(m.fecha) AS ultimo FROM reclamos_garantia r
+                 JOIN LATERAL (SELECT autor, fecha FROM reclamo_mensajes WHERE reclamo_id = r.id AND NOT interno ORDER BY fecha DESC, id DESC LIMIT 1) m ON TRUE
+                 WHERE r.estado IN ('recibido','diagnostico','reparacion','reemplazo','listo') AND m.autor = 'cliente'`,
     devoluciones: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM devoluciones WHERE estado = 'solicitada'`,
     evaluaciones: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM resenas WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '7 days'`,
     clientes: `SELECT COUNT(*)::int AS n, MAX(fecha_registro) AS ultimo FROM clientes WHERE fecha_registro > CURRENT_TIMESTAMP - INTERVAL '7 days'`,
@@ -5812,6 +5956,7 @@ const cambiarEstadoPedido = asyncRoute(async (req, res) => {
         );
         await registrarProceso(client, pedido.id, 'estado', `Estado: ${pedido.estado} → ${estado}`,
             { usuarioId: req.usuario.id, automatico: false });
+        if (estado === 'entregado') await emitirGarantiasBase(client, pedido.id);
         await auditar(client, req, { accion: 'pedido_estado', entidad: 'pedido', entidad_id: pedido.numero_orden,
             antes: { estado: pedido.estado }, despues: { estado, ...(result.rows[0].numero_guia ? { guia: result.rows[0].numero_guia } : {}) } });
         await client.query('COMMIT');
@@ -6708,46 +6853,163 @@ function conVigencia(g) {
 }
 
 app.get('/api/admin/garantias', asyncRoute(async (req, res) => {
-    const { estado, busqueda } = req.query;
+    const { estado, busqueda, tipo } = req.query;
     const cond = [];
     const vals = [];
     let i = 1;
-    if (estado && estado !== 'Todas') { cond.push(`g.estado = $${i++}`); vals.push(estado); }
+    if (estado && estado !== 'Todas') {
+        if (estado === 'vencida') cond.push(`(g.estado = 'vencida' OR (g.estado = 'activa' AND g.vence < CURRENT_DATE))`);
+        else if (estado === 'activa') cond.push(`g.estado = 'activa' AND g.vence >= CURRENT_DATE`);
+        else { cond.push(`g.estado = $${i++}`); vals.push(estado); }
+    }
+    if (tipo === 'incluida') cond.push('g.costo = 0');
+    if (tipo === 'extendida') cond.push('g.costo > 0');
     if (busqueda) {
-        cond.push(`(g.folio ILIKE $${i} OR g.codigo ILIKE $${i} OR c.nombre ILIKE $${i} OR pr.nombre ILIKE $${i} OR ped.numero_orden ILIKE $${i})`);
+        cond.push(`(g.folio ILIKE $${i} OR g.codigo ILIKE $${i} OR c.nombre ILIKE $${i} OR c.correo ILIKE $${i} OR pr.nombre ILIKE $${i} OR ped.numero_orden ILIKE $${i})`);
         vals.push(`%${busqueda}%`); i++;
     }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const r = await pool.query(
         `SELECT g.id, g.folio, g.codigo, g.plan, g.meses, g.costo, g.inicio, g.vence, g.estado,
-                g.reclamo_fecha, g.reclamo_desc, g.resuelto_fecha, g.resuelto_nota,
                 c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
-                pr.nombre AS producto, ped.numero_orden, u.nombre AS resuelto_por_nombre
+                pr.nombre AS producto, ped.id AS pedido_id, ped.numero_orden,
+                (SELECT COUNT(*)::int FROM reclamos_garantia x WHERE x.garantia_id = g.id) AS reclamos,
+                (SELECT x.id FROM reclamos_garantia x WHERE x.garantia_id = g.id AND x.estado IN ${SQL_ABIERTOS} LIMIT 1) AS reclamo_abierto
          FROM garantias g
          LEFT JOIN clientes c ON c.id = g.cliente_id
          LEFT JOIN productos pr ON pr.id = g.producto_id
          LEFT JOIN pedidos ped ON ped.id = g.pedido_id
-         LEFT JOIN usuarios u ON u.id = g.resuelto_por
-         ${where} ORDER BY g.reclamo_fecha DESC NULLS LAST, g.id DESC`,
+         ${where} ORDER BY g.id DESC LIMIT 500`,
         vals
     );
-    const conteos = await pool.query(
-        `SELECT COUNT(*) FILTER (WHERE estado='activa') AS activas,
-                COUNT(*) FILTER (WHERE estado='activa' AND reclamo_fecha IS NOT NULL) AS con_reclamo,
-                COUNT(*) FILTER (WHERE estado='usada') AS usadas,
-                COUNT(*) FILTER (WHERE estado IN ('vencida','cancelada')) AS inactivas
-         FROM garantias`
-    );
-    res.json({ conteos: conteos.rows[0], garantias: r.rows.map(conVigencia) });
+    const conteos = (await pool.query(
+        `SELECT COUNT(*) FILTER (WHERE estado='activa' AND vence >= CURRENT_DATE)::int AS activas,
+                COUNT(*) FILTER (WHERE estado='activa' AND vence >= CURRENT_DATE AND vence < CURRENT_DATE + 30)::int AS por_vencer,
+                COUNT(*) FILTER (WHERE costo > 0)::int AS extendidas,
+                (SELECT COUNT(*)::int FROM reclamos_garantia WHERE estado IN ${SQL_ABIERTOS}) AS reclamos_abiertos
+         FROM garantias`)).rows[0];
+    res.json({ conteos, garantias: r.rows.map(conVigencia) });
+}));
+
+// Cola de reclamos
+app.get('/api/admin/reclamos', asyncRoute(async (req, res) => {
+    const { estado, busqueda } = req.query;
+    const cond = []; const vals = []; let i = 1;
+    if (!estado || estado === 'abiertos') cond.push(`r.estado IN ${SQL_ABIERTOS}`);
+    else if (estado !== 'todos') { cond.push(`r.estado = $${i++}`); vals.push(estado); }
+    if (busqueda) {
+        cond.push(`(r.folio ILIKE $${i} OR g.folio ILIKE $${i} OR c.nombre ILIKE $${i} OR c.correo ILIKE $${i} OR pr.nombre ILIKE $${i} OR ped.numero_orden ILIKE $${i})`);
+        vals.push(`%${busqueda}%`); i++;
+    }
+    const r = await pool.query(
+        `SELECT r.id, r.folio, r.estado, r.resolucion, r.fecha, r.fecha_actualizacion, r.fecha_cierre,
+                g.folio AS garantia_folio, g.plan, g.costo, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
+                pr.nombre AS producto, ped.numero_orden, u.nombre AS asignado_nombre,
+                (SELECT m.autor FROM reclamo_mensajes m WHERE m.reclamo_id = r.id AND NOT m.interno ORDER BY m.fecha DESC, m.id DESC LIMIT 1) AS ultimo_autor
+         FROM reclamos_garantia r JOIN garantias g ON g.id = r.garantia_id JOIN clientes c ON c.id = r.cliente_id
+         LEFT JOIN productos pr ON pr.id = g.producto_id LEFT JOIN pedidos ped ON ped.id = g.pedido_id
+         LEFT JOIN usuarios u ON u.id = r.asignado_a
+         ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''}
+         ORDER BY (r.estado IN ${SQL_ABIERTOS}) DESC, r.fecha_actualizacion DESC LIMIT 300`, vals);
+    res.json(r.rows.map((x) => ({ ...x, dias: Math.floor((Date.now() - new Date(x.fecha).getTime()) / 86400000) })));
+}));
+
+app.get('/api/admin/reclamos/:id', asyncRoute(async (req, res) => {
+    const r = (await pool.query(
+        `SELECT r.*, g.folio AS garantia_folio, g.codigo, g.plan, g.meses, g.costo, g.inicio, g.vence, g.estado AS garantia_estado,
+                c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
+                pr.nombre AS producto, ped.id AS pedido_id, ped.numero_orden, ped.direccion_envio, ped.fecha_entrega,
+                u.nombre AS asignado_nombre, uc.nombre AS cerrado_por_nombre
+         FROM reclamos_garantia r JOIN garantias g ON g.id = r.garantia_id JOIN clientes c ON c.id = r.cliente_id
+         LEFT JOIN productos pr ON pr.id = g.producto_id LEFT JOIN pedidos ped ON ped.id = g.pedido_id
+         LEFT JOIN usuarios u ON u.id = r.asignado_a LEFT JOIN usuarios uc ON uc.id = r.cerrado_por
+         WHERE r.id = $1`, [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ message: 'Reclamo no encontrado' });
+    const previos = await pool.query(
+        `SELECT id, folio, estado, resolucion, fecha FROM reclamos_garantia WHERE garantia_id = $1 AND id <> $2 ORDER BY fecha DESC`, [r.garantia_id, r.id]);
+    res.json({ ...r, abierto: RECLAMO_ABIERTOS.includes(r.estado), mensajes: await hiloReclamo(r.id, { conInternos: true }), previos: previos.rows });
+}));
+
+app.get('/api/admin/reclamos/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
+    const f = (await pool.query('SELECT tipo, datos FROM reclamo_adjuntos WHERE id = $1 AND reclamo_id = $2', [req.params.fotoId, req.params.id])).rows[0];
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+    res.send(Buffer.from(f.datos, 'base64'));
+}));
+
+// Responder al cliente (o dejar una nota interna que el cliente no ve).
+app.post('/api/admin/reclamos/:id/mensajes', asyncRoute(async (req, res) => {
+    const r = (await pool.query('SELECT id, folio, estado FROM reclamos_garantia WHERE id = $1', [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ message: 'Reclamo no encontrado' });
+    const texto = String(req.body.mensaje || '').trim();
+    const interno = !!req.body.interno;
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    if (!texto && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje' });
+    await guardarMensajeReclamo(pool, r.id, { autor: 'equipo', usuarioId: req.usuario.id, mensaje: texto, interno, fotos });
+    if (!r.asignado_a) await pool.query('UPDATE reclamos_garantia SET asignado_a = COALESCE(asignado_a, $2) WHERE id = $1', [r.id, req.usuario.id]);
+    if (!interno) await avisarClienteReclamo(req, r.id, { asunto: 'Respuesta a tu reclamo de garantía', texto: `El equipo de Kozmok te escribió:\n\n${texto}` });
+    res.status(201).json({ message: interno ? 'Nota interna guardada' : 'Respuesta enviada al cliente' });
+}));
+
+// Avanzar etapa / cerrar / rechazar un reclamo.
+app.put('/api/admin/reclamos/:id', asyncRoute(async (req, res) => {
+    const estado = String(req.body.estado || '');
+    const nota = String(req.body.nota || '').trim().slice(0, 2000);
+    if (!RECLAMO_ESTADOS.includes(estado)) return res.status(400).json({ message: 'Etapa no válida' });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const r = (await client.query('SELECT * FROM reclamos_garantia WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!r) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Reclamo no encontrado' }); }
+        if (!RECLAMO_ABIERTOS.includes(r.estado)) { await client.query('ROLLBACK'); return res.status(400).json({ message: `El reclamo ya está ${RECLAMO_TXT[r.estado].toLowerCase()}` }); }
+        if (estado === r.estado) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El reclamo ya está en esa etapa' }); }
+        const cierra = estado === 'cerrado' || estado === 'rechazado';
+        let resolucion = null;
+        if (estado === 'cerrado') {
+            resolucion = String(req.body.resolucion || '');
+            if (!RESOLUCION_TXT[resolucion]) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Elige cómo se resolvió el reclamo' }); }
+        }
+        if (estado === 'rechazado') {
+            resolucion = 'no_cubierto';
+            if (nota.length < 10) { await client.query('ROLLBACK'); return res.status(400).json({ message: 'Explica al cliente por qué no procede (mínimo 10 caracteres)' }); }
+        }
+        await client.query(
+            `UPDATE reclamos_garantia SET estado = $2, resolucion = COALESCE($3, resolucion), asignado_a = COALESCE(asignado_a, $4),
+                    fecha_cierre = CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE fecha_cierre END,
+                    cerrado_por = CASE WHEN $5 THEN $4 ELSE cerrado_por END, fecha_actualizacion = CURRENT_TIMESTAMP
+             WHERE id = $1`, [r.id, estado, resolucion, req.usuario.id, cierra]);
+        // Mensaje visible en el hilo con el cambio de etapa.
+        const linea = `Etapa: ${RECLAMO_TXT[estado]}${estado === 'cerrado' ? ` · ${RESOLUCION_TXT[resolucion]}` : ''}${nota ? `\n${nota}` : ''}`;
+        await guardarMensajeReclamo(client, r.id, { autor: 'sistema', usuarioId: req.usuario.id, mensaje: linea });
+        // La garantía sigue cubriendo hasta su fecha, salvo que se reemplazó
+        // el equipo o se reembolsó y así se indicó.
+        let terminada = false;
+        if (estado === 'cerrado' && ['reemplazo', 'reembolso'].includes(resolucion) && req.body.terminar_garantia) {
+            await client.query(`UPDATE garantias SET estado = 'usada', resuelto_por = $2, resuelto_fecha = CURRENT_TIMESTAMP, resuelto_nota = $3 WHERE id = $1`,
+                [r.garantia_id, req.usuario.id, `${RESOLUCION_TXT[resolucion]} (${'RG-' + (1000 + r.id)})`]);
+            terminada = true;
+        }
+        await auditar(client, req, { accion: 'reclamo_garantia', entidad: 'reclamo_garantia', entidad_id: r.folio,
+            antes: { estado: r.estado }, despues: { estado, resolucion, garantia_terminada: terminada } });
+        await client.query('COMMIT');
+        await avisarClienteReclamo(req, r.id, {
+            asunto: estado === 'rechazado' ? 'Tu reclamo de garantía no procede' : estado === 'cerrado' ? 'Tu reclamo de garantía se cerró' : `Tu reclamo avanzó: ${RECLAMO_TXT[estado]}`,
+            texto: `Tu reclamo ahora está: ${RECLAMO_TXT[estado]}${estado === 'cerrado' ? ` (${RESOLUCION_TXT[resolucion]})` : ''}.${nota ? `\n\n${nota}` : ''}`
+                + (estado === 'cerrado' ? (terminada ? '\n\nCon esto la garantía de este producto queda concluida.' : '\n\nTu garantía sigue vigente hasta su fecha de vencimiento.') : ''),
+        });
+        res.json({ message: `Reclamo ${RECLAMO_TXT[estado].toLowerCase()}${terminada ? '; la garantía quedó concluida' : ''}` });
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 }));
 
 // Validar una garantía por su código (herramienta de mostrador)
 app.get('/api/admin/garantias/validar/:codigo', asyncRoute(async (req, res) => {
     const r = await pool.query(
         `SELECT g.id, g.folio, g.codigo, g.plan, g.meses, g.costo, g.inicio, g.vence, g.estado,
-                g.reclamo_fecha, g.reclamo_desc, g.resuelto_fecha, g.resuelto_nota,
                 c.id AS cliente_id, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
-                pr.nombre AS producto, ped.numero_orden
+                pr.nombre AS producto, ped.numero_orden,
+                (SELECT x.id FROM reclamos_garantia x WHERE x.garantia_id = g.id AND x.estado IN ${SQL_ABIERTOS} LIMIT 1) AS reclamo_abierto,
+                (SELECT COUNT(*)::int FROM reclamos_garantia x WHERE x.garantia_id = g.id) AS reclamos
          FROM garantias g
          LEFT JOIN clientes c ON c.id = g.cliente_id
          LEFT JOIN productos pr ON pr.id = g.producto_id
@@ -6761,24 +7023,36 @@ app.get('/api/admin/garantias/validar/:codigo', asyncRoute(async (req, res) => {
     res.json(g);
 }));
 
-// Resolver una garantía: marcarla como usada (o cerrar el reclamo)
+// Abrir un reclamo desde el mostrador (el cliente llegó con el equipo).
+app.post('/api/admin/garantias/:id/reclamo', asyncRoute(async (req, res) => {
+    const descripcion = String(req.body.descripcion || '').trim();
+    if (descripcion.length < 10) return res.status(400).json({ message: 'Describe la falla (mínimo 10 caracteres)' });
+    const g = (await pool.query('SELECT id, estado, vence, cliente_id FROM garantias WHERE id = $1', [req.params.id])).rows[0];
+    if (!g) return res.status(404).json({ message: 'Garantía no encontrada' });
+    if (!garantiaVigente(g)) return res.status(400).json({ message: 'La garantía no está vigente' });
+    const abierto = await pool.query(`SELECT id, folio FROM reclamos_garantia WHERE garantia_id = $1 AND estado IN ${SQL_ABIERTOS}`, [g.id]);
+    if (abierto.rows[0]) return res.status(400).json({ message: `Ya está abierto el reclamo ${abierto.rows[0].folio}`, id: abierto.rows[0].id });
+    const rec = (await pool.query(
+        `INSERT INTO reclamos_garantia (folio, garantia_id, cliente_id, descripcion, asignado_a) VALUES ('RG-TMP', $1, $2, $3, $4) RETURNING id`,
+        [g.id, g.cliente_id, descripcion.slice(0, 4000), req.usuario.id])).rows[0];
+    await pool.query(`UPDATE reclamos_garantia SET folio = 'RG-' || (1000 + id) WHERE id = $1`, [rec.id]);
+    await guardarMensajeReclamo(pool, rec.id, { autor: 'sistema', usuarioId: req.usuario.id, mensaje: `Reclamo abierto en tienda por ${req.usuario.nombre}.\n${descripcion}` });
+    await avisarClienteReclamo(req, rec.id, { asunto: 'Abrimos tu reclamo de garantía', texto: `Registramos tu reclamo en tienda:\n\n${descripcion}\n\nTe avisaremos de cada avance.` });
+    res.status(201).json({ message: 'Reclamo abierto', id: rec.id });
+}));
+
+// Cancelar una garantía (p. ej. venta anulada) — no aplica a las vencidas.
 app.put('/api/admin/garantias/:id', asyncRoute(async (req, res) => {
-    const { estado, nota } = req.body;
-    const validos = ['activa', 'usada', 'vencida', 'cancelada'];
-    if (!validos.includes(estado)) return res.status(400).json({ message: 'Estado no válido' });
-    const activa = estado === 'activa';
+    const { estado } = req.body;
+    if (estado !== 'cancelada') return res.status(400).json({ message: 'Desde aquí solo se puede cancelar una garantía; los reclamos se atienden en su caso' });
+    const nota = String(req.body.nota || '').trim().slice(0, 800);
+    if (nota.length < 5) return res.status(400).json({ message: 'Escribe el motivo de la cancelación' });
     const r = await pool.query(
-        `UPDATE garantias
-         SET estado = $1,
-             resuelto_nota = $2,
-             resuelto_por = $3,
-             resuelto_fecha = CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE resuelto_fecha END,
-             reclamo_fecha  = CASE WHEN $6 THEN NULL ELSE reclamo_fecha END
-         WHERE id = $4 RETURNING *`,
-        [estado, (nota || '').slice(0, 800) || null, req.usuario.id, req.params.id, !activa, activa]
-    );
-    if (r.rows.length === 0) return res.status(404).json({ message: 'Garantía no encontrada' });
-    res.json({ message: 'Garantía actualizada', garantia: r.rows[0] });
+        `UPDATE garantias SET estado = 'cancelada', resuelto_por = $2, resuelto_fecha = CURRENT_TIMESTAMP, resuelto_nota = $3
+         WHERE id = $1 AND estado = 'activa' RETURNING folio`, [req.params.id, req.usuario.id, nota]);
+    if (!r.rows.length) return res.status(400).json({ message: 'Solo se cancelan garantías activas' });
+    await auditar(pool, req, { accion: 'garantia_cancelada', entidad: 'garantia', entidad_id: r.rows[0].folio, motivo: nota });
+    res.json({ message: 'Garantía cancelada' });
 }));
 
 // =========================================================
@@ -8088,6 +8362,67 @@ async function migrarEsquema() {
         ip VARCHAR(64),
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_recuperaciones_usuario ON recuperaciones_usuario(usuario_id)');
+    // Reclamos de garantía con etapas, conversación y fotos.
+    await pool.query(`CREATE TABLE IF NOT EXISTS reclamos_garantia (
+        id SERIAL PRIMARY KEY,
+        folio VARCHAR(20) NOT NULL,
+        garantia_id INTEGER NOT NULL REFERENCES garantias(id) ON DELETE CASCADE,
+        cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+        estado VARCHAR(12) NOT NULL DEFAULT 'recibido'
+            CHECK (estado IN ('recibido','diagnostico','reparacion','reemplazo','listo','cerrado','rechazado')),
+        resolucion VARCHAR(12) CHECK (resolucion IN ('reparacion','reemplazo','reembolso','sin_falla','no_cubierto')),
+        descripcion TEXT NOT NULL,
+        asignado_a INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        cerrado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_cierre TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_reclamos_garantia ON reclamos_garantia(garantia_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_reclamos_cliente ON reclamos_garantia(cliente_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS reclamo_mensajes (
+        id SERIAL PRIMARY KEY,
+        reclamo_id INTEGER NOT NULL REFERENCES reclamos_garantia(id) ON DELETE CASCADE,
+        autor VARCHAR(10) NOT NULL CHECK (autor IN ('cliente','equipo','sistema')),
+        usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        mensaje TEXT NOT NULL DEFAULT '',
+        interno BOOLEAN NOT NULL DEFAULT FALSE,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_reclamo_mensajes ON reclamo_mensajes(reclamo_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS reclamo_adjuntos (
+        id SERIAL PRIMARY KEY,
+        reclamo_id INTEGER NOT NULL REFERENCES reclamos_garantia(id) ON DELETE CASCADE,
+        mensaje_id INTEGER REFERENCES reclamo_mensajes(id) ON DELETE CASCADE,
+        nombre VARCHAR(80), tipo VARCHAR(20) NOT NULL, datos TEXT NOT NULL, tamano INTEGER,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    // Reclamos del sistema anterior (un solo texto en la garantía) → casos.
+    const viejos = await pool.query(
+        `SELECT id, cliente_id, reclamo_fecha, reclamo_desc, resuelto_fecha, resuelto_nota, resuelto_por, estado FROM garantias g
+         WHERE reclamo_fecha IS NOT NULL AND cliente_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM reclamos_garantia r WHERE r.garantia_id = g.id)`);
+    for (const v of viejos.rows) {
+        const cerrado = v.estado !== 'activa' || !!v.resuelto_fecha;
+        const rec = (await pool.query(
+            `INSERT INTO reclamos_garantia (folio, garantia_id, cliente_id, estado, resolucion, descripcion, fecha, fecha_actualizacion, fecha_cierre, cerrado_por)
+             VALUES ('RG-TMP', $1, $2, $3, $4, $5, $6, COALESCE($7, $6), $7, $8) RETURNING id`,
+            [v.id, v.cliente_id, cerrado ? 'cerrado' : 'recibido', cerrado ? (v.estado === 'usada' ? 'reparacion' : 'sin_falla') : null,
+             v.reclamo_desc || 'Reclamo', v.reclamo_fecha, cerrado ? (v.resuelto_fecha || v.reclamo_fecha) : null, v.resuelto_por])).rows[0];
+        await pool.query(`UPDATE reclamos_garantia SET folio = 'RG-' || (1000 + id) WHERE id = $1`, [rec.id]);
+        await pool.query(`INSERT INTO reclamo_mensajes (reclamo_id, autor, mensaje, fecha) VALUES ($1, 'cliente', $2, $3)`, [rec.id, v.reclamo_desc || 'Reclamo', v.reclamo_fecha]);
+        if (v.resuelto_nota) await pool.query(`INSERT INTO reclamo_mensajes (reclamo_id, autor, usuario_id, mensaje, fecha) VALUES ($1, 'sistema', $2, $3, $4)`,
+            [rec.id, v.resuelto_por, `Etapa: Cerrado\n${v.resuelto_nota}`, v.resuelto_fecha || v.reclamo_fecha]);
+    }
+    // Garantía Kozmok para lo ya entregado antes de este cambio (desde su entrega).
+    const sinBase = await pool.query(
+        `SELECT pi.id, pi.producto_id, pe.id AS pedido_id, pe.cliente_id, COALESCE(pe.fecha_entrega, pe.fecha_pedido)::date AS desde
+         FROM pedido_items pi JOIN pedidos pe ON pe.id = pi.pedido_id
+         WHERE pe.estado = 'entregado' AND pe.cliente_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM garantias g WHERE g.pedido_item_id = pi.id)`);
+    for (const it of sinBase.rows) {
+        const g = await pool.query(
+            `INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence, estado)
+             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7, 0, $8::date, ($8::date + ($7 || ' months')::interval)::date,
+                     CASE WHEN ($8::date + ($7 || ' months')::interval)::date < CURRENT_DATE THEN 'vencida' ELSE 'activa' END) RETURNING id`,
+            [codigoGarantia(), it.pedido_id, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, String(GARANTIA_BASE.meses), it.desde]);
+        await pool.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
+    }
 
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
