@@ -1,238 +1,212 @@
-# Kozmok CRM
+# Kozmok · notas técnicas
 
 Tienda en línea de electrónica y cómputo (laptops, PCs, componentes y
-periféricos) con panel de administración, CRM de clientes, panel de
-cliente y un chatbot de recomendaciones basado en presupuesto, uso e
-inventario disponible.
+periféricos) con CRM, SCM, ERP, carrito con pagos y monedero, garantías,
+devoluciones, facturación y seguridad. Node/Express + PostgreSQL, front-end
+en HTML, CSS y JavaScript sin frameworks.
 
-Rehecha a partir del proyecto original de perfumería, con la misma
-arquitectura (Node/Express + PostgreSQL) pedida para la Etapa 1 (CRM)
-del proyecto: front-end, back-end con API REST, base de datos y
-autenticación con roles.
+Este archivo es la referencia técnica. Qué hace cada pantalla está en
+[`../Manual_usuario.txt`](../Manual_usuario.txt), el resumen del proyecto en
+[`../README.md`](../README.md) y los ataques y defensas en
+[`../SEGURIDAD.md`](../SEGURIDAD.md).
 
 > **Etapas del proyecto:** Etapa 1 = CRM, Etapa 2 = SCM, Etapa 3 = ERP
-> (órdenes de clientes capturadas por el equipo que integran CRM y SCM,
-> nivel de implementación y reportes empresariales). Las rutas del ERP
-> viven en `server.js` bajo `/api/admin/erp/*` y sus pantallas en
-> `public/admin/erp.html`, `ordenes-erp.html`, `orden-nueva.html`,
-> `nivel-erp.html` y `reportes-erp.html` (utilidades en `admin/js/erp.js`).
-> Etapa 4 = carrito y sus agregados. Etapa 5 = seguridad: `seguridad.js`,
-> las rutas `/api/auth/*` y `/api/admin/seguridad/*`, y la guía `../SEGURIDAD.md`.
+> (rutas `/api/admin/erp/*`, pantallas `admin/erp.html`, `ordenes-erp.html`,
+> `orden-nueva.html`, `nivel-erp.html` y `reportes-erp.html`), Etapa 4 =
+> carrito y sus agregados (promociones, impuestos, monedero, pagos),
+> Etapa 5 = seguridad (`seguridad.js`, `/api/auth/*`, `/api/admin/seguridad/*`).
 
 ## Estructura
 
 ```
 kozmok/
-├── server.js              # API REST (Express)
+├── server.js              # API REST (Express), migraciones al arrancar y tareas cada minuto
+├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
+├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
+├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
+├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
+├── paypal.js              # API de PayPal (órdenes, captura y reembolsos)
+├── facturama.js           # API de Facturama (CFDI 4.0)
+├── env.js                 # lee el .env (sin dependencias)
 ├── db.config.js           # conexión a PostgreSQL (lee el .env)
-├── seguridad.js           # Etapa 5: sesiones, bloqueos, filtros SQL/XSS, CSP
-├── .env.example           # plantilla del .env (contraseña de la base y límites)
-├── pruebas-seguridad/     # ataques de prueba contra el servidor local (npm run prueba:seguridad)
+├── .env.example           # plantilla de toda la configuración
+├── limpiar-ejemplo.js     # npm run limpiar:ejemplo (bases viejas con clientes de prueba)
+├── prueba-correo.js       # npm run prueba:correo (prueba la conexión con Gmail)
+├── pruebas-seguridad/     # ataques contra el propio servidor (npm run prueba:seguridad)
 ├── db/
-│   └── database.sql       # TODO en un archivo: tablas, triggers, datos
-│                          #   de ejemplo y contraseñas (bcrypt vía pgcrypto)
-└── public/                # front-end estático
-    ├── index.html          # catálogo: búsqueda/filtros por URL, orden, favoritos, alta al carrito
-    ├── carrito.html        # carrito + checkout (direcciones guardadas, envío, IVA)
-    ├── cuenta.html         # hub del cliente: resumen, pedidos, favoritos, direcciones,
-    │                       #   perfil, seguridad (cambiar contraseña), preferencias
-    ├── ayuda.html          # centro de ayuda / FAQ + formulario de soporte (→ CRM)
-    ├── cliente-panel.html  # redirección a cuenta.html (compatibilidad)
-    ├── login.html / registro.html   # con ?next=, mostrar/ocultar contraseña
-    ├── css/style.css
-    ├── css/arcade.css      # estilo Arcade de la tienda (solo páginas del cliente)
-    ├── js/api.js, layout.js, chatbot.js, toast.js
-    └── admin/
-        ├── login.html
-        ├── dashboard.html   # métricas CRM (gráficas, clientes en riesgo, más vendidos)
-        ├── clientes.html    # listado, etapa CRM, historial de interacciones
-        ├── productos.html   # inventario: alta/edición/restock
-        ├── pedidos.html     # seguimiento, cambio de estado y detalle de la orden
-        ├── chatbot.html     # analítica del chatbot (qué se busca, presupuestos, sin-stock)
-        └── usuarios.html    # equipo interno (admin/ventas/logística) + cambio de rol
+│   ├── database.sql       # esquema, triggers, datos iniciales y cuentas del panel (bcrypt vía pgcrypto)
+│   └── control_interno.sql# bitácora encadenada, fechas del servidor, auditoría, facturas y devoluciones
+│                          #   (se ejecuta solo al arrancar)
+└── public/
+    ├── index.html                 # portada y catálogo (filtros en la URL, ?promo=ID)
+    ├── carrito.html, pagar.html, gracias.html, recibo.html
+    ├── login.html, registro.html, verificar.html, recuperar.html, restablecer.html
+    ├── perfil.html, pedidos.html, devoluciones.html, garantias.html, monedero.html,
+    │   recompensas.html, favoritos.html, resenas.html, direcciones.html, pagos.html,
+    │   soporte.html, datos.html, seguridad.html, preferencias.html   # "Mi cuenta"
+    ├── cuenta.html, cliente-panel.html   # redirigen a la sección nueva (enlaces viejos)
+    ├── armar-pc.html, comparar.html, socio.html, ayuda.html, terminos.html, 404.html
+    ├── css/style.css, css/arcade.css     # arcade.css: estilo de la tienda (no del panel)
+    ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast,
+    │                               #   icons (íconos, logo KZK y fantasmita), dos-pasos, fotos,
+    │                               #   garantia, paypal-botones, recibo-render, graficas, vendor/
+    └── admin/                      # una pantalla por sección del panel
+        └── js/
+            ├── admin-layout.js     # menú, "Ir a…", puntitos de aviso, botón Regresar
+            ├── permisos.js         # permisos por rol (los usa el menú y el servidor)
+            ├── gestion-pedido.js   # gestor de pedidos compartido (CRM, ERP, SCM, Soporte)
+            ├── scm-acciones.js     # movimiento, reposición y abastecimiento en ventana
+            └── erp.js, clientes-erp.js, productos-erp.js, interaccion-sim.js
 ```
 
-## 1. Requisitos
+## Instalación
 
-- Node.js 18+
-- PostgreSQL 14+
-
-## 2. Instalación
+Requisitos: Node.js 18+ y PostgreSQL 16+.
 
 ```bash
 npm install
 ```
 
-## 3. Base de datos
+1. Crea la base: `CREATE DATABASE kozmok;`
+2. Copia `.env.example` como `.env` y pon la contraseña de PostgreSQL. El
+   `.env` no se sube a GitHub.
+3. Carga el esquema: `psql -U postgres -d kozmok -f db/database.sql`. Se
+   puede repetir: borra todo y lo recrea.
+4. `npm start`. Tienda en http://localhost:3000 y panel en
+   http://localhost:3000/admin/login.html.
 
-1. Crea la base de datos:
-   ```sql
-   CREATE DATABASE kozmok;
-   ```
-2. Copia `.env.example` como `.env` y pon tu usuario/contraseña de PostgreSQL (el `.env` no se sube a GitHub).
-3. Carga **todo** con un solo archivo (esquema + triggers + datos +
-   contraseñas hasheadas con bcrypt vía `pgcrypto`):
-   ```bash
-   psql -U postgres -d kozmok -f db/database.sql
-   ```
-   No hace falta ningún script de Node aparte. El archivo se puede
-   volver a ejecutar: borra todo y lo recrea desde cero.
+La base empieza sin clientes ni pedidos. Trae tres cuentas del panel (una
+por rol) que piden cambiar la contraseña al entrar; están en
+[`../README.md`](../README.md). Antes de configurar Gmail crea un
+administrador con un correo real: con Gmail activo, la verificación en dos
+pasos del panel manda el código al correo de la cuenta y los correos
+`@kozmok.mx` no existen.
 
-   La base empieza sin datos de ejemplo (sin clientes, pedidos ni
-   interacciones). Quedan las tres cuentas del panel, una por rol; todas
-   piden cambiar la contraseña al entrar:
+### Actualizar una base existente
 
-   | Rol        | Correo                     | Contraseña inicial |
-   |------------|----------------------------|--------------------|
-   | Admin      | admin@kozmok.mx            | Admin#KZ2026       |
-   | Ventas     | laura.ventas@kozmok.mx     | Ventas#KZ2026      |
-   | Logística  | paola.logistica@kozmok.mx  | Logistica#KZ2026   |
+No hace falta volver a cargar `database.sql`. Al arrancar,
+`migrarEsquema()` (en `server.js`) aplica solo lo que falte con
+`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS`,
+cambia restricciones, migra datos (roles viejos, reclamos del sistema
+anterior, garantía base de lo ya entregado, severidades de seguridad) y al
+final ejecuta `db/control_interno.sql`. Basta `git pull` y reiniciar.
 
-   En una base de antes sin estas cuentas, el servidor las crea (o las
-   reactiva) una sola vez al arrancar.
+Al agregar un cambio de esquema: ponlo en `migrarEsquema()` (para bases
+existentes) **y** en `database.sql` (para bases nuevas).
 
-   Si tu base es de antes y tiene los clientes de prueba:
-   `npm run limpiar:ejemplo` (muestra) y
-   `npm run limpiar:ejemplo -- --confirmar` (borra).
+### Configuración (.env)
 
-   Pruebas de seguridad: crea una cuenta de cliente solo para pruebas y
-   `npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1`
+`.env.example` documenta cada variable. Las principales:
 
-   Nota: se usan contraseñas con mayúscula/símbolo (no "admin123" tal
-   cual) porque los navegadores muestran un aviso nativo de "contraseña
-   comprometida" cuando detectan una contraseña que aparece en listas de
-   filtraciones conocidas, y "admin123"/"demo123" están en esas listas.
+| Grupo | Variables |
+|---|---|
+| Base | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` |
+| Servidor | `PORT`, `HOST` (`127.0.0.1` = solo esta computadora), `URL_PUBLICA` (enlaces de los correos) |
+| Correo | `SMTP_USUARIO`, `SMTP_PASSWORD` (contraseña de aplicación de Gmail), `CORREO_REMITENTE` |
+| Seguridad | `MAX_FALLOS_CUENTA`, `MAX_FALLOS_IP`, `BLOQUEO_*`, `SESION_*`, `INACTIVIDAD_MIN_*`, `BCRYPT_COSTO`, `FILTRO_SQLI`, `COOKIE_SEGURA` |
+| Dos pasos y captcha | `DOSF_PANEL_OBLIGATORIO`, `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `RECAPTCHA_DOMINIOS` |
+| Pagos y facturas | `PAYPAL_*`, `FACTURAMA_*`, `FACTURA_*`, `EMPRESA_*`, `SPEI_*` (datos de transferencia) |
+| Negocio | `GARANTIA_BASE_MESES`, `DEVOLUCION_*`, `DEVOLUCIONES_DIRECCION`, `MONEDERO_*`, `BAJA_UMBRAL_*`, `MAX_PIEZAS_POR_PRODUCTO`, `MAX_PEDIDOS_SIN_PAGAR`, `INVENTARIO_MAX_POR_MOVIMIENTO` |
+| Administración | `CODIGO_BORRADO_DEFINITIVO` (borrado definitivo de productos; vacío = apagado) |
+| Pruebas | `PRUEBA_CORREO`, `PRUEBA_PASSWORD` (cuenta de cliente para `npm run prueba:seguridad`) |
 
-## 4. Correr el proyecto
+## Scripts
 
-```bash
-npm start
-```
+| Comando | Qué hace |
+|---|---|
+| `npm start` / `npm run dev` | Inicia el servidor (`dev` con nodemon) |
+| `npm run prueba:seguridad` | Fuerza bruta, inyección SQL y robo de sesión contra el propio servidor; revisa antes la cuenta de prueba |
+| `npm run prueba:fuerza-bruta`, `prueba:sqli`, `prueba:sesion` | Cada prueba por separado |
+| `npm run desbloquear` | Levanta bloqueos (`-- --todo` también borra la bitácora de intentos y eventos) |
+| `npm run prueba:correo` | Manda un correo de prueba con la configuración de Gmail |
+| `npm run limpiar:ejemplo` | Muestra (o con `-- --confirmar` borra) los clientes de prueba de bases viejas |
 
-- Tienda: http://localhost:3000
-- Acceso interno (admin / ventas / logística): http://localhost:3000/admin/login.html
+## Arquitectura del servidor
 
-## Módulo CRM (lo que pide la Etapa 1)
+- **Rutas**: tienda en `/api/*`, panel en `/api/admin/*`. Todas las de
+  `/api/admin/*` exigen sesión del equipo; `PERMISOS_API` (regex por ruta y
+  método) más `admin/js/permisos.js` deciden qué rol entra a cada una.
+- **Sesiones**: token aleatorio de 256 bits en cookie HttpOnly
+  (`kz_sesion` tienda, `kz_admin` panel); en la tabla `sesiones` solo su
+  hash. Desde Postman: `{"modo":"token"}` en el login y
+  `Authorization: Bearer <token>`.
+- **Errores**: `asyncRoute()` atrapa las excepciones; la base nunca muestra
+  su mensaje al usuario (`seg.mensajeSeguro`).
+- **Bitácoras**: `auditar()` para acciones del equipo (encadenada en
+  `auditoria`), `seg.registrarEvento()` para seguridad (severidad `info`,
+  `baja`, `media` o `alta`; `info` es actividad normal y no cuenta como
+  alerta).
+- **Correos**: `enviarCorreo()` los guarda en `correos_salida` y el
+  despachador los manda cada 30 s con reintentos.
+- **Tareas cada minuto** (`tareasPeriodicas`): reabasto automático,
+  cancelación de pedidos con el plazo de pago vencido, conciliación de pagos
+  de PayPal pendientes y avisos por correo (boletín, favoritos, pedidos).
+- **Promociones**: `promocionesVigentes()` y `adjuntarAlcance()` calculan
+  qué productos entran en cada una (todo el catálogo, filtro por
+  categoría/marca/palabras o selección en `promocion_productos`);
+  `decorarPrecios()` aplica la que más descuenta.
 
-- **Gestión de clientes**: alta desde registro público, listado con
-  búsqueda y filtro por etapa, edición de etapa CRM
-  (`Prospecto → Activo → Frecuente → Inactivo`).
-- **Interacciones**: se registran manualmente desde el panel de
-  clientes (llamada, correo, reunión, soporte) y automáticamente
-  cuando alguien usa el chatbot (`tipo = chat`).
-- **Clasificación y seguimiento**: cada cliente pasa a `Activo`
-  automáticamente al confirmar su primera compra.
-- **Indicadores**: `/admin/dashboard.html` muestra total de clientes,
-  activos/inactivos, interacciones del mes, clientes en riesgo
-  (30+ días sin contacto) y gráficas de etapa/tipo de interacción.
-- **Roles y autenticación**: login separado para clientes
-  (`/api/auth/login-cliente`) y para equipo interno
-  (`/api/auth/login-usuario` o `/api/auth/login`, roles `admin` /
-  `ventas` / `logistica`, ver `public/admin/js/permisos.js`), con
-  contraseñas hasheadas con bcrypt. Todas las rutas `/api/admin/*`
-  exigen la sesión del equipo interno (cookie HttpOnly `kz_admin`, que
-  el navegador manda sola; desde Postman, `Authorization: Bearer <token>`
-  pidiendo el token con `{"modo":"token"}` en el login); crear usuarios
-  internos requiere además rol `admin`.
-- **"Mi actividad"**: `/api/usuarios/:id/actividad` devuelve las
-  interacciones registradas por ese usuario interno (visible en
-  `/admin/usuarios.html`).
-- **Analítica del chatbot** (`/admin/chatbot.html`): consultas por
-  uso y por rango de presupuesto, y cuántas búsquedas se quedaron
-  **sin recomendación** (señal de restock o de catálogo faltante).
-- **Autoservicio del cliente** (`/cuenta.html`): edita sus datos
-  (`PUT /api/clientes/:id`) y cancela pedidos aún no procesados
-  (`PUT /api/pedidos/:id/cancelar`, que devuelve el stock y registra
-  el movimiento de inventario).
-- **Soporte del cliente**: el formulario de `/ayuda.html`
-  (`POST /api/clientes/:id/soporte`) crea una interacción CRM
-  `tipo = soporte`, así que las dudas de los clientes caen en el
-  mismo historial que ve el equipo interno.
+### Consultas a PostgreSQL
 
-## Navegación y cuenta del cliente
-
-- **Navbar** con buscador (lleva a `/index.html?busqueda=`), barra de
-  categorías (`?categoria=`), menú de cuenta desplegable y menú lateral
-  en móvil.
-- **Catálogo** (`/index.html`): los filtros viven en la URL (se pueden
-  compartir y funciona el botón "atrás"), con orden por precio/nombre,
-  corazón de favorito y alta directa al carrito desde la tarjeta.
-- **Hub de cuenta** (`/cuenta.html`, secciones por `#hash`):
-  - `#resumen` – etapa CRM, nº de pedidos, gasto total, favoritos.
-  - `#pedidos` – historial con barra de seguimiento, detalle y cancelar.
-  - `#favoritos` – `GET/POST/DELETE /api/clientes/:id/favoritos`.
-  - `#direcciones` – CRUD en `/api/clientes/:id/direcciones` (una
-    predeterminada), reutilizadas en el checkout.
-  - `#perfil` – datos personales.
-  - `#seguridad` – `PUT /api/clientes/:id/password` (verifica la actual).
-  - `#preferencias` – `PUT /api/clientes/:id/preferencias` (JSONB:
-    boletín, ofertas, aviso de estado de pedidos, stock de favoritos).
-- **Checkout**: elige una dirección guardada o escribe otra; el total
-  incluye IVA 16% y **envío** ($199, gratis desde $10,000; se guarda en
-  `pedidos.envio`).
-- **UI**: notificaciones tipo *toast* y diálogos de confirmación con
-  estilo (`js/toast.js`) en lugar de `alert()`/`confirm()`.
+- Siempre parametrizadas (`$1, $2…`); nunca se concatena un dato.
+- **Un mismo `$n` debe tener un solo tipo** en toda la consulta. Si se usa
+  como fecha y como texto (o número y texto), PostgreSQL responde
+  *"inconsistent types deduced for parameter"*. Usa un parámetro por uso o
+  un cast explícito (`$1::int`, `$2::timestamp`), y para meses
+  `make_interval(months => $1::int)` en vez de `($1 || ' months')::interval`.
+- Para validar todas las consultas contra una base real: extraerlas y
+  correr `PREPARE` en `psql`; detecta errores de tipos sin ejecutar nada.
 
 ## Chatbot de recomendaciones
 
-El widget pregunta **uso → categoría → presupuesto** (o acepta texto
-libre en cualquier momento) y llama a:
-
-`POST /api/chatbot/recomendar`, que recibe `{ uso, presupuesto,
-categoria, cliente_id, mensaje }` y:
-
-1. Filtra productos **activos y con stock disponible**.
-2. Descarta los que exceden el presupuesto.
-3. Da puntaje extra a los que coinciden con el uso buscado
-   (`gaming`, `oficina`, `diseno`, `programacion`, `estudiante`,
-   `streaming`, `servidor`) y a los más cercanos al presupuesto.
-4. Devuelve hasta 5 sugerencias ordenadas por relevancia.
-5. Guarda la consulta en `chatbot_consultas` y, si hay un cliente
-   logueado, también la registra como interacción CRM tipo `chat`
-   (para que aparezca en su historial e influya en sus métricas).
-
-El widget (botón flotante en todas las páginas de la tienda) guía al
-usuario con preguntas rápidas de uso y presupuesto, y también acepta
-texto libre.
+`POST /api/chatbot/recomendar` recibe `{ uso, presupuesto, categoria,
+cliente_id, mensaje }`: filtra productos activos con stock y dentro del
+presupuesto, da puntaje por uso (`gaming`, `oficina`, `diseno`,
+`programacion`, `estudiante`, `streaming`, `servidor`) y cercanía al
+presupuesto, y devuelve hasta 5. Guarda la consulta en `chatbot_consultas`
+y, con cliente en sesión, una interacción CRM `tipo = chat`. También arma
+PCs pieza por pieza filtrando por compatibilidad.
 
 ## Control interno, monedero y rendimiento
 
-- **Antifraude**: `db/control_interno.sql` (triggers de fecha del servidor, tablas de solo
-  agregar, pedidos sellados, bitácora encadenada). Detalle en `SEGURIDAD.md` §4.
-- **Auditoría** (panel, solo admin): bitácora con filtros, verificación de la cadena y
-  bajas de inventario pendientes de aprobar.
-- **Monedero**: límites configurables en `.env` (`MONEDERO_*`), congelar/bloquear con motivo,
-  ajustes grandes con segunda firma. Reglas públicas en `terminos.html` (lee `/api/reglamento`).
-- **Rendimiento**: caché en memoria del catálogo (se invalida con cualquier cambio), gzip,
-  índices nuevos y reportes con consultas en paralelo.
+- **Antifraude**: `db/control_interno.sql` (fechas del servidor, tablas de
+  solo agregar, pedidos sellados, bitácora encadenada). Detalle en
+  `../SEGURIDAD.md` §4.
+- **Auditoría** (panel, solo admin): bitácora con filtros, verificación de la
+  cadena y bajas de inventario pendientes de aprobar.
+- **Monedero**: límites en `.env` (`MONEDERO_*`), congelar o bloquear con
+  motivo, ajustes grandes con segunda firma. Reglas públicas en
+  `terminos.html` (lee `/api/reglamento`).
+- **Rendimiento**: caché en memoria del catálogo (se invalida con cualquier
+  cambio), gzip, índices y reportes con consultas en paralelo.
 
-## Pagos con PayPal y factura electrónica (modo de prueba)
+## Pagos con PayPal y factura electrónica
 
-Los dos funcionan en **sandbox**: se usan las APIs reales, pero no se mueve dinero ni se
-emiten facturas con validez fiscal. El modo real exige dos variables a propósito
-(`*_MODO=live` y `*_PERMITIR_REAL=1`).
+Los dos funcionan en **sandbox**: se usan las APIs reales, pero no se mueve
+dinero ni se emiten facturas con validez fiscal. El modo real exige dos
+variables a propósito (`*_MODO=live` y `*_PERMITIR_REAL=1`).
 
-- **PayPal o tarjeta** (`paypal.js`): el pedido se aparta 60 min y se paga en `pagar.html`
-  con los botones de PayPal. El servidor crea la orden con su propio total y solo confirma
-  si PayPal responde `COMPLETED` con el mismo monto, moneda y pedido. Cancelar un pedido
-  pagado hace el reembolso real en PayPal. Kozmok no recibe números de tarjeta.
-  Configura `PAYPAL_CLIENT_ID` y `PAYPAL_CLIENT_SECRET` (developer.paypal.com → Apps &
-  Credentials → Sandbox) y prueba con una cuenta personal del sandbox.
-- **Factura CFDI 4.0** (`facturama.js`): el cliente factura un pedido pagado desde
-  Mis pedidos; el equipo en Panel → Facturas. Se timbra con Facturama (sandbox) y llega
-  PDF y XML por correo. Configura `FACTURAMA_USUARIO`, `FACTURAMA_PASSWORD` y
-  `FACTURA_LUGAR_EXPEDICION`; en el perfil de Facturama, el emisor de prueba
-  `EKU9003173C9`.
-- Sin credenciales, esas opciones aparecen como "no disponible" y el resto de la tienda
-  funciona igual.
+- **PayPal o tarjeta** (`paypal.js`): el pedido se aparta 60 min y se paga
+  en `pagar.html` con los botones de PayPal. El servidor crea la orden con
+  su propio total y solo confirma si PayPal responde `COMPLETED` con el
+  mismo monto, moneda y pedido. Cancelar un pedido pagado o reembolsar una
+  devolución hace el reembolso real en PayPal. Kozmok no recibe números de
+  tarjeta. Configura `PAYPAL_CLIENT_ID` y `PAYPAL_CLIENT_SECRET`
+  (developer.paypal.com → Apps & Credentials → Sandbox).
+- **Factura CFDI 4.0** (`facturama.js`): el cliente factura un pedido
+  pagado desde Mis pedidos; el equipo en Panel → Facturas. Se timbra con
+  Facturama y llegan PDF y XML por correo. Configura `FACTURAMA_USUARIO`,
+  `FACTURAMA_PASSWORD` y `FACTURA_LUGAR_EXPEDICION`; en sandbox, el emisor
+  de prueba `EKU9003173C9`.
+- Sin credenciales, esas opciones aparecen como "no disponible" y el resto
+  de la tienda funciona igual.
 
 ## Notas para producción
 
-- Usa variables de entorno reales (o el `.env`), sirve todo con HTTPS y pon `COOKIE_SEGURA=1`.
-- Las sesiones (Etapa 5) son tokens aleatorios en cookie HttpOnly con
-  vencimiento, inactividad y revocación; el límite de intentos por minuto
-  vive en memoria, así que con varios servidores habría que moverlo a la
-  base o a Redis. Detalle y limitaciones en `../SEGURIDAD.md`.
-- Las imágenes de producto son URLs externas de ejemplo; para un
-  entorno real conviene subirlas a almacenamiento propio (S3, Cloud
-  Storage, etc.).
+- Sirve todo con HTTPS y pon `COOKIE_SEGURA=1` (agrega `Secure` a las
+  cookies y HSTS).
+- El límite de intentos por minuto vive en memoria; con varios servidores
+  habría que moverlo a la base o a Redis.
+- Las imágenes de producto son URLs externas; en un entorno real conviene
+  almacenamiento propio (S3, Cloud Storage, etc.).
+- Detalle y limitaciones de seguridad en `../SEGURIDAD.md`.
