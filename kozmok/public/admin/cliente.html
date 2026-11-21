@@ -40,7 +40,7 @@ async function cargar() {
     const main = document.getElementById('main');
     const m = C.metricas || {};
     main.innerHTML = `
-        <a href="/admin/clientes.html" style="font-size:.85rem">← Volver a clientes</a>
+        <a href="/admin/clientes.html" class="volver-fijo" style="font-size:.85rem">← Volver a clientes</a>
         <div class="crm-perfil" style="margin-top:10px">
             <span class="crm-avatar">${(C.nombre[0] || 'C').toUpperCase()}</span>
             <div>

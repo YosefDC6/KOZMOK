@@ -154,6 +154,7 @@ function renderAdminSidebar(activo) {
         window.location.href = homeDe(rol);
         return;
     }
+    Regreso.iniciar();
 
     const secciones = ADMIN_SECCIONES
         .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
@@ -475,3 +476,61 @@ function adminHeader(titulo, subtitulo, accionHTML) {
 }
 window.adminHeader = adminHeader;
 
+
+// ---------------------------------------------------------
+// Botón "Regresar": recuerda las pantallas del panel por las que pasaste
+// en esta pestaña y te devuelve a la anterior (con sus filtros), sin
+// buscarla en la barra lateral. Cambiar solo la búsqueda de la misma
+// pantalla (?reclamo=, ?dev=…) no cuenta como otra pantalla.
+// ---------------------------------------------------------
+const Regreso = {
+    CLAVE: 'kz_panel_ruta',
+    leer() { try { return JSON.parse(sessionStorage.getItem(this.CLAVE)) || []; } catch { return []; } },
+    guardar(r) { try { sessionStorage.setItem(this.CLAVE, JSON.stringify(r.slice(-25))); } catch { /* nada */ } },
+    nombre() {
+        const link = ADMIN_SECCIONES.flatMap((s) => s.links).find((l) => l.href === location.pathname);
+        return link ? link.label : (document.title.split('·')[0].trim() || 'pantalla anterior');
+    },
+    iniciar() {
+        if (this._listo) return; this._listo = true;
+        const aqui = { ruta: location.pathname, url: location.pathname + location.search, nombre: this.nombre() };
+        let r = this.leer();
+        const prev = r[r.length - 2];
+        if (prev && prev.ruta === aqui.ruta) { r.pop(); r[r.length - 1] = aqui; }   // volvimos a la anterior
+        else if (r.length && r[r.length - 1].ruta === aqui.ruta) r[r.length - 1] = aqui; // recarga
+        else r.push(aqui);
+        this.guardar(r);
+        this.anterior = r[r.length - 2] || null;
+        // Si la pantalla cambia su ?búsqueda sin recargar, se actualiza la entrada.
+        ['pushState', 'replaceState'].forEach((m) => {
+            const orig = history[m].bind(history);
+            history[m] = (...args) => { orig(...args); const x = this.leer(); if (x.length && x[x.length - 1].ruta === location.pathname) { x[x.length - 1].url = location.pathname + location.search; this.guardar(x); } };
+        });
+        this.pintar();
+    },
+    volver() {
+        const a = this.anterior; if (!a) return;
+        let ref = null; try { ref = new URL(document.referrer); } catch { /* nada */ }
+        // Si venimos justo de ahí, el navegador conserva el scroll y el estado.
+        if (ref && ref.origin === location.origin && ref.pathname === a.ruta && history.length > 1) history.back();
+        else location.href = a.url;
+    },
+    pintar() {
+        const main = document.querySelector('.admin-main');
+        if (!main || !this.anterior) return;
+        const poner = () => {
+            if (main.querySelector(':scope > .at-volver')) return;
+            const b = document.createElement('button');
+            b.type = 'button'; b.className = 'at-volver';
+            b.title = 'Regresar a la pantalla anterior (Alt + ←)';
+            b.innerHTML = `${window.icon ? icon('arrow', 14) : '←'} <span>Regresar a <strong></strong></span>`;
+            b.querySelector('strong').textContent = this.anterior.nombre;
+            b.onclick = () => this.volver();
+            main.prepend(b);
+        };
+        poner();
+        // Algunas pantallas redibujan todo el contenido: se vuelve a poner.
+        new MutationObserver(poner).observe(main, { childList: true });
+    },
+};
+window.Regreso = Regreso;

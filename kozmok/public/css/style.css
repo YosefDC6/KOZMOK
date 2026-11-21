@@ -1637,6 +1637,15 @@ tr.en-orden td { background: color-mix(in srgb, var(--accent) 7%, transparent); 
         radial-gradient(1100px 380px at 30% -120px, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%);
 }
 
+/* ---- Botón Regresar ---- */
+.admin-shell .at-volver { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 5px 12px 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8rem; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.admin-shell .at-volver svg { transform: scaleX(-1); transition: transform .15s; }
+.admin-shell .at-volver strong { color: var(--text); font-weight: 600; }
+.admin-shell .at-volver:hover { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.admin-shell .at-volver:hover svg { transform: scaleX(-1) translateX(2px); }
+/* Con historial, el enlace fijo de la pantalla sobra */
+.admin-main:has(> .at-volver) .volver-fijo { display: none; }
+
 /* ---- Encabezado de cada pantalla ---- */
 .admin-shell .admin-topbar { align-items: flex-end; padding-bottom: 18px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
 .admin-shell .admin-topbar h2 { font-size: 1.7rem; letter-spacing: -.01em; margin-bottom: 4px; }
