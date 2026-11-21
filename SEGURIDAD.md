@@ -9,6 +9,8 @@ Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestr
 | Ataque | Qué intenta el atacante | Qué lo detiene | Dónde se ve |
 |---|---|---|---|
 | **Fuerza bruta** | Probar muchas contraseñas hasta atinarle | Bloqueo de la cuenta tras 5 fallos (15 min), bloqueo de IP tras 20 fallos (30 min), máximo 15 intentos por minuto, retraso progresivo, bcrypt | Panel → Cuenta → **Seguridad** (Intentos y Bloqueos) |
+| **Bots que prueban contraseñas** | Automatizar logins, registros y recuperaciones | Google reCAPTCHA en login, registro y recuperar contraseña | Seguridad → Eventos (“Captcha”) |
+| **Contraseña robada o adivinada** | Entrar con la contraseña correcta de otra persona | Verificación en dos pasos (app autenticadora o código por correo): obligatoria en el panel, opcional en la tienda | Seguridad → Eventos (“Verificación en dos pasos”) |
 | **Relleno de credenciales** | Una contraseña filtrada contra muchas cuentas | Límite por conexión y bloqueo de IP | Seguridad → Intentos (IPs con más fallos) |
 | **Robo de sesión** | Copiar la cookie y usarla en otro navegador | Cookie HttpOnly + SameSite=Strict, token aleatorio guardado como hash, sesión atada al navegador, vencimiento, revocación al salir | Seguridad → Eventos (“Sesión robada”) |
 | **Token falsificado** | Fabricar el token (la versión anterior usaba Base64 `cliente:1:…`) | Tokens aleatorios de 256 bits validados contra la tabla `sesiones` | Seguridad → Eventos (“Token falso”) |
@@ -20,6 +22,38 @@ Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestr
 
 ## Cómo correr las pruebas
 
+### Antes de la primera vez: cuenta de prueba
+
+La base no trae clientes de ejemplo, así que las pruebas necesitan una cuenta de **cliente** creada en la tienda solo para esto:
+
+1. En la tienda, *Crear cuenta* con un correo al que tengas acceso (llega un código para confirmarlo). Con Gmail sirve agregar `+pruebas`: `tucorreo+pruebas@gmail.com` llega a tu bandeja normal y la tienda la toma como otra cuenta.
+2. **No** le actives la verificación en dos pasos (los scripts no pueden escribir el código).
+3. Agrégala una vez al `.env` (junto a `server.js`):
+
+```
+PRUEBA_CORREO=tucorreo+pruebas@gmail.com
+PRUEBA_PASSWORD=LaContraseñaDeEsaCuenta
+```
+
+También se puede pasar en cada corrida: `npm run prueba:seguridad -- --correo=… --password=…` (en PowerShell, si la contraseña lleva `#`, `$` o `&`, va entre comillas simples).
+
+No uses tu cuenta de cliente de siempre: la prueba de fuerza bruta la bloquea a propósito (los scripts la desbloquean al terminar).
+
+### Antes de una demostración: empezar en limpio
+
+```bash
+npm run desbloquear -- --todo
+```
+
+Levanta los bloqueos **y borra la bitácora de intentos y eventos**. Sirve por dos cosas:
+
+- El bloqueo cuenta los intentos fallidos de los **últimos 15 minutos**. Si acabas de correr las pruebas, esos fallos siguen contando aunque hayas desbloqueado, y en la siguiente corrida la cuenta se bloquea antes (el primer intento ya dice “Te quedan 3” en vez de 4). Con `--todo` la demo muestra la secuencia completa desde cero.
+- El panel, *Cuenta → Seguridad*, queda vacío y solo aparece lo que se ataque durante la demo.
+
+`npm run desbloquear` (sin `--todo`) solo levanta los bloqueos y conserva el historial.
+
+### Correr las pruebas
+
 Con el servidor encendido (`npm start` dentro de `kozmok/`), en otra terminal:
 
 ```bash
@@ -30,7 +64,7 @@ cd kozmok
 npm run prueba:seguridad
 ```
 
-Corre las tres pruebas en orden y al final levanta los bloqueos que quedaron. Cada línea dice **✔ DEFENDIDO** o **✘ VULNERABLE**. También se pueden correr por separado:
+Antes de empezar levanta bloqueos viejos y comprueba que la cuenta de prueba entra; si no puede, dice por qué (contraseña equivocada, verificación en dos pasos activada, cuenta bloqueada o captcha) y no corre nada, para no dar resultados falsos. Luego corre las tres pruebas en orden y al final levanta los bloqueos que quedaron. Cada línea dice **✔ DEFENDIDO** o **✘ VULNERABLE**. También se pueden correr por separado:
 
 ```bash
 npm run prueba:fuerza-bruta
@@ -50,7 +84,7 @@ Después de una demostración, para quitar bloqueos de cuentas e IPs (por ejempl
 npm run desbloquear
 ```
 
-`npm run desbloquear -- --todo` además borra la bitácora de intentos y eventos para empezar la demo en limpio.
+`npm run desbloquear -- --todo` además borra la bitácora (ver *Antes de una demostración*).
 
 **Con reCAPTCHA activado** (llaves en `.env`): al arrancar, el servidor genera un pase de pruebas en `kozmok/.pruebas-token` (fuera de git). Los scripts lo usan solo si corren en la misma computadora del servidor, y el servidor solo lo acepta desde ahí; así se prueban el bloqueo de cuentas y las sesiones sin marcar la casilla. Desde cualquier otra computadora el captcha se sigue pidiendo.
 
@@ -77,10 +111,10 @@ Desde la otra computadora no se puede tocar la base del servidor, así que la co
 
 ## 1. Fuerza bruta
 
-**Ataque.** `pruebas-seguridad/1-fuerza-bruta.js` prueba un diccionario de contraseñas contra `diego@correo.com`; la contraseña correcta va al final. Con `--ip` también hace *relleno de credenciales*: la misma contraseña contra 25 cuentas.
+**Ataque.** `pruebas-seguridad/1-fuerza-bruta.js` prueba un diccionario de contraseñas contra la cuenta de prueba; la contraseña correcta va al final. Antes comprueba que la respuesta es la misma para un correo registrado y uno inexistente, y al final que un correo que no existe también se “bloquea” tras los mismos intentos (el bloqueo no delata qué cuentas existen). Con `--ip` también hace *relleno de credenciales*: la misma contraseña contra 25 cuentas.
 
 ```bash
-node pruebas-seguridad/1-fuerza-bruta.js --cuenta=diego@correo.com --ip
+npm run prueba:fuerza-bruta -- --ip
 ```
 
 **Qué se ve.** Los primeros intentos regresan 401 y avisan cuántos quedan; el 5º responde **429: cuenta bloqueada 15 minutos**, y aunque después llegue la contraseña correcta, **no entra**. En la ráfaga contra muchas cuentas aparece el límite por minuto (429) y la IP queda bloqueada.
@@ -211,5 +245,5 @@ del proyecto; las reglas para el cliente en la tienda, `terminos.html`.
 - El límite por minuto vive en memoria: se reinicia con el servidor. Los bloqueos de cuenta e IP sí quedan en la base.
 - Un atacante puede bloquear a propósito la cuenta de alguien fallando 5 veces (es el costo del bloqueo); por eso dura solo 15 minutos y la persona puede entrar con “¿Olvidaste tu contraseña?”, que además levanta el bloqueo.
 - Los correos salen por Gmail solo si se configuran `SMTP_USUARIO` y `SMTP_PASSWORD` en el `.env`; sin eso se guardan en el panel, *Cuenta → Seguridad → Correos enviados* (ahí está el enlace de recuperación durante la demo). La contraseña de aplicación de Gmail vive solo en el `.env`, que no se sube a GitHub.
-- "Mantener sesión iniciada" (solo en la tienda) alarga la sesión a 30 días y la exime del cierre por inactividad; sigue atada al navegador que la abrió y se revoca al cerrar sesión o cambiar la contraseña. El panel no la tiene: su cookie es de sesión (se borra al cerrar el navegador) y no recuerda cuentas.
+- "Mantener sesión iniciada" (solo en la tienda) alarga la sesión a 30 días y la exime del cierre por inactividad; sigue atada al navegador que la abrió y se revoca al cerrar sesión o cambiar la contraseña. El panel no la tiene: su cookie es de sesión (se cierra al cerrar la pestaña o el navegador) y solo recuerda el correo de la cuenta, nunca la contraseña.
 - La CSP todavía permite scripts escritos dentro del HTML (`'unsafe-inline'`) porque las pantallas los usan. Contra XSS la defensa principal es limpiar lo que entra y escapar lo que se muestra; la CSP evita que un script inyectado mande datos a otro servidor (`connect-src 'self'`). El siguiente paso sería pasar esos scripts a archivos `.js` y quitar `'unsafe-inline'`.
