@@ -129,7 +129,7 @@ function abrirMenuModulo(titulo) {
         <button class="modal-close" onclick="document.getElementById('modal-menu-modulo').classList.remove('open')" aria-label="Cerrar">${ic('x', 20)}</button>
         <div class="mm-head"><span class="mm-ico">${ic(ICONO_MODULO[titulo] || 'grid', 20)}</span><div><h3>${titulo}</h3><p>${links.length} secciones</p></div></div>
         <div class="mm-grid">${links.map((l) => `
-            <a class="modulo-tile ${l.key === window.ADMIN_ACTIVO ? 'actual' : ''}" href="${l.href}">
+            <a class="modulo-tile ${l.key === window.ADMIN_ACTIVO ? 'actual' : ''}" href="${l.href}" data-key="${l.key}">
                 <span class="mt-ico">${ic(l.ic, 20)}</span>
                 <span class="mt-txt"><span class="mt-title">${l.label}</span>${l.desc ? `<span class="mt-desc">${l.desc}</span>` : ''}</span>
             </a>`).join('')}</div>`;
@@ -172,13 +172,14 @@ function renderAdminSidebar(activo) {
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>
         <nav class="admin-rail" aria-label="Módulos">
             ${secciones.map((s) => `
-                <button type="button" class="rail-mod ${s.titulo === grupoActivo ? 'activo' : ''}" onclick="abrirMenuModulo('${s.titulo}')" title="${s.titulo}">
+                <button type="button" class="rail-mod ${s.titulo === grupoActivo ? 'activo' : ''}" data-grupo="${s.titulo}" onclick="abrirMenuModulo('${s.titulo}')" title="${s.titulo}">
                     ${ic(ICONO_MODULO[s.titulo] || 'grid', 20)}<span>${s.titulo}</span>
                 </button>`).join('')}
         </nav>
+        <button type="button" class="admin-ir" onclick="abrirIrA()" title="Ir a una sección (Ctrl + K)">${ic('search', 15)} <span>Ir a…</span><kbd>Ctrl K</kbd></button>
         <div class="admin-nav-links" id="admin-nav-links">
             ${secciones.map((s) => {
-                const enlaces = s.links.map((l) => `<a href="${l.href}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
+                const enlaces = s.links.map((l) => `<a href="${l.href}" data-key="${l.key}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
                 if (!s.home) {
                     // Grupo estático (Cuenta): sin desplegable, siempre visible.
                     return `<div class="admin-nav-sec">${s.titulo}</div>${enlaces}`;
@@ -188,7 +189,7 @@ function renderAdminSidebar(activo) {
                 // si la página activa pertenece a este grupo.
                 const abierto = s.links.some((l) => l.key === activo);
                 return `
-                    <div class="admin-nav-grupo ${abierto ? 'abierto' : ''}">
+                    <div class="admin-nav-grupo ${abierto ? 'abierto' : ''}" data-grupo="${s.titulo}">
                         <div class="admin-nav-grupo-head">
                             <a href="${s.home}" class="admin-nav-sec-link">${s.titulo}</a>
                             <button type="button" class="admin-nav-sec-toggle" aria-expanded="${abierto ? 'true' : 'false'}" aria-label="Mostrar opciones de ${s.titulo}">${ic('chevron', 15)}</button>
@@ -221,7 +222,126 @@ function renderAdminSidebar(activo) {
             btn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
         });
     });
+    Avisos.iniciar(activo);
 }
+
+// ---------------------------------------------------------
+// Puntitos de aviso en el menú: una sección se marca cuando llegó algo
+// después de la última vez que la abriste (un ticket con mensaje nuevo,
+// una devolución, un pago reportado…). Al abrirla, el punto se quita.
+// Se revisa cada minuto y al volver a la pestaña.
+// ---------------------------------------------------------
+const Avisos = {
+    datos: {},
+    _clave() { return 'kz_avisos_visto_' + ((Sesion.usuario() || {}).id || ''); },
+    _visto() { try { return JSON.parse(localStorage.getItem(this._clave()) || '{}') || {}; } catch { return {}; } },
+    _guardar(v) { try { localStorage.setItem(this._clave(), JSON.stringify(v)); } catch { /* sin almacenamiento */ } },
+    nuevo(k) {
+        const a = this.datos[k];
+        if (!a || !a.n) return false;
+        const v = this._visto()[k];
+        if (!v) return true;
+        if (a.ultimo) return new Date(a.ultimo).getTime() > (v.t || 0);
+        return a.n > (v.n || 0);
+    },
+    marcarVisto(k) {
+        if (!k) return;
+        const v = this._visto();
+        v[k] = { t: Date.now(), n: (this.datos[k] || {}).n || 0 };
+        this._guardar(v);
+    },
+    pintar() {
+        const nuevos = new Set(Object.keys(this.datos).filter((k) => this.nuevo(k)));
+        document.querySelectorAll('[data-key]').forEach((el) => {
+            const k = el.dataset.key;
+            const on = nuevos.has(k);
+            let p = el.querySelector(':scope > .aviso-punto');
+            if (on && !p) { p = document.createElement('span'); p.className = 'aviso-punto'; el.appendChild(p); }
+            if (!on && p) p.remove();
+            if (p) p.title = `${this.datos[k].n} por atender`;
+        });
+        // Módulos (CRM, SCM…): punto si alguna de sus secciones tiene algo nuevo.
+        (window.ADMIN_SECCIONES || []).forEach((sec) => {
+            const on = sec.links.some((l) => nuevos.has(l.key));
+            document.querySelectorAll(`[data-grupo="${sec.titulo}"]`).forEach((el) => {
+                const destino = el.classList.contains('rail-mod') ? el : el.querySelector('.admin-nav-sec-link, .admin-nav-grupo-head');
+                if (!destino) return;
+                let p = destino.querySelector(':scope > .aviso-punto');
+                if (on && !p) { p = document.createElement('span'); p.className = 'aviso-punto'; destino.appendChild(p); }
+                if (!on && p) p.remove();
+            });
+        });
+    },
+    async actualizar() {
+        try { this.datos = await api('/admin/avisos'); } catch { return; }
+        if (this.activo) this.marcarVisto(this.activo);
+        this.pintar();
+    },
+    iniciar(activo) {
+        this.activo = activo;
+        this.actualizar();
+        if (this._reloj) return;
+        this._reloj = setInterval(() => { if (!document.hidden) this.actualizar(); }, 60000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) this.actualizar(); });
+    },
+};
+window.Avisos = Avisos;
+
+// ---------------------------------------------------------
+// "Ir a…" (Ctrl + K): busca una sección por nombre y entra con Enter,
+// sin abrir los grupos del menú. Muestra los puntos de aviso.
+// ---------------------------------------------------------
+function abrirIrA() {
+    const rol = (Sesion.usuario() || {}).rol || '';
+    const ic = window.icon || (() => '');
+    const lista = [];
+    (window.ADMIN_SECCIONES || []).forEach((sec) => sec.links.forEach((l) => { if (puedeVer(rol, l.key)) lista.push({ ...l, modulo: sec.titulo }); }));
+    let ov = document.getElementById('modal-ir-a');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.className = 'modal-overlay';
+        ov.id = 'modal-ir-a';
+        ov.innerHTML = `<div class="modal ir-a" role="dialog" aria-modal="true" aria-label="Ir a una sección">
+            <div class="ir-a-buscar">${ic('search', 18)}<input id="ir-a-q" placeholder="¿A dónde vas? Pedidos, soporte, inventario…" autocomplete="off" /><kbd>Esc</kbd></div>
+            <div class="ir-a-lista" id="ir-a-lista" role="listbox"></div></div>`;
+        ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
+        document.body.appendChild(ov);
+    }
+    const q = ov.querySelector('#ir-a-q');
+    const cont = ov.querySelector('#ir-a-lista');
+    const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    let sel = 0, vis = [];
+    const pintar = () => {
+        const t = sinAcentos(q.value.trim());
+        vis = lista.filter((l) => !t || sinAcentos(`${l.label} ${l.modulo} ${l.desc || ''}`).includes(t));
+        // Primero las que tienen algo nuevo; después en el orden del menú.
+        vis.sort((a, b) => Number(Avisos.nuevo(b.key)) - Number(Avisos.nuevo(a.key)));
+        sel = Math.min(sel, Math.max(0, vis.length - 1));
+        cont.innerHTML = vis.length ? vis.map((l, i) => `
+            <a class="ir-a-op ${i === sel ? 'sel' : ''}" href="${l.href}" role="option" data-i="${i}">
+                <span class="ir-a-ic">${ic(l.ic, 17)}</span>
+                <span class="ir-a-txt"><strong>${l.label}</strong><small>${l.modulo}${l.desc ? ' · ' + l.desc : ''}</small></span>
+                ${Avisos.nuevo(l.key) ? `<span class="ir-a-nuevo">${Avisos.datos[l.key].n} por atender</span>` : ''}
+            </a>`).join('') : '<p class="ir-a-vacio">Ninguna sección coincide.</p>';
+        const actual = cont.querySelector('.sel'); if (actual) actual.scrollIntoView({ block: 'nearest' });
+    };
+    q.oninput = () => { sel = 0; pintar(); };
+    q.onkeydown = (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, vis.length - 1); pintar(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); pintar(); }
+        else if (e.key === 'Enter' && vis[sel]) { e.preventDefault(); location.href = vis[sel].href; }
+        else if (e.key === 'Escape') ov.classList.remove('open');
+    };
+    q.value = ''; sel = 0; pintar();
+    ov.classList.add('open');
+    setTimeout(() => q.focus(), 30);
+}
+window.abrirIrA = abrirIrA;
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && document.getElementById('admin-sidebar-placeholder')) {
+        e.preventDefault(); abrirIrA();
+    }
+});
 
 // Ventana "Cambiar mi contraseña" (cualquier rol). aviso = true cuando se
 // abre sola porque la contraseña actual no cumple las reglas.

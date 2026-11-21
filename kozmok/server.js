@@ -3640,6 +3640,7 @@ const PERMISOS_API = [
     { ruta: /^\/(whoami|roles)$/,                     metodos: LEER, permisos: ['*'] },
     { ruta: /^\/mi-password$/,                         metodos: ['PUT'], permisos: ['*'] },
     { ruta: /^\/mi-2fa(\/|$)/,                          metodos: TODO, permisos: ['*'] },
+    { ruta: /^\/avisos$/,                               metodos: LEER, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
     { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
@@ -3972,6 +3973,40 @@ app.get('/api/admin/whoami', (req, res) => res.json(req.usuario));
 
 // Cada persona del equipo cambia su propia contraseña (menú del panel).
 const cfg2faUsuario = rutasConfig2fa({ tipo: 'usuario', cuentaDe: (req) => req.usuario.id });
+// ---------------------------------------------------------
+// Avisos del menú lateral: por sección, cuántas cosas esperan atención (n)
+// y cuándo llegó la más reciente (ultimo). El navegador compara con la
+// última vez que la persona abrió esa sección y pinta el puntito.
+// Solo se calculan las secciones que el rol puede ver.
+// ---------------------------------------------------------
+const AVISOS_SQL = {
+    soporte: `SELECT COUNT(*)::int AS n, MAX(m.fecha) AS ultimo FROM tickets t
+               JOIN LATERAL (SELECT autor, fecha FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) m ON TRUE
+               WHERE t.estado IN ('abierto','en_proceso') AND m.autor = 'cliente'`,
+    pedidos: `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos
+               WHERE estado IN ('confirmado','procesando') OR (estado = 'pendiente' AND pago_reportado AND pago_estado <> 'pagado')`,
+    pagos: `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos
+             WHERE estado = 'pendiente' AND pago_reportado AND pago_estado <> 'pagado'`,
+    'ordenes-erp': `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos WHERE estado IN ('confirmado','procesando')`,
+    garantias: `SELECT COUNT(*)::int AS n, MAX(reclamo_fecha) AS ultimo FROM garantias WHERE estado = 'activa' AND reclamo_fecha IS NOT NULL`,
+    devoluciones: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM devoluciones WHERE estado = 'solicitada'`,
+    evaluaciones: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM resenas WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '7 days'`,
+    clientes: `SELECT COUNT(*)::int AS n, MAX(fecha_registro) AS ultimo FROM clientes WHERE fecha_registro > CURRENT_TIMESTAMP - INTERVAL '7 days'`,
+    monedero: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM movimientos_monedero WHERE tipo = 'recarga' AND estado = 'pendiente'`,
+    movimientos: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM movimientos_inventario WHERE estado = 'pendiente'`,
+    inventario: `SELECT COUNT(*)::int AS n, NULL::timestamp AS ultimo FROM productos WHERE activo AND stock <= stock_minimo`,
+    'ordenes-compra': `SELECT COUNT(*)::int AS n, MAX(fecha_creacion) AS ultimo FROM ordenes_compra WHERE estado = 'pendiente'`,
+    seguridad: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM eventos_seguridad WHERE severidad = 'alta' AND fecha > CURRENT_TIMESTAMP - INTERVAL '1 day'`,
+};
+app.get('/api/admin/avisos', asyncRoute(async (req, res) => {
+    const claves = Object.keys(AVISOS_SQL).filter((k) => puedeVer(req.usuario.rol, k));
+    const filas = await Promise.all(claves.map((k) => pool.query(AVISOS_SQL[k]).then((r) => r.rows[0]).catch(() => null)));
+    const avisos = {};
+    claves.forEach((k, i) => { if (filas[i]) avisos[k] = { n: Number(filas[i].n) || 0, ultimo: filas[i].ultimo }; });
+    res.set('Cache-Control', 'no-store');
+    res.json(avisos);
+}));
+
 app.get('/api/admin/mi-2fa', cfg2faUsuario.estado);
 app.post('/api/admin/mi-2fa/app', limiteAuth, cfg2faUsuario.appIniciar);
 app.post('/api/admin/mi-2fa/app/confirmar', limiteAuth, cfg2faUsuario.appConfirmar);
