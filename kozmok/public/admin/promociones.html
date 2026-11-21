@@ -39,7 +39,7 @@
 </div>
 
 <div class="modal-overlay" id="modal-promo">
-    <div class="modal" style="max-width:560px" id="modal-promo-body"></div>
+    <div class="modal modal-promo-x" id="modal-promo-body"></div>
 </div>
 
 <script src="/js/theme.js"></script>
@@ -65,8 +65,10 @@ const SITUACION = {
 };
 
 const valorTxt = (p) => p.tipo_descuento === 'porcentaje' ? `${Number(p.valor)}%` : `${formatoMoneda(p.valor)} por pieza`;
-const alcanceTxt = (p) => p.alcance === 'todos' ? 'Todo el catálogo'
-    : p.alcance === 'categoria' ? `Categoría: ${p.categoria_nombre || '—'}` : `Producto: ${p.producto_nombre || '—'}`;
+const alcanceTxt = (p) => {
+    const d = p.alcance === 'todos' ? 'Todo el catálogo' : escHTML((p.donde || '').replace(/^en /, '').replace(/^./, (c) => c.toUpperCase()));
+    return `${d}<div style="color:var(--text-muted);font-size:.76rem">${p.productos ?? 0} producto${p.productos === 1 ? '' : 's'} activo${p.productos === 1 ? '' : 's'}</div>`;
+};
 const pill = (k) => { const [t, c] = SITUACION[k] || [k, 'var(--text-muted)']; return `<span class="tag" style="color:${c};border-color:${c}">${t}</span>`; };
 
 async function cargar() {
@@ -104,48 +106,74 @@ function pintar() {
 
 const fechaInput = (f) => { if (!f) return ''; const d = new Date(f); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
+// ---- Alcance: mismo criterio que el servidor ----
+const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const palabras = (t) => String(t || '').split(',').map(sinAcentos).filter(Boolean);
+let AL = { modo: 'todos', cat: '', marca: '', texto: '', sel: new Set(), q: '', fcat: '', fmarca: '', soloSel: false };
+
+function coincide(x) {
+    if (AL.modo === 'todos') return true;
+    if (AL.modo === 'seleccion') return AL.sel.has(x.id);
+    if (AL.cat && x.categoria_id !== Number(AL.cat)) return false;
+    if (AL.marca && sinAcentos(x.marca) !== sinAcentos(AL.marca)) return false;
+    const pal = palabras(AL.texto);
+    return !pal.length || pal.some((w) => sinAcentos(x.nombre).includes(w));
+}
+// Tipo de producto = primera palabra del nombre (Mouse, Teclado, Audífonos…)
+const tipoDe = (x) => (x.nombre || '').split(/\s+/)[0];
+const conteo = (arr, f) => { const m = new Map(); arr.forEach((x) => { const k = f(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); };
+
 async function abrirPromo(id) {
     if (!CATEGORIAS.length) CATEGORIAS = await api('/categorias');
     if (!PRODUCTOS.length) PRODUCTOS = (await api('/admin/productos').catch(() => api('/productos'))).filter((p) => p.activo !== false);
     const p = id ? PROMOS.find((x) => x.id === id) : { tipo_descuento: 'porcentaje', alcance: 'todos', estado: 'activa', mostrar_banner: true,
         fecha_inicio: new Date(), fecha_fin: new Date(Date.now() + 14 * 86400000) };
     const yaEmpezo = !!id && new Date(p.fecha_inicio) <= new Date();
+    // Las de antes (una categoría / un producto) se abren con el formato nuevo.
+    AL = { modo: 'todos', cat: '', marca: '', texto: '', sel: new Set(), q: '', fcat: '', fmarca: '', soloSel: false };
+    if (p.alcance === 'categoria' || p.alcance === 'filtro') Object.assign(AL, { modo: 'filtro', cat: p.categoria_id ? String(p.categoria_id) : '', marca: p.marca || '', texto: p.texto || '' });
+    if (p.alcance === 'producto' || p.alcance === 'seleccion') Object.assign(AL, { modo: 'seleccion', sel: new Set((p.productos_ids || [p.producto_id]).filter(Boolean).map(Number)), soloSel: true });
+    const v = (t) => escHTML(t || '');
     document.getElementById('modal-promo-body').innerHTML = `
         <button class="modal-close" onclick="cerrarModal()">${icon('x', 18)}</button>
         <h3>${id ? 'Editar promoción' : 'Nueva promoción'}</h3>
-        <div class="field"><label>Nombre</label><input id="pr-nombre" value="${(p.nombre || '').replace(/"/g, '&quot;')}" placeholder="Ej. Semana de laptops" /></div>
-        <div class="field"><label>Descripción (se ve en el banner)</label><input id="pr-desc" value="${(p.descripcion || '').replace(/"/g, '&quot;')}" /></div>
-        <div class="field-row">
-            <div class="field"><label>Tipo de descuento</label>
-                <select id="pr-tipo" onchange="vistaPrevia()">
-                    <option value="porcentaje" ${p.tipo_descuento === 'porcentaje' ? 'selected' : ''}>Porcentaje (%)</option>
-                    <option value="monto" ${p.tipo_descuento === 'monto' ? 'selected' : ''}>Monto fijo por pieza ($)</option>
-                </select></div>
-            <div class="field"><label>Valor</label><input id="pr-valor" type="number" min="0.01" step="0.01" value="${p.valor ?? ''}" oninput="vistaPrevia()" /></div>
-        </div>
-        <div class="field"><label>Productos aplicables</label>
-            <select id="pr-alcance" onchange="cambioAlcance()">
-                <option value="todos" ${p.alcance === 'todos' ? 'selected' : ''}>Todo el catálogo</option>
-                <option value="categoria" ${p.alcance === 'categoria' ? 'selected' : ''}>Una categoría</option>
-                <option value="producto" ${p.alcance === 'producto' ? 'selected' : ''}>Un producto</option>
-            </select></div>
-        <div class="field" id="box-cat"><label>Categoría</label>
-            <select id="pr-cat" onchange="vistaPrevia()">${CATEGORIAS.map((c) => `<option value="${c.id}" ${Number(p.categoria_id) === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('')}</select></div>
-        <div class="field" id="box-prod"><label>Producto</label>
-            <select id="pr-prod" onchange="vistaPrevia()">${PRODUCTOS.map((x) => `<option value="${x.id}" ${Number(p.producto_id) === x.id ? 'selected' : ''}>${x.nombre} · ${formatoMoneda(x.precio)}</option>`).join('')}</select></div>
-        <div class="field-row">
-            <div class="field"><label>Inicia</label><input id="pr-ini" type="date" value="${fechaInput(p.fecha_inicio)}" min="${HOY}" ${yaEmpezo ? 'disabled' : ''} onchange="ajustarFin()" /></div>
-            <div class="field"><label>Termina (incluido)</label><input id="pr-fin" type="date" value="${fechaInput(p.fecha_fin)}" min="${fechaInput(p.fecha_inicio) > HOY ? fechaInput(p.fecha_inicio) : HOY}" /></div>
-        </div>
-        ${yaEmpezo ? `<p style="margin:-6px 0 12px;font-size:.78rem;color:var(--text-muted)">${icon('lock', 12)} Ya empezó el ${formatoFecha(p.fecha_inicio)}: su inicio no se cambia. Puedes ajustar la fecha de término.</p>` : ''}
-        <div class="field-row">
-            <div class="field"><label><input type="checkbox" id="pr-activa" style="width:auto;display:inline-block" ${p.estado !== 'inactiva' ? 'checked' : ''}/> Activa</label></div>
-            <div class="field"><label><input type="checkbox" id="pr-banner" style="width:auto;display:inline-block" ${p.mostrar_banner ? 'checked' : ''}/> Mostrar en el banner</label></div>
-        </div>
-        <div class="pago-box" id="pr-preview" style="font-size:.85rem"></div>
-        <button class="btn btn-primary" style="width:100%;margin-top:6px" onclick="guardar(${id || ''})">${id ? 'Guardar cambios' : 'Crear promoción'}</button>`;
+        <div class="px-grid">
+          <div class="px-datos">
+            <div class="field"><label>Nombre</label><input id="pr-nombre" value="${v(p.nombre)}" placeholder="Ej. Semana del mouse" /></div>
+            <div class="field"><label>Descripción (se ve en el banner)</label><input id="pr-desc" value="${v(p.descripcion)}" placeholder="Ej. 15% en mouse Logitech" /></div>
+            <div class="field-row">
+                <div class="field"><label>Tipo de descuento</label>
+                    <select id="pr-tipo" onchange="vistaPrevia()">
+                        <option value="porcentaje" ${p.tipo_descuento === 'porcentaje' ? 'selected' : ''}>Porcentaje (%)</option>
+                        <option value="monto" ${p.tipo_descuento === 'monto' ? 'selected' : ''}>Monto fijo por pieza ($)</option>
+                    </select></div>
+                <div class="field"><label>Valor</label><input id="pr-valor" type="number" min="1" step="1" value="${p.valor ?? ''}" oninput="vistaPrevia()" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field"><label>Inicia</label><input id="pr-ini" type="date" value="${fechaInput(p.fecha_inicio)}" min="${HOY}" ${yaEmpezo ? 'disabled' : ''} onchange="ajustarFin()" /></div>
+                <div class="field"><label>Termina (incluido)</label><input id="pr-fin" type="date" value="${fechaInput(p.fecha_fin)}" min="${fechaInput(p.fecha_inicio) > HOY ? fechaInput(p.fecha_inicio) : HOY}" /></div>
+            </div>
+            ${yaEmpezo ? `<p style="margin:-6px 0 12px;font-size:.78rem;color:var(--text-muted)">${icon('lock', 12)} Ya empezó el ${formatoFecha(p.fecha_inicio)}: su inicio no se cambia. Puedes ajustar la fecha de término.</p>` : ''}
+            <div class="field-row">
+                <div class="field"><label><input type="checkbox" id="pr-activa" style="width:auto;display:inline-block" ${p.estado !== 'inactiva' ? 'checked' : ''}/> Activa</label></div>
+                <div class="field"><label><input type="checkbox" id="pr-banner" style="width:auto;display:inline-block" ${p.mostrar_banner ? 'checked' : ''}/> Mostrar en el banner</label></div>
+            </div>
+            <div class="pago-box" id="pr-preview" style="font-size:.85rem"></div>
+            <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="guardar(${id || ''})">${id ? 'Guardar cambios' : 'Crear promoción'}</button>
+          </div>
+          <div class="px-alcance">
+            <label class="px-tit">¿A qué productos aplica?</label>
+            <div class="seg px-seg" role="radiogroup">
+                <label class="seg-op"><input type="radio" name="px-modo" value="todos" ${AL.modo === 'todos' ? 'checked' : ''} />Todo el catálogo</label>
+                <label class="seg-op"><input type="radio" name="px-modo" value="filtro" ${AL.modo === 'filtro' ? 'checked' : ''} />Categoría, marca o tipo</label>
+                <label class="seg-op"><input type="radio" name="px-modo" value="seleccion" ${AL.modo === 'seleccion' ? 'checked' : ''} />Elegir productos</label>
+            </div>
+            <div id="px-cuerpo"></div>
+          </div>
+        </div>`;
+    document.querySelectorAll('[name="px-modo"]').forEach((r) => r.onchange = () => { AL.modo = r.value; pintarAlcance(); });
     document.getElementById('modal-promo').classList.add('open');
-    cambioAlcance();
+    pintarAlcance();
 }
 function cerrarModal() { document.getElementById('modal-promo').classList.remove('open'); }
 const HOY = fechaInput(new Date());
@@ -158,24 +186,106 @@ function ajustarFin() {
     if (fin.value && fin.value < minimo) fin.value = minimo;
 }
 
-function cambioAlcance() {
-    const a = document.getElementById('pr-alcance').value;
-    document.getElementById('box-cat').hidden = a !== 'categoria';
-    document.getElementById('box-prod').hidden = a !== 'producto';
-    vistaPrevia();
+const catNombre = (id) => (CATEGORIAS.find((c) => c.id === Number(id)) || {}).nombre || '';
+function precioCon(x) {
+    const tipo = document.getElementById('pr-tipo').value, valor = Number(document.getElementById('pr-valor').value) || 0;
+    const d = Math.min(Number(x.precio), tipo === 'porcentaje' ? Number(x.precio) * valor / 100 : valor);
+    return valor ? Number(x.precio) - d : null;
+}
+function filaProd(x, check) {
+    const nuevo = coincide(x) ? precioCon(x) : null;
+    return `<label class="px-prod ${check && AL.sel.has(x.id) ? 'on' : ''}">
+        ${check ? `<input type="checkbox" ${AL.sel.has(x.id) ? 'checked' : ''} onchange="alternarSel(${x.id}, this.checked)" />` : ''}
+        <span class="px-pn"><strong>${escHTML(x.nombre)}</strong><em>${escHTML(x.marca || '—')} · ${escHTML(catNombre(x.categoria_id))}</em></span>
+        <span class="px-pp">${nuevo !== null ? `<s>${formatoMoneda(x.precio)}</s><b>${formatoMoneda(nuevo)}</b>` : formatoMoneda(x.precio)}</span>
+    </label>`;
 }
 
-// Cuántos productos toca y cómo queda un precio de ejemplo
+// Panel derecho según el modo
+function pintarAlcance() {
+    const el = document.getElementById('px-cuerpo');
+    if (AL.modo === 'todos') {
+        el.innerHTML = `<p class="px-ayuda">Todos los productos activos de la tienda (${PRODUCTOS.length}).</p><div class="px-lista" id="px-lista"></div>`;
+    } else if (AL.modo === 'filtro') {
+        const base = PRODUCTOS.filter((x) => !AL.cat || x.categoria_id === Number(AL.cat));
+        const marcas = conteo(base, (x) => x.marca);
+        const tipos = conteo(base.filter((x) => !AL.marca || sinAcentos(x.marca) === sinAcentos(AL.marca)), tipoDe).filter(([, n]) => n > 1 || base.length < 15).slice(0, 10);
+        const pal = palabras(AL.texto);
+        el.innerHTML = `<p class="px-ayuda">Combina lo que quieras; vacío = cualquiera. Ej.: Periféricos + Logitech + "mouse".</p>
+            <div class="field-row">
+                <div class="field"><label>Categoría</label><select id="px-cat"><option value="">Cualquiera</option>${CATEGORIAS.map((c) => `<option value="${c.id}" ${String(c.id) === AL.cat ? 'selected' : ''}>${escHTML(c.nombre)}</option>`).join('')}</select></div>
+                <div class="field"><label>Marca</label><select id="px-marca"><option value="">Cualquiera</option>${marcas.map(([m, n]) => `<option value="${escHTML(m)}" ${sinAcentos(m) === sinAcentos(AL.marca) ? 'selected' : ''}>${escHTML(m)} (${n})</option>`).join('')}
+                    ${AL.marca && !marcas.some(([m]) => sinAcentos(m) === sinAcentos(AL.marca)) ? `<option selected value="${escHTML(AL.marca)}">${escHTML(AL.marca)} (0)</option>` : ''}</select></div>
+            </div>
+            <div class="field"><label>Palabras en el nombre <span style="font-weight:400;color:var(--text-muted)">(separa con coma: mouse, teclado)</span></label>
+                <input id="px-texto" value="${escHTML(AL.texto)}" placeholder="Ej. mouse" /></div>
+            ${tipos.length ? `<div class="px-chips">${tipos.map(([t, n]) => `<button type="button" class="px-tipo ${pal.includes(sinAcentos(t)) ? 'on' : ''}" onclick="alternarTipo('${escHTML(t).replace(/'/g, '')}')">${escHTML(t)} <small>${n}</small></button>`).join('')}</div>` : ''}
+            <div class="px-lista" id="px-lista"></div>`;
+        document.getElementById('px-cat').onchange = (e) => { AL.cat = e.target.value; pintarAlcance(); };
+        document.getElementById('px-marca').onchange = (e) => { AL.marca = e.target.value; pintarAlcance(); };
+        const t = document.getElementById('px-texto');
+        t.oninput = () => { AL.texto = t.value; pintarLista(); };
+        t.onchange = () => pintarAlcance();
+    } else {
+        const marcas = conteo(PRODUCTOS.filter((x) => !AL.fcat || x.categoria_id === Number(AL.fcat)), (x) => x.marca);
+        el.innerHTML = `<p class="px-ayuda">Marca uno por uno los artículos que entran, de cualquier categoría o marca.</p>
+            <div class="px-busca">
+                <input type="search" id="px-q" placeholder="Buscar producto…" value="${escHTML(AL.q)}" />
+                <select id="px-fcat"><option value="">Categoría: todas</option>${CATEGORIAS.map((c) => `<option value="${c.id}" ${String(c.id) === AL.fcat ? 'selected' : ''}>${escHTML(c.nombre)}</option>`).join('')}</select>
+                <select id="px-fmarca"><option value="">Todas las marcas</option>${marcas.map(([m]) => `<option ${m === AL.fmarca ? 'selected' : ''}>${escHTML(m)}</option>`).join('')}</select>
+            </div>
+            <div class="px-barra">
+                <span id="px-nsel"></span>
+                <span style="display:flex;gap:6px">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selVisibles(true)">Marcar visibles</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selVisibles(false)">Quitar visibles</button>
+                    <label class="px-solo"><input type="checkbox" id="px-solo" ${AL.soloSel ? 'checked' : ''} /> Solo elegidos</label>
+                </span>
+            </div>
+            <div class="px-lista" id="px-lista"></div>`;
+        const q = document.getElementById('px-q'); q.oninput = () => { AL.q = q.value; pintarLista(); };
+        document.getElementById('px-fcat').onchange = (e) => { AL.fcat = e.target.value; AL.fmarca = ''; pintarAlcance(); };
+        document.getElementById('px-fmarca').onchange = (e) => { AL.fmarca = e.target.value; pintarLista(); };
+        document.getElementById('px-solo').onchange = (e) => { AL.soloSel = e.target.checked; pintarLista(); };
+    }
+    pintarLista();
+}
+function visiblesSel() {
+    const q = sinAcentos(AL.q);
+    return PRODUCTOS.filter((x) => (!AL.fcat || x.categoria_id === Number(AL.fcat)) && (!AL.fmarca || x.marca === AL.fmarca)
+        && (!q || sinAcentos(`${x.nombre} ${x.marca}`).includes(q)) && (!AL.soloSel || AL.sel.has(x.id)));
+}
+function pintarLista() {
+    const box = document.getElementById('px-lista'); if (!box) return;
+    if (AL.modo === 'seleccion') {
+        const vis = visiblesSel();
+        box.innerHTML = vis.map((x) => filaProd(x, true)).join('') || `<p class="px-vacio">${AL.soloSel ? 'Aún no eliges productos: quita "Solo elegidos" para ver el catálogo.' : 'Ningún producto con esa búsqueda.'}</p>`;
+        document.getElementById('px-nsel').innerHTML = `<strong>${AL.sel.size}</strong> elegido${AL.sel.size === 1 ? '' : 's'}`;
+    } else {
+        const ap = PRODUCTOS.filter(coincide);
+        box.innerHTML = `<div class="px-cuenta">${ap.length ? `Entran <strong>${ap.length}</strong> producto${ap.length === 1 ? '' : 's'}` : 'Ningún producto coincide: ajusta el filtro'}</div>`
+            + ap.slice(0, 60).map((x) => filaProd(x, false)).join('') + (ap.length > 60 ? `<p class="px-vacio">… y ${ap.length - 60} más.</p>` : '');
+    }
+    vistaPrevia();
+}
+function alternarSel(id, on) { on ? AL.sel.add(id) : AL.sel.delete(id); pintarLista(); }
+function selVisibles(on) { visiblesSel().forEach((x) => on ? AL.sel.add(x.id) : AL.sel.delete(x.id)); pintarLista(); }
+function alternarTipo(t) {
+    const pal = palabras(AL.texto), k = sinAcentos(t);
+    const nuevas = pal.includes(k) ? pal.filter((w) => w !== k) : [...pal, k];
+    AL.texto = nuevas.join(', ');
+    pintarAlcance();
+}
+
+// Resumen: cuántos productos toca y cómo queda un precio de ejemplo
 function vistaPrevia() {
-    const a = document.getElementById('pr-alcance').value;
-    const tipo = document.getElementById('pr-tipo').value;
-    const valor = Number(document.getElementById('pr-valor').value) || 0;
-    const aplica = PRODUCTOS.filter((x) => a === 'todos' || (a === 'categoria' && x.categoria_id === Number(document.getElementById('pr-cat').value)) || (a === 'producto' && x.id === Number(document.getElementById('pr-prod').value)));
+    const box = document.getElementById('pr-preview'); if (!box) return;
+    const aplica = PRODUCTOS.filter(coincide);
     const ej = aplica[0];
-    const box = document.getElementById('pr-preview');
-    if (!ej || !valor) { box.innerHTML = `${icon('info', 14)} Aplica a <strong>${aplica.length}</strong> producto${aplica.length === 1 ? '' : 's'}.`; return; }
-    const d = Math.min(Number(ej.precio), tipo === 'porcentaje' ? Number(ej.precio) * valor / 100 : valor);
-    box.innerHTML = `${icon('info', 14)} Aplica a <strong>${aplica.length}</strong> producto${aplica.length === 1 ? '' : 's'}. Ejemplo: ${ej.nombre} pasa de ${formatoMoneda(ej.precio)} a <strong style="color:var(--success)">${formatoMoneda(Number(ej.precio) - d)}</strong>.`;
+    const n = `Aplica a <strong>${aplica.length}</strong> producto${aplica.length === 1 ? '' : 's'}`;
+    const nuevo = ej ? precioCon(ej) : null;
+    box.innerHTML = nuevo === null ? `${icon('info', 14)} ${n}.`
+        : `${icon('info', 14)} ${n}. Ejemplo: ${escHTML(ej.nombre)} pasa de ${formatoMoneda(ej.precio)} a <strong style="color:var(--success)">${formatoMoneda(nuevo)}</strong>.`;
 }
 
 async function guardar(id) {
@@ -183,14 +293,16 @@ async function guardar(id) {
     const ini = iniEl.value, fin = document.getElementById('pr-fin').value;
     if (!iniEl.disabled && ini && ini < HOY) { toast('La fecha de inicio no puede ser anterior a hoy', 'warn'); return; }
     if (fin && fin < HOY) { toast('La fecha de término no puede ser anterior a hoy', 'warn'); return; }
+    if (AL.modo === 'seleccion' && !AL.sel.size) { toast('Elige al menos un producto', 'warn'); return; }
+    if (AL.modo === 'filtro' && !PRODUCTOS.some(coincide)) { toast('Ningún producto coincide con el filtro', 'warn'); return; }
     const body = {
         nombre: document.getElementById('pr-nombre').value.trim(),
         descripcion: document.getElementById('pr-desc').value.trim(),
         tipo_descuento: document.getElementById('pr-tipo').value,
         valor: Number(document.getElementById('pr-valor').value),
-        alcance: document.getElementById('pr-alcance').value,
-        categoria_id: Number(document.getElementById('pr-cat').value),
-        producto_id: Number(document.getElementById('pr-prod').value),
+        alcance: AL.modo,
+        ...(AL.modo === 'filtro' ? { categoria_id: AL.cat ? Number(AL.cat) : null, marca: AL.marca || null, texto: AL.texto || null } : {}),
+        ...(AL.modo === 'seleccion' ? { productos_ids: [...AL.sel] } : {}),
         ...(iniEl.disabled ? {} : { fecha_inicio: ini ? ini + 'T00:00:00' : '' }),
         fecha_fin: fin ? fin + 'T23:59:59' : '',
         estado: document.getElementById('pr-activa').checked ? 'activa' : 'inactiva',

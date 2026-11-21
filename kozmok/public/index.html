@@ -207,7 +207,7 @@ async function cargarCategorias() {
 // a "modo catálogo": se ve solo la lista con sus filtros.
 function modoResultados() {
     const q = new URLSearchParams(location.search);
-    const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max') || q.get('promocion') || q.get('orden'));
+    const enCatalogo = !!(q.get('ver') || q.get('busqueda') || q.get('categoria') || q.get('uso') || q.get('precio_max') || q.get('promocion') || q.get('promo') || q.get('orden'));
     document.getElementById('catalogo').hidden = !enCatalogo;
     // hero + explorar: solo en la portada
     ['hero', 'explorar', 'promos'].forEach((id) => document.getElementById(id).hidden = enCatalogo);
@@ -249,15 +249,16 @@ async function renderBannerPromos() {
     try { promos = (await api('/promociones')).filter((p) => p.mostrar_banner && p.productos > 0); } catch { return; }
     if (!promos.length) return;
     const valor = (p) => p.tipo_descuento === 'porcentaje' ? `${Number(p.valor)}%` : formatoMoneda(p.valor);
-    const destino = (p) => p.alcance === 'producto' ? `/index.html?ver=todo#producto-${p.producto_id}`
-        : p.alcance === 'categoria' ? `/index.html?promocion=1&categoria=${encodeURIComponent(p.categoria_nombre)}` : '/index.html?promocion=1';
+    // Un solo producto: su ficha. Si no, el catálogo con exactamente los productos de esa promoción.
+    const destino = (p) => p.productos === 1 && p.producto_id ? `/index.html?ver=todo#producto-${p.producto_id}`
+        : p.alcance === 'todos' ? '/index.html?promocion=1' : `/index.html?promo=${p.id}`;
     const dias = (f) => Math.max(0, Math.ceil((new Date(f) - Date.now()) / 86400000));
     const tarjeta = (p, i) => `
         <a class="pb-item pb-${i % 3}" href="${destino(p)}">
             <span class="pb-valor">-${valor(p)}</span>
             <span class="pb-txt">
                 <strong>${escHTML(p.nombre)}</strong>
-                <span>${escHTML(p.descripcion || (p.alcance === 'categoria' ? 'En ' + p.categoria_nombre : p.alcance === 'producto' ? p.producto_nombre : 'En todo el catálogo'))}</span>
+                <span>${escHTML(p.descripcion || (p.alcance === 'todos' ? 'En todo el catálogo' : (p.donde || '').replace(/^en /, 'En ')))}</span>
                 <em>${dias(p.fecha_fin) <= 1 ? 'Termina hoy' : `Quedan ${dias(p.fecha_fin)} días`}</em>
             </span>
             <span class="pb-cta">Ver ${icon('arrow', 14)}</span>
@@ -462,7 +463,14 @@ function ordenar(lista) {
     return l;
 }
 
+// Promoción concreta elegida desde el banner (?promo=ID)
+let PROMO_SEL = null;
+async function nombrePromoSel() {
+    if (!PROMO_SEL || PROMO_SEL.nombre !== 'cargando…') return;
+    try { const p = (await api('/promociones')).find((x) => x.id === PROMO_SEL.id); PROMO_SEL.nombre = p ? p.nombre : 'ya terminó'; } catch { PROMO_SEL.nombre = 'promoción'; }
+}
 async function cargarProductos() {
+    await nombrePromoSel();
     const params = new URLSearchParams();
     const busqueda = BUSQUEDA.trim();
     const categoria = document.getElementById('f-categoria').value;
@@ -476,6 +484,7 @@ async function cargarProductos() {
     if (marca) params.set('marca', marca);
     const soloPromo = document.getElementById('f-promocion').checked;
     if (soloPromo) params.set('promocion', '1');
+    if (PROMO_SEL) params.set('promo', PROMO_SEL.id);
     const orden = document.getElementById('f-orden').value;
     if (orden === 'novedades') params.set('orden', 'novedades');
     if (![...params].length) params.set('ver', 'todo');
@@ -521,6 +530,7 @@ function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo) {
     if (precio) chips.push(['f-precio', `Hasta ${formatoMoneda(precio)}`]);
     if (marca) chips.push(['f-marca', marca]);
     if (soloPromo) chips.push(['f-promocion', 'En promoción']);
+    if (PROMO_SEL) chips.push(['promo', `Promoción: ${escHTML(PROMO_SEL.nombre)}`]);
     cont.innerHTML = chips.length === 0 ? '' : (
         chips.map(([campo, txt]) =>
             `<span class="filter-chip">${txt} <button onclick="quitarFiltro('${campo}')" aria-label="Quitar">${icon('x', 12)}</button></span>`
@@ -529,7 +539,8 @@ function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo) {
     );
 }
 function quitarFiltro(campo) {
-    if (campo === 'busqueda') BUSQUEDA = '';
+    if (campo === 'promo') PROMO_SEL = null;
+    else if (campo === 'busqueda') BUSQUEDA = '';
     else if (campo === 'f-promocion') document.getElementById(campo).checked = false;
     else document.getElementById(campo).value = '';
     cargarProductos();
@@ -561,7 +572,7 @@ function actualizarEncabezado(categoria, busqueda, uso, soloPromo, novedades) {
 }
 
 function limpiarFiltros() {
-    BUSQUEDA = '';
+    BUSQUEDA = ''; PROMO_SEL = null;
     ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].forEach((id) => document.getElementById(id).value = '');
     document.getElementById('f-promocion').checked = false;
     cargarProductos();
@@ -810,6 +821,7 @@ function aplicarFiltrosDeURL() {
     if (q.get('uso')) document.getElementById('f-uso').value = q.get('uso');
     if (q.get('precio_max')) document.getElementById('f-precio').value = q.get('precio_max');
     if (q.get('promocion')) document.getElementById('f-promocion').checked = true;
+    if (/^\d+$/.test(q.get('promo') || '')) PROMO_SEL = { id: Number(q.get('promo')), nombre: 'cargando…' };
     if (q.get('orden') === 'novedades') document.getElementById('f-orden').value = 'novedades';
     if (q.get('marca')) document.getElementById('f-marca').innerHTML = `<option value="${q.get('marca').replace(/"/g, '')}" selected>${q.get('marca').replace(/</g, '')}</option>`;
 }

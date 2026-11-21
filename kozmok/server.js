@@ -994,7 +994,63 @@ async function leerPromocionesVigentes(db) {
          LEFT JOIN productos p ON p.id = pr.producto_id
          WHERE pr.estado = 'activa' AND pr.fecha_inicio <= CURRENT_TIMESTAMP AND pr.fecha_fin >= CURRENT_TIMESTAMP
          ORDER BY pr.fecha_fin ASC`);
-    return r.rows.map((x) => ({ ...x, valor: Number(x.valor) }));
+    return adjuntarAlcance(db, r.rows.map((x) => ({ ...x, valor: Number(x.valor) })));
+}
+
+// ---------------------------------------------------------
+// Alcance de una promoción:
+//   todos      todo el catálogo
+//   filtro     categoría, marca y/o palabras del nombre ("mouse, teclado"),
+//              combinables: p. ej. los mouse Logitech de Periféricos
+//   seleccion  productos elegidos uno por uno (tabla promocion_productos)
+//   categoria / producto: promociones anteriores, se siguen respetando
+// ---------------------------------------------------------
+const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const palabrasPromo = (t) => String(t || '').split(',').map(sinAcentos).filter(Boolean);
+function productoEnPromo(pr, p, sel) {
+    switch (pr.alcance) {
+        case 'todos': return true;
+        case 'categoria': return Number(pr.categoria_id) === Number(p.categoria_id);
+        case 'producto': return Number(pr.producto_id) === Number(p.id);
+        case 'filtro': {
+            if (pr.categoria_id && Number(pr.categoria_id) !== Number(p.categoria_id)) return false;
+            if (pr.marca && sinAcentos(pr.marca) !== sinAcentos(p.marca)) return false;
+            const pal = palabrasPromo(pr.texto);
+            return !pal.length || pal.some((w) => sinAcentos(p.nombre).includes(w));
+        }
+        case 'seleccion': return !!(sel && sel.includes(Number(p.id)));
+        default: return false;
+    }
+}
+// Agrega a cada promoción: ids (no sale en el JSON), productos (activos que
+// aplican), productos_ids (si es selección) y producto_nombre si es uno solo.
+async function adjuntarAlcance(db, promos) {
+    if (!promos.length) return promos;
+    const ids = promos.map((x) => Math.floor(Number(x.id))).filter((n) => n > 0);
+    const [prods, sel] = await Promise.all([
+        db.query('SELECT id, categoria_id, marca, nombre, activo FROM productos'),
+        db.query(`SELECT promocion_id, producto_id FROM promocion_productos WHERE promocion_id IN (${ids.join(',') || 0})`),
+    ]);
+    for (const pr of promos) {
+        const elegidos = pr.alcance === 'seleccion' ? sel.rows.filter((x) => x.promocion_id === pr.id).map((x) => Number(x.producto_id)) : null;
+        const aplican = prods.rows.filter((p) => productoEnPromo(pr, p, elegidos));
+        Object.defineProperty(pr, 'ids', { value: new Set(aplican.map((p) => Number(p.id))), enumerable: false });
+        pr.productos = aplican.filter((p) => p.activo).length;
+        if (elegidos) {
+            pr.productos_ids = elegidos;
+            if (elegidos.length === 1) { const u = prods.rows.find((p) => Number(p.id) === elegidos[0]); pr.producto_id = elegidos[0]; pr.producto_nombre = u ? u.nombre : pr.producto_nombre; }
+        }
+    }
+    return promos;
+}
+// "en Periféricos", "en mouse Logitech", "en 5 productos seleccionados"…
+function dondePromo(pr) {
+    if (pr.alcance === 'todos') return 'en toda la tienda';
+    if (pr.alcance === 'categoria') return `en ${pr.categoria_nombre}`;
+    if (pr.alcance === 'producto' || (pr.alcance === 'seleccion' && pr.productos_ids && pr.productos_ids.length === 1)) return `en ${pr.producto_nombre}`;
+    if (pr.alcance === 'seleccion') return `en ${(pr.productos_ids || []).length} productos seleccionados`;
+    const partes = [pr.texto ? String(pr.texto).split(',').map((w) => w.trim().toLowerCase()).filter(Boolean).join(' y ') : null, pr.marca ? (pr.texto ? pr.marca : `productos ${pr.marca}`) : null, pr.categoria_nombre ? `${pr.texto || pr.marca ? 'de' : ''} ${pr.categoria_nombre}`.trim() : null];
+    return `en ${partes.filter(Boolean).join(' ')}`;
 }
 
 // Descuento por pieza que da una promoción a un producto (nunca más que su precio).
@@ -1007,9 +1063,8 @@ function descuentoPromo(promo, precio) {
 function mejorPromocion(producto, promos) {
     let mejor = null;
     for (const pr of promos) {
-        const aplica = pr.alcance === 'todos'
-            || (pr.alcance === 'categoria' && Number(pr.categoria_id) === Number(producto.categoria_id))
-            || (pr.alcance === 'producto' && Number(pr.producto_id) === Number(producto.id ?? producto.producto_id));
+        const pid = Number(producto.id ?? producto.producto_id);
+        const aplica = pr.ids ? pr.ids.has(pid) : productoEnPromo(pr, { ...producto, id: pid });
         if (!aplica) continue;
         const d = descuentoPromo(pr, producto.precio);
         if (d > 0 && (!mejor || d > mejor.descuento_unitario)) mejor = { promo: pr, descuento_unitario: d };
@@ -1134,6 +1189,11 @@ async function leerCatalogo(q) {
         ORDER BY ${orden}`, values);
     let filas = decorarPrecios(result.rows, await promocionesVigentes());
     if (q.promocion === '1' || q.promocion === 'true') filas = filas.filter((p) => p.promocion);
+    // Productos de una promoción concreta (los que entran en ella, aunque otra descuente más).
+    if (/^\d+$/.test(String(q.promo || ''))) {
+        const pr = (await promocionesVigentes()).find((x) => x.id === Number(q.promo));
+        filas = pr ? filas.filter((p) => pr.ids.has(Number(p.id))) : [];
+    }
     return filas;
 }
 
@@ -1883,14 +1943,12 @@ async function avisarPromocionesNuevas() {
         // pero la promoción no se vuelve a anunciar.
         const marca = await pool.query('UPDATE promociones SET boletin_enviado = CURRENT_TIMESTAMP WHERE id = $1 AND boletin_enviado IS NULL RETURNING id', [pr.id]);
         if (!marca.rows[0] || !subs.rows.length) continue;
-        const aplica = prods.rows.filter((p) => pr.alcance === 'todos'
-            || (pr.alcance === 'categoria' && Number(p.categoria_id) === Number(pr.categoria_id))
-            || (pr.alcance === 'producto' && Number(p.id) === Number(pr.producto_id))).slice(0, 4)
+        const aplica = prods.rows.filter((p) => pr.ids.has(Number(p.id))).slice(0, 4)
             .map((p) => ({ id: p.id, nombre: p.nombre, antes: p.precio, ahora: redondear(Number(p.precio) - descuentoPromo(pr, p.precio)) }));
         const desc = pr.tipo_descuento === 'porcentaje' ? `${Number(pr.valor)}% de descuento` : `${precioTxt(pr.valor)} de descuento`;
-        const donde = pr.alcance === 'todos' ? 'en toda la tienda' : pr.alcance === 'categoria' ? `en ${pr.categoria_nombre}` : `en ${pr.producto_nombre}`;
+        const donde = dondePromo(pr);
         const hasta = new Date(pr.fecha_fin).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' });
-        const url = pr.alcance === 'producto' ? `${urlBase(null)}/index.html#producto-${pr.producto_id}` : `${urlBase(null)}/index.html?ver=todo`;
+        const url = pr.productos === 1 && pr.producto_id ? `${urlBase(null)}/index.html#producto-${pr.producto_id}` : `${urlBase(null)}/index.html?promo=${pr.id}`;
         for (const c of subs.rows) {
             await enviarCorreo(pool, {
                 para: c.correo, tipo: 'boletin', cliente_id: c.id,
@@ -5186,7 +5244,7 @@ app.post('/api/admin/productos/:id/eliminar-definitivo', limiteAuth, asyncRoute(
                 (SELECT COUNT(*) FROM devolucion_items WHERE producto_id = $1)::int AS devoluciones,
                 (SELECT COUNT(*) FROM resenas WHERE producto_id = $1 AND NOT oculta)::int AS resenas,
                 (SELECT COUNT(*) FROM garantias WHERE producto_id = $1)::int AS garantias,
-                (SELECT COUNT(*) FROM promociones WHERE producto_id = $1)::int AS promociones`, [previo.id])).rows[0];
+                ((SELECT COUNT(*) FROM promociones WHERE producto_id = $1) + (SELECT COUNT(*) FROM promocion_productos WHERE producto_id = $1))::int AS promociones`, [previo.id])).rows[0];
     const NOMBRES = { ventas: 'venta(s)', movimientos: 'movimiento(s) de inventario', ordenes: 'orden(es) de compra', devoluciones: 'devolución(es)', resenas: 'reseña(s)', garantias: 'garantía(s)', promociones: 'promoción(es)' };
     const tiene = Object.entries(historia).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${NOMBRES[k]}`);
     if (tiene.length) {
@@ -7458,14 +7516,22 @@ app.get('/api/admin/pagos', asyncRoute(async (req, res) => {
 // ---------------------------------------------------------
 function leerPromocion(b) {
     const tipo = b.tipo_descuento === 'monto' ? 'monto' : 'porcentaje';
-    const alcance = ['todos', 'categoria', 'producto'].includes(b.alcance) ? b.alcance : 'todos';
+    // Las de antes (categoría / un producto) se guardan con el formato nuevo.
+    let alcance = ['todos', 'filtro', 'seleccion', 'categoria', 'producto'].includes(b.alcance) ? b.alcance : 'todos';
+    let productosIds = Array.isArray(b.productos_ids) ? b.productos_ids : null;
+    if (alcance === 'categoria') alcance = 'filtro';
+    if (alcance === 'producto') { alcance = 'seleccion'; if (!productosIds && b.producto_id) productosIds = [b.producto_id]; }
+    const ids = [...new Set((productosIds || []).map((n) => Math.floor(Number(n))).filter((n) => n > 0))];
     const valor = Number(b.valor);
     const p = {
         nombre: String(b.nombre || '').trim().slice(0, 100),
         descripcion: b.descripcion ? String(b.descripcion).slice(0, 300) : null,
         tipo_descuento: tipo, valor, alcance,
-        categoria_id: alcance === 'categoria' ? Number(b.categoria_id) || null : null,
-        producto_id: alcance === 'producto' ? Number(b.producto_id) || null : null,
+        categoria_id: alcance === 'filtro' ? Number(b.categoria_id) || null : null,
+        marca: alcance === 'filtro' && b.marca ? String(b.marca).trim().slice(0, 80) || null : null,
+        texto: alcance === 'filtro' && b.texto ? String(b.texto).split(',').map((w) => w.trim()).filter(Boolean).join(', ').slice(0, 120) || null : null,
+        producto_id: null,
+        productos_ids: alcance === 'seleccion' ? ids : null,
         fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin,
         estado: b.estado === 'inactiva' ? 'inactiva' : 'activa',
         mostrar_banner: b.mostrar_banner !== false,
@@ -7473,8 +7539,9 @@ function leerPromocion(b) {
     if (!p.nombre) throw new Error('El nombre de la promoción es obligatorio');
     if (!(valor > 0)) throw new Error('El valor del descuento debe ser mayor a cero');
     if (tipo === 'porcentaje' && valor > 90) throw new Error('El porcentaje no puede pasar de 90%');
-    if (alcance === 'categoria' && !p.categoria_id) throw new Error('Elige la categoría de la promoción');
-    if (alcance === 'producto' && !p.producto_id) throw new Error('Elige el producto de la promoción');
+    if (alcance === 'filtro' && !p.categoria_id && !p.marca && !p.texto) throw new Error('Elige al menos una categoría, una marca o palabras del nombre');
+    if (alcance === 'seleccion' && !ids.length) throw new Error('Elige al menos un producto');
+    if (alcance === 'seleccion' && ids.length > 300) throw new Error('Máximo 300 productos por promoción');
     if (!p.fecha_inicio || !p.fecha_fin) throw new Error('Indica la vigencia (inicio y fin)');
     if (new Date(p.fecha_fin) <= new Date(p.fecha_inicio)) throw new Error('La fecha de fin debe ser posterior al inicio');
     return p;
@@ -7500,17 +7567,17 @@ const listarPromociones = asyncRoute(async (req, res) => {
     if (!todas) {
         // tienda: solo las vigentes, con cuántos productos aplican
         const promos = await promocionesVigentes();
-        const prods = await pool.query('SELECT id, categoria_id, precio FROM productos WHERE activo = true');
         return res.json(promos.map((pr) => ({
             id: pr.id, nombre: pr.nombre, descripcion: pr.descripcion, tipo_descuento: pr.tipo_descuento, valor: pr.valor,
             alcance: pr.alcance, categoria_id: pr.categoria_id, categoria_nombre: pr.categoria_nombre,
-            producto_id: pr.producto_id, producto_nombre: pr.producto_nombre,
+            producto_id: pr.producto_id, producto_nombre: pr.producto_nombre, marca: pr.marca, texto: pr.texto,
+            donde: dondePromo(pr),
             fecha_inicio: pr.fecha_inicio, fecha_fin: pr.fecha_fin, mostrar_banner: pr.mostrar_banner,
-            productos: prods.rows.filter((p) => pr.alcance === 'todos' || (pr.alcance === 'categoria' && p.categoria_id === pr.categoria_id) || (pr.alcance === 'producto' && p.id === pr.producto_id)).length,
+            productos: pr.productos,
         })));
     }
     const r = await pool.query(`${SELECT_PROMO} ORDER BY pr.fecha_fin DESC, pr.id DESC`);
-    res.json(r.rows);
+    res.json((await adjuntarAlcance(pool, r.rows)).map((pr) => ({ ...pr, donde: dondePromo(pr) })));
 });
 // Fechas de una promoción: el inicio no puede quedar antes de hoy (no se
 // "reescribe" el pasado: los pedidos de esos días se cobraron sin ella) y el
@@ -7523,13 +7590,40 @@ function revisarFechasPromo(p, actual = null) {
     if (new Date(p.fecha_fin) < inicioDeHoy()) throw new Error('La fecha de término no puede ser anterior a hoy');
     if (new Date(p.fecha_fin) <= new Date(p.fecha_inicio)) throw new Error('La fecha de fin debe ser posterior al inicio');
 }
+// La selección solo puede tener productos que existen; el filtro, al menos uno que entre.
+async function revisarProductosPromo(p, revisarFiltro = true) {
+    if (p.alcance === 'seleccion') {
+        const ok = (await pool.query(`SELECT id FROM productos WHERE id IN (${p.productos_ids.join(',')})`)).rows.map((x) => x.id);
+        p.productos_ids = p.productos_ids.filter((id) => ok.includes(id));
+        if (!p.productos_ids.length) throw new Error('Los productos elegidos ya no existen');
+    }
+    if (p.alcance === 'filtro' && p.marca) {
+        // La marca se guarda como está escrita en el catálogo ("Logitech", no "logitech").
+        const m = (await pool.query('SELECT DISTINCT marca FROM productos WHERE marca IS NOT NULL')).rows.find((x) => sinAcentos(x.marca) === sinAcentos(p.marca));
+        if (m) p.marca = m.marca;
+    }
+    if (p.alcance === 'filtro' && revisarFiltro) {
+        const [x] = await adjuntarAlcance(pool, [{ id: 0, ...p }]);
+        if (!x.productos) throw new Error('Ningún producto activo coincide con ese filtro: revisa la categoría, la marca o las palabras');
+    }
+}
+async function guardarSeleccionPromo(id, p) {
+    await pool.query('DELETE FROM promocion_productos WHERE promocion_id = $1', [id]);
+    if (p.alcance !== 'seleccion') return;
+    const vals = p.productos_ids.map((pid) => `(${Math.floor(Number(id))}, ${pid})`).join(',');
+    await pool.query(`INSERT INTO promocion_productos (promocion_id, producto_id) VALUES ${vals} ON CONFLICT DO NOTHING`);
+}
 const crearPromocion = asyncRoute(async (req, res) => {
     let p; try { p = leerPromocion(req.body); revisarFechasPromo(p); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
+    try { await revisarProductosPromo(p); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     const r = await pool.query(
-        `INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.usuario.id]);
+        `INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, marca, texto, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.marca, p.texto, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.usuario.id]);
+    await guardarSeleccionPromo(r.rows[0].id, p);
     const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [r.rows[0].id]);
+    await adjuntarAlcance(pool, full.rows);
+    full.rows[0].donde = dondePromo(full.rows[0]);
     avisarPronto();   // si ya empezó, el boletín sale en unos segundos
     res.status(201).json({ message: 'Promoción creada', promocion: full.rows[0] });
 });
@@ -7538,15 +7632,22 @@ const editarPromocion = asyncRoute(async (req, res) => {
     if (!cur.rows.length) return res.status(404).json({ message: 'Promoción no encontrada' });
     let p;
     try {
-        p = leerPromocion({ ...cur.rows[0], ...req.body });
+        const actual = { ...cur.rows[0] };
+        if (actual.alcance === 'seleccion' && req.body.productos_ids === undefined)
+            actual.productos_ids = (await pool.query('SELECT producto_id FROM promocion_productos WHERE promocion_id = $1', [req.params.id])).rows.map((x) => x.producto_id);
+        p = leerPromocion({ ...actual, ...req.body });
+        await revisarProductosPromo(p, ['alcance', 'categoria_id', 'marca', 'texto'].some((k) => req.body[k] !== undefined));
         // Solo se revisan las fechas si se cambian (activar/desactivar una vencida sigue funcionando).
         if (req.body.fecha_inicio !== undefined || req.body.fecha_fin !== undefined) revisarFechasPromo(p, cur.rows[0]);
     } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     await pool.query(
         `UPDATE promociones SET nombre=$1, descripcion=$2, tipo_descuento=$3, valor=$4, alcance=$5, categoria_id=$6, producto_id=$7,
-             fecha_inicio=$8, fecha_fin=$9, estado=$10, mostrar_banner=$11 WHERE id=$12`,
-        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.params.id]);
+             marca=$8, texto=$9, fecha_inicio=$10, fecha_fin=$11, estado=$12, mostrar_banner=$13 WHERE id=$14`,
+        [p.nombre, p.descripcion, p.tipo_descuento, p.valor, p.alcance, p.categoria_id, p.producto_id, p.marca, p.texto, p.fecha_inicio, p.fecha_fin, p.estado, p.mostrar_banner, req.params.id]);
+    await guardarSeleccionPromo(req.params.id, p);
     const full = await pool.query(`${SELECT_PROMO} WHERE pr.id = $1`, [req.params.id]);
+    await adjuntarAlcance(pool, full.rows);
+    full.rows[0].donde = dondePromo(full.rows[0]);
     avisarPronto();
     res.json({ message: 'Promoción actualizada', promocion: full.rows[0] });
 });
@@ -8529,6 +8630,17 @@ async function migrarEsquema() {
         OR (tipo = 'sesion_revocada' AND detalle ~ '\\((cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida|cuenta activada con contraseña nueva|inactividad)\\)$'))`);
     await pool.query(`UPDATE eventos_seguridad SET severidad = 'baja' WHERE severidad IN ('media','alta') AND (
         (tipo = 'cambio_password' AND detalle LIKE '%panel restablecida%') OR (tipo = 'segundo_factor' AND detalle LIKE 'Desactivó%'))`);
+    // Promociones más flexibles: filtro (categoría + marca + palabras) o selección de productos.
+    await pool.query(`ALTER TABLE promociones ADD COLUMN IF NOT EXISTS marca VARCHAR(80)`);
+    await pool.query(`ALTER TABLE promociones ADD COLUMN IF NOT EXISTS texto VARCHAR(120)`);
+    await pool.query(`ALTER TABLE promociones DROP CONSTRAINT IF EXISTS promociones_alcance_check`);
+    await pool.query(`ALTER TABLE promociones DROP CONSTRAINT IF EXISTS promociones_alcance`);
+    await pool.query(`ALTER TABLE promociones ADD CONSTRAINT promociones_alcance_check CHECK (alcance IN ('todos','filtro','seleccion','categoria','producto'))`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS promocion_productos (
+        promocion_id INTEGER NOT NULL REFERENCES promociones(id) ON DELETE CASCADE,
+        producto_id  INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+        PRIMARY KEY (promocion_id, producto_id))`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_promocion_productos_prod ON promocion_productos(producto_id)');
     // Reseñas: respuesta pública del equipo y moderación.
     await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS respuesta TEXT`);
     await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS respuesta_fecha TIMESTAMP`);

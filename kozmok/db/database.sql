@@ -286,7 +286,9 @@ CREATE TABLE impuestos (
 -- ---------------------------------------------------------
 -- PROMOCIONES (Etapa 4 · comercialización)
 --   tipo_descuento: porcentaje (% del precio) o monto ($ por pieza)
---   alcance: todos los productos, una categoría o un producto
+--   alcance: todos los productos; filtro (categoría, marca y/o palabras
+--   del nombre, combinables); o selección de productos uno por uno
+--   (promocion_productos). 'categoria' y 'producto' son del formato anterior.
 --   Solo aplica si está activa y dentro de su vigencia. Si a un
 --   producto le tocan varias, se usa la que más descuenta.
 -- ---------------------------------------------------------
@@ -296,9 +298,11 @@ CREATE TABLE promociones (
     descripcion     VARCHAR(300),
     tipo_descuento  VARCHAR(12) NOT NULL CHECK (tipo_descuento IN ('porcentaje','monto')),
     valor           NUMERIC(10,2) NOT NULL CHECK (valor > 0),
-    alcance         VARCHAR(10) NOT NULL DEFAULT 'todos' CHECK (alcance IN ('todos','categoria','producto')),
+    alcance         VARCHAR(10) NOT NULL DEFAULT 'todos' CHECK (alcance IN ('todos','filtro','seleccion','categoria','producto')),
     categoria_id    INTEGER REFERENCES categorias(id) ON DELETE CASCADE,
     producto_id     INTEGER REFERENCES productos(id) ON DELETE CASCADE,
+    marca           VARCHAR(80),     -- filtro: solo esta marca
+    texto           VARCHAR(120),    -- filtro: palabras del nombre separadas por coma ("mouse, teclado")
     fecha_inicio    TIMESTAMP NOT NULL,
     fecha_fin       TIMESTAMP NOT NULL,
     estado          VARCHAR(10) NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
@@ -309,12 +313,16 @@ CREATE TABLE promociones (
     usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
     fecha_creacion  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT promociones_vigencia CHECK (fecha_fin > fecha_inicio),
-    CONSTRAINT promociones_porcentaje CHECK (tipo_descuento <> 'porcentaje' OR valor <= 100),
-    CONSTRAINT promociones_alcance CHECK (
-        (alcance = 'todos'     AND categoria_id IS NULL AND producto_id IS NULL) OR
-        (alcance = 'categoria' AND categoria_id IS NOT NULL AND producto_id IS NULL) OR
-        (alcance = 'producto'  AND producto_id IS NOT NULL AND categoria_id IS NULL))
+    CONSTRAINT promociones_porcentaje CHECK (tipo_descuento <> 'porcentaje' OR valor <= 100)
 );
+
+-- Productos elegidos uno por uno para una promoción (alcance 'seleccion')
+CREATE TABLE promocion_productos (
+    promocion_id INTEGER NOT NULL REFERENCES promociones(id) ON DELETE CASCADE,
+    producto_id  INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+    PRIMARY KEY (promocion_id, producto_id)
+);
+CREATE INDEX idx_promocion_productos_prod ON promocion_productos(producto_id);
 CREATE INDEX idx_promociones_vigencia ON promociones(estado, fecha_inicio, fecha_fin);
 
 -- ---------------------------------------------------------
