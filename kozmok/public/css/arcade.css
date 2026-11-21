@@ -276,3 +276,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .empty-state .empty-mascota, .p404-mascota { animation: none; } }
 #chatbot-panel { border: 2px solid var(--arc-tinta); box-shadow: 6px 6px 0 var(--accent); }
 #chatbot-panel .chatbot-header strong { font-family: var(--font-arcade); font-style: italic; font-weight: 800; text-transform: uppercase; letter-spacing: .01em; }
+.pb-mas { border: 2px dashed var(--accent); border-radius: var(--radius); box-shadow: 5px 5px 0 var(--arc-sombra); }
+.pb-mas strong { font-family: var(--font-arcade); font-style: italic; }
+.pb-mas span { text-transform: uppercase; font-style: italic; letter-spacing: .02em; }
+.modal-promos h2 { font-family: var(--font-arcade); font-style: italic; text-transform: uppercase; }

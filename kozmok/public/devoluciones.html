@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Devoluciones · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="cuenta-shell">
+    <nav class="cuenta-nav" id="cuenta-nav"></nav>
+    <main class="cuenta-panel" id="cuenta-panel"><div class="empty-state">Cargando…</div></main>
+</div>
+
+<div id="footer-placeholder"></div>
+<div class="modal-overlay" id="modal-generico"><div class="modal" id="modal-generico-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script src="/js/cuenta.js"></script>
+<script>
+let CID = null, DATA = null;
+const PASOS = ['solicitada', 'aprobada', 'recibida', 'cerrada'];
+const PASO_TXT = { solicitada: 'Solicitada', aprobada: 'Envía el producto', recibida: 'En revisión', cerrada: 'Reembolso o cambio' };
+const ABIERTAS = ['solicitada', 'aprobada', 'recibida'];
+
+montarCuenta('devoluciones', async (panel, P) => {
+    CID = P.id;
+    DATA = await api(`/clientes/${CID}/devoluciones`);
+    pintar(panel);
+});
+
+function paso(d) {
+    if (['reembolsada', 'cambiada'].includes(d.estado)) return 3;
+    return PASOS.indexOf(d.estado);
+}
+function pintar(panel) {
+    const { devoluciones, elegibles, dias } = DATA;
+    const abiertas = devoluciones.filter((d) => ABIERTAS.includes(d.estado));
+    const cerradas = devoluciones.filter((d) => !ABIERTAS.includes(d.estado));
+    panel.innerHTML = `
+        <div class="cuenta-head"><h1>Devoluciones</h1>
+            <p>Tienes <strong>${dias} días</strong> desde que recibes tu pedido para devolverlo o pedir un cambio. Si el producto falla después, usa <a href="/garantias.html">Mis garantías</a>.</p></div>
+        ${abiertas.length ? `<h2 class="dv-sec">En curso</h2>${abiertas.map(tarjeta).join('')}` : ''}
+        <h2 class="dv-sec">¿Quieres devolver algo?</h2>
+        ${elegibles.length ? `<div class="dv-eleg">${elegibles.map((e) => `
+            <div class="dv-eleg-item">
+                <div><strong class="mono">${escHTML(e.numero_orden)}</strong>
+                    <span>${e.items.map((i) => escHTML(i.nombre)).join(', ')}</span>
+                    <small>Entregado el ${formatoFecha(e.fecha_entrega)} · puedes pedirla hasta el ${formatoFecha(e.limite)}</small></div>
+                ${e.abierta ? '<span class="tag">Ya tiene una en curso</span>'
+                    : `<a class="btn btn-primary btn-sm" href="/pedidos.html?devolver=${e.id}">${icon('undo', 14)} Solicitar</a>`}
+            </div>`).join('')}</div>`
+          : `<div class="empty-state">No tienes pedidos dentro del plazo de devolución.<br>Aparecen aquí durante ${dias} días después de recibirlos.</div>`}
+        ${cerradas.length ? `<details class="gar-otras"><summary>Historial (${cerradas.length})</summary>${cerradas.map(tarjeta).join('')}</details>` : ''}
+    `;
+}
+
+function tarjeta(d) {
+    const k = paso(d);
+    const malo = ['rechazada', 'cancelada'].includes(d.estado);
+    const fechas = [d.fecha, d.fecha_revision, d.fecha_recibida, d.fecha_cierre];
+    const via = { paypal: 'a tu PayPal o tarjeta', monedero: 'a tu monedero', transferencia: 'por transferencia' }[d.reembolso_via] || '';
+    return `
+    <div class="gar-card dv-card">
+        <div class="gar-top">
+            <div><div class="gar-prod mono">${escHTML(d.folio)}</div>
+                <div class="gar-sub">Pedido <a class="mono" href="/pedidos.html#p${d.pedido_id}">${escHTML(d.numero_orden)}</a> · ${escHTML(DATA.motivos[d.motivo] || d.motivo)}</div></div>
+            <span class="estado-pill dv-est-${d.estado}" style="text-transform:none">${escHTML(DATA.estados[d.estado] || d.estado)}</span>
+        </div>
+        ${malo ? `<div class="rec-aviso no">${icon('alert', 16)} ${d.estado === 'rechazada' ? 'No se aprobó esta devolución.' : 'Cancelaste esta solicitud.'}${d.nota_equipo ? ' ' + escHTML(d.nota_equipo) : ''}</div>`
+          : `<ol class="rec-pasos" style="grid-template-columns:repeat(4,1fr)">${PASOS.map((p, i) => `<li class="${i < k || (i === 3 && k === 3) ? 'hecho' : ''} ${i === k && k < 3 ? 'actual' : ''}">
+                <span>${i < k || (i === 3 && k === 3) ? icon('check', 13) : i + 1}</span>${PASO_TXT[p]}${fechas[i] ? `<small>${formatoFecha(fechas[i])}</small>` : ''}</li>`).join('')}</ol>`}
+        ${d.estado === 'aprobada' ? `<div class="dv-instr">${icon('package', 18)}<div><strong>Siguiente paso: envíanos el producto.</strong>
+            Empácalo con sus accesorios, escribe el folio <span class="mono">${escHTML(d.folio)}</span> en la caja y envíalo ${DATA.direccion ? `a <strong>${escHTML(DATA.direccion)}</strong>` : 'a la dirección que te mandamos por correo'}.</div></div>` : ''}
+        <div class="dv-items">${d.items.map((i) => `<span>${i.cantidad} × ${escHTML(i.nombre)}</span>`).join('')}</div>
+        <div class="gar-grid" style="margin-top:10px">
+            <div><span>Qué pediste</span><strong>${d.resolucion === 'cambio' ? 'Cambio por el mismo producto' : `Reembolso ${formatoMoneda(d.monto)}`}</strong></div>
+            ${d.resolucion !== 'cambio' ? `<div><span>Cómo se reembolsa</span><strong>${via}</strong></div>` : ''}
+            <div><span>Solicitada</span><strong>${formatoFecha(d.fecha)}</strong></div>
+            ${d.reembolso_ref ? `<div><span>Referencia</span><strong class="mono">${escHTML(d.reembolso_ref)}</strong></div>` : ''}
+        </div>
+        ${d.nota_equipo && !malo ? `<p style="margin:10px 0 0;font-size:.85rem"><strong>Nota del equipo:</strong> ${escHTML(d.nota_equipo)}</p>` : ''}
+        ${['solicitada', 'aprobada'].includes(d.estado) ? `<div class="gar-acts"><button class="btn btn-ghost btn-sm" onclick="cancelar(${d.id})">Cancelar solicitud</button></div>` : ''}
+    </div>`;
+}
+async function cancelar(id) {
+    if (!(await confirmar('¿Cancelar esta solicitud de devolución?', { okText: 'Cancelar solicitud' }))) return;
+    try {
+        const r = await api(`/devoluciones/${id}/cancelar`, { method: 'POST' });
+        toast(r.message || 'Solicitud cancelada', 'ok');
+        DATA = await api(`/clientes/${CID}/devoluciones`);
+        pintar(document.getElementById('cuenta-panel'));
+    } catch (e) { toast(e.message, 'error'); }
+}
+</script>
+</body>
+</html>

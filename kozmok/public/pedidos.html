@@ -137,6 +137,14 @@ montarCuenta('pedidos', async (panel, P) => {
     // Enlace directo a un pedido:  /pedidos.html#p123  abre su detalle
     const h = location.hash.match(/^#p(\d+)$/);
     if (h && document.getElementById('det-' + h[1])) detallePedido(Number(h[1]), true);
+    // Desde "Devoluciones" → "Solicitar": abre el pedido y el formulario.
+    const dv = Number(new URLSearchParams(location.search).get('devolver'));
+    if (dv && document.getElementById('det-' + dv)) {
+        await detallePedido(dv);
+        for (let i = 0; i < 40 && !DEVS[dv]; i++) await new Promise((ok) => setTimeout(ok, 100));
+        document.getElementById('det-' + dv).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (DEVS[dv] && !DEVS[dv].razon && !DEVS[dv].abierta) formDevolucion(dv);
+    }
 });
 
 async function detallePedido(id, irAResenas) {

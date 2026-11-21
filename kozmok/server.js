@@ -1208,13 +1208,13 @@ app.get('/api/productos/:id/garantias', asyncRoute(async (req, res) => {
 // Reseñas públicas de un producto (promedio + lista)
 app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
     const stats = await pool.query(
-        'SELECT ROUND(AVG(calificacion), 1) AS promedio, COUNT(*)::int AS total FROM resenas WHERE producto_id = $1',
+        'SELECT ROUND(AVG(calificacion), 1) AS promedio, COUNT(*)::int AS total FROM resenas WHERE producto_id = $1 AND NOT oculta',
         [req.params.id]
     );
     const lista = await pool.query(
-        `SELECT re.calificacion, re.comentario, re.fecha, c.nombre AS cliente_nombre
+        `SELECT re.calificacion, re.comentario, re.fecha, re.respuesta, re.respuesta_fecha, c.nombre AS cliente_nombre
          FROM resenas re JOIN clientes c ON re.cliente_id = c.id
-         WHERE re.producto_id = $1 ORDER BY re.fecha DESC LIMIT 30`,
+         WHERE re.producto_id = $1 AND NOT re.oculta ORDER BY re.fecha DESC LIMIT 30`,
         [req.params.id]
     );
     // Si viene la sesión de un cliente: su reseña (si tiene) y si puede
@@ -1224,7 +1224,7 @@ app.get('/api/productos/:id/resenas', asyncRoute(async (req, res) => {
     const cid = await clienteDeSesion(req);
     if (cid) {
         const [mia, compra] = await Promise.all([
-            pool.query('SELECT calificacion, comentario, fecha FROM resenas WHERE cliente_id = $1 AND producto_id = $2', [cid, req.params.id]),
+            pool.query('SELECT calificacion, comentario, fecha, respuesta, oculta FROM resenas WHERE cliente_id = $1 AND producto_id = $2', [cid, req.params.id]),
             clienteRecibioProducto(cid, req.params.id),
         ]);
         mi_resena = mia.rows[0] || null;
@@ -2717,8 +2717,8 @@ async function avisarDevolucion(dev, titulo, texto) {
     await enviarCorreo(pool, {
         para: c.correo, tipo: 'pedido', cliente_id: dev.cliente_id, pedido_id: dev.pedido_id,
         asunto: `${titulo} · ${dev.folio}`,
-        cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\n${texto}\n\nFolio de tu devolución: ${dev.folio}. Puedes ver cómo va en Mis pedidos.`,
-        boton: { texto: 'Ver mis pedidos', url: `${urlBase(null)}/pedidos.html` },
+        cuerpo: `Hola ${c.nombre.split(' ')[0]}:\n\n${texto}\n\nFolio de tu devolución: ${dev.folio}. Puedes ver cómo va en Mi cuenta > Devoluciones.`,
+        boton: { texto: 'Ver mi devolución', url: `${urlBase(null)}/devoluciones.html` },
     }).catch(() => {});
     avisarPronto();
 }
@@ -2734,6 +2734,32 @@ app.get('/api/pedidos/:id/devolucion', requireCliente, asyncRoute(async (req, re
          WHERE d.pedido_id = $1 GROUP BY d.id ORDER BY d.id DESC`, [p.id])).rows;
     res.json({ ...o, envio: Number(p.envio || 0), dias: DEV.dias, motivos: DEV.motivos, vias_txt: DEV.vias, estados: DEV.estados, devoluciones: devs,
                abierta: devs.some((d) => ['solicitada', 'aprobada', 'recibida'].includes(d.estado)) });
+}));
+
+// Mis devoluciones (sección propia en la cuenta del cliente): todas sus
+// devoluciones con sus fechas, y los pedidos que todavía puede devolver.
+app.get('/api/clientes/:id/devoluciones', asyncRoute(async (req, res) => {
+    const devs = (await pool.query(
+        `SELECT d.id, d.folio, d.estado, d.motivo, d.descripcion, d.resolucion, d.reembolso_via, d.monto, d.incluye_envio, d.nota_equipo, d.reembolso_ref,
+                d.fecha, d.fecha_revision, d.fecha_recibida, d.fecha_cierre, pe.id AS pedido_id, pe.numero_orden,
+                COALESCE(json_agg(json_build_object('nombre', p.nombre, 'cantidad', di.cantidad, 'imagen_url', p.imagen_url, 'producto_id', di.producto_id) ORDER BY di.id)
+                         FILTER (WHERE di.id IS NOT NULL), '[]') AS items
+         FROM devoluciones d JOIN pedidos pe ON pe.id = d.pedido_id
+         LEFT JOIN devolucion_items di ON di.devolucion_id = d.id LEFT JOIN productos p ON p.id = di.producto_id
+         WHERE d.cliente_id = $1 GROUP BY d.id, pe.id ORDER BY d.id DESC`, [req.params.id])).rows;
+    const entregados = (await pool.query(
+        `SELECT * FROM pedidos WHERE cliente_id = $1 AND estado = 'entregado' AND fecha_entrega > CURRENT_TIMESTAMP - ($2 || ' days')::interval
+         ORDER BY fecha_entrega DESC LIMIT 15`, [req.params.id, String(DEV.dias)])).rows;
+    const elegibles = [];
+    for (const pe of entregados) {
+        const o = await opcionesDevolucion(pool, pe);
+        if (o.razon) continue;
+        const abierta = devs.some((d) => d.pedido_id === pe.id && ['solicitada', 'aprobada', 'recibida'].includes(d.estado));
+        elegibles.push({ id: pe.id, numero_orden: pe.numero_orden, fecha_entrega: pe.fecha_entrega, limite: o.limite, abierta,
+            items: o.items.filter((i) => i.disponibles > 0).map((i) => ({ nombre: i.nombre, disponibles: i.disponibles, imagen_url: i.imagen_url })) });
+    }
+    res.json({ devoluciones: devs, elegibles, estados: DEV.estados, motivos: DEV.motivos, vias: DEV.vias, dias: DEV.dias,
+        direccion: process.env.DEVOLUCIONES_DIRECCION || null });
 }));
 
 app.post('/api/pedidos/:id/devolucion', limiteDinero, requireCliente, asyncRoute(async (req, res) => {
@@ -3013,7 +3039,7 @@ function rutasConfig2fa({ tipo, cuentaDe }) {
     const colPass = tipo === 'cliente' ? 'password' : 'password_hash';
     const leer = async (req) => (await pool.query(`SELECT * FROM ${tabla} WHERE id = $1`, [cuentaDe(req)])).rows[0];
     const obligatoria = tipo === 'usuario' && DOSF.panelObligatorio;
-    const evento = (req, c, detalle, severidad = 'baja') => seg.registrarEvento(req, { tipo: 'segundo_factor', severidad, detalle, ...(tipo === 'cliente' ? { cliente_id: c.id } : { usuario_id: c.id }) });
+    const evento = (req, c, detalle, severidad = 'info') => seg.registrarEvento(req, { tipo: 'segundo_factor', severidad, detalle, ...(tipo === 'cliente' ? { cliente_id: c.id } : { usuario_id: c.id }) });
     const aviso = (req, c, texto) => enviarCorreo(pool, {
         para: correoDe(tipo, c), tipo: 'seguridad', cliente_id: tipo === 'cliente' ? c.id : null,
         asunto: 'Cambió la verificación en dos pasos de tu cuenta de Kozmok',
@@ -3074,7 +3100,7 @@ function rutasConfig2fa({ tipo, cuentaDe }) {
             if (obligatoria) return res.status(400).json({ message: 'En el panel la verificación en dos pasos es obligatoria. Puedes cambiar entre correo y app.' });
             if (!(await revisarPassword(req, res, c))) return;
             await pool.query(`UPDATE ${tabla} SET dosf_metodo = NULL, totp_secreto = NULL, totp_pendiente = NULL, totp_ultimo_paso = NULL, dosf_activado = NULL WHERE id = $1`, [c.id]);
-            await evento(req, c, 'Desactivó la verificación en dos pasos', 'media');
+            await evento(req, c, 'Desactivó la verificación en dos pasos', 'baja');
             await aviso(req, c, 'Desactivaste la verificación en dos pasos. Desde ahora basta tu contraseña para entrar.');
             res.json({ message: 'Verificación en dos pasos desactivada', ...estado({ ...c, dosf_metodo: null, dosf_activado: null }) });
         }),
@@ -3168,7 +3194,7 @@ app.put('/api/clientes/:id/password', limiteAuth, asyncRoute(async (req, res) =>
 
     await pool.query('UPDATE clientes SET password = $1, password_debil = FALSE WHERE id = $2', [await seg.hashPassword(nueva), req.params.id]);
     const cerradas = await seg.revocarSesionesDe('cliente', req.cliente.id, 'cambio de contraseña', req.sesion.id);
-    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: req.cliente.id, detalle: `Cambio de contraseña; ${cerradas} sesión(es) cerradas` });
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'info', cliente_id: req.cliente.id, detalle: `Cambio de contraseña; ${cerradas} sesión(es) cerradas` });
     await enviarCorreo(pool, { para: c.correo, tipo: 'seguridad', cliente_id: req.cliente.id, asunto: 'Tu contraseña cambió',
         cuerpo: `Hola ${c.nombre}:\n\nLa contraseña de tu cuenta Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros dispositivos` : ''}.\n\n`
             + `- Fecha: ${new Date().toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Mexico_City' })}\n`
@@ -3786,7 +3812,7 @@ const PERMISOS_API = [
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
     { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
-    { ruta: /^\/resenas$/,                             metodos: LEER, permisos: ['evaluaciones'] },
+    { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -4181,7 +4207,7 @@ app.put('/api/admin/mi-password', limiteAuth, asyncRoute(async (req, res) => {
     if (await seg.compararPassword(nueva, u.password_hash)) return res.status(400).json({ message: 'La nueva contraseña debe ser distinta de la actual' });
     await pool.query('UPDATE usuarios SET password_hash = $1, password_debil = FALSE, cambiar_password = FALSE WHERE id = $2', [await seg.hashPassword(nueva), u.id]);
     const cerradas = await seg.revocarSesionesDe('usuario', u.id, 'cambio de contraseña', req.sesion.id);
-    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', usuario_id: u.id, detalle: `Cambio de contraseña del equipo; ${cerradas} sesión(es) cerradas` });
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'info', usuario_id: u.id, detalle: `Cambio de contraseña del equipo; ${cerradas} sesión(es) cerradas` });
     // Aviso por correo, igual que en la tienda: si no fue la persona, se entera.
     await enviarCorreo(pool, { para: u.email, tipo: 'seguridad', asunto: 'Tu contraseña del panel de Kozmok cambió',
         cuerpo: `Hola ${u.nombre}:\n\nLa contraseña de tu cuenta del panel de Kozmok se cambió${cerradas ? ` y cerramos ${cerradas} sesión(es) en otros equipos` : ''}.\n\n`
@@ -4267,12 +4293,37 @@ app.delete('/api/admin/clientes/:id', requireAdmin, asyncRoute(async (req, res) 
 }));
 
 // Alta de cliente desde el panel (equivale al registro, pero lo hace un admin)
+// Cuenta creada por el equipo: el cliente recibe un correo con un enlace
+// para crear SU contraseña (vence en 72 h). Nadie del equipo la conoce y,
+// al usar el enlace, también queda confirmado su correo.
+async function invitarClienteNuevo(req, cliente) {
+    if (!correo_.configurado()) return false;
+    const token = crypto.randomBytes(32).toString('base64url');
+    await pool.query(`INSERT INTO recuperaciones (cliente_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '72 hours', $3)`,
+        [cliente.id, seg.sha256(token), seg.ipDe(req)]);
+    const enlace = `${urlPublica(req)}/restablecer.html?token=${token}&nueva=1`;
+    await enviarCorreo(pool, {
+        para: cliente.correo, tipo: 'registro', cliente_id: cliente.id,
+        asunto: 'Te creamos una cuenta en Kozmok: crea tu contraseña',
+        cuerpo: `Hola ${cliente.nombre}:\n\n${req.usuario.nombre}, del equipo de Kozmok, te creó una cuenta en la tienda con este correo.`
+            + `\n\nPara entrar, crea tu propia contraseña con este enlace (vence en 72 horas y sirve una sola vez):\n${enlace}`
+            + `\n\nTu contraseña debe tener al menos 10 caracteres, con mayúsculas, minúsculas, números y un símbolo. Nadie de Kozmok la conoce.`
+            + '\n\nSi el enlace vence, usa "¿Olvidaste tu contraseña?" en la pantalla de inicio de sesión. Si no esperabas este correo, ignóralo.',
+        boton: { texto: 'Crear mi contraseña', url: enlace },
+    });
+    return true;
+}
+
 app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
-    const { nombre, correo, password, telefono, empresa, ciudad, estado } = req.body;
-    if (!nombre || !correo || !password) return res.status(400).json({ message: 'Nombre, correo y contraseña son obligatorios' });
+    const { nombre, correo, telefono, empresa, ciudad, estado } = req.body;
+    const password = String(req.body.password || '');
+    if (!nombre || !correo) return res.status(400).json({ message: 'Nombre y correo son obligatorios' });
     if (!seg.correoValido(seg.normalizarCorreo(correo))) return res.status(400).json({ message: 'El correo no es válido' });
-    const errPass = seg.validarPassword(password, { correo, nombre });
-    if (errPass) return res.status(400).json({ message: errPass });
+    // La contraseña es opcional: sin ella, el cliente la crea desde el correo.
+    if (password) {
+        const errPass = seg.validarPassword(password, { correo, nombre });
+        if (errPass) return res.status(400).json({ message: errPass });
+    }
 
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [seg.normalizarCorreo(correo)]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado' });
@@ -4280,7 +4331,7 @@ app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
     const dom = await correo_.dominioRecibeCorreo(seg.normalizarCorreo(correo));
     if (!dom.ok) return res.status(400).json({ message: dom.motivo + (dom.sugerencia ? ` ¿Quisiste decir ${dom.sugerencia}?` : '') });
 
-    const hash = await seg.hashPassword(password);
+    const hash = await seg.hashPassword(password || crypto.randomBytes(24).toString('base64url') + 'Aa1#');
     let codigoSocio;
     for (let i = 0; i < 5; i++) {
         codigoSocio = generarCodigoSocio();
@@ -4294,9 +4345,17 @@ app.post('/api/admin/clientes', requireAdmin, asyncRoute(async (req, res) => {
         [nombre, seg.normalizarCorreo(correo), hash, telefono || null, empresa || null, ciudad || null, estado || null, codigoSocio, !correo_.configurado()]
     );
     await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [r.rows[0].id]);
-    // Bienvenida con su código para confirmar el correo (como al registrarse en la tienda).
-    if (correo_.configurado()) await enviarCodigoVerificacion(pool, req, r.rows[0], { bienvenida: true, creadaPor: req.usuario.nombre });
-    res.status(201).json({ message: correo_.configurado() ? 'Cliente creado. Le mandamos un correo de bienvenida con su código para confirmar el correo.' : 'Cliente creado', cliente: r.rows[0] });
+    let message = 'Cliente creado';
+    if (!password) {
+        message = (await invitarClienteNuevo(req, r.rows[0]))
+            ? 'Cliente creado. Le mandamos un correo para que cree su propia contraseña (el enlace vence en 72 horas).'
+            : 'Cliente creado, pero el correo no está configurado: no se le pudo mandar el enlace para crear su contraseña.';
+    } else if (correo_.configurado()) {
+        // Con contraseña dada por el equipo: bienvenida con su código para confirmar el correo.
+        await enviarCodigoVerificacion(pool, req, r.rows[0], { bienvenida: true, creadaPor: req.usuario.nombre });
+        message = 'Cliente creado. Le mandamos un correo de bienvenida con su código para confirmar el correo.';
+    }
+    res.status(201).json({ message, cliente: r.rows[0] });
 }));
 
 app.get('/api/admin/clientes/:id/pedidos', asyncRoute(async (req, res) => {
@@ -4551,23 +4610,100 @@ async function interaccionReal(req, clienteId) {
 // ADMIN: EVALUACIONES (todas las reseñas)
 // =========================================================
 app.get('/api/admin/resenas', asyncRoute(async (req, res) => {
-    const { min } = req.query;
-    const cond = [];
-    const values = [];
-    if (min) { cond.push(`re.calificacion >= $1`); values.push(min); }
+    const { estrellas, busqueda, filtro } = req.query;
+    const cond = []; const values = []; let i = 1;
+    if (estrellas === 'criticas') cond.push('re.calificacion <= 2');
+    else if (Number(estrellas) >= 1 && Number(estrellas) <= 5) { cond.push(`re.calificacion = $${i++}`); values.push(Number(estrellas)); }
+    if (filtro === 'sin_respuesta') cond.push(`re.respuesta IS NULL AND NOT re.oculta`);
+    if (filtro === 'con_comentario') cond.push(`COALESCE(TRIM(re.comentario), '') <> ''`);
+    if (filtro === 'ocultas') cond.push('re.oculta');
+    if (busqueda) { cond.push(`(p.nombre ILIKE $${i} OR c.nombre ILIKE $${i} OR re.comentario ILIKE $${i})`); values.push(`%${busqueda}%`); i++; }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const rows = await pool.query(
-        `SELECT re.id, re.calificacion, re.comentario, re.fecha,
+        `SELECT re.id, re.calificacion, re.comentario, re.fecha, re.respuesta, re.respuesta_fecha, re.oculta,
                 c.id AS cliente_id, c.nombre AS cliente_nombre,
-                p.id AS producto_id, p.nombre AS producto_nombre
+                p.id AS producto_id, p.nombre AS producto_nombre, p.imagen_url
          FROM resenas re
          JOIN clientes c ON re.cliente_id = c.id
          JOIN productos p ON re.producto_id = p.id
-         ${where} ORDER BY re.fecha DESC LIMIT 200`,
+         ${where} ORDER BY re.fecha DESC LIMIT 300`,
         values
     );
-    const stats = await pool.query('SELECT ROUND(AVG(calificacion),2) AS promedio, COUNT(*)::int AS total FROM resenas');
-    res.json({ promedio: Number(stats.rows[0].promedio) || 0, total: stats.rows[0].total, resenas: rows.rows });
+    const stats = (await pool.query(
+        `SELECT ROUND(AVG(calificacion) FILTER (WHERE NOT oculta), 2) AS promedio, COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE calificacion <= 2 AND NOT oculta)::int AS criticas,
+                COUNT(*) FILTER (WHERE respuesta IS NULL AND NOT oculta)::int AS sin_respuesta,
+                COUNT(*) FILTER (WHERE calificacion = 5)::int AS e5, COUNT(*) FILTER (WHERE calificacion = 4)::int AS e4,
+                COUNT(*) FILTER (WHERE calificacion = 3)::int AS e3, COUNT(*) FILTER (WHERE calificacion = 2)::int AS e2,
+                COUNT(*) FILTER (WHERE calificacion = 1)::int AS e1
+         FROM resenas`)).rows[0];
+    const peores = await pool.query(
+        `SELECT p.id, p.nombre, ROUND(AVG(re.calificacion), 1) AS promedio, COUNT(*)::int AS total
+         FROM resenas re JOIN productos p ON p.id = re.producto_id WHERE NOT re.oculta
+         GROUP BY p.id, p.nombre HAVING COUNT(*) >= 1 ORDER BY AVG(re.calificacion) ASC, COUNT(*) DESC LIMIT 5`);
+    res.json({
+        promedio: Number(stats.promedio) || 0, total: stats.total, criticas: stats.criticas, sin_respuesta: stats.sin_respuesta,
+        distribucion: { 5: stats.e5, 4: stats.e4, 3: stats.e3, 2: stats.e2, 1: stats.e1 },
+        peores: peores.rows.map((x) => ({ ...x, promedio: Number(x.promedio) })),
+        resenas: rows.rows,
+    });
+}));
+
+// Detalle de una reseña: producto, cliente, si la compra está verificada y contexto.
+app.get('/api/admin/resenas/:id', asyncRoute(async (req, res) => {
+    const re = (await pool.query(
+        `SELECT re.*, u.nombre AS respuesta_por_nombre, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.etapa_crm,
+                p.nombre AS producto_nombre, p.marca, p.precio, p.imagen_url, p.activo AS producto_activo
+         FROM resenas re JOIN clientes c ON c.id = re.cliente_id JOIN productos p ON p.id = re.producto_id
+         LEFT JOIN usuarios u ON u.id = re.respuesta_por WHERE re.id = $1`, [req.params.id])).rows[0];
+    if (!re) return res.status(404).json({ message: 'Reseña no encontrada' });
+    const [compra, prod, otrasProd, otrasCli, recl] = await Promise.all([
+        pool.query(`SELECT pe.id, pe.numero_orden, pe.fecha_pedido, pe.fecha_entrega, pe.estado FROM pedidos pe JOIN pedido_items pi ON pi.pedido_id = pe.id
+                    WHERE pe.cliente_id = $1 AND pi.producto_id = $2 ORDER BY pe.fecha_pedido DESC LIMIT 1`, [re.cliente_id, re.producto_id]),
+        pool.query(`SELECT ROUND(AVG(calificacion), 2) AS promedio, COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE calificacion = 5)::int AS e5, COUNT(*) FILTER (WHERE calificacion = 4)::int AS e4,
+                    COUNT(*) FILTER (WHERE calificacion = 3)::int AS e3, COUNT(*) FILTER (WHERE calificacion = 2)::int AS e2,
+                    COUNT(*) FILTER (WHERE calificacion = 1)::int AS e1
+                    FROM resenas WHERE producto_id = $1 AND NOT oculta`, [re.producto_id]),
+        pool.query(`SELECT re.id, re.calificacion, re.comentario, re.fecha, c.nombre AS cliente_nombre FROM resenas re JOIN clientes c ON c.id = re.cliente_id
+                    WHERE re.producto_id = $1 AND re.id <> $2 ORDER BY re.fecha DESC LIMIT 5`, [re.producto_id, re.id]),
+        pool.query(`SELECT re.id, re.calificacion, re.fecha, p.nombre AS producto_nombre FROM resenas re JOIN productos p ON p.id = re.producto_id
+                    WHERE re.cliente_id = $1 AND re.id <> $2 ORDER BY re.fecha DESC LIMIT 5`, [re.cliente_id, re.id]),
+        pool.query(`SELECT r.id, r.folio, r.estado FROM reclamos_garantia r JOIN garantias g ON g.id = r.garantia_id
+                    WHERE r.cliente_id = $1 AND g.producto_id = $2 ORDER BY r.fecha DESC LIMIT 3`, [re.cliente_id, re.producto_id]),
+    ]);
+    const d = prod.rows[0];
+    res.json({ ...re, compra: compra.rows[0] || null,
+        producto_stats: { promedio: Number(d.promedio) || 0, total: d.total, distribucion: { 5: d.e5, 4: d.e4, 3: d.e3, 2: d.e2, 1: d.e1 } },
+        otras_del_producto: otrasProd.rows, otras_del_cliente: otrasCli.rows, reclamos: recl.rows });
+}));
+
+// Responder públicamente (se ve debajo de la reseña en la tienda) u ocultarla.
+app.put('/api/admin/resenas/:id', asyncRoute(async (req, res) => {
+    const re = (await pool.query('SELECT re.*, c.correo, c.nombre AS cliente_nombre, p.nombre AS producto FROM resenas re JOIN clientes c ON c.id = re.cliente_id JOIN productos p ON p.id = re.producto_id WHERE re.id = $1', [req.params.id])).rows[0];
+    if (!re) return res.status(404).json({ message: 'Reseña no encontrada' });
+    if (req.body.respuesta !== undefined) {
+        const txt = String(req.body.respuesta || '').trim().slice(0, 1500);
+        await pool.query(`UPDATE resenas SET respuesta = $2, respuesta_fecha = CASE WHEN $2 IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, respuesta_por = $3 WHERE id = $1`,
+            [re.id, txt || null, txt ? req.usuario.id : null]);
+        if (txt && !re.respuesta && re.correo) {
+            await enviarCorreo(pool, { para: re.correo, tipo: 'resena', cliente_id: re.cliente_id,
+                asunto: `Kozmok respondió tu reseña de ${re.producto}`,
+                cuerpo: `Hola ${re.cliente_nombre}:\n\nGracias por tu opinión sobre ${re.producto}. El equipo de Kozmok te respondió:\n\n${txt}`,
+                boton: { texto: 'Ver mis reseñas', url: `${urlPublica(req)}/resenas.html` } });
+        }
+        await auditar(pool, req, { accion: 'resena_respuesta', entidad: 'resena', entidad_id: re.id, antes: { respuesta: re.respuesta }, despues: { respuesta: txt || null } });
+        return res.json({ message: txt ? 'Respuesta publicada' : 'Respuesta eliminada' });
+    }
+    if (req.body.oculta !== undefined) {
+        const oculta = !!req.body.oculta;
+        const motivo = String(req.body.motivo || '').trim().slice(0, 300);
+        if (oculta && motivo.length < 5) return res.status(400).json({ message: 'Escribe por qué se oculta (queda en la auditoría)' });
+        await pool.query('UPDATE resenas SET oculta = $2 WHERE id = $1', [re.id, oculta]);
+        await auditar(pool, req, { accion: oculta ? 'resena_oculta' : 'resena_visible', entidad: 'resena', entidad_id: re.id, motivo: motivo || null });
+        return res.json({ message: oculta ? 'Reseña oculta: ya no se ve en la tienda ni cuenta en el promedio' : 'Reseña visible otra vez' });
+    }
+    res.status(400).json({ message: 'Nada que actualizar' });
 }));
 
 // =========================================================
@@ -5048,7 +5184,7 @@ app.post('/api/admin/productos/:id/eliminar-definitivo', limiteAuth, asyncRoute(
                 (SELECT COUNT(*) FROM movimientos_inventario WHERE producto_id = $1)::int AS movimientos,
                 (SELECT COUNT(*) FROM ordenes_compra WHERE producto_id = $1)::int AS ordenes,
                 (SELECT COUNT(*) FROM devolucion_items WHERE producto_id = $1)::int AS devoluciones,
-                (SELECT COUNT(*) FROM resenas WHERE producto_id = $1)::int AS resenas,
+                (SELECT COUNT(*) FROM resenas WHERE producto_id = $1 AND NOT oculta)::int AS resenas,
                 (SELECT COUNT(*) FROM garantias WHERE producto_id = $1)::int AS garantias,
                 (SELECT COUNT(*) FROM promociones WHERE producto_id = $1)::int AS promociones`, [previo.id])).rows[0];
     const NOMBRES = { ventas: 'venta(s)', movimientos: 'movimiento(s) de inventario', ordenes: 'orden(es) de compra', devoluciones: 'devolución(es)', resenas: 'reseña(s)', garantias: 'garantía(s)', promociones: 'promoción(es)' };
@@ -6199,14 +6335,17 @@ app.get('/api/admin/erp/clientes-consulta/:id', asyncRoute(async (req, res) => {
 // y pasa a Activo al confirmarse su primera compra). La contraseña es
 // temporal: el cliente la cambia en la tienda.
 app.post('/api/admin/erp/clientes', requirePermiso('orden-nueva'), asyncRoute(async (req, res) => {
-    const { nombre, correo, telefono, empresa, ciudad } = req.body;
+    const { nombre, telefono, empresa, ciudad } = req.body;
+    const correo = seg.normalizarCorreo(req.body.correo);
     if (!nombre || !correo) return res.status(400).json({ message: 'Nombre y correo son obligatorios' });
+    if (!seg.correoValido(correo)) return res.status(400).json({ message: 'El correo no es válido' });
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = LOWER($1)', [correo]);
     if (existe.rows.length > 0) return res.status(400).json({ message: 'Ese correo ya está registrado en el CRM' });
+    const dom = await correo_.dominioRecibeCorreo(correo);
+    if (!dom.ok) return res.status(400).json({ message: dom.motivo + (dom.sugerencia ? ` ¿Quisiste decir ${dom.sugerencia}?` : '') });
 
-    // Temporal aleatoria (generador criptográfico) que cumple la política.
-    const temporal = 'Kz#' + crypto.randomBytes(5).toString('hex').toUpperCase() + 'a';
-    const hash = await seg.hashPassword(temporal);
+    // Nadie del equipo conoce su contraseña: se le manda un enlace para crearla.
+    const hash = await seg.hashPassword(crypto.randomBytes(24).toString('base64url') + 'Aa1#');
     let codigoSocio;
     for (let i = 0; i < 5; i++) {
         codigoSocio = generarCodigoSocio();
@@ -6220,7 +6359,8 @@ app.post('/api/admin/erp/clientes', requirePermiso('orden-nueva'), asyncRoute(as
         [nombre, correo, hash, telefono || null, empresa || null, ciudad || null, codigoSocio]
     );
     await pool.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [r.rows[0].id]);
-    res.status(201).json({ cliente: { ...r.rows[0], total_compras: 0, direccion: null }, password_temporal: temporal });
+    const invitado = await invitarClienteNuevo(req, { ...r.rows[0], correo });
+    res.status(201).json({ cliente: { ...r.rows[0], total_compras: 0, direccion: null }, invitacion_enviada: invitado });
 }));
 
 // Productos del SCM para el paso 2 (solo activos; el stock es el real).
@@ -6765,13 +6905,13 @@ app.get('/api/admin/seguridad/resumen', requireAdmin, asyncRoute(async (req, res
                    (SELECT COUNT(*)::int FROM bloqueos WHERE levantado IS NULL AND hasta > CURRENT_TIMESTAMP) AS bloqueos_activos,
                    (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo = 'inyeccion_sql' AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS sqli_7d,
                    (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo = 'xss' AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS xss_7d,
-                   (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo IN ('sesion_robada','token_invalido','sesion_revocada') AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS sesiones_7d,
+                   (SELECT COUNT(*)::int FROM eventos_seguridad WHERE tipo IN ('sesion_robada','token_invalido','sesion_revocada') AND severidad <> 'info' AND fecha > CURRENT_TIMESTAMP - INTERVAL '7 days') AS sesiones_7d,
                    (SELECT COUNT(*)::int FROM sesiones WHERE revocada IS NULL AND expira > CURRENT_TIMESTAMP) AS sesiones_activas`),
         pool.query(`SELECT tipo, COUNT(*)::int AS total FROM eventos_seguridad WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '7 days' GROUP BY tipo ORDER BY total DESC`),
         pool.query(`
             SELECT e.*, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre FROM eventos_seguridad e
             LEFT JOIN clientes c ON c.id = e.cliente_id LEFT JOIN usuarios u ON u.id = e.usuario_id
-            ORDER BY e.fecha DESC LIMIT 150`),
+            ORDER BY e.fecha DESC LIMIT 300`),
         pool.query(`SELECT * FROM intentos_login ORDER BY fecha DESC LIMIT 150`),
         pool.query(`
             SELECT b.*, (b.levantado IS NULL AND b.hasta > CURRENT_TIMESTAMP) AS activo, u.nombre AS levantado_por_nombre
@@ -6800,13 +6940,13 @@ app.get('/api/admin/seguridad/resumen', requireAdmin, asyncRoute(async (req, res
 app.post('/api/admin/seguridad/bloqueos/:id/levantar', requireAdmin, asyncRoute(async (req, res) => {
     const r = await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP, levantado_por = $2 WHERE id = $1 AND levantado IS NULL RETURNING tipo, valor`, [req.params.id, req.usuario.id]);
     if (!r.rows[0]) return res.status(404).json({ message: 'El bloqueo ya no está activo' });
-    await seg.registrarEvento(req, { tipo: 'desbloqueo', severidad: 'baja', usuario_id: req.usuario.id, detalle: `Se levantó el bloqueo de ${r.rows[0].tipo} ${r.rows[0].valor}` });
+    await seg.registrarEvento(req, { tipo: 'desbloqueo', severidad: 'info', usuario_id: req.usuario.id, detalle: `Se levantó el bloqueo de ${r.rows[0].tipo} ${r.rows[0].valor}` });
     res.json({ message: 'Bloqueo levantado' });
 }));
 app.post('/api/admin/seguridad/sesiones/:id/revocar', requireAdmin, asyncRoute(async (req, res) => {
     if (req.sesion && Number(req.params.id) === Number(req.sesion.id)) return res.status(400).json({ message: 'Esa es tu sesión actual: usa Cerrar sesión' });
     await seg.revocarSesion(req.params.id, `revocada por ${req.usuario.nombre}`);
-    await seg.registrarEvento(req, { tipo: 'sesion_revocada_admin', severidad: 'baja', usuario_id: req.usuario.id, detalle: `Sesión #${req.params.id} revocada desde el panel` });
+    await seg.registrarEvento(req, { tipo: 'sesion_revocada_admin', severidad: 'info', usuario_id: req.usuario.id, detalle: `Sesión #${req.params.id} revocada desde el panel` });
     res.json({ message: 'Sesión cerrada' });
 }));
 
@@ -7143,7 +7283,7 @@ app.post('/api/admin/usuarios/:id/activar', requireAdmin, asyncRoute(async (req,
             + 'Si no esperabas este correo, ignóralo: la cuenta no se activa hasta que abras el enlace.',
         boton: { texto: 'Activar mi cuenta', url: enlace },
     });
-    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'baja', usuario_id: u.id, detalle: `${req.usuario.nombre} mandó el enlace de activación a ${u.nombre} (${u.email})` });
+    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'info', usuario_id: u.id, detalle: `${req.usuario.nombre} mandó el enlace de activación a ${u.nombre} (${u.email})` });
     res.json({ message: `Le mandamos a ${u.email} un enlace para activar su cuenta (vence en ${ACTIVACION_HORAS} horas). Quedará activa cuando cree su contraseña.` });
 }));
 
@@ -7372,8 +7512,19 @@ const listarPromociones = asyncRoute(async (req, res) => {
     const r = await pool.query(`${SELECT_PROMO} ORDER BY pr.fecha_fin DESC, pr.id DESC`);
     res.json(r.rows);
 });
+// Fechas de una promoción: el inicio no puede quedar antes de hoy (no se
+// "reescribe" el pasado: los pedidos de esos días se cobraron sin ella) y el
+// fin no puede quedar en el pasado. Si ya empezó, su inicio no cambia.
+const inicioDeHoy = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+function revisarFechasPromo(p, actual = null) {
+    const yaEmpezo = actual && new Date(actual.fecha_inicio) <= new Date();
+    if (yaEmpezo) p.fecha_inicio = actual.fecha_inicio;
+    else if (new Date(p.fecha_inicio) < inicioDeHoy()) throw new Error('La fecha de inicio no puede ser anterior a hoy');
+    if (new Date(p.fecha_fin) < inicioDeHoy()) throw new Error('La fecha de término no puede ser anterior a hoy');
+    if (new Date(p.fecha_fin) <= new Date(p.fecha_inicio)) throw new Error('La fecha de fin debe ser posterior al inicio');
+}
 const crearPromocion = asyncRoute(async (req, res) => {
-    let p; try { p = leerPromocion(req.body); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
+    let p; try { p = leerPromocion(req.body); revisarFechasPromo(p); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     const r = await pool.query(
         `INSERT INTO promociones (nombre, descripcion, tipo_descuento, valor, alcance, categoria_id, producto_id, fecha_inicio, fecha_fin, estado, mostrar_banner, usuario_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
@@ -7385,7 +7536,12 @@ const crearPromocion = asyncRoute(async (req, res) => {
 const editarPromocion = asyncRoute(async (req, res) => {
     const cur = await pool.query('SELECT * FROM promociones WHERE id = $1', [req.params.id]);
     if (!cur.rows.length) return res.status(404).json({ message: 'Promoción no encontrada' });
-    let p; try { p = leerPromocion({ ...cur.rows[0], ...req.body }); } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
+    let p;
+    try {
+        p = leerPromocion({ ...cur.rows[0], ...req.body });
+        // Solo se revisan las fechas si se cambian (activar/desactivar una vencida sigue funcionando).
+        if (req.body.fecha_inicio !== undefined || req.body.fecha_fin !== undefined) revisarFechasPromo(p, cur.rows[0]);
+    } catch (e) { return res.status(400).json({ message: seg.mensajeSeguro(e) }); }
     await pool.query(
         `UPDATE promociones SET nombre=$1, descripcion=$2, tipo_descuento=$3, valor=$4, alcance=$5, categoria_id=$6, producto_id=$7,
              fecha_inicio=$8, fecha_fin=$9, estado=$10, mostrar_banner=$11 WHERE id=$12`,
@@ -7960,7 +8116,7 @@ app.post('/api/auth/recuperar', limiteAuth, captchaMw, asyncRoute(async (req, re
         // Máximo RECUPERACION_MAX_HORA enlaces por hora por cuenta (contra abuso). Al cliente se le
         // responde lo mismo de siempre; en el panel queda registrado por qué
         // no salió el correo.
-        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', cliente_id: c.rows[0].id,
+        await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'info', cliente_id: c.rows[0].id,
             detalle: `No se mandó el enlace de recuperación a ${c.rows[0].correo}: ya se pidieron ${RECUPERACION_MAX_HORA} en la última hora` });
         return res.json(generico);
     }
@@ -8009,7 +8165,7 @@ app.post('/api/auth/recuperar-usuario', limiteAuth, captchaMw, asyncRoute(async 
         cuerpo: `Hola ${u.nombre}:\n\nRecibimos una solicitud para restablecer tu contraseña del panel. Abre este enlace (vence en 30 minutos y solo sirve una vez):\n${enlace}\n\nSi no fuiste tú, ignora este correo: tu contraseña no cambia. Si te llegan varios sin pedirlos, avisa a un administrador.`,
         boton: { texto: 'Crear nueva contraseña', url: enlace },
     });
-    await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'baja', usuario_id: u.id, detalle: `Se mandó enlace de recuperación del panel a ${u.email}` });
+    await seg.registrarEvento(req, { tipo: 'recuperacion', severidad: 'info', usuario_id: u.id, detalle: `Se mandó enlace de recuperación del panel a ${u.email}` });
     res.json(generico);
 }));
 async function recuperacionUsuarioDeToken(token) {
@@ -8037,7 +8193,7 @@ app.post('/api/auth/restablecer-usuario', limiteAuth, asyncRoute(async (req, res
     await pool.query('UPDATE recuperaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [r.usuario_id]);
     const cerradas = await seg.revocarSesionesDe('usuario', r.usuario_id, 'contraseña restablecida');
     await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`usuario:${seg.normalizarCorreo(r.email)}`]);
-    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'media', usuario_id: r.usuario_id, detalle: `Contraseña del panel restablecida por enlace; ${cerradas} sesión(es) cerradas` });
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', usuario_id: r.usuario_id, detalle: `Contraseña del panel restablecida por enlace; ${cerradas} sesión(es) cerradas` });
     await enviarCorreo(pool, { para: r.email, tipo: 'seguridad', asunto: 'Tu contraseña del panel cambió',
         cuerpo: `Hola ${r.nombre}:\n\nTu contraseña del panel de Kozmok se restableció y cerramos tus sesiones abiertas. Si no fuiste tú, avisa de inmediato a un administrador.` });
     res.json({ message: 'Contraseña actualizada. Entra al panel con tu nueva contraseña.' });
@@ -8071,7 +8227,7 @@ app.post('/api/auth/activar-usuario', limiteAuth, asyncRoute(async (req, res) =>
     await pool.query('UPDATE activaciones_usuario SET usado = CURRENT_TIMESTAMP WHERE usuario_id = $1 AND usado IS NULL', [a.usuario_id]);
     await seg.revocarSesionesDe('usuario', a.usuario_id, 'cuenta activada con contraseña nueva');
     await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`usuario:${seg.normalizarCorreo(a.email)}`]);
-    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'baja', usuario_id: a.usuario_id, detalle: `${a.nombre} activó su cuenta del panel y creó su contraseña` });
+    await seg.registrarEvento(req, { tipo: 'cuenta_equipo', severidad: 'info', usuario_id: a.usuario_id, detalle: `${a.nombre} activó su cuenta del panel y creó su contraseña` });
     res.json({ message: 'Tu cuenta quedó activa. Ya puedes entrar al panel con tu correo y tu nueva contraseña.' });
 }));
 
@@ -8094,7 +8250,7 @@ app.post('/api/auth/restablecer', limiteAuth, asyncRoute(async (req, res) => {
     await pool.query('UPDATE recuperaciones SET usado = CURRENT_TIMESTAMP WHERE cliente_id = $1 AND usado IS NULL', [rec.cliente_id]);
     const cerradas = await seg.revocarSesionesDe('cliente', rec.cliente_id, 'contraseña restablecida');
     await pool.query(`UPDATE bloqueos SET levantado = CURRENT_TIMESTAMP WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL`, [`cliente:${seg.normalizarCorreo(rec.correo)}`]);
-    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'baja', cliente_id: rec.cliente_id, detalle: `Contraseña restablecida por enlace; ${cerradas} sesión(es) cerradas` });
+    await seg.registrarEvento(req, { tipo: 'cambio_password', severidad: 'info', cliente_id: rec.cliente_id, detalle: `Contraseña restablecida por enlace; ${cerradas} sesión(es) cerradas` });
     await enviarCorreo(pool, { para: rec.correo, tipo: 'seguridad', cliente_id: rec.cliente_id, asunto: 'Tu contraseña cambió',
         cuerpo: `Hola ${rec.nombre}:\n\nTu contraseña se restableció y cerramos tus sesiones abiertas. Si no fuiste tú, contáctanos de inmediato.` });
     res.json({ message: 'Contraseña actualizada. Inicia sesión con tu nueva contraseña.' });
@@ -8199,7 +8355,7 @@ async function migrarEsquema() {
     await pool.query(`CREATE TABLE IF NOT EXISTS eventos_seguridad (
     id          SERIAL PRIMARY KEY,
     tipo        VARCHAR(30) NOT NULL,          
-    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('baja','media','alta')),
+    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('info','baja','media','alta')),
     ip          VARCHAR(64),
     user_agent  VARCHAR(300),
     metodo      VARCHAR(8),
@@ -8362,6 +8518,22 @@ async function migrarEsquema() {
         ip VARCHAR(64),
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_recuperaciones_usuario ON recuperaciones_usuario(usuario_id)');
+    // Severidad 'info': actividad normal de la cuenta (activar dos pasos,
+    // cambiar la contraseña, abrir una pestaña vieja…). Se registra, pero no
+    // se cuenta como alerta.
+    await pool.query(`ALTER TABLE eventos_seguridad DROP CONSTRAINT IF EXISTS eventos_seguridad_severidad_check`);
+    await pool.query(`ALTER TABLE eventos_seguridad ADD CONSTRAINT eventos_seguridad_severidad_check CHECK (severidad IN ('info','baja','media','alta'))`);
+    await pool.query(`UPDATE eventos_seguridad SET severidad = 'info' WHERE severidad <> 'info' AND (
+        (tipo = 'segundo_factor' AND detalle LIKE 'Activó%') OR (tipo = 'cambio_password' AND detalle NOT LIKE '%panel restablecida%')
+        OR tipo IN ('desbloqueo','sesion_revocada_admin')
+        OR (tipo = 'sesion_revocada' AND detalle ~ '\\((cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida|cuenta activada con contraseña nueva|inactividad)\\)$'))`);
+    await pool.query(`UPDATE eventos_seguridad SET severidad = 'baja' WHERE severidad IN ('media','alta') AND (
+        (tipo = 'cambio_password' AND detalle LIKE '%panel restablecida%') OR (tipo = 'segundo_factor' AND detalle LIKE 'Desactivó%'))`);
+    // Reseñas: respuesta pública del equipo y moderación.
+    await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS respuesta TEXT`);
+    await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS respuesta_fecha TIMESTAMP`);
+    await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS respuesta_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL`);
+    await pool.query(`ALTER TABLE resenas ADD COLUMN IF NOT EXISTS oculta BOOLEAN NOT NULL DEFAULT FALSE`);
     // Reclamos de garantía con etapas, conversación y fotos.
     await pool.query(`CREATE TABLE IF NOT EXISTS reclamos_garantia (
         id SERIAL PRIMARY KEY,

@@ -109,6 +109,7 @@ async function abrirPromo(id) {
     if (!PRODUCTOS.length) PRODUCTOS = (await api('/admin/productos').catch(() => api('/productos'))).filter((p) => p.activo !== false);
     const p = id ? PROMOS.find((x) => x.id === id) : { tipo_descuento: 'porcentaje', alcance: 'todos', estado: 'activa', mostrar_banner: true,
         fecha_inicio: new Date(), fecha_fin: new Date(Date.now() + 14 * 86400000) };
+    const yaEmpezo = !!id && new Date(p.fecha_inicio) <= new Date();
     document.getElementById('modal-promo-body').innerHTML = `
         <button class="modal-close" onclick="cerrarModal()">${icon('x', 18)}</button>
         <h3>${id ? 'Editar promoción' : 'Nueva promoción'}</h3>
@@ -133,9 +134,10 @@ async function abrirPromo(id) {
         <div class="field" id="box-prod"><label>Producto</label>
             <select id="pr-prod" onchange="vistaPrevia()">${PRODUCTOS.map((x) => `<option value="${x.id}" ${Number(p.producto_id) === x.id ? 'selected' : ''}>${x.nombre} · ${formatoMoneda(x.precio)}</option>`).join('')}</select></div>
         <div class="field-row">
-            <div class="field"><label>Inicia</label><input id="pr-ini" type="date" value="${fechaInput(p.fecha_inicio)}" /></div>
-            <div class="field"><label>Termina (incluido)</label><input id="pr-fin" type="date" value="${fechaInput(p.fecha_fin)}" /></div>
+            <div class="field"><label>Inicia</label><input id="pr-ini" type="date" value="${fechaInput(p.fecha_inicio)}" min="${HOY}" ${yaEmpezo ? 'disabled' : ''} onchange="ajustarFin()" /></div>
+            <div class="field"><label>Termina (incluido)</label><input id="pr-fin" type="date" value="${fechaInput(p.fecha_fin)}" min="${fechaInput(p.fecha_inicio) > HOY ? fechaInput(p.fecha_inicio) : HOY}" /></div>
         </div>
+        ${yaEmpezo ? `<p style="margin:-6px 0 12px;font-size:.78rem;color:var(--text-muted)">${icon('lock', 12)} Ya empezó el ${formatoFecha(p.fecha_inicio)}: su inicio no se cambia. Puedes ajustar la fecha de término.</p>` : ''}
         <div class="field-row">
             <div class="field"><label><input type="checkbox" id="pr-activa" style="width:auto;display:inline-block" ${p.estado !== 'inactiva' ? 'checked' : ''}/> Activa</label></div>
             <div class="field"><label><input type="checkbox" id="pr-banner" style="width:auto;display:inline-block" ${p.mostrar_banner ? 'checked' : ''}/> Mostrar en el banner</label></div>
@@ -146,6 +148,15 @@ async function abrirPromo(id) {
     cambioAlcance();
 }
 function cerrarModal() { document.getElementById('modal-promo').classList.remove('open'); }
+const HOY = fechaInput(new Date());
+// El término no puede quedar antes del inicio (ni de hoy).
+function ajustarFin() {
+    const ini = document.getElementById('pr-ini').value, fin = document.getElementById('pr-fin');
+    if (ini && ini < HOY) document.getElementById('pr-ini').value = HOY;
+    const minimo = (document.getElementById('pr-ini').value || HOY) > HOY ? document.getElementById('pr-ini').value : HOY;
+    fin.min = minimo;
+    if (fin.value && fin.value < minimo) fin.value = minimo;
+}
 
 function cambioAlcance() {
     const a = document.getElementById('pr-alcance').value;
@@ -168,7 +179,10 @@ function vistaPrevia() {
 }
 
 async function guardar(id) {
-    const ini = document.getElementById('pr-ini').value, fin = document.getElementById('pr-fin').value;
+    const iniEl = document.getElementById('pr-ini');
+    const ini = iniEl.value, fin = document.getElementById('pr-fin').value;
+    if (!iniEl.disabled && ini && ini < HOY) { toast('La fecha de inicio no puede ser anterior a hoy', 'warn'); return; }
+    if (fin && fin < HOY) { toast('La fecha de término no puede ser anterior a hoy', 'warn'); return; }
     const body = {
         nombre: document.getElementById('pr-nombre').value.trim(),
         descripcion: document.getElementById('pr-desc').value.trim(),
@@ -177,7 +191,7 @@ async function guardar(id) {
         alcance: document.getElementById('pr-alcance').value,
         categoria_id: Number(document.getElementById('pr-cat').value),
         producto_id: Number(document.getElementById('pr-prod').value),
-        fecha_inicio: ini ? ini + 'T00:00:00' : '',
+        ...(iniEl.disabled ? {} : { fecha_inicio: ini ? ini + 'T00:00:00' : '' }),
         fecha_fin: fin ? fin + 'T23:59:59' : '',
         estado: document.getElementById('pr-activa').checked ? 'activa' : 'inactiva',
         mostrar_banner: document.getElementById('pr-banner').checked,

@@ -105,11 +105,10 @@ function formNuevo() {
         <div class="field"><label>Nombre completo</label><input id="n-nombre" /></div>
         <div class="field"><label>Correo</label><input type="email" id="n-correo" /></div>
         <div class="field-row">
-            <div class="field"><label>Contraseña (mín. 6)</label><input type="password" id="n-pass" minlength="6" value="temporal123" /></div>
             <div class="field"><label>Teléfono</label><input id="n-tel" /></div>
+            <div class="field"><label>Empresa</label><input id="n-empresa" /></div>
         </div>
-        <div class="field"><label>Empresa</label><input id="n-empresa" /></div>
-        <p style="font-size:.8rem;color:var(--text-muted)">Puedes dejar la contraseña temporal; el cliente la cambia al ingresar.</p>
+        <p class="nota-invitacion">${icon('mail', 15)} <span>No necesitas ponerle contraseña: le mandamos un correo para que <strong>cree la suya</strong> (con las reglas de seguridad de la tienda). Nadie del equipo la conoce. Al usar el enlace también queda confirmado su correo.</span></p>
         <div id="n-err" style="color:var(--danger);font-size:.85rem;margin-bottom:10px;display:none"></div>
         <button class="btn btn-primary" style="width:100%" onclick="crearCliente()">Crear cliente</button>
     `;
@@ -119,11 +118,12 @@ async function crearCliente() {
     const err = document.getElementById('n-err'); err.style.display = 'none';
     try {
         const r = await api('/admin/clientes', { method: 'POST', body: {
-            nombre: v('n-nombre'), correo: v('n-correo'), password: document.getElementById('n-pass').value,
+            nombre: v('n-nombre'), correo: v('n-correo'),
             telefono: v('n-tel'), empresa: v('n-empresa'),
         }});
         document.getElementById('modal').classList.remove('open');
-        toast('Cliente creado', 'ok');
+        toast(r.message, 'ok');
+        await new Promise((ok) => setTimeout(ok, 1200));
         location.href = '/admin/cliente.html?id=' + r.cliente.id;
     } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
 }

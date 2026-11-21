@@ -732,6 +732,7 @@ const MIGAS = {
     '/favoritos.html': [CUENTA_MIGA, ['Favoritos']],
     '/resenas.html': [CUENTA_MIGA, ['Mis reseñas']],
     '/garantias.html': [CUENTA_MIGA, ['Mis garantías']],
+    '/devoluciones.html': [CUENTA_MIGA, ['Devoluciones']],
     '/direcciones.html': [CUENTA_MIGA, ['Direcciones']],
     '/pagos.html': [CUENTA_MIGA, ['Formas de pago']],
     '/soporte.html': [CUENTA_MIGA, ['Soporte']],

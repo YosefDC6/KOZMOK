@@ -13,6 +13,7 @@
     .sev-alta { color: var(--danger); border-color: var(--danger); }
     .sev-media { color: var(--warning); border-color: var(--warning); }
     .sev-baja { color: var(--text-muted); }
+    .sev-info { color: var(--text-muted); border-style: dashed; opacity: .8; }
     .defensas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
     .defensas .card h4 { margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
     .defensas ul { margin: 0; padding-left: 18px; font-size: .84rem; color: var(--text-muted); line-height: 1.6; }
@@ -85,18 +86,34 @@ async function cargar() {
     pintar();
 }
 
+let FILTRO_SEV = 'baja';
 function pintar() {
     document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === TAB));
     const el = document.getElementById('contenido');
     if (TAB === 'eventos') {
-        el.innerHTML = `<div class="table-wrap"><table>
+        // Por defecto solo alertas; la actividad normal de las cuentas (activar
+        // dos pasos, cambiar contraseña, pestañas viejas…) se ve si se pide.
+        const NIVEL = { info: 0, baja: 1, media: 2, alta: 3 };
+        const min = NIVEL[FILTRO_SEV] ?? 1;
+        const evs = D.eventos.filter((e) => (NIVEL[e.severidad] ?? 2) >= min);
+        const normales = D.eventos.filter((e) => e.severidad === 'info').length;
+        el.innerHTML = `<div class="filters-bar" style="margin-bottom:10px">
+            <select id="f-sev" onchange="FILTRO_SEV=this.value;pintar()">
+                <option value="baja" ${FILTRO_SEV === 'baja' ? 'selected' : ''}>Alertas (baja, media y alta)</option>
+                <option value="media" ${FILTRO_SEV === 'media' ? 'selected' : ''}>Solo media y alta</option>
+                <option value="alta" ${FILTRO_SEV === 'alta' ? 'selected' : ''}>Solo alta</option>
+                <option value="info" ${FILTRO_SEV === 'info' ? 'selected' : ''}>Todo, con actividad normal (${normales})</option>
+            </select>
+            <span style="font-size:.8rem;color:var(--text-muted)">La actividad normal (activar dos pasos, cambiar contraseña, una pestaña vieja tras cerrar sesión) se guarda, pero no es alerta.</span>
+        </div>
+        <div class="table-wrap"><table>
             <thead><tr><th>Fecha</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle</th></tr></thead>
-            <tbody>${D.eventos.map((e) => `<tr>
+            <tbody>${evs.map((e) => `<tr>
                 <td style="white-space:nowrap">${formatoFechaHora(e.fecha)}</td>
                 <td><strong>${escHTML(TIPO[e.tipo] || e.tipo)}</strong>${e.cliente_nombre || e.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(e.cliente_nombre || e.usuario_nombre)}</div>` : ''}</td>
-                <td><span class="tag sev-${escHTML(e.severidad)}">${escHTML(e.severidad)}</span></td>
+                <td><span class="tag sev-${escHTML(e.severidad)}">${e.severidad === 'info' ? 'normal' : escHTML(e.severidad)}</span></td>
                 <td class="mono" style="font-size:.78rem">${escHTML(e.ip || '—')}<div style="color:var(--text-muted)">${escHTML(e.metodo || '')} ${escHTML(e.ruta || '')}</div><div style="color:var(--text-muted)">${escHTML(navegadorDe(e.user_agent))}</div></td>
-                <td class="det">${escHTML(e.detalle)}</td></tr>`).join('') || '<tr><td colspan="5">Sin eventos registrados.</td></tr>'}</tbody></table></div>`;
+                <td class="det">${escHTML(e.detalle)}</td></tr>`).join('') || '<tr><td colspan="5">Sin alertas con este filtro.</td></tr>'}</tbody></table></div>`;
     } else if (TAB === 'intentos') {
         el.innerHTML = `${D.top_ips.length ? `<div class="card" style="margin-bottom:12px"><strong>IPs con más fallos (24 h)</strong>${D.top_ips.map((x) => `<div class="resumen-linea" style="margin-top:6px"><span class="mono">${escHTML(x.ip)}</span><span>${x.fallos} fallos · ${x.cuentas} cuenta(s)</span></div>`).join('')}</div>` : ''}
             <div class="table-wrap"><table>

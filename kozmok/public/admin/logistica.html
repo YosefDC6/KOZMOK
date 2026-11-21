@@ -12,44 +12,38 @@
     <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
     <main class="admin-main">
         <div id="topbar"></div>
-
-        <div class="card" style="margin-bottom:22px">
-            <h3 style="margin:0 0 4px">Configurar estrategia de reposición</h3>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 10px">
-                Elige un producto y define cómo se reabastece: por calendario (push) o solo cuando se necesita (pull).
-            </p>
-            <div class="field"><label>Producto</label><select id="lg-producto" onchange="seleccionarProducto()"></select></div>
-            <div class="estrategia-opciones">
-                <div class="estrategia-card" id="card-push" onclick="elegirEstrategia('push')">
-                    <h4 id="titulo-push"></h4>
-                    <p>Se genera pedido automáticamente cuando el stock llega al mínimo. Ideal para productos de alta rotación y demanda predecible.</p>
-                </div>
-                <div class="estrategia-card" id="card-pull" onclick="elegirEstrategia('pull')">
-                    <h4 id="titulo-pull"></h4>
-                    <p>Se genera pedido solo bajo pedido o demanda: cuando una venta deja el producto en su mínimo. Ideal para productos de bajo volumen, caros o armados a la medida.</p>
-                </div>
+        <div class="lg-leyenda">
+            <div class="estrategia-tile push" id="tile-push"></div>
+            <div class="estrategia-tile pull" id="tile-pull"></div>
+            <div class="lg-expl">
+                <p><strong>Push</strong>: se pide al proveedor en cuanto el stock llega al mínimo. Para alta rotación y demanda predecible.</p>
+                <p><strong>Pull</strong>: se pide solo cuando una venta deja el producto en su mínimo. Para bajo volumen, caros o armados a la medida.</p>
             </div>
-            <button class="btn btn-primary" onclick="guardarEstrategia()">Guardar estrategia</button>
         </div>
-
-        <div class="card">
-            <h3 style="margin:0 0 4px">Comparativa push vs. pull</h3>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 4px">Cómo está clasificado todo el catálogo activo ahora mismo.</p>
-            <div class="estrategia-tiles" id="estrategia-tiles"></div>
-            <div class="filters-bar" style="margin-bottom:10px">
-                <select id="f-categoria" onchange="renderTablaComparativa()"><option value="">Todas las categorías</option></select>
-                <select id="f-estrategia" onchange="renderTablaComparativa()">
-                    <option value="">Push y pull</option>
-                    <option value="push">Solo push</option>
-                    <option value="pull">Solo pull</option>
-                </select>
-            </div>
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Stock mínimo</th><th>Estrategia</th></tr></thead>
-                    <tbody id="tabla-comparativa"><tr><td colspan="5">Cargando…</td></tr></tbody>
-                </table>
-            </div>
+        <div class="lg-layout">
+            <aside class="card lg-filtros">
+                <div class="field"><label for="lg-busca">Buscar</label><input id="lg-busca" placeholder="Nombre o marca…" autocomplete="off" /></div>
+                <div class="stat-label" style="margin:6px 0 8px">Categoría</div>
+                <div class="lg-cats" id="lg-cats"></div>
+                <div class="stat-label" style="margin:14px 0 8px">Estrategia</div>
+                <div class="seg" role="radiogroup" id="lg-est">
+                    <label class="seg-op"><input type="radio" name="lg-est" value="" checked />Todas</label>
+                    <label class="seg-op"><input type="radio" name="lg-est" value="push" />Push</label>
+                    <label class="seg-op"><input type="radio" name="lg-est" value="pull" />Pull</label>
+                </div>
+                <label style="display:flex;gap:8px;align-items:center;margin:14px 0 0;font-size:.85rem"><input type="checkbox" id="lg-criticos" /> Solo en stock mínimo o agotados</label>
+            </aside>
+            <section>
+                <div class="lg-barra">
+                    <label style="display:flex;gap:8px;align-items:center;margin:0;font-size:.85rem"><input type="checkbox" id="lg-todos" /> <span id="lg-conteo">—</span></label>
+                    <div class="lg-masivo" id="lg-masivo" hidden>
+                        <span id="lg-sel-n"></span>
+                        <button class="btn btn-outline btn-sm" onclick="cambiarVarios('push')">Pasar a push</button>
+                        <button class="btn btn-outline btn-sm" onclick="cambiarVarios('pull')">Pasar a pull</button>
+                    </div>
+                </div>
+                <div class="lg-lista" id="lg-lista"><div class="empty-state">Cargando…</div></div>
+            </section>
         </div>
     </main>
 </div>
@@ -64,93 +58,98 @@
 requireAuthAdmin();
 renderAdminSidebar('logistica');
 document.getElementById('topbar').innerHTML = adminHeader(
-    'Logística', 'Define la estrategia push o pull de cada producto y compara cómo está repartido todo el catálogo.'
+    'Logística', 'Filtra el catálogo y cambia la estrategia push o pull de cada producto con un clic.'
 );
+const $ = (id) => document.getElementById(id);
+let PRODUCTOS = [];
+let CAT = '';
+const SEL = new Set();
 
-let PRODUCTOS_LG = [];
-let ESTRATEGIA_ELEGIDA = 'push';
-
-function tarjetasEstrategia() {
-    document.getElementById('titulo-push').innerHTML = `${icon('calendar', 18)} Push`;
-    document.getElementById('titulo-pull').innerHTML = `${icon('clock', 18)} Pull`;
+function filtrados() {
+    const q = $('lg-busca').value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const est = document.querySelector('input[name="lg-est"]:checked').value;
+    const crit = $('lg-criticos').checked;
+    return PRODUCTOS.filter((p) => (!CAT || p.categoria_nombre === CAT)
+        && (!est || (p.restock || 'push') === est)
+        && (!crit || p.stock <= p.stock_minimo)
+        && (!q || `${p.nombre} ${p.marca || ''}`.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(q)));
 }
 
-function seleccionarProducto() {
-    const id = Number(document.getElementById('lg-producto').value);
-    const p = PRODUCTOS_LG.find((x) => x.id === id);
-    ESTRATEGIA_ELEGIDA = (p && p.restock === 'pull') ? 'pull' : 'push';
-    pintarSeleccionEstrategia();
+function pintar() {
+    const push = PRODUCTOS.filter((p) => p.restock !== 'pull').length;
+    $('tile-push').innerHTML = `${icon('calendar', 20)}<div class="et-num">${push}</div><div class="et-label">Productos PUSH</div>`;
+    $('tile-pull').innerHTML = `${icon('clock', 20)}<div class="et-num">${PRODUCTOS.length - push}</div><div class="et-label">Productos PULL</div>`;
+    const cats = {};
+    PRODUCTOS.forEach((p) => { const c = p.categoria_nombre || 'Sin categoría'; cats[c] = (cats[c] || 0) + 1; });
+    $('lg-cats').innerHTML = [['', 'Todas', PRODUCTOS.length], ...Object.entries(cats).sort((a, b) => a[0].localeCompare(b[0])).map(([c, n]) => [c, c, n])]
+        .map(([v, t, n]) => `<button class="lg-cat ${CAT === v ? 'on' : ''}" data-cat="${escHTML(v)}">${escHTML(t)}<span>${n}</span></button>`).join('');
+    $('lg-cats').querySelectorAll('.lg-cat').forEach((b) => b.onclick = () => { CAT = b.dataset.cat; SEL.clear(); pintar(); });
+
+    const lista = filtrados();
+    $('lg-conteo').textContent = `${lista.length} producto${lista.length === 1 ? '' : 's'}${CAT ? ' en ' + CAT : ''}`;
+    $('lg-todos').checked = lista.length > 0 && lista.every((p) => SEL.has(p.id));
+    $('lg-masivo').hidden = SEL.size === 0;
+    $('lg-sel-n').textContent = `${SEL.size} seleccionado${SEL.size === 1 ? '' : 's'}`;
+    $('lg-lista').innerHTML = lista.length ? lista.map((p) => {
+        const est = p.restock === 'pull' ? 'pull' : 'push';
+        const cls = p.stock === 0 ? 'stock-out' : p.stock <= p.stock_minimo ? 'stock-low' : 'stock-ok';
+        return `
+        <div class="lg-item ${SEL.has(p.id) ? 'sel' : ''}">
+            <input type="checkbox" data-id="${p.id}" ${SEL.has(p.id) ? 'checked' : ''} aria-label="Seleccionar ${escHTML(p.nombre)}" />
+            <div class="lg-item-txt">
+                <strong>${escHTML(p.nombre)}</strong>
+                <span>${escHTML(p.marca || '')}${p.marca ? ' · ' : ''}${escHTML(p.categoria_nombre || 'Sin categoría')}${p.proveedor_nombre ? ' · ' + escHTML(p.proveedor_nombre) : ''}</span>
+            </div>
+            <div class="lg-item-stock"><span class="mono ${cls}">${p.stock}</span><small>/ mín. ${p.stock_minimo}</small></div>
+            <div class="seg lg-toggle">
+                <label class="seg-op ${est === 'push' ? '' : ''}"><input type="radio" name="e${p.id}" value="push" ${est === 'push' ? 'checked' : ''} data-prod="${p.id}" />${icon('calendar', 14)} Push</label>
+                <label class="seg-op"><input type="radio" name="e${p.id}" value="pull" ${est === 'pull' ? 'checked' : ''} data-prod="${p.id}" />${icon('clock', 14)} Pull</label>
+            </div>
+        </div>`;
+    }).join('') : '<div class="empty-state">Ningún producto coincide con estos filtros.</div>';
+    $('lg-lista').querySelectorAll('input[type=checkbox][data-id]').forEach((c) => c.onchange = () => {
+        const id = Number(c.dataset.id); c.checked ? SEL.add(id) : SEL.delete(id); pintar();
+    });
+    $('lg-lista').querySelectorAll('input[type=radio][data-prod]').forEach((r) => r.onchange = () => cambiar(Number(r.dataset.prod), r.value));
 }
 
-function elegirEstrategia(valor) {
-    ESTRATEGIA_ELEGIDA = valor;
-    pintarSeleccionEstrategia();
-}
-
-function pintarSeleccionEstrategia() {
-    document.getElementById('card-push').classList.toggle('activa', ESTRATEGIA_ELEGIDA === 'push');
-    document.getElementById('card-pull').classList.toggle('activa', ESTRATEGIA_ELEGIDA === 'pull');
-}
-
-async function guardarEstrategia() {
-    const id = Number(document.getElementById('lg-producto').value);
-    if (!id) { toast('Elige un producto', 'warn'); return; }
+async function cambiar(id, estrategia) {
+    const p = PRODUCTOS.find((x) => x.id === id);
     try {
-        await api(`/admin/productos/${id}/estrategia`, { method: 'PUT', body: { estrategia: ESTRATEGIA_ELEGIDA } });
-        toast('Estrategia guardada', 'ok');
-        await cargarProductos();
-        document.getElementById('lg-producto').value = id;
-        seleccionarProducto();
+        await api(`/admin/productos/${id}/estrategia`, { method: 'PUT', body: { estrategia } });
+        p.restock = estrategia;
+        toast(`${p.nombre}: ${estrategia === 'pull' ? 'Pull' : 'Push'}`, 'ok');
     } catch (e) { toast(e.message, 'error'); }
+    pintar();
+}
+async function cambiarVarios(estrategia) {
+    const ids = [...SEL].filter((id) => (PRODUCTOS.find((p) => p.id === id).restock || 'push') !== estrategia);
+    if (!ids.length) { toast(`Los seleccionados ya están en ${estrategia}`, 'ok'); return; }
+    if (!(await confirmar(`¿Pasar ${ids.length} producto(s) a ${estrategia === 'pull' ? 'Pull' : 'Push'}?`, { okText: 'Cambiar' }))) return;
+    let ok = 0;
+    for (const id of ids) {
+        try { await api(`/admin/productos/${id}/estrategia`, { method: 'PUT', body: { estrategia } }); PRODUCTOS.find((p) => p.id === id).restock = estrategia; ok++; }
+        catch (e) { toast(e.message, 'error'); break; }
+    }
+    SEL.clear();
+    toast(`${ok} producto(s) cambiados a ${estrategia === 'pull' ? 'Pull' : 'Push'}`, 'ok');
+    pintar();
 }
 
-function renderTilesComparativa() {
-    const push = PRODUCTOS_LG.filter((p) => p.restock !== 'pull').length;
-    const pull = PRODUCTOS_LG.filter((p) => p.restock === 'pull').length;
-    document.getElementById('estrategia-tiles').innerHTML = `
-        <div class="estrategia-tile push">${icon('calendar', 20)}<div class="et-num">${push}</div><div class="et-label">Productos PUSH</div></div>
-        <div class="estrategia-tile pull">${icon('clock', 20)}<div class="et-num">${pull}</div><div class="et-label">Productos PULL</div></div>
-    `;
-}
-
-function renderTablaComparativa() {
-    const cat = document.getElementById('f-categoria').value;
-    const est = document.getElementById('f-estrategia').value;
-    const lista = PRODUCTOS_LG.filter((p) =>
-        (!cat || p.categoria_nombre === cat) && (!est || (p.restock || 'push') === est)
-    );
-    document.getElementById('tabla-comparativa').innerHTML = lista.length ? lista.map((p) => `
-        <tr>
-            <td>${p.nombre}<div style="color:var(--text-muted);font-size:.78rem">${p.marca || ''}</div></td>
-            <td>${p.categoria_nombre || '—'}</td>
-            <td class="mono ${p.stock === 0 ? 'stock-out' : p.stock <= p.stock_minimo ? 'stock-low' : 'stock-ok'}">${p.stock}</td>
-            <td class="mono">${p.stock_minimo}</td>
-            <td><span class="tag" style="color:${p.restock === 'pull' ? 'var(--copper)' : 'var(--info)'};border-color:${p.restock === 'pull' ? 'var(--copper)' : 'var(--info)'}">${p.restock === 'pull' ? 'Pull' : 'Push'}</span></td>
-        </tr>
-    `).join('') : `<tr><td colspan="5" style="color:var(--text-muted)">Ningún producto coincide con este filtro.</td></tr>`;
-}
-
-async function cargarProductos() {
-    PRODUCTOS_LG = await api('/admin/productos');
-
-    const actual = document.getElementById('lg-producto').value;
-    document.getElementById('lg-producto').innerHTML = PRODUCTOS_LG.map((p) =>
-        `<option value="${p.id}">${p.nombre} — ${p.restock === 'pull' ? 'Pull' : 'Push'}</option>`
-    ).join('');
-    if (actual) document.getElementById('lg-producto').value = actual;
-
-    const categorias = [...new Set(PRODUCTOS_LG.map((p) => p.categoria_nombre).filter(Boolean))].sort();
-    document.getElementById('f-categoria').innerHTML = '<option value="">Todas las categorías</option>' +
-        categorias.map((c) => `<option value="${c}">${c}</option>`).join('');
-
-    renderTilesComparativa();
-    renderTablaComparativa();
-}
-
+$('lg-busca').addEventListener('input', pintar);
+$('lg-criticos').addEventListener('change', pintar);
+document.querySelectorAll('input[name="lg-est"]').forEach((r) => r.addEventListener('change', pintar));
+$('lg-todos').addEventListener('change', () => {
+    const lista = filtrados();
+    if ($('lg-todos').checked) lista.forEach((p) => SEL.add(p.id)); else lista.forEach((p) => SEL.delete(p.id));
+    pintar();
+});
 (async () => {
-    tarjetasEstrategia();
-    await cargarProductos();
-    seleccionarProducto();
+    PRODUCTOS = await api('/admin/productos');
+    const cat = new URLSearchParams(location.search).get('categoria');
+    if (cat) CAT = cat;
+    pintar();
+    $('lg-busca').focus();
 })();
 </script>
 </body>

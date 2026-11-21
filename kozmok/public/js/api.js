@@ -232,7 +232,8 @@ window.copiarTexto = copiarTexto;
         if (input.disabled || input.readOnly) return false;
         const min = num(input.min), max = num(input.max), d = paso(input);
         let v = num(input.value);
-        if (v === null) v = dir > 0 ? (min ?? 0) : (max ?? min ?? 0);
+        // Vacío: "+" empieza en el mínimo permitido (o en 1), nunca en 0.
+        if (v === null) v = dir > 0 ? (min !== null && min > 0 ? min : 1) : (max ?? min ?? 0);
         else v += dir * d;
         if (min !== null && v < min) v = min;
         if (max !== null && v > max) v = max;
@@ -254,6 +255,8 @@ window.copiarTexto = copiarTexto;
         input.dataset.stepper = '1';
         const caja = document.createElement('span');
         caja.className = 'num-ctrl';
+        // El margen del campo pasa a la caja, para que los botones queden centrados en el campo.
+        ['marginTop', 'marginBottom'].forEach((m) => { if (input.style[m]) { caja.style[m] = input.style[m]; input.style[m] = '0'; } });
         input.parentNode.insertBefore(caja, input);
         caja.appendChild(input);
         const btns = document.createElement('span');

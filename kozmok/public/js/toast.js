@@ -50,14 +50,14 @@
     };
 
     // prompt() con promesa y estilo. Devuelve el texto o null si se cancela.
-    window.pedirDato = function (mensaje, { placeholder = '', tipo = 'text', okText = 'Aceptar', valorInicial = '' } = {}) {
+    window.pedirDato = function (mensaje, { placeholder = '', tipo = 'text', okText = 'Aceptar', valorInicial = '', min = null, max = null } = {}) {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             overlay.className = 'confirm-overlay';
             overlay.innerHTML = `
                 <div class="confirm-box">
                     <p>${mensaje}</p>
-                    <input type="${tipo}" class="pd-input" placeholder="${placeholder}" value="${valorInicial}" style="margin-bottom:16px" />
+                    <div style="margin-bottom:16px"><input type="${tipo}" class="pd-input" placeholder="${placeholder}" value="${valorInicial}"${min !== null ? ` min="${min}"` : ''}${max !== null ? ` max="${max}"` : ''}${tipo === 'number' ? ' step="1"' : ''} /></div>
                     <div class="confirm-actions">
                         <button class="btn btn-outline btn-sm" data-x>Cancelar</button>
                         <button class="btn btn-primary btn-sm" data-ok>${okText}</button>

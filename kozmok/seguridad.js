@@ -426,7 +426,14 @@ async function leerSesion(req, tipo) {
         return null;
     }
     if (s.revocada) {
-        registrarEvento(req, { tipo: 'sesion_revocada', severidad: 'media', detalle: `Se intentó reusar una sesión cerrada (${s.motivo_revocacion || 'revocada'})`, cliente_id: s.cliente_id, usuario_id: s.usuario_id });
+        // Lo normal es una pestaña vieja del mismo navegador después de que la
+        // persona cerró sesión o cambió su contraseña: eso es 'info'. Si la
+        // sesión se cerró por sospecha (otro navegador, desde el panel…) o
+        // llega desde otro navegador, sí es alerta.
+        const normal = /^(cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida|cuenta activada con contraseña nueva|inactividad)$/.test(s.motivo_revocacion || '');
+        const mismoNavegador = !s.huella || s.huella === huellaDe(req);
+        registrarEvento(req, { tipo: 'sesion_revocada', severidad: normal && mismoNavegador ? 'info' : 'media',
+            detalle: `Se intentó reusar una sesión cerrada (${s.motivo_revocacion || 'revocada'})${mismoNavegador ? '' : ' desde otro navegador'}`, cliente_id: s.cliente_id, usuario_id: s.usuario_id });
         return null;
     }
     if (new Date(s.expira) < new Date()) return null;

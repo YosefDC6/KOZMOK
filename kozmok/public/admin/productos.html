@@ -136,7 +136,7 @@ function formularioProducto(p = {}) {
             <div class="field"><label>Marca</label><input id="p-marca" value="${p.marca || ''}" /></div>
         </div>
         <div class="field-row">
-            <div class="field"><label>Precio de venta</label><input type="number" id="p-precio" value="${p.precio || ''}" /></div>
+            <div class="field"><label>Precio de venta</label><input type="number" id="p-precio" min="1" step="0.01" value="${p.precio || ''}" /></div>
             <div class="field"><label>Costo unitario (proveedor)</label><input type="number" min="0" step="0.01" id="p-costo" value="${p.costo_unitario ?? ''}" /></div>
         </div>
         <div class="field-row">
@@ -146,7 +146,7 @@ function formularioProducto(p = {}) {
                 : `<div class="field"><label>Existencias iniciales</label><input type="number" min="0" step="1" id="p-stock" value="0" /></div>`}
         </div>
         <div class="field-row">
-            <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" value="${p.stock_minimo ?? 5}" /></div>
+            <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" min="0" max="500" value="${p.stock_minimo ?? 5}" /></div>
         </div>
         <div class="field"><label>Imagen (URL)</label><input id="p-imagen" value="${p.imagen_url || ''}" /></div>
         <div class="field-row">
@@ -161,7 +161,7 @@ function formularioProducto(p = {}) {
         </div>
         <div class="field-row">
             <div class="field"><label>Procesador</label><input id="p-procesador" value="${p.procesador || ''}" /></div>
-            <div class="field"><label>RAM (GB)</label><input type="number" id="p-ram" value="${p.ram_gb || ''}" /></div>
+            <div class="field"><label>RAM (GB)</label><input type="number" id="p-ram" min="0" max="512" value="${p.ram_gb || ''}" /></div>
         </div>
         <div class="field-row">
             <div class="field"><label>Almacenamiento</label><input id="p-almacenamiento" value="${p.almacenamiento || ''}" /></div>

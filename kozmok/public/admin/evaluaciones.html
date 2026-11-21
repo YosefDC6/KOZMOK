@@ -12,24 +12,34 @@
     <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
     <main class="admin-main">
         <div id="topbar"></div>
-        <div class="stat-grid" id="stat" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"></div>
+        <div class="ev-resumen">
+            <div class="card ev-prom" id="ev-prom"></div>
+            <div class="card ev-dist" id="ev-dist"></div>
+            <div class="card ev-peores" id="ev-peores"></div>
+        </div>
         <div class="filters-bar">
-            <select id="f-min">
-                <option value="">Todas las calificaciones</option>
-                <option value="5">Solo 5 estrellas</option>
-                <option value="4">4 estrellas o más</option>
-                <option value="3">3 estrellas o más</option>
-                <option value="1">1 o 2 estrellas (críticas)</option>
+            <input type="text" id="f-busqueda" placeholder="Producto, cliente o texto de la reseña…" />
+            <select id="f-filtro">
+                <option value="">Todas</option>
+                <option value="sin_respuesta">Sin responder</option>
+                <option value="con_comentario">Con comentario</option>
+                <option value="ocultas">Ocultas</option>
+            </select>
+            <select id="f-estrellas">
+                <option value="">Cualquier calificación</option>
+                <option value="5">★★★★★ 5</option><option value="4">★★★★ 4</option><option value="3">★★★ 3</option>
+                <option value="2">★★ 2</option><option value="1">★ 1</option><option value="criticas">Críticas (1 y 2)</option>
             </select>
         </div>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Fecha</th><th>Producto</th><th>Cliente</th><th>Calificación</th><th>Comentario</th></tr></thead>
-                <tbody id="tabla"><tr><td colspan="5">Cargando…</td></tr></tbody>
+                <thead><tr><th>Fecha</th><th>Producto</th><th>Cliente</th><th>Calificación</th><th>Comentario</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="6">Cargando…</td></tr></tbody>
             </table>
         </div>
     </main>
 </div>
+<div class="modal-overlay" id="modal"><div class="modal ev-modal" id="modal-body"></div></div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
@@ -40,36 +50,114 @@
 <script>
 requireAuthAdmin();
 renderAdminSidebar('evaluaciones');
-document.getElementById('topbar').innerHTML = adminHeader('Evaluaciones', 'Reseñas que los clientes dejan en los productos.');
-
-function estrellas(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
+document.getElementById('topbar').innerHTML = adminHeader('Evaluaciones', 'Reseñas de los clientes: revisa el detalle, responde en público o modera.');
+const $ = (id) => document.getElementById(id);
+function estrellas(n) { return `<span class="ev-est">${'★'.repeat(n)}<span>${'★'.repeat(5 - n)}</span></span>`; }
+let DATOS = null;
 
 async function cargar() {
-    const min = document.getElementById('f-min').value;
-    let filtro = '';
-    if (min === '1') filtro = ''; // se filtra abajo
-    else if (min) filtro = '?min=' + min;
-    const d = await api('/admin/resenas' + filtro);
-    let rows = d.resenas;
-    if (min === '1') rows = rows.filter((r) => r.calificacion <= 2);
-
-    document.getElementById('stat').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Reseñas totales</div><div class="stat-value">${d.total}</div></div>
-        <div class="stat-card"><div class="stat-label">Promedio</div><div class="stat-value">${d.promedio.toFixed(2)}</div><div class="stat-sub">de 5</div></div>
-        <div class="stat-card"><div class="stat-label">Críticas (≤2)</div><div class="stat-value" style="color:var(--danger)">${d.resenas.filter((r) => r.calificacion <= 2).length}</div></div>
-    `;
-    document.getElementById('tabla').innerHTML = rows.length === 0
-        ? '<tr><td colspan="5">Sin resultados.</td></tr>'
-        : rows.map((r) => `
-            <tr>
+    const q = new URLSearchParams();
+    if ($('f-estrellas').value) q.set('estrellas', $('f-estrellas').value);
+    if ($('f-filtro').value) q.set('filtro', $('f-filtro').value);
+    if ($('f-busqueda').value.trim()) q.set('busqueda', $('f-busqueda').value.trim());
+    const d = DATOS = await api('/admin/resenas?' + q);
+    const max = Math.max(1, ...Object.values(d.distribucion));
+    $('ev-prom').innerHTML = `
+        <div class="stat-label">Promedio general</div>
+        <div class="ev-num">${d.promedio.toFixed(2)}</div>${estrellas(Math.round(d.promedio))}
+        <div class="ev-mini"><span>${d.total} reseñas</span><button class="link-btn" onclick="filtrar('filtro','sin_respuesta')">${d.sin_respuesta} sin responder</button>
+            <button class="link-btn" style="color:var(--danger)" onclick="filtrar('estrellas','criticas')">${d.criticas} críticas</button></div>`;
+    $('ev-dist').innerHTML = `<div class="stat-label" style="margin-bottom:10px">Distribución · clic para filtrar</div>
+        ${[5, 4, 3, 2, 1].map((n) => `
+            <button class="ev-barra ${$('f-estrellas').value === String(n) ? 'on' : ''}" onclick="filtrar('estrellas','${n}')">
+                <span>${n} ★</span><span class="ev-barra-fondo"><span style="width:${Math.round(d.distribucion[n] / max * 100)}%" class="e${n}"></span></span><span>${d.distribucion[n]}</span>
+            </button>`).join('')}`;
+    $('ev-peores').innerHTML = `<div class="stat-label" style="margin-bottom:10px">Productos con peor calificación</div>
+        ${d.peores.length ? d.peores.map((p) => `
+            <button class="ev-prod" onclick="$('f-busqueda').value=${JSON.stringify(p.nombre).replace(/"/g, '&quot;')};cargar()">
+                <span>${escHTML(p.nombre)}</span><span><strong style="color:${p.promedio < 3 ? 'var(--danger)' : p.promedio < 4 ? 'var(--warning)' : 'var(--success)'}">${p.promedio.toFixed(1)}</strong> · ${p.total}</span>
+            </button>`).join('') : '<p style="color:var(--text-muted);margin:0">Aún no hay reseñas.</p>'}`;
+    $('tabla').innerHTML = d.resenas.length === 0
+        ? '<tr><td colspan="6"><div class="empty-state" style="padding:16px">Sin reseñas con ese filtro.</div></td></tr>'
+        : d.resenas.map((r) => `
+            <tr onclick="abrir(${r.id})" style="cursor:pointer" class="${r.oculta ? 'ev-oculta' : ''}">
                 <td>${formatoFecha(r.fecha)}</td>
-                <td>${r.producto_nombre}</td>
-                <td><a href="/admin/cliente.html?id=${r.cliente_id}&tab=evaluaciones">${r.cliente_nombre}</a></td>
-                <td style="color:var(--warning);letter-spacing:2px">${estrellas(r.calificacion)}</td>
-                <td>${r.comentario || '—'}</td>
+                <td>${escHTML(r.producto_nombre)}</td>
+                <td>${escHTML(r.cliente_nombre)}</td>
+                <td>${estrellas(r.calificacion)}</td>
+                <td class="ev-com">${r.comentario ? escHTML(r.comentario) : '<span style="color:var(--text-muted)">Sin comentario</span>'}
+                    ${r.oculta ? ' <span class="rec-chip est-rechazado">oculta</span>' : r.respuesta ? ' <span class="rec-chip est-listo">respondida</span>' : ''}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();abrir(${r.id})">Ver detalle</button></td>
             </tr>`).join('');
 }
-document.getElementById('f-min').addEventListener('change', cargar);
+function filtrar(campo, valor) {
+    if (campo === 'estrellas') $('f-estrellas').value = $('f-estrellas').value === valor ? '' : valor;
+    else $('f-filtro').value = $('f-filtro').value === valor ? '' : valor;
+    cargar();
+}
+
+async function abrir(id) {
+    let r;
+    try { r = await api('/admin/resenas/' + id); } catch (e) { toast(e.message, 'error'); return; }
+    const ps = r.producto_stats, max = Math.max(1, ...Object.values(ps.distribucion));
+    $('modal-body').innerHTML = `
+        <button class="modal-close" onclick="$('modal').classList.remove('open')">${icon('x', 20)}</button>
+        <div class="ev-det-head">
+            ${r.imagen_url ? `<img src="${escHTML(r.imagen_url)}" alt="" class="ev-det-img" />` : `<span class="ev-det-img">${icon('laptop', 28)}</span>`}
+            <div><h3 style="margin:0">${escHTML(r.producto_nombre)}</h3>
+                <p style="margin:2px 0 0;color:var(--text-muted);font-size:.84rem">${escHTML(r.marca || '')} · ${formatoMoneda(r.precio)}${r.producto_activo ? '' : ' · desactivado'}</p></div>
+        </div>
+        <div class="ev-det-grid">
+            <section>
+                <div class="ev-det-resena ${r.oculta ? 'ev-oculta' : ''}">
+                    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">${estrellas(r.calificacion)}<span style="font-size:.8rem;color:var(--text-muted)">${formatoFechaHora(r.fecha)}</span></div>
+                    <p style="margin:8px 0 0">${r.comentario ? escHTML(r.comentario) : '<em style="color:var(--text-muted)">Sin comentario, solo calificación.</em>'}</p>
+                    <p style="margin:8px 0 0;font-size:.8rem;color:var(--text-muted)">
+                        ${r.compra ? `${icon('check', 13)} Compra verificada: <a href="/admin/pedidos.html?open=${r.compra.id}" class="mono">${escHTML(r.compra.numero_orden)}</a>${r.compra.fecha_entrega ? ' · entregado el ' + formatoFecha(r.compra.fecha_entrega) : ''}` : 'No encontramos el pedido de esta compra.'}
+                    </p>
+                    ${r.oculta ? '<p style="margin:8px 0 0;color:var(--danger);font-size:.84rem">Oculta: no se ve en la tienda ni cuenta en el promedio.</p>' : ''}
+                </div>
+                <div class="field" style="margin-top:14px"><label>Respuesta pública de Kozmok <span style="font-weight:400;color:var(--text-muted)">(se ve debajo de la reseña; al cliente le llega un correo)</span></label>
+                    <textarea id="ev-resp" rows="3" maxlength="1500" placeholder="Gracias por tu opinión…">${escHTML(r.respuesta || '')}</textarea></div>
+                ${r.respuesta ? `<p style="margin:-6px 0 10px;font-size:.78rem;color:var(--text-muted)">Respondida el ${formatoFecha(r.respuesta_fecha)}${r.respuesta_por_nombre ? ' por ' + escHTML(r.respuesta_por_nombre) : ''}</p>` : ''}
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="btn btn-primary btn-sm" onclick="responder(${r.id})">${r.respuesta ? 'Actualizar respuesta' : 'Publicar respuesta'}</button>
+                    ${r.respuesta ? `<button class="btn btn-ghost btn-sm" onclick="responder(${r.id}, true)">Quitar respuesta</button>` : ''}
+                    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="moderar(${r.id}, ${!r.oculta})">${r.oculta ? 'Volver a mostrar' : 'Ocultar reseña'}</button>
+                </div>
+            </section>
+            <aside>
+                <div class="ev-det-card">
+                    <div class="stat-label">Cliente</div>
+                    <p style="margin:4px 0 0"><a href="/admin/cliente.html?id=${r.cliente_id}&tab=evaluaciones">${escHTML(r.cliente_nombre)}</a></p>
+                    <p style="margin:2px 0 0;font-size:.8rem;color:var(--text-muted)">${escHTML(r.cliente_correo)} · ${escHTML(r.etapa_crm || '')}</p>
+                    ${r.otras_del_cliente.length ? `<div style="margin-top:8px;font-size:.8rem">${r.otras_del_cliente.map((o) => `<div class="tk-kv"><a href="#" onclick="abrir(${o.id});return false">${escHTML(o.producto_nombre)}</a><span>${'★'.repeat(o.calificacion)}</span></div>`).join('')}</div>` : ''}
+                    ${r.reclamos.length ? `<p style="margin:8px 0 0;font-size:.8rem">Reclamos de garantía de este producto: ${r.reclamos.map((x) => `<a href="/admin/garantias.html?reclamo=${x.id}" class="mono">${escHTML(x.folio)}</a>`).join(', ')}</p>` : ''}
+                </div>
+                <div class="ev-det-card">
+                    <div class="stat-label">Este producto</div>
+                    <p style="margin:4px 0 8px"><strong style="font-size:1.3rem">${ps.promedio.toFixed(1)}</strong> ${estrellas(Math.round(ps.promedio))} <span style="font-size:.8rem;color:var(--text-muted)">${ps.total} reseña(s)</span></p>
+                    ${[5, 4, 3, 2, 1].map((n) => `<div class="ev-barra mini"><span>${n} ★</span><span class="ev-barra-fondo"><span style="width:${Math.round(ps.distribucion[n] / max * 100)}%" class="e${n}"></span></span><span>${ps.distribucion[n]}</span></div>`).join('')}
+                    ${r.otras_del_producto.length ? `<div style="margin-top:10px;font-size:.8rem">${r.otras_del_producto.map((o) => `<a href="#" class="ev-otra" onclick="abrir(${o.id});return false"><span>${'★'.repeat(o.calificacion)}</span> ${escHTML(o.comentario || 'Sin comentario')} <em>— ${escHTML(o.cliente_nombre)}</em></a>`).join('')}</div>` : ''}
+                </div>
+            </aside>
+        </div>`;
+    $('modal').classList.add('open');
+}
+async function responder(id, quitar = false) {
+    const respuesta = quitar ? '' : $('ev-resp').value.trim();
+    if (!quitar && respuesta.length < 3) { toast('Escribe la respuesta', 'warn'); return; }
+    try { const r = await api('/admin/resenas/' + id, { method: 'PUT', body: { respuesta } }); toast(r.message, 'ok'); abrir(id); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function moderar(id, oculta) {
+    let motivo = '';
+    if (oculta) { motivo = await pedirDato('¿Por qué se oculta? (queda en la auditoría)', { placeholder: 'Lenguaje ofensivo, datos personales, spam…' }); if (motivo === null) return; }
+    try { const r = await api('/admin/resenas/' + id, { method: 'PUT', body: { oculta, motivo } }); toast(r.message, 'ok'); abrir(id); cargar(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+['f-estrellas', 'f-filtro'].forEach((x) => $(x).addEventListener('change', cargar));
+$('f-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargar(); });
 cargar();
 </script>
 </body>

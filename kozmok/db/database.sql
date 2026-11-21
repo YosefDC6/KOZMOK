@@ -788,7 +788,7 @@ CREATE INDEX idx_bloqueos_valor ON bloqueos(tipo, valor, hasta);
 CREATE TABLE eventos_seguridad (
     id          SERIAL PRIMARY KEY,
     tipo        VARCHAR(30) NOT NULL,          -- inyeccion_sql, xss, fuerza_bruta, sesion_robada, ...
-    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('baja','media','alta')),
+    severidad   VARCHAR(8) NOT NULL DEFAULT 'media' CHECK (severidad IN ('info','baja','media','alta')),
     ip          VARCHAR(64),
     user_agent  VARCHAR(300),
     metodo      VARCHAR(8),

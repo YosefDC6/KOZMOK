@@ -22,8 +22,10 @@
                     <input type="search" id="b-cliente" placeholder="Buscar cliente por nombre, correo o empresa…" style="flex:1;min-width:220px" />
                     <button class="btn btn-primary" onclick="abrirNuevoCliente()"></button>
                 </div>
-                <div class="cli-list" id="cli-list"></div>
-                <div id="cli-sel" style="margin-top:16px"></div>
+                <div class="paso1-grid">
+                    <div class="cli-list" id="cli-list"></div>
+                    <div id="cli-sel" class="paso1-sel"></div>
+                </div>
                 <div class="wiz-actions">
                     <a class="btn btn-outline" href="/admin/ordenes-erp.html">Cancelar</a>
                     <button class="btn btn-primary" id="btn-sig-1" onclick="irPaso(2)" disabled>Siguiente</button>
@@ -188,8 +190,8 @@ async function buscarClientes() {
         <button type="button" class="cli-opt ${CLIENTE && CLIENTE.id === c.id ? 'sel' : ''}" onclick="elegirCliente(${c.id})">
             <span class="cli-avatar">${iniciales(c.nombre)}</span>
             <span style="flex:1;min-width:0">
-                <strong>${c.nombre}</strong>
-                <span style="display:block;font-size:.78rem;color:var(--text-muted)">${c.correo}${c.empresa ? ' · ' + c.empresa : ''}</span>
+                <strong>${escHTML(c.nombre)}</strong>
+                <span style="display:block;font-size:.78rem;color:var(--text-muted)">${escHTML(c.correo)}${c.empresa ? ' · ' + escHTML(c.empresa) : ''}</span>
             </span>
             <span class="origen-pill">${c.etapa_crm}</span>
         </button>`).join('') || '<p style="color:var(--text-muted)">No hay clientes con esa búsqueda. Puedes darlo de alta con “Nuevo cliente (CRM)”.</p>';
@@ -204,7 +206,7 @@ function elegirCliente(id) {
 function pintarClienteSel() {
     const el = document.getElementById('cli-sel');
     document.getElementById('btn-sig-1').disabled = !CLIENTE;
-    if (!CLIENTE) { el.innerHTML = ''; return; }
+    if (!CLIENTE) { el.innerHTML = `<div class="paso1-vacio">${icon('user', 26)}<p>Elige un cliente de la lista o da de alta uno nuevo.</p></div>`; return; }
     const c = CLIENTE;
     el.innerHTML = `
         <label class="sim-lbl">Cliente seleccionado</label>
@@ -238,7 +240,7 @@ document.getElementById('form-cliente').addEventListener('submit', async (e) => 
         document.getElementById('b-cliente').value = r.cliente.nombre;
         await buscarClientes();
         pintarClienteSel();
-        toast(`Cliente creado. Contraseña temporal para la tienda: ${r.password_temporal}`, 'ok');
+        toast(r.invitacion_enviada ? 'Cliente creado. Le mandamos un correo para que cree su contraseña de la tienda.' : 'Cliente creado (el correo no está configurado: no se le pudo mandar el enlace para su contraseña).', 'ok');
     } catch (err) { toast(err.message, 'error'); }
 });
 
@@ -459,6 +461,7 @@ let tC = null;
 document.getElementById('b-cliente').addEventListener('input', () => { clearTimeout(tC); tC = setTimeout(buscarClientes, 250); });
 document.getElementById('b-producto').addEventListener('input', pintarProductos);
 pintarPasos();
+pintarClienteSel();
 Promise.all([buscarClientes(), cargarProductos()]).then(() => {
     const pre = Number(new URLSearchParams(location.search).get('cliente'));
     if (pre) {

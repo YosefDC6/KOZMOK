@@ -50,6 +50,11 @@
 // El token llega en la URL; se quita de la barra de direcciones para que
 // no quede en el historial ni se comparta por accidente.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+// Cuenta creada por el equipo: es su primera contraseña, no un cambio.
+if (new URLSearchParams(location.search).get('nueva') === '1') {
+    document.querySelector('.page-hero h1').textContent = 'Crea tu contraseña';
+    document.querySelector('.page-hero p').textContent = 'Te creamos una cuenta en Kozmok. Elige una contraseña que solo tú conozcas para entrar a la tienda.';
+}
 if (TOKEN) history.replaceState(null, '', location.pathname);
 if (!/^[A-Za-z0-9_-]{30,60}$/.test(TOKEN)) {
     document.getElementById('form-card').hidden = true;

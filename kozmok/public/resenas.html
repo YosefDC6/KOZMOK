@@ -44,12 +44,13 @@ montarCuenta('resenas', async (panel, P) => {
                 <div class="card" style="margin-bottom:12px">
                     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
                         <div>
-                            <a href="/index.html#producto-${r.producto_id}" style="font-weight:600">${r.producto_nombre}</a>
+                            <a href="/index.html#producto-${r.producto_id}" style="font-weight:600">${escHTML(r.producto_nombre)}</a>
                             <div style="margin-top:4px">${estrellas(r.calificacion)}</div>
                         </div>
                         <span style="font-size:.8rem;color:var(--text-muted)">${formatoFecha(r.fecha)}</span>
                     </div>
-                    ${r.comentario ? `<p style="margin:10px 0 0">${r.comentario}</p>` : ''}
+                    ${r.comentario ? `<p style="margin:10px 0 0">${escHTML(r.comentario)}</p>` : ''}
+                    ${r.respuesta ? `<div class="resena-resp"><strong>Respuesta de Kozmok</strong> · ${formatoFecha(r.respuesta_fecha)}<div>${escHTML(r.respuesta)}</div></div>` : ''}
                     <div style="margin-top:10px;display:flex;gap:8px">
                         <a class="btn btn-outline btn-sm" href="/index.html#producto-${r.producto_id}">Editar</a>
                         <button class="btn btn-ghost btn-sm" onclick="borrarResena(${r.producto_id})">Eliminar</button>

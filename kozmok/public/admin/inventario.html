@@ -211,7 +211,7 @@ function movimiento(productoId) { ScmAcciones.nuevoMovimiento({ productoId, onLi
 function generarPedido(productoId) { ScmAcciones.pedidoReposicion({ productoId, onListo: alTerminar }); }
 
 async function restock(id) {
-    const cantidad = await pedirDato('¿Cuántas unidades vas a agregar al stock?', { tipo: 'number', placeholder: 'Ej. 10' });
+    const cantidad = await pedirDato('¿Cuántas unidades vas a agregar al stock?', { tipo: 'number', placeholder: 'Cantidad (máx. 500)', min: 1, max: 500 });
     if (!cantidad || isNaN(cantidad) || Number(cantidad) < 1) return;
     try {
         await api(`/admin/productos/${id}/restock`, { method: 'POST', body: { cantidad: Number(cantidad), motivo: 'Restock manual desde Inventario' } });

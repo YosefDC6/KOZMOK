@@ -252,17 +252,39 @@ async function renderBannerPromos() {
     const destino = (p) => p.alcance === 'producto' ? `/index.html?ver=todo#producto-${p.producto_id}`
         : p.alcance === 'categoria' ? `/index.html?promocion=1&categoria=${encodeURIComponent(p.categoria_nombre)}` : '/index.html?promocion=1';
     const dias = (f) => Math.max(0, Math.ceil((new Date(f) - Date.now()) / 86400000));
-    document.getElementById('promo-banner-track').innerHTML = promos.slice(0, 3).map((p, i) => `
-        <a class="pb-item pb-${i}" href="${destino(p)}">
+    const tarjeta = (p, i) => `
+        <a class="pb-item pb-${i % 3}" href="${destino(p)}">
             <span class="pb-valor">-${valor(p)}</span>
             <span class="pb-txt">
-                <strong>${p.nombre}</strong>
-                <span>${p.descripcion || (p.alcance === 'categoria' ? 'En ' + p.categoria_nombre : p.alcance === 'producto' ? p.producto_nombre : 'En todo el catálogo')}</span>
+                <strong>${escHTML(p.nombre)}</strong>
+                <span>${escHTML(p.descripcion || (p.alcance === 'categoria' ? 'En ' + p.categoria_nombre : p.alcance === 'producto' ? p.producto_nombre : 'En todo el catálogo'))}</span>
                 <em>${dias(p.fecha_fin) <= 1 ? 'Termina hoy' : `Quedan ${dias(p.fecha_fin)} días`}</em>
             </span>
             <span class="pb-cta">Ver ${icon('arrow', 14)}</span>
-        </a>`).join('');
+        </a>`;
+    const track = document.getElementById('promo-banner-track');
+    // Más de 3: se muestran 3 y un recuadro "Ver más" que abre todas las vigentes.
+    track.classList.toggle('con-mas', promos.length > 3);
+    track.innerHTML = promos.slice(0, 3).map(tarjeta).join('')
+        + (promos.length > 3 ? `<button type="button" class="pb-mas" id="pb-mas"><strong>+${promos.length - 3}</strong><span>Ver más promociones</span>${icon('arrow', 14)}</button>` : '');
     document.getElementById('promo-banner').hidden = false;
+    const mas = document.getElementById('pb-mas');
+    if (mas) mas.addEventListener('click', () => {
+        let ov = document.getElementById('modal-promos');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.className = 'modal-overlay'; ov.id = 'modal-promos';
+            ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ov.classList.remove('open'); });
+            document.body.appendChild(ov);
+        }
+        ov.innerHTML = `<div class="modal modal-promos" role="dialog" aria-modal="true" aria-label="Promociones vigentes">
+            <button class="modal-close" aria-label="Cerrar" onclick="document.getElementById('modal-promos').classList.remove('open')">${icon('x', 20)}</button>
+            <h2>Promociones vigentes</h2>
+            <p class="mp-sub">${promos.length} promociones activas ahora mismo. Toca una para ver sus productos.</p>
+            <div class="mp-grid">${promos.map(tarjeta).join('')}</div></div>`;
+        ov.classList.add('open');
+    });
 }
 
 // ---- Vistos recientemente (localStorage) ----
@@ -680,8 +702,9 @@ async function cargarResenas(pid) {
         ${data.resenas.slice(0, 4).map((r) => `
             <div class="mr-item">
                 ${estrellasHTML(r.calificacion, false)}
-                <div class="mr-meta">${r.cliente_nombre} · ${formatoFecha(r.fecha)}</div>
-                ${r.comentario ? `<div>${r.comentario.replace(/</g, '&lt;')}</div>` : ''}
+                <div class="mr-meta">${escHTML(r.cliente_nombre)} · ${formatoFecha(r.fecha)}</div>
+                ${r.comentario ? `<div>${escHTML(r.comentario)}</div>` : ''}
+                ${r.respuesta ? `<div class="resena-resp"><strong>Respuesta de Kozmok</strong><div>${escHTML(r.respuesta)}</div></div>` : ''}
             </div>`).join('')}
         ${cli && !data.puede_resenar && !mia
             ? '<p style="font-size:.82rem;color:var(--text-muted);margin-top:10px">Podrás reseñar este producto cuando recibas tu compra.</p>'

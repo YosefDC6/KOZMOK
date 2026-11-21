@@ -5,6 +5,7 @@
 const CUENTA_LINKS = [
     { href: '/perfil.html', key: 'perfil', label: 'Resumen', ic: 'home' },
     { href: '/pedidos.html', key: 'pedidos', label: 'Mis pedidos', ic: 'package' },
+    { href: '/devoluciones.html', key: 'devoluciones', label: 'Devoluciones', ic: 'undo' },
     { href: '/recompensas.html', key: 'recompensas', label: 'Club de puntos', ic: 'star' },
     { href: '/monedero.html', key: 'monedero', label: 'Mi monedero', ic: 'wallet' },
     { href: '/favoritos.html', key: 'favoritos', label: 'Favoritos', ic: 'heart' },
