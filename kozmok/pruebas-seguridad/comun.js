@@ -47,11 +47,19 @@ function resumen() {
     if (malos.length) { malos.forEach((m) => console.log(`${C.mal}  ✘ ${m.nombre}${C.fin}`)); process.exitCode = 1; }
 }
 
+// Si el servidor corre en esta computadora, se lee su pase de pruebas para no
+// tener que marcar reCAPTCHA (el servidor solo lo acepta desde esta misma
+// computadora). Desde otra máquina el captcha sigue pidiéndose.
+let PASE_PRUEBAS = null, avisoCaptcha = false;
+if (ES_ESTA_COMPU) {
+    try { PASE_PRUEBAS = require('fs').readFileSync(require('path').join(__dirname, '..', '.pruebas-token'), 'utf8').trim(); } catch { /* sin pase */ }
+}
+
 // Cliente HTTP con su propia "cookie jar" y su propio navegador (User-Agent).
 function navegador(userAgent = 'Mozilla/5.0 (Prueba de seguridad Kozmok) Chrome/130') {
     const jar = {};
     async function pedir(metodo, ruta, { body, headers = {}, cookies = true } = {}) {
-        const h = { 'User-Agent': userAgent, ...headers };
+        const h = { 'User-Agent': userAgent, ...(PASE_PRUEBAS ? { 'X-Kozmok-Pruebas': PASE_PRUEBAS } : {}), ...headers };
         if (body !== undefined) h['Content-Type'] = 'application/json';
         const galletas = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
         if (cookies && galletas && !h.Cookie) h.Cookie = galletas;
@@ -78,6 +86,12 @@ function navegador(userAgent = 'Mozilla/5.0 (Prueba de seguridad Kozmok) Chrome/
             r = await pedir('POST', '/api/auth/login', { body });
         }
         if (r.status === 429) console.log(`${C.aviso}  (acceso bloqueado: ${(r.json && r.json.message) || ''} → corre "npm run desbloquear")${C.fin}`);
+        if (r.status === 400 && r.json && r.json.captcha && !avisoCaptcha) {
+            avisoCaptcha = true;
+            console.log(`${C.aviso}  (reCAPTCHA está activo y pide la casilla "No soy un robot": ${ES_ESTA_COMPU
+                ? 'reinicia el servidor con npm start para que genere el pase de pruebas'
+                : 'desde otra computadora el captcha frena el ataque antes; para la demo por Wi-Fi quita RECAPTCHA_SITE_KEY y RECAPTCHA_SECRET_KEY del .env del servidor y reinícialo'})${C.fin}`);
+        }
         return r;
     }
     return {

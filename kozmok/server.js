@@ -866,8 +866,21 @@ app.post('/api/auth/login-cliente', limiteAuth, captchaMw, loginCliente);
 app.post('/api/auth/registro-cliente', limiteAuth, captchaMw, registrarCliente);
 // Casilla "No soy un robot" (Google reCAPTCHA) en iniciar sesión, crear
 // cuenta y recuperar contraseña. Si no hay claves en el .env no se pide.
+// Pase para "npm run prueba:seguridad" en la MISMA computadora del servidor:
+// al arrancar se genera una clave aleatoria en .pruebas-token (fuera de git).
+// Solo se acepta si la conexión es local (127.0.0.1 / ::1, sin contar
+// cabeceras que se puedan falsificar). Así las pruebas evalúan el bloqueo de
+// cuentas y sesiones sin tener que marcar la casilla de reCAPTCHA.
+const TOKEN_PRUEBAS = crypto.randomBytes(24).toString('hex');
+try { require('fs').writeFileSync(path.join(__dirname, '.pruebas-token'), TOKEN_PRUEBAS, { mode: 0o600 }); } catch { /* sin pase: las pruebas pedirán captcha */ }
+function esPruebaLocal(req) {
+    const t = String(req.get('x-kozmok-pruebas') || '');
+    const ip = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+    return t.length === TOKEN_PRUEBAS.length && (ip === '127.0.0.1' || ip === '::1')
+        && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN_PRUEBAS));
+}
 async function pedirCaptcha(req, res, next) {
-    if (!captcha.configurado()) return next();
+    if (!captcha.configurado() || esPruebaLocal(req)) return next();
     const r = await captcha.verificar(req.body && req.body.captcha, seg.ipDe(req));
     if (r.ok) return next();
     if (r.sinConexion) return res.status(503).json({ message: 'No pudimos comprobar la casilla "No soy un robot" (sin conexión con Google). Intenta de nuevo.', captcha: true });

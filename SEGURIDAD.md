@@ -52,6 +52,8 @@ npm run desbloquear
 
 `npm run desbloquear -- --todo` además borra la bitácora de intentos y eventos para empezar la demo en limpio.
 
+**Con reCAPTCHA activado** (llaves en `.env`): al arrancar, el servidor genera un pase de pruebas en `kozmok/.pruebas-token` (fuera de git). Los scripts lo usan solo si corren en la misma computadora del servidor, y el servidor solo lo acepta desde ahí; así se prueban el bloqueo de cuentas y las sesiones sin marcar la casilla. Desde cualquier otra computadora el captcha se sigue pidiendo.
+
 ### Atacar por Wi-Fi desde otra computadora (más realista)
 
 Así el ataque viaja por la red, como el de un atacante de verdad, y en el panel se ve la IP de la computadora atacante.
@@ -64,6 +66,8 @@ node pruebas-seguridad/todas.js http://192.168.43.20:3000
 ```
 
 (o cada una: `node pruebas-seguridad/1-fuerza-bruta.js http://192.168.43.20:3000 --ip`).
+
+Si el servidor tiene reCAPTCHA activado, desde la otra computadora el captcha frena los inicios de sesión antes que el bloqueo de cuentas. Para mostrar el bloqueo en la demo por Wi-Fi, quita `RECAPTCHA_SITE_KEY` y `RECAPTCHA_SECRET_KEY` del `.env` del servidor y reinícialo (vuelve a ponerlas al terminar).
 
 3. **Proyector:** en la computadora del servidor abre el panel → *Cuenta → Seguridad*: aparecen los intentos, el bloqueo de la cuenta (y de la IP con `--ip`), la inyección SQL y la sesión robada, con la IP del atacante.
 

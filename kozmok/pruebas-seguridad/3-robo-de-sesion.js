@@ -63,11 +63,18 @@ const VICTIMA = cuentaPrueba();
     verificar('Una petición con origen ajeno se rechaza', r.status === 403, `${r.status}`);
 
     titulo('f) Ver datos de otro cliente (IDOR)');
-    r = await v3.get('/api/clientes/1');
+    // Se usan ids que NO son de la cuenta de prueba (si la cuenta de prueba
+    // fuera el cliente 1 o dueña del pedido 1, la prueba daría un falso positivo).
+    const yo = (await v3.get('/api/auth/perfil')).json || {};
+    const otroCliente = Number(yo.id) === 1 ? 2 : 1;
+    const mios = new Set((((await v3.get(`/api/pedidos/cliente/${yo.id}`)).json) || []).map((p) => Number(p.id)));
+    let otroPedido = 1; while (mios.has(otroPedido)) otroPedido++;
+    info(`La cuenta de prueba es el cliente #${yo.id}; se intentan el cliente #${otroCliente} y el pedido #${otroPedido}.`);
+    r = await v3.get(`/api/clientes/${otroCliente}`);
     verificar('No puede ver el perfil de otro cliente', r.status === 403, `${r.status}`);
-    r = await v3.get('/api/pedidos/1/detalle');
+    r = await v3.get(`/api/pedidos/${otroPedido}/detalle`);
     verificar('No puede ver pedidos de otro cliente', r.status === 404 || r.status === 403, `${r.status}`);
-    r = await v3.get('/api/carrito/1');
+    r = await v3.get(`/api/carrito/${otroCliente}`);
     verificar('No puede ver el carrito de otro cliente', r.status === 403, `${r.status}`);
 
     titulo('g) Si se roban la base de datos');

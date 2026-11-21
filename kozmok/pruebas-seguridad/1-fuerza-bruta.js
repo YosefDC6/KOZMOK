@@ -15,6 +15,14 @@ const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Hola2026', 'contrasena1
 
 (async () => {
     await servidorArriba();
+    // Antes del ataque (con la cuenta aún sin bloquear): si se hiciera después,
+    // se compararía una cuenta bloqueada contra un correo nuevo.
+    paso('Mismo mensaje exista o no el correo (no se puede adivinar quién está registrado)');
+    const a = await navegador().login({ tipo: 'cliente', correo: cuenta, password: 'Equivocada#1' });
+    const b = await navegador().login({ tipo: 'cliente', correo: 'no-existe-' + Date.now() + '@correo.com', password: 'Equivocada#1' });
+    const limpio = (m) => String(m || '').replace(/ Te quedan.*$/, '');
+    verificar('Respuesta igual para un correo real y uno inexistente', a.status === b.status && limpio(a.json && a.json.message) === limpio(b.json && b.json.message), `"${limpio(a.json && a.json.message)}"`);
+
     titulo(`Fuerza bruta contra ${cuenta}`);
     const atacante = navegador('Hydra-simulado/1.0');
     let bloqueada = false, entro = false;
@@ -29,11 +37,11 @@ const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Hola2026', 'contrasena1
     verificar('Ni con la contraseña correcta entra mientras está bloqueada', !entro);
     info('En el panel: Cuenta → Seguridad → Bloqueos (ahí se puede desbloquear).');
 
-    paso('Mismo mensaje exista o no el correo (no se puede adivinar quién está registrado)');
-    const a = await navegador().post('/api/auth/login', { tipo: 'cliente', correo: cuenta, password: 'Equivocada#1' });
-    const b = await navegador().post('/api/auth/login', { tipo: 'cliente', correo: 'no-existe-' + Date.now() + '@correo.com', password: 'Equivocada#1' });
-    const limpio = (m) => String(m || '').replace(/ Te quedan.*$/, '');
-    verificar('Respuesta igual para un correo real y uno inexistente', a.status === b.status && limpio(a.json.message) === limpio(b.json.message), `"${limpio(a.json.message)}"`);
+    paso('Un correo que no existe también se "bloquea" (el bloqueo no delata qué cuentas existen)');
+    const fantasma = 'no-existe-' + Date.now() + '@correo.com', bot = navegador('Hydra-simulado/1.0');
+    let fb = null;
+    for (let i = 0; i < 6; i++) fb = await bot.login({ tipo: 'cliente', correo: fantasma, password: 'Equivocada#' + i });
+    verificar('Tras los mismos intentos responde "cuenta bloqueada" aunque no exista', fb.status === 429 && /bloqueada/.test((fb.json && fb.json.message) || ''), `${fb.status}`);
 
     if (args.includes('--ip')) {
         titulo('Relleno de credenciales (una contraseña contra muchas cuentas)');
