@@ -2194,8 +2194,8 @@ async function emitirGarantiasBase(db, pedidoId) {
     for (const it of items.rows) {
         const g = await db.query(
             `INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence)
-             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7, 0, CURRENT_DATE, (CURRENT_DATE + ($7 || ' months')::interval)::date) RETURNING id`,
-            [codigoGarantia(), pedidoId, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, String(GARANTIA_BASE.meses)]);
+             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7::int, 0, CURRENT_DATE, (CURRENT_DATE + make_interval(months => $7::int))::date) RETURNING id`,
+            [codigoGarantia(), pedidoId, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, GARANTIA_BASE.meses]);
         await db.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
     }
     return items.rows.length;
@@ -4742,7 +4742,7 @@ app.put('/api/admin/resenas/:id', asyncRoute(async (req, res) => {
     if (!re) return res.status(404).json({ message: 'Reseña no encontrada' });
     if (req.body.respuesta !== undefined) {
         const txt = String(req.body.respuesta || '').trim().slice(0, 1500);
-        await pool.query(`UPDATE resenas SET respuesta = $2, respuesta_fecha = CASE WHEN $2 IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, respuesta_por = $3 WHERE id = $1`,
+        await pool.query(`UPDATE resenas SET respuesta = $2::text, respuesta_fecha = CASE WHEN $2::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, respuesta_por = $3 WHERE id = $1`,
             [re.id, txt || null, txt ? req.usuario.id : null]);
         if (txt && !re.respuesta && re.correo) {
             await enviarCorreo(pool, { para: re.correo, tipo: 'resena', cliente_id: re.cliente_id,
@@ -8686,9 +8686,10 @@ async function migrarEsquema() {
         const cerrado = v.estado !== 'activa' || !!v.resuelto_fecha;
         const rec = (await pool.query(
             `INSERT INTO reclamos_garantia (folio, garantia_id, cliente_id, estado, resolucion, descripcion, fecha, fecha_actualizacion, fecha_cierre, cerrado_por)
-             VALUES ('RG-TMP', $1, $2, $3, $4, $5, $6, COALESCE($7, $6), $7, $8) RETURNING id`,
+             VALUES ('RG-TMP', $1, $2, $3, $4, $5, $6::timestamp, $7::timestamp, $8::timestamp, $9) RETURNING id`,
             [v.id, v.cliente_id, cerrado ? 'cerrado' : 'recibido', cerrado ? (v.estado === 'usada' ? 'reparacion' : 'sin_falla') : null,
-             v.reclamo_desc || 'Reclamo', v.reclamo_fecha, cerrado ? (v.resuelto_fecha || v.reclamo_fecha) : null, v.resuelto_por])).rows[0];
+             v.reclamo_desc || 'Reclamo', v.reclamo_fecha, cerrado ? (v.resuelto_fecha || v.reclamo_fecha) : v.reclamo_fecha,
+             cerrado ? (v.resuelto_fecha || v.reclamo_fecha) : null, v.resuelto_por])).rows[0];
         await pool.query(`UPDATE reclamos_garantia SET folio = 'RG-' || (1000 + id) WHERE id = $1`, [rec.id]);
         await pool.query(`INSERT INTO reclamo_mensajes (reclamo_id, autor, mensaje, fecha) VALUES ($1, 'cliente', $2, $3)`, [rec.id, v.reclamo_desc || 'Reclamo', v.reclamo_fecha]);
         if (v.resuelto_nota) await pool.query(`INSERT INTO reclamo_mensajes (reclamo_id, autor, usuario_id, mensaje, fecha) VALUES ($1, 'sistema', $2, $3, $4)`,
@@ -8702,9 +8703,9 @@ async function migrarEsquema() {
     for (const it of sinBase.rows) {
         const g = await pool.query(
             `INSERT INTO garantias (folio, codigo, pedido_id, pedido_item_id, cliente_id, producto_id, plan, meses, costo, inicio, vence, estado)
-             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7, 0, $8::date, ($8::date + ($7 || ' months')::interval)::date,
-                     CASE WHEN ($8::date + ($7 || ' months')::interval)::date < CURRENT_DATE THEN 'vencida' ELSE 'activa' END) RETURNING id`,
-            [codigoGarantia(), it.pedido_id, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, String(GARANTIA_BASE.meses), it.desde]);
+             VALUES ('GAR-TMP', $1, $2, $3, $4, $5, $6, $7::int, 0, $8::date, ($8::date + make_interval(months => $7::int))::date,
+                     CASE WHEN ($8::date + make_interval(months => $7::int))::date < CURRENT_DATE THEN 'vencida' ELSE 'activa' END) RETURNING id`,
+            [codigoGarantia(), it.pedido_id, it.id, it.cliente_id, it.producto_id, GARANTIA_BASE.plan, GARANTIA_BASE.meses, it.desde]);
         await pool.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
     }
 
