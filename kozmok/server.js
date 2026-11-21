@@ -873,11 +873,19 @@ app.post('/api/auth/registro-cliente', limiteAuth, captchaMw, registrarCliente);
 // cuentas y sesiones sin tener que marcar la casilla de reCAPTCHA.
 const TOKEN_PRUEBAS = crypto.randomBytes(24).toString('hex');
 try { require('fs').writeFileSync(path.join(__dirname, '.pruebas-token'), TOKEN_PRUEBAS, { mode: 0o600 }); } catch { /* sin pase: las pruebas pedirán captcha */ }
+// IPs de esta computadora (localhost y las de sus tarjetas de red: si el
+// script ataca a http://192.168.1.67:3000 desde aquí mismo, llega con esa IP).
+function ipsDeEstaCompu() {
+    const ips = new Set(['127.0.0.1', '::1']);
+    for (const lista of Object.values(require('os').networkInterfaces())) for (const i of lista || []) ips.add(i.address.replace(/%.*$/, ''));
+    return ips;
+}
 function esPruebaLocal(req) {
     const t = String(req.get('x-kozmok-pruebas') || '');
-    const ip = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
-    return t.length === TOKEN_PRUEBAS.length && (ip === '127.0.0.1' || ip === '::1')
-        && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN_PRUEBAS));
+    if (t.length !== TOKEN_PRUEBAS.length || !crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN_PRUEBAS))) return false;
+    // La IP del socket (no cabeceras): otra computadora no puede tener la nuestra.
+    const ip = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '').replace(/%.*$/, '');
+    return ipsDeEstaCompu().has(ip);
 }
 async function pedirCaptcha(req, res, next) {
     if (!captcha.configurado() || esPruebaLocal(req)) return next();

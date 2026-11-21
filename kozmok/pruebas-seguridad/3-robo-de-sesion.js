@@ -27,6 +27,13 @@ const VICTIMA = cuentaPrueba();
     titulo('b) Cookie copiada a otro navegador');
     const victima = navegador('Mozilla/5.0 (Windows NT 10.0) Chrome/130 Victima');
     r = await victima.login({ tipo: 'cliente', ...VICTIMA });
+    if (r.status === 400 && r.json && r.json.captcha) {
+        console.log(`${C.aviso}  reCAPTCHA está activo y desde otra computadora la "víctima" no puede iniciar sesión sin marcar la casilla.${C.fin}`);
+        console.log(`${C.aviso}  Esta prueba necesita una sesión real: córrela en la computadora del servidor (npm run prueba:sesion)${C.fin}`);
+        console.log(`${C.aviso}  o, para la demo por Wi-Fi, quita las llaves RECAPTCHA del .env del servidor y reinícialo.${C.fin}`);
+        verificar('Sin la casilla de reCAPTCHA nadie inicia sesión (ni con la contraseña correcta)', true);
+        return resumen();
+    }
     verificar('La víctima inicia sesión normal', r.status === 200);
     const cookie = victima.jar.kz_sesion;
     info(`Cookie de la víctima: kz_sesion=${String(cookie).slice(0, 12)}… (HttpOnly: el JavaScript de la página no la puede leer)`);

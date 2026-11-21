@@ -25,15 +25,20 @@ const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Hola2026', 'contrasena1
 
     titulo(`Fuerza bruta contra ${cuenta}`);
     const atacante = navegador('Hydra-simulado/1.0');
-    let bloqueada = false, entro = false;
+    let bloqueada = false, entro = false, captcha = false;
     for (const [i, pw] of DICCIONARIO.entries()) {
         const r = await atacante.post('/api/auth/login', { tipo: 'cliente', correo: cuenta, password: pw });
         const estado = r.status === 200 ? `${C.mal}ENTRÓ${C.fin}` : r.status === 429 ? `${C.aviso}BLOQUEADO${C.fin}` : `${C.gris}rechazado${C.fin}`;
         console.log(`  intento ${String(i + 1).padStart(2)}  ${pw.padEnd(14)} → ${r.status} ${estado}  ${C.gris}${(r.json && r.json.message) || ''}${C.fin}`);
         if (r.status === 429) bloqueada = true;
+        if (r.status === 400 && r.json && r.json.captcha) captcha = true;
         if (r.status === 200) { entro = true; break; }
     }
-    verificar('La cuenta se bloquea antes de agotar el diccionario', bloqueada);
+    if (captcha && !bloqueada) {
+        // Desde otra computadora con reCAPTCHA activo: el captcha frena el ataque antes del bloqueo.
+        verificar('reCAPTCHA frena el ataque: ningún intento llega a revisar la contraseña', !entro);
+        info('Para ver además el bloqueo de la cuenta, corre las pruebas en la computadora del servidor (npm run prueba:seguridad).');
+    } else verificar('La cuenta se bloquea antes de agotar el diccionario', bloqueada);
     verificar('Ni con la contraseña correcta entra mientras está bloqueada', !entro);
     info('En el panel: Cuenta → Seguridad → Bloqueos (ahí se puede desbloquear).');
 
@@ -41,7 +46,8 @@ const DICCIONARIO = ['123456', 'password', 'qwerty123', 'Hola2026', 'contrasena1
     const fantasma = 'no-existe-' + Date.now() + '@correo.com', bot = navegador('Hydra-simulado/1.0');
     let fb = null;
     for (let i = 0; i < 6; i++) fb = await bot.login({ tipo: 'cliente', correo: fantasma, password: 'Equivocada#' + i });
-    verificar('Tras los mismos intentos responde "cuenta bloqueada" aunque no exista', fb.status === 429 && /bloqueada/.test((fb.json && fb.json.message) || ''), `${fb.status}`);
+    if (fb.status === 400 && fb.json && fb.json.captcha) info('(se omite: reCAPTCHA frena estos intentos antes del bloqueo)');
+    else verificar('Tras los mismos intentos responde "cuenta bloqueada" aunque no exista', fb.status === 429 && /bloqueada/.test((fb.json && fb.json.message) || ''), `${fb.status}`);
 
     if (args.includes('--ip')) {
         titulo('Relleno de credenciales (una contraseña contra muchas cuentas)');
