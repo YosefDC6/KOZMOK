@@ -232,7 +232,7 @@ function pintarAlcance() {
             <div class="px-busca">
                 <input type="search" id="px-q" placeholder="Buscar producto…" value="${escHTML(AL.q)}" />
                 <select id="px-fcat"><option value="">Categoría: todas</option>${CATEGORIAS.map((c) => `<option value="${c.id}" ${String(c.id) === AL.fcat ? 'selected' : ''}>${escHTML(c.nombre)}</option>`).join('')}</select>
-                <select id="px-fmarca"><option value="">Todas las marcas</option>${marcas.map(([m]) => `<option ${m === AL.fmarca ? 'selected' : ''}>${escHTML(m)}</option>`).join('')}</select>
+                <select id="px-fmarca"><option value="">Marca: todas</option>${marcas.map(([m]) => `<option ${m === AL.fmarca ? 'selected' : ''}>${escHTML(m)}</option>`).join('')}</select>
             </div>
             <div class="px-barra">
                 <span id="px-nsel"></span>
