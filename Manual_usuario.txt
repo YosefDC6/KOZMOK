@@ -1,7 +1,8 @@
 ===============================================================================
  KOZMOK CRM  -  MANUAL DE USUARIO
  Tienda de electronica / computo con tienda en linea, CRM, SCM, ERP, carrito
- con pagos, monedero, promociones e impuestos (Etapa 4) y chatbot.
+ con pagos, monedero, promociones e impuestos (Etapa 4), seguridad (Etapa 5),
+ garantias, devoluciones, facturacion y chatbot.
  Ultima actualizacion: noviembre 2026
 ===============================================================================
 
@@ -146,10 +147,26 @@ Cuentas del panel (tras cargar db/database.sql)
      sola vez al arrancar. Si despues el administrador las desactiva en
      Cuentas y equipo, se quedan desactivadas.
 
-   - Los clientes se registran en la tienda (registro.html).
+   - IMPORTANTE con Gmail configurado: el panel pide un codigo de
+     verificacion en dos pasos (ver "Seguridad de sesion", abajo) y por
+     defecto lo manda al correo de la cuenta. Los correos @kozmok.mx de la
+     tabla no existen, asi que ese codigo nunca llegaria. Antes de poner
+     SMTP_USUARIO y SMTP_PASSWORD en el .env:
+        1. Entra como admin@kozmok.mx y en Cuentas y equipo crea una cuenta
+           de Administrador con tu correo real.
+        2. Entra con esa cuenta nueva y desactiva admin@kozmok.mx (y Ventas
+           y Logistica si no las vas a usar; o crea las suyas con correos
+           reales).
+     Sin Gmail configurado el codigo no se pide (para no dejar fuera al
+     equipo) y queda un aviso en Seguridad.
+
+   - Los clientes se registran en la tienda (registro.html). Si el equipo
+     crea al cliente desde el panel, no le pone contrasena: al cliente le
+     llega un correo para crear la suya (ver 4.2).
    - Los empleados se dan de alta en el panel (Cuentas y equipo); la
      primera vez que entran se les pide cambiar la contraseña que les dio
-     el administrador.
+     el administrador. Una cuenta inactiva se activa con un enlace por
+     correo (ver 4.12).
    - Base de una version anterior con los clientes de prueba:
         npm run limpiar:ejemplo               (solo muestra)
         npm run limpiar:ejemplo -- --confirmar (borra; no se deshace)
@@ -171,8 +188,24 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
                       navegador.
         Sin marcar -> la sesion termina al cerrar el navegador; mientras
                       tanto dura 7 dias (se cierra tras 2 dias sin uso).
-   - El panel interno NO recuerda nada: ni la cuenta ni la sesion. Su sesion
-     termina al cerrar el navegador, a las 8 horas o tras 2 horas sin uso.
+   - El panel interno recuerda SOLO el correo de la cuenta (nunca la
+     contrasena): al volver al login aparece la cuenta y solo se escribe la
+     contrasena ("Usar otra cuenta" para cambiarla). Su sesion termina al
+     cerrar la pestana o el navegador, a las 8 horas o tras 2 horas sin uso.
+   - VERIFICACION EN DOS PASOS: ademas de la contrasena se pide un codigo
+     de 6 digitos, de una app autenticadora (Google o Microsoft
+     Authenticator) o enviado al correo. Cada quien elige el metodo.
+        Panel  -> obligatoria. Quien no ha elegido metodo recibe el codigo
+                  en su correo. Se configura en el menu del panel, abajo:
+                  "Verificacion en dos pasos". Si alguien pierde su celular,
+                  el administrador la reinicia en Cuentas y equipo.
+        Tienda -> opcional; el cliente la activa en Mi cuenta -> Seguridad.
+     Con la app tambien se puede pedir el codigo al correo ("¿No tienes tu
+     app a la mano?").
+   - CASILLA "NO SOY UN ROBOT" (Google reCAPTCHA): en iniciar sesion
+     (tienda y panel), crear cuenta y recuperar contrasena, si se pusieron
+     RECAPTCHA_SITE_KEY y RECAPTCHA_SECRET_KEY en el .env. Sin ellas no
+     aparece.
    - Contrasenas sencillas de antes: al iniciar sesion se revisa la
      contrasena contra las reglas actuales (8+ caracteres, mayusculas,
      minusculas, numero y simbolo). Si no las cumple (cuentas creadas antes
@@ -215,8 +248,11 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    - "Como funciona": 3 pasos (explora / pregunta al asesor / compra y gana
      puntos).
    - BANNER DE PROMOCIONES (arriba, despues del titulo): hasta 3 promociones
-     vigentes con su descuento, descripcion y dias que le quedan. Clic lleva
-     a los productos de esa promocion.
+     vigentes con su descuento, descripcion y dias que le quedan. Si hay mas
+     de 3 aparece un cuadro "+N Ver mas promociones" que abre todas las
+     vigentes. Clic en una lleva al catalogo con EXACTAMENTE los productos
+     de esa promocion (arriba sale la etiqueta "Promocion: ..." y se quita
+     con la x); si la promocion es de un solo producto, abre su ficha.
    - "Destacados": los productos que el equipo marco como destacados en
      Productos (4.9). "Novedades": los 4 productos mas nuevos del catalogo.
      Y "Vistos recientemente".
@@ -308,11 +344,14 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      mejor valor de cada fila (precio mas bajo, mas RAM, mas stock, etc.).
    - Desde ahi puedes agregar al carrito o quitar una columna.
 
-3.3c GARANTIA EXTENDIDA
+3.3c GARANTIA KOZMOK Y GARANTIA EXTENDIDA
+   - TODO producto trae GARANTIA KOZMOK de 12 meses incluida, sin costo
+     (GARANTIA_BASE_MESES en el .env). Empieza cuando el pedido se marca
+     Entregado y aparece sola en "Mis garantias".
    - Al abrir un producto, ademas de la cantidad hay un selector de
-     "Garantia extendida": Sin garantia / Basica 12 meses / Extendida 24
-     meses / Total 36 meses. El costo es un % del precio del producto
-     (6% / 12% / 18%) y se ve en la opcion.
+     garantia: "Garantia Kozmok 12 meses (incluida)" / Extendida 24 meses /
+     Total 36 meses. Las extendidas cuestan un % del precio del producto
+     (12% / 18%) y se ve en la opcion.
    - Al agregar al carrito se guarda con esa linea. En el carrito cada
      producto tiene su propio selector para cambiar o quitar la garantia,
      y el resumen muestra una linea "Garantias extendidas".
@@ -487,8 +526,26 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
         el PDF y XML por correo. Despues aparecen "Factura PDF" y "XML".
         En modo de prueba (sandbox) el CFDI no tiene validez fiscal.
         Si el SAT rechaza los datos se muestra el motivo para corregirlos.
+      - DEVOLUCION O CAMBIO: en pedidos entregados (hasta 30 dias), "Ver
+        detalle" -> "Solicitar devolucion o cambio" (ver Devoluciones, abajo).
    La pantalla de agradecimiento (gracias.html) tambien muestra un mini
    rastreo de las 4 etapas.
+
+   Devoluciones (devoluciones.html)
+      - "En curso": cada devolucion con su folio (DEV-0000x) y una barra de
+        4 pasos: Solicitada -> Envia el producto -> En revision -> Reembolso
+        o cambio. Debajo, que pediste (reembolso o cambio), como se
+        reembolsa y la fecha.
+      - Cuando la aprueban aparece "Siguiente paso: envianos el producto"
+        con las instrucciones (empacarlo con sus accesorios, escribir el
+        folio y la direccion que llega por correo).
+      - "Cancelar solicitud" mientras no haya llegado el paquete.
+      - "¿Quieres devolver algo?": tus pedidos entregados que aun estan en
+        plazo, con la fecha limite. "Solicitar" abre el formulario: que
+        productos y cuantos, motivo, descripcion y si quieres reembolso o
+        cambio (las reglas del monto estan en 4.15f).
+      - Historial de devoluciones terminadas al final.
+      - Llega un correo en cada paso, con enlace a esta pantalla.
 
    Club de puntos (recompensas.html)
       - Saldo de puntos y su valor en dinero.
@@ -503,11 +560,19 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
       - Todas las resenas que has dejado; se pueden editar o borrar.
 
    Mis garantias (garantias.html)
-      - Certificados de garantia extendida de tus compras, con folio,
-        codigo para validar, vigencia (inicio -> vence) y estado (Activa,
-        Usada, Vencida, Cancelada).
-      - "Usar la garantia": describes la falla y el equipo la revisa. Queda
-        marcada "en revision" hasta que la resuelvan.
+      - Una tarjeta por producto recibido: la Garantia Kozmok incluida (12
+        meses) o la extendida que compraste, con folio, codigo para validar
+        en tienda, vigencia (inicio -> vence) y estado.
+      - "Solicitar servicio de garantia": describes la falla y puedes
+        adjuntar hasta 3 fotos. Se abre un CASO (folio RG-1xxx).
+      - El caso avanza por etapas que pone el equipo: Recibido -> En
+        diagnostico -> En reparacion / Reemplazo en proceso -> Listo para
+        entregar -> Cerrado (o "No procede", con el motivo). Ves la etapa,
+        los mensajes del equipo y puedes contestar y mandar fotos ahi mismo.
+        "Respuesta nueva" marca los casos con mensajes que no has leido; cada
+        avance tambien llega por correo.
+      - La garantia sigue vigente despues de una reparacion; solo termina si
+        se reemplazo el equipo o se reembolso.
 
    Direcciones (direcciones.html)
       - Alta/edicion/borrado de direcciones; marcar una como predeterminada.
@@ -523,7 +588,8 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
       - Nombre, telefono, empresa, ciudad, estado. Se guardan en la base.
 
    Seguridad (seguridad.html)
-      - Cambio de contrasena (pide la actual).
+      - Cambio de contrasena, verificacion en dos pasos, dispositivos
+        conectados e inicios de sesion (ver 3.7c).
 
    Preferencias (preferencias.html)
       - Notificaciones por correo (boletin, ofertas, estado de pedidos,
@@ -562,6 +628,11 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      un simbolo.
 
 3.7b INICIAR SESION Y RECUPERAR CONTRASENA  (login.html, recuperar.html)
+   - Si el .env tiene las llaves de reCAPTCHA, hay que marcar "No soy un
+     robot" para entrar, crear cuenta o recuperar la contrasena.
+   - Si la cuenta tiene la verificacion en dos pasos, despues de la
+     contrasena se pide el codigo de 6 digitos (de la app o del correo; el
+     del correo se puede reenviar).
    - Si la contrasena es incorrecta se avisa cuantos intentos quedan antes
      del bloqueo (cuando quedan 3 o menos). Al quinto, la cuenta se bloquea
      15 minutos aunque despues se escriba la contrasena correcta.
@@ -579,6 +650,11 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 3.7c MI CUENTA -> SEGURIDAD  (seguridad.html)
    - Cambiar contrasena: pide la actual y la nueva (con las 4 reglas). Al
      cambiarla se cierran las sesiones de otros dispositivos.
+   - Verificacion en dos pasos (opcional en la tienda): elige "app
+     autenticadora" (escaneas un QR con Google o Microsoft Authenticator y
+     escribes el primer codigo) o "codigo por correo" (requiere el correo
+     confirmado). Para activarla, cambiarla o desactivarla se pide la
+     contrasena.
    - Dispositivos conectados: navegador, desde cuando y ultima vez de cada
      sesion. "Cerrar" termina una; "Cerrar sesion en los demas" deja solo la
      actual. (La IP y la huella se ven solo en el panel del equipo.)
@@ -648,6 +724,26 @@ de accesos directos con iconos grandes a cada seccion de su modulo
 
 Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 
+NAVEGACION RAPIDA EN EL PANEL
+   - "Regresar a <pantalla>": arriba de cada pantalla, con el nombre de la
+     pantalla de la que vienes (por ejemplo "Regresar a Clientes"). Vuelve
+     con sus filtros y, si vienes justo de ahi, a la misma posicion. Se
+     puede regresar varias veces seguidas. Abrir un detalle dentro de la
+     misma pantalla (un ticket, una devolucion) no cuenta como otra
+     pantalla. Una pantalla sin anterior (la primera al entrar o en una
+     pestana nueva) no muestra el boton.
+   - "Ir a..." (arriba del menu, o Ctrl + K): escribe parte del nombre de
+     una seccion y entra con Enter, sin abrir los grupos del menu.
+   - PUNTITOS DE AVISO: una seccion del menu (y su modulo) lleva un punto
+     naranja cuando llego algo despues de la ultima vez que la abriste:
+     tickets o mensajes nuevos, pedidos nuevos, pagos o recargas por
+     confirmar, reclamos de garantia, devoluciones por revisar, resenas o
+     clientes nuevos, bajas de inventario por aprobar, productos en stock
+     critico y alertas altas de seguridad (cada rol ve solo las de sus
+     secciones). Al abrirla el punto se quita. Se revisa cada minuto.
+   - El boton de la flecha junto al logo oculta el menu y deja solo los
+     iconos de los modulos (se recuerda en el navegador).
+
 4.1  DASHBOARD  (admin/dashboard.html)  [bloque CRM]
    - Indicadores: total de clientes, clientes activos, interacciones del mes,
      tickets de soporte activos, productos con stock critico.
@@ -660,8 +756,11 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - Listado con buscador (nombre, correo, empresa), filtro por etapa y
      filtro por estado (activo / inactivo).
    - Columnas: ID, nombre, correo, empresa, etapa CRM, estado.
-   - "Nuevo cliente": crea la cuenta (contrasena editable, temporal por
-     defecto) y abre su ficha.
+   - "Nuevo cliente": nombre, correo, telefono y empresa. NO se le pone
+     contrasena: al cliente le llega un correo "Te creamos una cuenta en
+     Kozmok" con un enlace (vence en 72 horas) para crear la suya con las
+     reglas de seguridad de la tienda. Al usar el enlace su correo queda
+     confirmado. Nadie del equipo conoce su contrasena.
    - "Exportar CSV": descarga el listado tal como esta filtrado.
    - Clic en una fila o en "Ver ficha" -> ficha del cliente.
    - "Eliminar" (solo admin), en dos pasos:
@@ -717,26 +816,48 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      Tambien se registran solos los tickets que abre el cliente.
 
 4.5  EVALUACIONES  (admin/evaluaciones.html)  [CRM]
-   - Todas las resenas de productos hechas por clientes.
-   - Indicadores: total, promedio de estrellas, resenas criticas (<= 2).
-   - Filtro por calificacion (5, 4+, 3+, criticas).
+   - Arriba: promedio general (con cuantas estan sin responder y cuantas
+     son criticas), la distribucion de 1 a 5 estrellas (clic en una barra
+     filtra por esa calificacion) y los productos peor calificados.
+   - Filtros: texto (producto, cliente o comentario), calificacion y
+     Todas / Sin responder / Con comentario / Ocultas.
+   - Clic en una resena (o "Ver detalle") abre su ficha: la resena, si la
+     compra esta verificada (pedido y fecha de entrega), el cliente con los
+     reclamos de garantia de ese producto, y las estadisticas del producto.
+   - RESPONDER: la respuesta se publica debajo de la resena en la tienda
+     como "Respuesta de Kozmok" y al cliente le llega un correo (la primera
+     vez). Se puede editar o quitar.
+   - OCULTAR RESENA: la quita de la tienda (pide el motivo y queda en la
+     auditoria). "Volver a mostrar" la regresa.
 
 4.6  SOPORTE  (admin/soporte.html)  [CRM]  -> ver seccion 9
    - Cola de tickets con contadores (Abiertos, En proceso, Resueltos,
      Cerrados) y filtros por estado y prioridad.
    - Al abrir un ticket: hilo de mensajes, selector de estado y prioridad,
-     y campo para responder al cliente.
+     campo para responder al cliente y el PEDIDO RELACIONADO (ver 9).
 
 4.6b GARANTIAS  (admin/garantias.html)  [CRM]
+   - "Reclamos en curso": los casos que abrieron los clientes (RG-1xxx) con
+     su etapa y antiguedad. Al abrir uno:
+        * Falla que reporta el cliente, sus fotos y la conversacion.
+        * "Actualizar etapa": Recibido -> En diagnostico -> En reparacion /
+          Reemplazo en proceso -> Listo para entregar -> Cerrado (eliges la
+          resolucion: reparacion, reemplazo, reembolso o sin falla) o "No
+          procede" (explicar el motivo es obligatorio). Cada cambio se
+          escribe en el hilo y le llega al cliente por correo.
+        * "Nota para el cliente" (se le manda por correo) y "Nota interna"
+          (el cliente no la ve).
+        * Al cerrar por reemplazo o reembolso se puede concluir la
+          garantia; si no, sigue vigente hasta su fecha.
+   - "Abrir reclamo en mostrador": cuando el cliente trae el equipo a la
+     tienda, se abre el caso desde aqui con la falla que reporta.
    - "Validar garantia": escribe el codigo que trae el cliente y muestra si
-     esta VALIDA (verde) o no (roja), con producto, cliente, vigencia y
+     esta vigente (verde) o no (roja), con producto, cliente, vigencia y
      dias restantes.
-   - Indicadores: activas, con reclamo, usadas, vencidas/canceladas.
-   - Tabla de todas las garantias con filtro por estado y busqueda (folio,
-     codigo, cliente, producto, pedido). Las que tienen un reclamo del
-     cliente llevan una etiqueta "reclamo".
-   - Al abrir una: "Marcar como usada" (pide una nota de resolucion),
-     "Cerrar reclamo sin usar" o "Marcar vencida".
+   - Lista de garantias: incluidas (Garantia Kozmok) y extendidas
+     vendidas, con filtros (solo incluidas / solo extendidas, vencen en 30
+     dias, concluidas, canceladas) y busqueda. "Cancelar garantia" pide
+     motivo y queda en la auditoria.
 
 4.7  REPORTES  (admin/reportes.html)  [CRM]
    - Rango de fechas ("Del ... al ...") o "Todo el historico".
@@ -793,6 +914,15 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
    - "Destacado en la portada de la tienda": los marcados aparecen en
      "Destacados" de la portada (3.1).
    - Enlace directo:  /admin/productos.html?editar=<id>  abre su formulario.
+   - "Eliminar" solo DESACTIVA el producto (ver "Productos desactivados" en
+     4.15). Borrarlo definitivamente de la base se hace desde "Editar" ->
+     "Borrar definitivamente de la base de datos", y solo si:
+        * el producto ya esta desactivado,
+        * no tiene historia (ventas, movimientos, ordenes de compra,
+          resenas, garantias, promociones), y
+        * se escribe el codigo de autorizacion (CODIGO_BORRADO_DEFINITIVO
+          en el .env; sin el, la opcion esta apagada).
+     Esto quedara para el rol de superadmin cuando exista.
 
 4.9a INVENTARIO  (admin/inventario.html)  [SCM]
    - Vista de existencias de los productos activos (separada del catalogo).
@@ -814,6 +944,9 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      proveedor y estrategia sin ir a Productos ni a Logistica; si el
      producto queda en su minimo se aplica el reabasto automatico) y
      "Generar pedido".
+   - "Restock" pide la cantidad a sumar (de 1 a 500). En todos los campos
+     de cantidad del panel, los botones - y + empiezan en 1 si el campo
+     esta vacio.
    - Los formularios de movimiento y de pedido de reposicion son los
      mismos de Movimientos y Pedidos (admin/js/scm-acciones.js).
 
@@ -905,16 +1038,20 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
      en curso" mientras eso sea cierto.
 
 4.9e LOGISTICA  (admin/logistica.html)  [SCM]
-   - Configurar estrategia: eliges un producto y dos tarjetas grandes
-     (Push / Pull) explican cada una y marcan cual esta activa. "Guardar
-     estrategia" actualiza el metodo de reabastecimiento de ese producto
-     (lo mismo que el campo de Productos, pero en su propia pantalla).
-   - Push = se genera pedido automaticamente cuando el stock llega al
+   - Arriba: cuantos productos hay en PUSH y en PULL y que significa cada
+     uno. Push = se genera pedido automaticamente cuando el stock llega al
      minimo; Pull = se genera pedido solo bajo pedido o demanda (ver el
      reabasto automatico en 4.9d).
-   - Comparativa push vs. pull: dos tarjetas con el total de productos en
-     cada estrategia (de todo el catalogo activo) y una tabla completa
-     con filtro por categoria y por estrategia.
+   - A la IZQUIERDA, los filtros: buscar por nombre o marca, categoria
+     (con cuantos productos tiene cada una), estrategia (Todas / Push /
+     Pull) y "Solo en stock minimo o agotados".
+   - A la DERECHA aparecen al instante los productos que cumplen el filtro
+     (por ejemplo: clic en "Laptops" y salen las laptops), con su marca,
+     categoria, proveedor y stock contra su minimo.
+   - Cada producto tiene su interruptor Push / Pull: un clic cambia su
+     estrategia al momento.
+   - Cambio en bloque: marca varios productos (o todos los visibles con la
+     casilla de arriba) y usa "Pasar a push" o "Pasar a pull".
 
 4.9f DASHBOARD SCM  (admin/scm.html)  [SCM]
    - Primer elemento del bloque SCM, con accesos directos a cada seccion.
@@ -988,6 +1125,17 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
           (Administrador/     el tipo elegido.
            Ventas/Logistica)
    - Tambien puedes crear un cliente desde Clientes -> "Nuevo cliente".
+   - Estado de cada cuenta del equipo:
+        * "Desactivar": ya no puede entrar (no se puede a si mismo).
+        * "Activar" (cuenta inactiva): le manda un correo con un enlace
+          para crear su contrasena (vence en ACTIVACION_HORAS, por defecto
+          48). La cuenta queda activa hasta que lo abre; mientras tanto se
+          ve "Activacion enviada" con "Reenviar" o "Cancelar". Requiere
+          Gmail configurado y un correo real.
+        * "Reiniciar verificacion en dos pasos": si la persona perdio su
+          celular; en su siguiente entrada recibe el codigo por correo.
+   - El correo de una cuenta no se cambia desde el panel (quedara para el
+     rol de superadmin).
    - A los roles que no son admin, esta seccion no les aparece en el menu.
 
 4.13 CONFIGURACION  (admin/configuracion.html)  [CUENTA]
@@ -1072,12 +1220,14 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
 
    4.14c NUEVA ORDEN  (admin/orden-nueva.html)  -- asistente de 3 pasos
       Paso 1 - Cliente (CRM)
-         - Buscar por nombre, correo o empresa y elegirlo; se muestra la
+         - Buscar por nombre, correo o empresa; los clientes se ven en
+           cuadricula a lo ancho y el elegido aparece a la derecha en la
            tarjeta "Cliente seleccionado" (empresa, correo, telefono, etapa
            CRM y numero de compras).
          - "Nuevo cliente (CRM)": alta rapida (nombre, correo, telefono,
-           empresa, ciudad). Queda en el CRM como Prospecto con una
-           contrasena temporal para la tienda (se muestra en el aviso).
+           empresa, ciudad). Queda en el CRM como Prospecto y le llega un
+           correo para crear su contrasena de la tienda (nadie del equipo
+           la conoce).
          - Desde la ficha de un cliente (4.3) el boton "Nueva orden (ERP)"
            abre el asistente con ese cliente ya elegido.
       Paso 2 - Productos (SCM)
@@ -1197,12 +1347,28 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
       - Tabla con busqueda y filtro por situacion: Vigente, Programada (aun
         no empieza), Vencida, Inactiva. Muestra descuento, a que aplica,
         vigencia y cuantos pedidos la usaron.
-      - "Nueva promocion" / "Editar": nombre, descripcion (sale en el
-        banner), tipo de descuento (porcentaje o monto fijo por pieza),
-        valor, productos aplicables (todo el catalogo, una categoria o un
-        producto), fecha de inicio y fin (dia incluido), activa y "mostrar
-        en el banner". Abajo dice a cuantos productos aplica y un precio de
-        ejemplo con el descuento.
+      - "Nueva promocion" / "Editar": a la izquierda nombre, descripcion
+        (sale en el banner), tipo de descuento (porcentaje o monto fijo por
+        pieza), valor, fechas, activa y "mostrar en el banner". A la derecha
+        "¿A que productos aplica?" con tres opciones:
+          * Todo el catalogo.
+          * Categoria, marca o tipo: se combinan categoria, marca y palabras
+            del nombre; vacio = cualquiera. Ej.: Perifericos + Logitech +
+            "mouse" = los mouse Logitech. Debajo salen botones con los tipos
+            que hay (Mouse, Teclado, Audifonos...) para agregarlos con un
+            clic; varias palabras se separan con coma ("mouse, teclado").
+          * Elegir productos: lista con busqueda y filtros por categoria y
+            marca; se marcan uno por uno, de cualquier categoria o marca.
+            "Marcar visibles", "Quitar visibles" y "Solo elegidos" ayudan a
+            revisar la seleccion.
+        En las tres se ve en vivo que productos entran con su precio antes
+        y despues. No deja guardar un filtro que no deje ningun producto.
+      - FECHAS: la de inicio no puede ser anterior a hoy. Si la promocion ya
+        empezo, su inicio queda bloqueado (los pedidos de esos dias ya se
+        cobraron con o sin ella); la de termino si se puede ajustar, pero no
+        antes de hoy.
+      - Las promociones de antes (una categoria / un producto) siguen
+        funcionando y al editarlas se abren con estas opciones.
       - Reglas: el porcentaje no pasa de 90%; un descuento nunca deja un
         producto en negativo; si a un producto le tocan varias promociones
         se usa la que mas descuenta.
@@ -1277,7 +1443,15 @@ Cada pantalla tiene un encabezado con titulo y, si aplica, un boton de accion.
         pieza (promocion, garantia, IVA y la parte de los puntos usados) y no
         se puede cambiar. El envio se incluye si el problema fue de la
         tienda y se devuelve todo el pedido.
-      - Indicadores: por revisar, en camino, por cerrar y reembolsado.
+      - TABLERO (pestana "Tablero"): cuatro columnas, Por revisar, En
+        camino (aprobadas, esperando el paquete), Por cerrar (recibidas) y
+        Cerradas, con una tarjeta por devolucion (folio, cliente, productos,
+        monto, motivo y dias esperando). "Historial" muestra la tabla
+        completa con busqueda.
+      - Clic en una tarjeta abre el detalle con la barra de pasos y SOLO la
+        accion del paso actual (Paso 1 revisar, Paso 2 ¿llego el paquete?,
+        Paso 3 cerrar). Al terminar una accion el detalle se actualiza solo.
+        Enlace directo: admin/devoluciones.html?dev=<id>.
       - Flujo y botones:
           Solicitada -> "Aprobar" (con nota) o "Rechazar" (motivo obligatorio)
           Aprobada   -> "Llego el paquete": por cada pieza se marca si vuelve
@@ -1463,11 +1637,18 @@ Configuracion (.env)
 ===============================================================================
 
 Lado cliente  (soporte.html, dentro de Mi cuenta)
-   - "Nuevo ticket": asunto, categoria, prioridad y descripcion.
+   - "Nuevo ticket": asunto, categoria (pedido, cuenta, garantia,
+     devolucion o cambio, facturacion, general), PEDIDO RELACIONADO
+     (opcional: se elige de sus propios pedidos) y descripcion.
+   - El cliente NO elige la prioridad: se pone sola segun el caso. Pedido
+     y cuenta = alta; garantia, devolucion y facturacion = media; general =
+     baja. Si el texto habla de doble cobro, cargo no reconocido, fraude o
+     cuenta robada, sube a alta. El equipo puede cambiarla.
    - Cada ticket recibe un folio  TK-1001, TK-1002, ...
    - Al abrir un ticket se ve el hilo de mensajes y un campo para responder.
-   - Si el ticket estaba "Resuelto" o "Cerrado" y el cliente escribe de
-     nuevo, se REABRE automaticamente.
+   - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
+     aparece "Este ticket esta cerrado..." con el boton "Abrir un ticket
+     nuevo" (que ya trae el asunto, la categoria y el pedido del anterior).
    - Desde el Centro de ayuda (ayuda.html) el boton de contacto lleva aqui
      (o al login si no hay sesion).
 
@@ -1477,6 +1658,12 @@ Lado equipo  (admin/soporte.html)
      (Abierto, En proceso, Resuelto, Cerrado) y PRIORIDAD (Baja, Media, Alta).
    - "Enviar respuesta" agrega un mensaje del equipo; si el ticket estaba
      "Abierto" pasa a "En proceso".
+   - PEDIDO RELACIONADO: si el caso trae pedido, se ve ahi mismo (productos,
+     estado, pago) y se gestiona sin salir del caso: avanzar el estado,
+     registrar el pago o cancelarlo. Al hacerlo se deja escrita una
+     respuesta para avisarle al cliente, para revisarla y enviarla. Si el
+     cliente no lo eligio, "Ligar pedido" lo asocia (solo pedidos de ese
+     cliente) y se puede quitar sin cambiar el pedido.
 
 Relacion con el CRM
    - Cada ticket nuevo tambien se registra como interaccion de tipo
@@ -1540,8 +1727,10 @@ R: Es correcto. El panel solo acepta usuarios internos
 
 P: Como doy de alta una cuenta nueva (cliente o de personal)?
 R: Con una cuenta de admin: panel -> "Cuentas y equipo" -> "Nueva cuenta".
-   Elige el Tipo (Cliente o un rol interno), llena los campos, define una
-   contrasena y comunicasela. Un cliente tambien puede registrarse solo
+   Elige el Tipo (Cliente o un rol interno) y llena los campos. A un
+   cliente creado desde Clientes le llega un correo para crear su propia
+   contrasena; a una cuenta del equipo se le da una contrasena temporal
+   que debe cambiar al entrar. Un cliente tambien puede registrarse solo
    desde la tienda.
 
 P: Necesito un rol distinto a los que hay.
@@ -1549,6 +1738,19 @@ R: Se agrega en 3 lugares: el CHECK de la tabla usuarios (db/database.sql),
    el objeto ROLES_INTERNOS en server.js y el objeto PERMISOS en
    admin/js/permisos.js (para decir que secciones ve; el servidor usa el
    mismo archivo). Recarga database.sql y reinicia.
+
+P: El panel me pide un codigo de verificacion y no me llega.
+R: El codigo va al correo de la cuenta. Las cuentas @kozmok.mx de la base no
+   existen, asi que ahi nunca llega: crea una cuenta de administrador con un
+   correo real (ver seccion 2, "Cuentas del panel"). Revisa tambien la
+   carpeta de spam y que el .env tenga SMTP_USUARIO y SMTP_PASSWORD. Si
+   alguien perdio el celular con su app autenticadora, el administrador
+   reinicia su verificacion en Cuentas y equipo.
+
+P: npm run prueba:seguridad dice "Falta la cuenta de cliente de prueba".
+R: Crea en la tienda una cuenta de cliente solo para pruebas (sin
+   verificacion en dos pasos) y ponla en el .env como PRUEBA_CORREO y
+   PRUEBA_PASSWORD. Detalles en SEGURIDAD.md.
 
 P: Como reinicio los datos de ejemplo?
 R: Vuelve a ejecutar  psql -U postgres -d kozmok -f db/database.sql .
@@ -1714,8 +1916,15 @@ Reglas de negocio embebidas
 
    Pestanas
    - Eventos de seguridad: inyeccion SQL, XSS, fuerza bruta, sesion robada,
-     token falso, CSRF, acceso a datos ajenos, cambios de contrasena... con
+     token falso, CSRF, acceso a datos ajenos, captcha rechazado... con
      fecha, severidad, IP, ruta y detalle.
+     Severidades: alta, media, baja y NORMAL. "Normal" es la actividad
+     propia de las cuentas (activar la verificacion en dos pasos, cambiar o
+     restablecer la contrasena, desbloqueos, abrir una pestana vieja despues
+     de cerrar sesion en el mismo navegador): se guarda, pero no es alerta,
+     no cuenta en los indicadores y por defecto no se muestra. El selector
+     de arriba cambia entre "Alertas (baja, media y alta)", "Solo media y
+     alta", "Solo alta" y "Todo, con actividad normal".
    - Intentos de inicio de sesion: cada intento (tienda o panel) con correo,
      IP, navegador y resultado; arriba, las IPs con mas fallos en 24 h.
    - Bloqueos: cuentas e IPs bloqueadas. "Desbloquear" lo levanta antes de
@@ -1733,6 +1942,14 @@ Reglas de negocio embebidas
         npm run prueba:sesion
         npm run desbloquear          levanta bloqueos (-- --todo limpia la bitacora)
    Cada linea dice DEFENDIDO o VULNERABLE.
+   Necesitan una cuenta de CLIENTE de prueba sin verificacion en dos pasos,
+   guardada en el .env (PRUEBA_CORREO y PRUEBA_PASSWORD). Antes de empezar
+   se comprueba que esa cuenta entra; si no, se dice por que. Antes de una
+   demostracion conviene "npm run desbloquear -- --todo": el bloqueo cuenta
+   los fallos de los ultimos 15 minutos y asi la demo empieza desde cero.
+   Con reCAPTCHA activo, las pruebas corridas en la computadora del
+   servidor no piden la casilla (usan un pase que el servidor genera al
+   arrancar en .pruebas-token); desde otra computadora si se pide.
    Por Wi-Fi desde otra computadora (servidor y atacante en la misma red,
    por ejemplo el hotspot de un celular):
         node pruebas-seguridad/todas.js http://192.168.x.x:3000
