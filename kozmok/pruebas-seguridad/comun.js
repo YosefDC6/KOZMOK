@@ -123,6 +123,17 @@ async function servidorArriba() {
 //   npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1
 // o en el .env como PRUEBA_CORREO y PRUEBA_PASSWORD.
 // Ojo: la prueba de fuerza bruta la deja bloqueada 15 minutos.
+// Explica por qué la cuenta de prueba no pudo iniciar sesión (o null si entró).
+function motivoSinSesion(r) {
+    const m = (r.json && r.json.message) || '';
+    if (r.status === 200 && r.json && r.json.requiere_2fa) return 'la cuenta tiene activada la verificación en dos pasos: desactívala (Mi cuenta → Seguridad) o usa otra cuenta';
+    if (r.status === 200) return null;
+    if (r.status === 401) return `"${m}" → revisa PRUEBA_CORREO / PRUEBA_PASSWORD (o --correo / --password): deben ser los de una cuenta de cliente activa`;
+    if (r.status === 429) return `"${m}" → corre "npm run desbloquear" y vuelve a intentar`;
+    if (r.status === 400 && r.json && r.json.captcha) return 'reCAPTCHA pide la casilla: reinicia el servidor (npm start) para que genere el pase de pruebas';
+    return `respuesta ${r.status}: "${m}"`;
+}
+
 function cuentaPrueba() {
     const val = (k) => ((args.find((a) => a.startsWith(`--${k}=`)) || '').split('=').slice(1).join('=')) || '';
     const correo = val('correo') || val('cuenta') || process.env.PRUEBA_CORREO || '';
@@ -141,4 +152,4 @@ function cuentaPrueba() {
     return { correo, password };
 }
 
-module.exports = { URL_BASE, ES_ESTA_COMPU, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args, cuentaPrueba };
+module.exports = { motivoSinSesion, URL_BASE, ES_ESTA_COMPU, C, titulo, paso, info, verificar, resumen, navegador, servidorArriba, args, cuentaPrueba };

@@ -10,7 +10,7 @@
 //
 //   npm run prueba:sesion
 //   (con --correo= y --password= de una cuenta de cliente de prueba)
-const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C, ES_ESTA_COMPU, cuentaPrueba } = require('./comun');
+const { titulo, paso, info, verificar, resumen, navegador, servidorArriba, C, ES_ESTA_COMPU, cuentaPrueba, motivoSinSesion } = require('./comun');
 
 const VICTIMA = cuentaPrueba();
 
@@ -33,6 +33,14 @@ const VICTIMA = cuentaPrueba();
         console.log(`${C.aviso}  o, para la demo por Wi-Fi, quita las llaves RECAPTCHA del .env del servidor y reinícialo.${C.fin}`);
         verificar('Sin la casilla de reCAPTCHA nadie inicia sesión (ni con la contraseña correcta)', true);
         return resumen();
+    }
+    const motivo = motivoSinSesion(r);
+    if (motivo) {
+        // Sin sesión de la víctima no hay nada que robar: se explica en vez de marcar todo como vulnerable.
+        console.log(`${C.mal}  La cuenta de prueba no pudo iniciar sesión: ${motivo}${C.fin}`);
+        console.log(`${C.aviso}  Las pruebas de esta sección necesitan esa sesión. Corrige lo anterior y vuelve a correr: npm run prueba:sesion${C.fin}`);
+        process.exitCode = 1;
+        return;
     }
     verificar('La víctima inicia sesión normal', r.status === 200);
     const cookie = victima.jar.kz_sesion;
@@ -74,7 +82,8 @@ const VICTIMA = cuentaPrueba();
     // fuera el cliente 1 o dueña del pedido 1, la prueba daría un falso positivo).
     const yo = (await v3.get('/api/auth/perfil')).json || {};
     const otroCliente = Number(yo.id) === 1 ? 2 : 1;
-    const mios = new Set((((await v3.get(`/api/pedidos/cliente/${yo.id}`)).json) || []).map((p) => Number(p.id)));
+    const misPedidos = (await v3.get(`/api/pedidos/cliente/${yo.id}`)).json;
+    const mios = new Set((Array.isArray(misPedidos) ? misPedidos : []).map((p) => Number(p.id)));
     let otroPedido = 1; while (mios.has(otroPedido)) otroPedido++;
     info(`La cuenta de prueba es el cliente #${yo.id}; se intentan el cliente #${otroCliente} y el pedido #${otroPedido}.`);
     r = await v3.get(`/api/clientes/${otroCliente}`);
