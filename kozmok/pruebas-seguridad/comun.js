@@ -11,6 +11,7 @@
 //   node pruebas-seguridad/todas.js                         (localhost)
 //   node pruebas-seguridad/todas.js http://192.168.43.20:3000   (por Wi-Fi)
 
+require('../env.js');   // PRUEBA_CORREO / PRUEBA_PASSWORD / KOZMOK_URL desde el .env
 const os = require('os');
 const args = process.argv.slice(2);
 const URL_BASE = (args.find((a) => /^https?:\/\//.test(a)) || process.env.KOZMOK_URL || 'http://localhost:3000').replace(/\/+$/, '');
@@ -128,8 +129,13 @@ function cuentaPrueba() {
     const password = val('password') || val('real') || process.env.PRUEBA_PASSWORD || '';
     if (!correo || !password) {
         console.log(`\n${C.aviso}Falta la cuenta de cliente de prueba.${C.fin}`);
-        console.log('Crea una cuenta en la tienda solo para pruebas y córrelo así:');
-        console.log('  npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1\n');
+        console.log('Crea una cuenta de cliente en la tienda solo para pruebas (sin verificación en dos pasos) y:');
+        console.log('  a) agrégala una vez al archivo .env (junto a server.js):');
+        console.log('       PRUEBA_CORREO=prueba@tucorreo.com');
+        console.log('       PRUEBA_PASSWORD=TuClave#1');
+        console.log('     y corre solo: npm run prueba:seguridad');
+        console.log('  b) o pásala cada vez:');
+        console.log('       npm run prueba:seguridad -- --correo=prueba@tucorreo.com --password=TuClave#1\n');
         process.exit(1);
     }
     return { correo, password };
