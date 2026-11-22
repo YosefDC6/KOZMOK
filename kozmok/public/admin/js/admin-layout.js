@@ -28,7 +28,12 @@ function requireAuthAdmin() {
                 abrirCambioPassword(true);
             }
         })
-        .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = rutaLoginPanel(); });
+        .catch((e) => {
+            // Un TypeError es que la petición ni llegó (p. ej. se canceló porque
+            // la página se fue a otra pantalla): eso no es una sesión inválida.
+            if (e instanceof TypeError) return;
+            Sesion.cerrarSesionUsuario(); window.location.href = rutaLoginPanel();
+        });
     return usuario;
 }
 
@@ -55,11 +60,18 @@ const ADMIN_SECCIONES = [
         { href: '/admin/nivel-scm.html',      key: 'nivel-scm',       ic: 'medal',     label: 'Nivel de madurez',  desc: 'Avance en la implementación' },
         { href: '/admin/reportes-scm.html',   key: 'reportes-scm',    ic: 'grid',      label: 'Reportes',          desc: 'Métricas y análisis de la cadena' },
     ] },
+    // El ERP integra a los otros módulos, así que su menú también trae
+    // Clientes (CRM), Productos e Inventario (SCM), como en la lámina "Panel
+    // por rol". Son las mismas pantallas (`modulo` dice de dónde vienen); al
+    // abrirlas desde aquí el menú se queda en el ERP (ver moduloActual).
     { titulo: 'ERP', home: '/admin/erp.html', links: [
         { href: '/admin/erp.html',          key: 'erp',          ic: 'home',    label: 'Dashboard',           desc: 'Vista integrada del negocio' },
+        { href: '/admin/clientes.html',     key: 'clientes',     ic: 'user',    label: 'Clientes',            desc: 'Clientes del CRM para las órdenes', modulo: 'CRM' },
+        { href: '/admin/productos.html',    key: 'productos',    ic: 'laptop',  label: 'Productos',           desc: 'Catálogo de productos del SCM',     modulo: 'SCM' },
+        { href: '/admin/inventario.html',   key: 'inventario',   ic: 'package', label: 'Inventario',          desc: 'Existencias y stock crítico',       modulo: 'SCM' },
         { href: '/admin/ordenes-erp.html',  key: 'ordenes-erp',  ic: 'cart',    label: 'Órdenes de clientes', desc: 'Captura y consulta de órdenes' },
-        { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
         { href: '/admin/reportes-erp.html', key: 'reportes-erp', ic: 'grid',    label: 'Reportes',            desc: 'Indicadores clave del negocio' },
+        { href: '/admin/nivel-erp.html',    key: 'nivel-erp',    ic: 'medal',   label: 'Nivel ERP',           desc: 'Avance en la integración' },
         { href: '/admin/panel-roles.html',  key: 'panel-roles',  ic: 'id',      label: 'Panel por rol',       desc: 'Qué ve cada rol en el menú' },
     ] },
     { titulo: 'Tienda', home: '/admin/promociones.html', links: [
@@ -96,6 +108,41 @@ window.avatarIni = avatarIni;
 
 const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Tienda: 'cart', Cuenta: 'settings' };
 
+// Secciones del menú que ve un rol. Un módulo solo aparece si el rol ve al
+// menos una pantalla propia de ese módulo (Clientes dentro del ERP no
+// basta para mostrarle el ERP a quien no tiene ERP).
+function seccionesDeRol(rol) {
+    return ADMIN_SECCIONES
+        .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
+        .filter((s) => s.links.some((l) => !l.modulo));
+}
+window.seccionesDeRol = seccionesDeRol;
+
+// Módulo (CRM, SCM, ERP, Tienda) en el que se está navegando. Una pantalla
+// puede estar en dos menús (Clientes está en CRM y en ERP), así que se
+// recuerda el último módulo usado en la pestaña: si vienes del ERP y abres
+// Clientes, el menú sigue en el ERP. Las pantallas de Cuenta dejan abierto
+// ese mismo módulo.
+const MODULO_STORAGE = 'kz_admin_modulo';
+function moduloActual(secciones, activo) {
+    let guardado = null;
+    try { guardado = sessionStorage.getItem(MODULO_STORAGE); } catch { /* sin storage: se usa el módulo dueño */ }
+    const grupos = secciones.filter((s) => s.home && s.links.some((l) => l.key === activo));
+    if (grupos.length === 0) return secciones.some((s) => s.home && s.titulo === guardado) ? guardado : null;
+    const elegido = (grupos.find((s) => s.titulo === guardado) || grupos[0]).titulo;
+    try { sessionStorage.setItem(MODULO_STORAGE, elegido); } catch { /* sin storage */ }
+    return elegido;
+}
+// Un clic en un enlace que dice de qué módulo es (menú lateral, menú corto o
+// iconos de inicio de un módulo) hace de ese módulo el actual.
+document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a[data-modulo]');
+    if (!a) return;
+    try { sessionStorage.setItem(MODULO_STORAGE, a.dataset.modulo); } catch { /* sin storage */ }
+});
+// Etiqueta "CRM" / "SCM" de una pantalla de otro módulo dentro del ERP.
+const modTag = (l) => (l.modulo ? ` <span class="nav-mod">${l.modulo}</span>` : '');
+
 function menuCorto() {
     try { return localStorage.getItem('kz_menu_corto') === '1'; } catch { return false; }
 }
@@ -115,6 +162,7 @@ function abrirMenuModulo(titulo) {
     const grupo = ADMIN_SECCIONES.find((s) => s.titulo === titulo);
     if (!grupo) return;
     const links = grupo.links.filter((l) => puedeVer(rol, l.key));
+    const enEste = window.ADMIN_CONTEXTO && window.ADMIN_CONTEXTO.modulo === titulo;
     let ov = document.getElementById('modal-menu-modulo');
     if (!ov) {
         ov = document.createElement('div');
@@ -129,9 +177,9 @@ function abrirMenuModulo(titulo) {
         <button class="modal-close" onclick="document.getElementById('modal-menu-modulo').classList.remove('open')" aria-label="Cerrar">${ic('x', 20)}</button>
         <div class="mm-head"><span class="mm-ico">${ic(ICONO_MODULO[titulo] || 'grid', 20)}</span><div><h3>${titulo}</h3><p>${links.length} secciones</p></div></div>
         <div class="mm-grid">${links.map((l) => `
-            <a class="modulo-tile ${l.key === window.ADMIN_ACTIVO ? 'actual' : ''}" href="${l.href}" data-key="${l.key}">
+            <a class="modulo-tile ${l.key === window.ADMIN_ACTIVO && enEste ? 'actual' : ''}" href="${l.href}" data-key="${l.key}" data-modulo="${titulo}">
                 <span class="mt-ico">${ic(l.ic, 20)}</span>
-                <span class="mt-txt"><span class="mt-title">${l.label}</span>${l.desc ? `<span class="mt-desc">${l.desc}</span>` : ''}</span>
+                <span class="mt-txt"><span class="mt-title">${l.label}${modTag(l)}</span>${l.desc ? `<span class="mt-desc">${l.desc}</span>` : ''}</span>
             </a>`).join('')}</div>`;
     ov.classList.add('open');
 }
@@ -156,21 +204,23 @@ function renderAdminSidebar(activo) {
     }
     Regreso.iniciar();
 
-    const secciones = ADMIN_SECCIONES
-        .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
-        .filter((s) => s.links.length > 0);
+    const secciones = seccionesDeRol(rol);
 
     // Menú corto (solo íconos de módulo): se recuerda en el navegador.
     const shell = el.closest('.admin-shell');
     if (shell) shell.classList.toggle('menu-corto', menuCorto());
-    const grupoActivo = (secciones.find((s) => s.links.some((l) => l.key === activo)) || {}).titulo;
+    const grupoActivo = moduloActual(secciones, activo);
+    const grupoActual = secciones.find((s) => s.titulo === grupoActivo);
+    // Para el encabezado (adminHeader): módulo actual y, si es una pantalla de
+    // otro módulo abierta dentro de este, de cuál viene.
+    window.ADMIN_CONTEXTO = { modulo: grupoActivo, link: grupoActual && grupoActual.links.find((l) => l.key === activo) };
 
     el.innerHTML = `
         <div class="brand-fila">
             <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
             <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
         </div>
-        <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Menú">${ic('menu', 20)}</button>
+        <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="admin-nav-links">${ic('menu', 20)} <span>Menú${grupoActivo ? ' · ' + grupoActivo : ''}</span></button>
         <nav class="admin-rail" aria-label="Módulos">
             ${secciones.map((s) => `
                 <button type="button" class="rail-mod ${s.titulo === grupoActivo ? 'activo' : ''}" data-grupo="${s.titulo}" onclick="abrirMenuModulo('${s.titulo}')" title="${s.titulo}">
@@ -180,19 +230,22 @@ function renderAdminSidebar(activo) {
         <button type="button" class="admin-ir" onclick="abrirIrA()" title="Ir a una sección (Ctrl + K)">${ic('search', 15)} <span>Ir a…</span><kbd>Ctrl K</kbd></button>
         <div class="admin-nav-links" id="admin-nav-links">
             ${secciones.map((s) => {
-                const enlaces = s.links.map((l) => `<a href="${l.href}" data-key="${l.key}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
+                // Solo se marca la pantalla activa dentro del módulo actual
+                // (si no, Clientes saldría marcado en CRM y en ERP a la vez).
+                const marcar = (l) => l.key === activo && (!s.home || s.titulo === grupoActivo);
+                const enlaces = s.links.map((l) => `<a href="${l.href}" data-key="${l.key}"${s.home ? ` data-modulo="${s.titulo}"` : ''} class="${marcar(l) ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}${modTag(l)}</a>`).join('');
                 if (!s.home) {
                     // Grupo estático (Cuenta): sin desplegable, siempre visible.
                     return `<div class="admin-nav-sec">${s.titulo}</div>${enlaces}`;
                 }
                 // Grupo desplegable (CRM / SCM / ERP): el título navega a su dashboard;
                 // la flecha solo muestra u oculta sus opciones. Empieza abierto
-                // si la página activa pertenece a este grupo.
-                const abierto = s.links.some((l) => l.key === activo);
+                // si es el módulo en el que se está navegando.
+                const abierto = s.titulo === grupoActivo;
                 return `
                     <div class="admin-nav-grupo ${abierto ? 'abierto' : ''}" data-grupo="${s.titulo}">
                         <div class="admin-nav-grupo-head">
-                            <a href="${s.home}" class="admin-nav-sec-link">${s.titulo}</a>
+                            <a href="${s.home}" class="admin-nav-sec-link" data-modulo="${s.titulo}">${s.titulo}</a>
                             <button type="button" class="admin-nav-sec-toggle" aria-expanded="${abierto ? 'true' : 'false'}" aria-label="Mostrar opciones de ${s.titulo}">${ic('chevron', 15)}</button>
                         </div>
                         <div class="admin-nav-grupo-links"><div class="admin-nav-grupo-links-inner">${enlaces}</div></div>
@@ -213,8 +266,15 @@ function renderAdminSidebar(activo) {
             <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
     `;
+    // Menú hamburguesa (celular o ventana angosta): abre el menú completo, con
+    // la cuenta (cambiar contraseña, dos pasos y cerrar sesión) al final.
     const t = document.getElementById('admin-nav-toggle');
-    if (t) t.addEventListener('click', () => document.getElementById('admin-nav-links').classList.toggle('open'));
+    if (t) t.addEventListener('click', () => {
+        const abierto = document.getElementById('admin-nav-links').classList.toggle('open');
+        t.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+        t.setAttribute('aria-label', abierto ? 'Cerrar menú' : 'Abrir menú');
+        t.innerHTML = `${ic(abierto ? 'x' : 'menu', 20)} <span>${abierto ? 'Cerrar' : 'Menú'}${grupoActivo ? ' · ' + grupoActivo : ''}</span>`;
+    });
 
     document.querySelectorAll('.admin-nav-sec-toggle').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -296,7 +356,7 @@ function abrirIrA() {
     const rol = (Sesion.usuario() || {}).rol || '';
     const ic = window.icon || (() => '');
     const lista = [];
-    (window.ADMIN_SECCIONES || []).forEach((sec) => sec.links.forEach((l) => { if (puedeVer(rol, l.key)) lista.push({ ...l, modulo: sec.titulo }); }));
+    (window.ADMIN_SECCIONES || []).forEach((sec) => sec.links.forEach((l) => { if (!l.modulo && puedeVer(rol, l.key)) lista.push({ ...l, modulo: sec.titulo }); }));
     let ov = document.getElementById('modal-ir-a');
     if (!ov) {
         ov = document.createElement('div');
@@ -454,10 +514,10 @@ function renderModuloTiles(elId, grupoTitulo, excluirKey) {
     if (!grupo) return;
     const tiles = grupo.links.filter((l) => l.key !== excluirKey && puedeVer(rol, l.key));
     el.innerHTML = tiles.map((l) => `
-        <a class="modulo-tile" href="${l.href}">
+        <a class="modulo-tile" href="${l.href}" data-modulo="${grupo.titulo}">
             <span class="mt-ico">${ic(l.ic, 20)}</span>
             <span class="mt-txt">
-                <span class="mt-title">${l.label}</span>
+                <span class="mt-title">${l.label}${modTag(l)}</span>
                 <span class="mt-desc">${l.desc || ''}</span>
             </span>
         </a>
@@ -466,11 +526,17 @@ function renderModuloTiles(elId, grupoTitulo, excluirKey) {
 window.renderModuloTiles = renderModuloTiles;
 
 // Encabezado de página estándar del panel
-// Muestra arriba del título el módulo de la pantalla (CRM, SCM, ERP o Cuenta).
+// Muestra arriba del título el módulo en el que se está navegando (CRM, SCM,
+// ERP, Tienda o Cuenta). Si es una pantalla de otro módulo abierta desde el
+// ERP (Clientes, Productos, Inventario), dice de dónde vienen sus datos:
+// "ERP · datos del CRM", para que se note que sigues dentro del ERP.
 function adminHeader(titulo, subtitulo, accionHTML) {
-    const grupo = ADMIN_SECCIONES.find((s) => s.links.some((l) => l.key === window.ADMIN_ACTIVO));
+    const ctx = window.ADMIN_CONTEXTO || {};
+    const grupo = ctx.link ? { titulo: ctx.modulo }
+        : ADMIN_SECCIONES.find((s) => s.links.some((l) => l.key === window.ADMIN_ACTIVO && !l.modulo));
+    const origen = ctx.link && ctx.link.modulo ? ` · datos del ${ctx.link.modulo}` : '';
     return `<div class="admin-topbar">
-        <div>${grupo ? `<span class="at-modulo">${grupo.titulo}</span>` : ''}<h2>${titulo}</h2>${subtitulo ? `<p>${subtitulo}</p>` : ''}</div>
+        <div>${grupo ? `<span class="at-modulo">${grupo.titulo}${origen}</span>` : ''}<h2>${titulo}</h2>${subtitulo ? `<p>${subtitulo}</p>` : ''}</div>
         <div class="at-actions">${accionHTML || ''}</div>
     </div>`;
 }

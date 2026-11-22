@@ -178,11 +178,21 @@ const ICONO = { admin: 'shield', ventas: 'cart', logistica: 'truck' };
 const colorDe = (rol) => PALETA[ROLES.indexOf(rol) % PALETA.length];
 const iconoDe = (rol) => ICONO[rol] || 'user';
 
-// Secciones de cada módulo, con el permiso de acción "Capturar órdenes" en el ERP.
+// Secciones de cada módulo, con el permiso de acción "Capturar órdenes" en el
+// ERP (justo después de "Órdenes de clientes").
+//   links: las pantallas propias del módulo (para contar y para la matriz:
+//          Clientes, Productos e Inventario cuentan una sola vez, en su módulo).
+//   menu:  lo que se ve en la barra lateral, con las pantallas del CRM y del
+//          SCM que también salen en el menú del ERP.
+const conCaptura = (links) => {
+    const out = [...links];
+    const i = out.findIndex((l) => l.key === 'ordenes-erp');
+    out.splice(i + 1, 0, { key: 'orden-nueva', label: 'Capturar órdenes', ic: 'plus', accion: true });
+    return out;
+};
 const MODULOS = ADMIN_SECCIONES.map((s) => {
-    const links = [...s.links];
-    if (s.titulo === 'ERP') links.splice(2, 0, { key: 'orden-nueva', label: 'Capturar órdenes', ic: 'plus', accion: true });
-    return { titulo: s.titulo, links };
+    const menu = s.titulo === 'ERP' ? conCaptura(s.links) : [...s.links];
+    return { titulo: s.titulo, menu, links: menu.filter((l) => !l.modulo) };
 });
 const TOTAL = MODULOS.reduce((n, m) => n + m.links.length, 0);
 const visibles = (rol) => MODULOS.reduce((n, m) => n + m.links.filter((l) => puedeVer(rol, l.key)).length, 0);
@@ -229,12 +239,13 @@ function pintarMenu() {
     const home = homeDe(ROL);
     const ocultas = [];
     const grupos = MODULOS.map((m) => {
-        const si = m.links.filter((l) => puedeVer(ROL, l.key));
         m.links.filter((l) => !puedeVer(ROL, l.key)).forEach((l) => ocultas.push({ ...l, modulo: m.titulo }));
-        if (!si.length) return '';
+        // Igual que la barra lateral: el módulo aparece si el rol ve alguna pantalla propia.
+        if (!m.links.some((l) => puedeVer(ROL, l.key))) return '';
+        const si = m.menu.filter((l) => puedeVer(ROL, l.key));
         return `<div class="pr-menu-grupo">${m.titulo.toUpperCase()}</div>` + si.map((l) => `
-            <div class="pr-menu-item ${l.href === home ? 'inicio' : ''}">${icon(l.ic || 'grid', 15)} <span>${esc(l.label)}</span>
-                ${l.href === home ? '<span class="pr-tag">Inicio</span>' : l.accion ? '<span class="pr-tag">Acción</span>' : ''}</div>`).join('');
+            <div class="pr-menu-item ${l.href === home && !l.modulo ? 'inicio' : ''}">${icon(l.ic || 'grid', 15)} <span>${esc(l.label)}${l.modulo ? ` <span class="nav-mod">${l.modulo}</span>` : ''}</span>
+                ${l.href === home && !l.modulo ? '<span class="pr-tag">Inicio</span>' : l.accion ? '<span class="pr-tag">Acción</span>' : ''}</div>`).join('');
     }).join('');
     el.innerHTML = `
         <div class="pr-menu-head">
