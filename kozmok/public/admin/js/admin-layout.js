@@ -4,7 +4,7 @@ function requireAuthAdmin() {
     // La sesión real es la cookie HttpOnly "kz_admin"; aquí solo se
     // guardan los datos para pintar el menú y se confirman con el servidor.
     const usuario = Sesion.usuario();
-    if (!usuario) { window.location.href = '/admin/login.html'; return null; }
+    if (!usuario) { window.location.href = rutaLoginPanel(); return null; }
     // Pestaña nueva sin otra del panel abierta = se cerró la anterior: la
     // sesión termina y se pide entrar otra vez.
     if (!PestanaPanel.tiene()) {
@@ -12,7 +12,7 @@ function requireAuthAdmin() {
         PestanaPanel.verificar().then(async (ok) => {
             if (ok) { document.documentElement.style.visibility = ''; return; }
             await Sesion.cerrarSesionUsuario();
-            window.location.replace('/admin/login.html');
+            window.location.replace(rutaLoginPanel());
         });
     } else PestanaPanel.escuchar();
     api('/admin/whoami')
@@ -28,7 +28,7 @@ function requireAuthAdmin() {
                 abrirCambioPassword(true);
             }
         })
-        .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = '/admin/login.html'; });
+        .catch(() => { Sesion.cerrarSesionUsuario(); window.location.href = rutaLoginPanel(); });
     return usuario;
 }
 
@@ -420,7 +420,7 @@ window.abrirDosPasos = abrirDosPasos;
 
 async function cerrarSesionAdmin() {
     await Sesion.cerrarSesionUsuario();
-    window.location.replace('/admin/login.html');
+    window.location.replace(rutaLoginPanel());
 }
 
 // Exporta un array de objetos a CSV y lo descarga.

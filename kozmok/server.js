@@ -16,6 +16,8 @@ const captcha = require('./captcha.js');   // Google reCAPTCHA en login, registr
 const correo = require('./correo.js');
 const paypal = require('./paypal.js');
 const facturama = require('./facturama.js');   // factura electrónica CFDI 4.0 (sandbox por defecto)   // pagos con PayPal / tarjeta (sandbox por defecto)
+// Entrada del panel en una dirección secreta y pantallas solo con sesión.
+const panelOculto = require('./panel-oculto.js');
 const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
@@ -84,6 +86,10 @@ app.use((req, res, next) => {
     };
     next();
 });
+// Panel oculto (va antes de los archivos estáticos): /admin/login.html ya no
+// existe; la entrada es /admin/<PANEL_RUTA>/ y las demás pantallas del
+// panel solo se entregan con sesión del equipo y si el rol las puede ver.
+const PANEL = panelOculto.instalar(app, { pool, seg });
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
 // HTML/JS/CSS se revalidan (ETag), así una actualización se ve al momento.
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -7313,7 +7319,7 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     const u = result.rows[0];
     // Bienvenida: dónde entrar y qué esperar. La contraseña NO va en el
     // correo (se la da quien creó la cuenta) y se cambia al primer acceso.
-    const enlace = `${urlPublica(req)}/admin/login.html`;
+    const enlace = panelOculto.url(urlPublica(req));
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Te dieron acceso al panel de Kozmok',
@@ -7353,7 +7359,7 @@ app.post('/api/admin/usuarios/:id/activar', requireAdmin, asyncRoute(async (req,
         `INSERT INTO activaciones_usuario (usuario_id, token_hash, expira, creado_por, ip)
          VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' hours')::interval, $4, $5)`,
         [u.id, seg.sha256(token), String(ACTIVACION_HORAS), req.usuario.id, seg.ipDe(req)]);
-    const enlace = `${urlPublica(req)}/admin/activar.html?token=${token}`;
+    const enlace = `${panelOculto.url(urlPublica(req), 'activar')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Activa tu cuenta del panel de Kozmok',
@@ -8280,7 +8286,7 @@ app.post('/api/auth/recuperar-usuario', limiteAuth, captchaMw, asyncRoute(async 
     const token = crypto.randomBytes(32).toString('base64url');
     await pool.query(`INSERT INTO recuperaciones_usuario (usuario_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
         [u.id, seg.sha256(token), seg.ipDe(req)]);
-    const enlace = `${urlPublica(req)}/admin/restablecer.html?token=${token}`;
+    const enlace = `${panelOculto.url(urlPublica(req), 'restablecer')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'recuperacion',
         asunto: 'Restablece tu contraseña del panel de Kozmok',
@@ -8744,14 +8750,19 @@ app.use((req, res) => {
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
-    console.log(`   Panel de admin:  http://localhost:${PORT}/admin/login.html`);
+    console.log(`   Panel de admin:  ${panelOculto.url(`http://localhost:${PORT}`)}   (dirección secreta, PANEL_RUTA en el .env)`);
+    if (PANEL.generada) {
+        console.log(PANEL.guardada
+            ? `   Se generó la dirección secreta del panel${PANEL.invalida ? ' (la PANEL_RUTA anterior no era válida)' : ''} y se guardó en el .env (PANEL_RUTA).`
+            : '   Se generó una dirección secreta solo para esta vez: no se pudo escribir en el .env. Copia la de arriba como PANEL_RUTA=... en tu .env para que no cambie.');
+    }
     if (HOST === '0.0.0.0' || HOST === '::') {
         const ips = ipsDeRed();
         if (ips.length) {
             console.log('Desde un celular en la misma red Wi-Fi abre:');
             ips.forEach((x) => {
                 console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
-                console.log(`   Panel de admin:  http://${x.ip}:${PORT}/admin/login.html`);
+                console.log(`   Panel de admin:  ${panelOculto.url(`http://${x.ip}:${PORT}`)}`);
             });
         } else console.log('Sin red local detectada: solo se puede abrir desde esta computadora.');
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);

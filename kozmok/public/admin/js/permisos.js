@@ -54,7 +54,12 @@
         return p === '*' || p.includes(key);
     }
 
-    function homeDe(rol) { return ROL_HOME[rol] || '/admin/login.html'; }
+    // Sin un rol válido: a la entrada secreta del panel que recuerda este
+    // navegador (rutaLoginPanel, en api.js) o, si no hay, a la tienda.
+    function homeDe(rol) {
+        if (ROL_HOME[rol]) return ROL_HOME[rol];
+        return typeof raiz.rutaLoginPanel === 'function' ? raiz.rutaLoginPanel() : '/';
+    }
 
     const api = { PERMISOS, ROL_LABEL, ROL_HOME, puedeVer, homeDe };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

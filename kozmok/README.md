@@ -24,6 +24,7 @@ kozmok/
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
+├── panel-oculto.js        # entrada secreta del panel (/admin/<PANEL_RUTA>/) y pantallas solo con sesión y rol
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
 ├── paypal.js              # API de PayPal (órdenes, captura y reembolsos)
 ├── facturama.js           # API de Facturama (CFDI 4.0)
@@ -72,8 +73,9 @@ npm install
    `.env` no se sube a GitHub.
 3. Carga el esquema: `psql -U postgres -d kozmok -f db/database.sql`. Se
    puede repetir: borra todo y lo recrea.
-4. `npm start`. Tienda en http://localhost:3000 y panel en
-   http://localhost:3000/admin/login.html.
+4. `npm start`. Tienda en http://localhost:3000; el panel en la dirección
+   secreta que muestra la consola (`/admin/<PANEL_RUTA>/`, se genera sola la
+   primera vez y queda en el `.env`). `/admin/login.html` ya no existe.
 
 La base empieza sin clientes ni pedidos. Trae tres cuentas del panel (una
 por rol) que piden cambiar la contraseña al entrar; están en
@@ -126,6 +128,14 @@ existentes) **y** en `database.sql` (para bases nuevas).
 - **Rutas**: tienda en `/api/*`, panel en `/api/admin/*`. Todas las de
   `/api/admin/*` exigen sesión del equipo; `PERMISOS_API` (regex por ruta y
   método) más `admin/js/permisos.js` deciden qué rol entra a cada una.
+- **Panel oculto** (`panel-oculto.js`, antes de los archivos estáticos): la
+  entrada del equipo es `/admin/<PANEL_RUTA>/` (más `recuperar`,
+  `restablecer` y `activar`); `/admin/login.html` responde el mismo 404 que
+  cualquier dirección inventada y queda en Seguridad. Las demás pantallas de
+  `/admin/*.html` solo se entregan con sesión del equipo y si su rol puede
+  verlas (la clave que cada página le pasa a `renderAdminSidebar`, validada
+  con `permisos.js`). En el navegador, `rutaLoginPanel()` (api.js) regresa a
+  la entrada secreta que se abrió en ese equipo.
 - **Sesiones**: token aleatorio de 256 bits en cookie HttpOnly
   (`kz_sesion` tienda, `kz_admin` panel); en la tabla `sesiones` solo su
   hash. Desde Postman: `{"modo":"token"}` en el login y

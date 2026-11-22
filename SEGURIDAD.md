@@ -19,6 +19,8 @@ Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestr
 | **Inyección SQL** | `' OR '1'='1`, `UNION SELECT`, `; DROP TABLE` | Consultas parametrizadas en todo el servidor + filtro que bloquea y registra + ids numéricos validados + errores de la base ocultos | Seguridad → Eventos (“Inyección SQL”) |
 | **CSRF** | Que otro sitio mande una petición con la sesión de la víctima | Cookie SameSite=Strict y verificación del `Origin` | Seguridad → Eventos (“CSRF”) |
 | **IDOR** | Cambiar el id de la URL para ver datos de otro cliente | Cada ruta compara el id con el de la sesión | Seguridad → Eventos (“Acceso a datos ajenos”) |
+| **Encontrar el panel** | Escribir `/admin/login.html` (o variantes) para llegar al login del equipo y atacarlo | Entrada en una dirección secreta de 144 bits (`PANEL_RUTA`); las direcciones conocidas dan el mismo 404 que una inventada; sin sesión ninguna pantalla del panel se entrega | Seguridad → Eventos (“Intento de abrir el panel por su dirección pública”) |
+| **Robo de rol** | Cambiar el rol guardado en el navegador (p. ej. Logística → admin) para abrir pantallas de otro rol | El servidor valida el rol de la sesión en cada pantalla y en cada llamada a la API; el rol del navegador no cuenta | Regresa a su inicio; la API responde 403 |
 
 ## Cómo correr las pruebas
 
@@ -226,11 +228,35 @@ que se cumplan aunque alguien llame a la API directo o tenga acceso a la base:
 Los casos de fraude (empleados E1–E10, clientes C1–C9) y su cláusula están en el documento
 del proyecto; las reglas para el cliente en la tienda, `terminos.html`.
 
+## 5. Panel oculto y robo de roles
+
+**Ataque.** Quien conoce el proyecto sabe que el panel estaba en `/admin/login.html`: con solo agregar eso a la dirección llegaba al login del equipo para probar contraseñas. Y quien ya trabaja en el panel (por ejemplo, Logística) puede abrir las herramientas del navegador, cambiar su rol a `admin` en `localStorage` (`kz_usuario`) y escribir la dirección de una pantalla que no le toca, como *Cuentas y equipo*.
+
+**Qué se ve.**
+- `/admin/login.html`, `/admin/LOGIN.HTML`, `/admin/%6Cogin.html`, `/admin/js/../login.html`, `/admin/` y cualquier otra pantalla del panel sin sesión responden **la misma página 404** que una dirección inventada (mismo código y mismo tamaño): no se puede saber que el panel existe. Cada intento de abrir el login por su dirección pública queda en *Seguridad → Eventos*.
+- La entrada real es `http://localhost:3000/admin/<PANEL_RUTA>/`, un código aleatorio de 24 caracteres que la consola muestra al arrancar y que vive en el `.env` (no se sube a GitHub). De ahí salen también `…/recuperar`, `…/restablecer` y `…/activar` (los correos del equipo ya traen esos enlaces).
+- Con el rol cambiado en el navegador, el servidor revisa el rol **de la sesión** y regresa a la persona a su inicio; la API responde 403 y el menú vuelve a su rol real al recargar.
+
+**A mano.**
+```bash
+curl -i http://localhost:3000/admin/login.html          # 404, igual que /no-existe.html
+curl -i http://localhost:3000/admin/dashboard.html      # 404 sin sesión
+curl -i http://localhost:3000/admin/<PANEL_RUTA>/        # 200: la entrada del equipo
+```
+
+**Defensas.**
+- `panel-oculto.js` va **antes** de los archivos estáticos: ninguna página de `/admin` se sirve directo de la carpeta. La ruta se revisa como la entendería el servidor de archivos (decodificada, sin `..`, sin distinguir mayúsculas, como en Windows), así que las variantes no se cuelan.
+- La dirección secreta se compara en tiempo constante y tiene 144 bits al azar: no se puede adivinar. Para cambiarla basta con editar `PANEL_RUTA` en el `.env` y reiniciar; la anterior deja de servir.
+- Cada pantalla del panel pide la misma clave de permiso que usa el menú (`renderAdminSidebar('…')`) y el servidor la valida con `permisos.js` contra el rol guardado en la base, no contra lo que diga el navegador. La API ya hacía lo mismo con `PERMISOS_API`.
+- Las páginas de acceso salen con `Cache-Control: no-store` y `X-Robots-Tag: noindex`, y `Referrer-Policy: same-origin` evita que la dirección secreta viaje a otros sitios.
+- Esconder la entrada no reemplaza a las demás defensas: el login del panel sigue con bloqueo por intentos, captcha y verificación en dos pasos.
+
 ## Dónde está cada cosa
 
 | Archivo | Qué contiene |
 |---|---|
 | `kozmok/seguridad.js` | Cabeceras/CSP, límites, bloqueos, sesiones, filtros SQL y XSS, política de contraseñas |
+| `kozmok/panel-oculto.js` | Entrada secreta del panel (`PANEL_RUTA`) y pantallas del panel solo con sesión y rol |
 | `kozmok/server.js` | Rutas `/api/auth/*`, uso de los middlewares, rutas del panel `/api/admin/seguridad/*` |
 | `kozmok/db/database.sql` | Tablas `sesiones`, `intentos_login`, `bloqueos`, `eventos_seguridad`, `recuperaciones`, `correos_salida` |
 | `kozmok/public/admin/seguridad.html` | Tablero (Panel → Cuenta → Seguridad, solo administrador): eventos, intentos, bloqueos, sesiones activas y correos enviados |
@@ -242,6 +268,7 @@ del proyecto; las reglas para el cliente en la tienda, `terminos.html`.
 ## Limitaciones honestas
 
 - El proyecto corre en HTTP local; en producción debe ir con HTTPS (`COOKIE_SEGURA=1` agrega `Secure` y HSTS).
+- La dirección secreta del panel es una capa extra (oculta la puerta), no la cerradura: la protección real siguen siendo la contraseña, la verificación en dos pasos y los permisos por rol en el servidor. Los scripts de `/admin/js/` siguen siendo públicos porque la página de acceso los necesita antes de iniciar sesión; no traen datos ni la dirección secreta.
 - El límite por minuto vive en memoria: se reinicia con el servidor. Los bloqueos de cuenta e IP sí quedan en la base.
 - Un atacante puede bloquear a propósito la cuenta de alguien fallando 5 veces (es el costo del bloqueo); por eso dura solo 15 minutos y la persona puede entrar con “¿Olvidaste tu contraseña?”, que además levanta el bloqueo.
 - Los correos salen por Gmail solo si se configuran `SMTP_USUARIO` y `SMTP_PASSWORD` en el `.env`; sin eso se guardan en el panel, *Cuenta → Seguridad → Correos enviados* (ahí está el enlace de recuperación durante la demo). La contraseña de aplicación de Gmail vive solo en el `.env`, que no se sube a GitHub.

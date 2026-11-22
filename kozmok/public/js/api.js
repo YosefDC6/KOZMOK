@@ -3,6 +3,25 @@
 
 const API_BASE = '/api';
 
+// La entrada del panel es una dirección secreta (/admin/<PANEL_RUTA>/, ver
+// panel-oculto.js): /admin/login.html ya no existe. Las páginas de acceso
+// (iniciar sesión, recuperar, restablecer, activar) llevan
+// data-panel-acceso en <html>; al abrir una, este navegador recuerda la
+// dirección para volver a ella al cerrar sesión o si la sesión vence.
+const PANEL_ACCESO = document.documentElement.hasAttribute('data-panel-acceso');
+const RUTA_PANEL = /^\/admin\/[A-Za-z0-9_-]{16,64}\/$/;
+if (PANEL_ACCESO) {
+    const base = (location.pathname.match(/^\/admin\/[A-Za-z0-9_-]{16,64}\//) || [])[0];
+    if (base) { try { localStorage.setItem('kz_panel_acceso', base); } catch { /* sin storage */ } }
+}
+// Entrada del panel que conoce este navegador; si nunca la abrió, la tienda.
+function rutaLoginPanel() {
+    let r = null;
+    try { r = localStorage.getItem('kz_panel_acceso'); } catch { /* sin storage */ }
+    return r && RUTA_PANEL.test(r) ? r : '/';
+}
+window.rutaLoginPanel = rutaLoginPanel;
+
 async function api(path, options = {}) {
     // Etapa 5: la sesión viaja sola en una cookie HttpOnly (kz_sesion en la
     // tienda, kz_admin en el panel) que el JavaScript no puede leer, así
@@ -22,9 +41,9 @@ async function api(path, options = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
-        if (res.status === 401 && location.pathname.startsWith('/admin/') && !location.pathname.endsWith('login.html')) {
+        if (res.status === 401 && esPanel && !PANEL_ACCESO) {
             localStorage.removeItem('kz_usuario');
-            location.href = '/admin/login.html';
+            location.href = rutaLoginPanel();
         }
         const err = new Error(data.message || data.error || 'Error en la solicitud');
         err.status = res.status;
@@ -335,8 +354,8 @@ const ReglasPass = {
 window.addEventListener('pageshow', (ev) => {
     if (!ev.persisted) return;   // carga normal: cada página revisa su sesión
     const p = location.pathname;
-    if (p.startsWith('/admin/') && !/\/(login|activar|recuperar|restablecer)\.html$/.test(p)) {
-        if (!Sesion.usuario()) { location.replace('/admin/login.html'); return; }
+    if (p.startsWith('/admin/') && !PANEL_ACCESO) {
+        if (!Sesion.usuario()) { location.replace(rutaLoginPanel()); return; }
         api('/admin/whoami').catch(() => {});   // si la sesión ya no existe, api() manda al login
         return;
     }
