@@ -29,6 +29,7 @@ DROP TABLE IF EXISTS sesiones                CASCADE;
 DROP TABLE IF EXISTS movimientos_monedero    CASCADE;
 DROP TABLE IF EXISTS monederos               CASCADE;
 DROP TABLE IF EXISTS pagos                   CASCADE;
+DROP TABLE IF EXISTS promocion_productos     CASCADE;
 DROP TABLE IF EXISTS promociones             CASCADE;
 DROP TABLE IF EXISTS impuestos               CASCADE;
 DROP TABLE IF EXISTS carrito_detalle         CASCADE;
