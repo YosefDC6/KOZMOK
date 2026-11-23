@@ -50,7 +50,7 @@ kozmok/
     ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast,
     │                               #   icons (íconos, logo KZK y fantasmita), dos-pasos, fotos,
     │                               #   garantia, paypal-botones, recibo-render, graficas, vendor/
-    └── admin/                      # una pantalla por sección del panel
+    └── admin/                      # una pantalla por sección del panel (centro-soporte = inicio de Soporte)
         └── js/
             ├── admin-layout.js     # menú, "Ir a…", puntitos de aviso, botón Regresar
             ├── permisos.js         # permisos por rol (los usa el menú y el servidor)
@@ -156,6 +156,24 @@ existentes) **y** en `database.sql` (para bases nuevas).
   `make_interval(months => $1::int)` en vez de `($1 || ' months')::interval`.
 - Para validar todas las consultas contra una base real: extraerlas y
   correr `PREPARE` en `psql`; detecta errores de tipos sin ejecutar nada.
+
+## Existencias en la tienda y Centro de soporte
+
+- **Existencias**: `existenciaDe()` / `existenciaHTML()` (`public/js/api.js`)
+  arman el texto que ve el cliente ("24 disponibles", "Quedan 3",
+  "Agotado"; pocas = en o bajo `stock_minimo`). `GET /api/catalogo?disponible=1`
+  esconde los agotados y `GET /api/productos/:id/existencia` (sin caché)
+  devuelve `stock`, `stock_minimo` y `max_por_pedido` para la ficha.
+- **Rol Soporte** (`soporte` en `permisos.js`, `ROLES_INTERNOS` y el CHECK de
+  `usuarios`; `migrarEsquema()` lo agrega en bases viejas y
+  `control_interno.sql` crea una vez la cuenta `sofia.soporte@kozmok.mx`).
+  Con el permiso `clientes` se consulta la ficha, se registran interacciones
+  y se confirma el correo; editar datos o etapa pide `clientes-editar`.
+- **Centro de soporte** (`admin/centro-soporte.html`, permiso
+  `centro-soporte`): `GET /api/admin/soporte/resumen` (indicadores y la
+  bandeja unificada de tickets, reclamos, devoluciones y reseñas ≤ 3★ sin
+  respuesta, ordenada por quién debe responder, prioridad y antigüedad) y
+  `GET /api/admin/soporte/buscar?q=` (clientes, folios y pedidos).
 
 ## Chatbot de recomendaciones
 

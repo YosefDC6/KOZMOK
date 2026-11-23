@@ -386,6 +386,21 @@ function formatoMoneda(valor) {
     return Number(valor || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
 }
 
+// Existencia que ve el cliente: cuántas piezas hay de cada producto.
+// Pocas piezas = en o por debajo del stock mínimo del producto (5 si no lo trae).
+function existenciaDe(p) {
+    const n = Math.max(0, Number(p && p.stock) || 0);
+    const minimo = p && p.stock_minimo != null ? Number(p.stock_minimo) : 5;
+    const piezas = n === 1 ? '1 pieza' : `${n.toLocaleString('es-MX')} piezas`;
+    if (n === 0) return { n, clase: 'stock-out', texto: 'Agotado', corto: 'Agotado' };
+    if (n <= minimo) return { n, clase: 'stock-low', texto: n === 1 ? 'Última pieza disponible' : `Últimas ${piezas} disponibles`, corto: `Quedan ${n}` };
+    return { n, clase: 'stock-ok', texto: `${piezas} disponibles`, corto: `${n} disponibles` };
+}
+function existenciaHTML(p, { corto = false } = {}) {
+    const e = existenciaDe(p);
+    return `<span class="product-stock ${e.clase}">${corto ? e.corto : e.texto}</span>`;
+}
+
 // Desglose de impuestos de un pedido. Los pedidos nuevos guardan su detalle
 // (impuestos_detalle); los anteriores a la Etapa 4 solo el total (IVA 16%).
 function impuestosDe(d) {

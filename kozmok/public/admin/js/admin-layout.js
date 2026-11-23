@@ -38,6 +38,7 @@ const ADMIN_SECCIONES = [
         { href: '/admin/clientes.html',      key: 'clientes',      ic: 'user',    label: 'Clientes',            desc: 'Fichas y etapa de cada cliente' },
         { href: '/admin/interacciones.html', key: 'interacciones', ic: 'chat',    label: 'Interacciones',       desc: 'Llamadas, correos y reuniones' },
         { href: '/admin/evaluaciones.html',  key: 'evaluaciones',  ic: 'star',    label: 'Evaluaciones',        desc: 'Reseñas de producto' },
+        { href: '/admin/centro-soporte.html', key: 'centro-soporte', ic: 'headphones', label: 'Centro de soporte', desc: 'Todo lo pendiente de atención a clientes' },
         { href: '/admin/soporte.html',       key: 'soporte',       ic: 'help',    label: 'Soporte',             desc: 'Tickets de clientes' },
         { href: '/admin/garantias.html',     key: 'garantias',     ic: 'shield',  label: 'Garantías',           desc: 'Certificados y reclamos' },
         { href: '/admin/pedidos.html',       key: 'pedidos',       ic: 'truck',   label: 'Pedidos',             desc: 'Ventas a clientes' },
@@ -156,8 +157,14 @@ function renderAdminSidebar(activo) {
     }
     Regreso.iniciar();
 
+    // El título de cada módulo lleva a su dashboard; si el rol no lo ve
+    // (Soporte en CRM, por ejemplo), a la primera sección que sí ve.
     const secciones = ADMIN_SECCIONES
-        .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
+        .map((s) => {
+            const links = s.links.filter((l) => puedeVer(rol, l.key));
+            const home = s.home && (links.some((l) => l.href === s.home) ? s.home : (links[0] || {}).href);
+            return { ...s, links, home };
+        })
         .filter((s) => s.links.length > 0);
 
     // Menú corto (solo íconos de módulo): se recuerda en el navegador.

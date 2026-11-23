@@ -1473,6 +1473,16 @@ body:has(.cookie-bar.show) .cmp-bar { bottom: 76px; }
    FICHA DE PRODUCTO: cantidad + urgencia de stock
 ========================================================= */
 .modal .stock-urgente { color: var(--warning); font-weight: 600; font-size: .84rem; }
+/* Existencia en la ficha: cuántas piezas hay al momento */
+.pm-existencia { --c: var(--success); display: flex; gap: 10px; align-items: flex-start; margin: 10px 0 4px; padding: 9px 12px;
+    border: 1px solid color-mix(in srgb, var(--c) 35%, var(--line)); border-left: 3px solid var(--c); border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--c) 8%, transparent); font-size: .86rem; line-height: 1.4; }
+.pm-existencia.stock-low { --c: var(--warning); }
+.pm-existencia.stock-out { --c: var(--danger); }
+.pm-existencia > svg { color: var(--c); flex-shrink: 0; margin-top: 2px; }
+.pm-existencia strong { display: block; color: var(--c); }
+.pm-existencia span { color: var(--text-muted); font-size: .8rem; }
+.cart-existencia { margin-top: 4px; font-size: .76rem; }
 .modal-qty-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .modal-qty-row label { margin: 0; }
 
@@ -2975,3 +2985,39 @@ tr.ev-oculta td { opacity: .55; }
 .px-pp b { color: var(--success); }
 .px-vacio { font-size: .82rem; color: var(--text-muted); margin: 6px 0; }
 @media (max-width: 860px) { .px-grid { grid-template-columns: 1fr; } .px-alcance { padding-left: 0; border-left: 0; } .px-busca { grid-template-columns: 1fr; } }
+
+/* =========================================================
+   CENTRO DE SOPORTE (panel)
+========================================================= */
+.admin-shell .cs-buscar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 10px; }
+.cs-buscar-ico { color: var(--text-muted); display: inline-flex; }
+.cs-buscar input { flex: 1; border: none; background: none; padding: 6px 0; font: inherit; color: var(--text); outline: none; box-shadow: none; }
+.cs-res-card { margin-bottom: 18px; padding: 12px 14px; }
+.cs-res-grupo + .cs-res-grupo { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.cs-res-grupo h4 { margin: 0 0 6px; font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.cs-res { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-radius: var(--radius-sm); background: none;
+    font: inherit; text-align: left; color: var(--text); text-decoration: none; cursor: pointer; }
+.cs-res:hover { background: var(--bg-panel-2); }
+.cs-res-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cs-res-txt span { font-size: .8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-res-meta { font-size: .78rem; color: var(--text-muted); text-align: right; text-transform: capitalize; }
+.admin-shell .cs-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 8px; }
+a.cs-kpi { color: inherit; text-decoration: none; transition: border-color .15s; }
+a.cs-kpi:hover { border-color: var(--accent); }
+.cs-kpi-sub { margin-top: 4px; font-size: .76rem; color: var(--text-muted); line-height: 1.35; }
+.cs-bandeja-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 22px 0 10px; }
+.cs-bandeja-head h3 { margin: 0; font-size: 1.05rem; }
+.cs-bandeja-head p { margin: 2px 0 0; font-size: .84rem; color: var(--text-muted); }
+.cs-bandeja-head .tabs-seg { margin: 0; flex-wrap: wrap; }
+.cs-n { font-size: .72rem; opacity: .8; }
+.cs-tipo { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.cs-titulo { margin-top: 2px; font-weight: 600; }
+.cs-det { font-size: .78rem; color: var(--text-muted); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-espera { display: inline-flex; align-items: center; gap: 4px; font-size: .8rem; white-space: nowrap; }
+.cs-espera.nos { color: var(--warning); font-weight: 600; }
+.cs-espera.cli { color: var(--text-muted); }
+.cs-modal { max-width: 640px; }
+.cs-hilo { max-height: 300px; overflow-y: auto; padding-right: 4px; }
+.cs-resp-pie { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cs-resp-pie label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .84rem; }
+.cs-resp-pie select { width: auto; }

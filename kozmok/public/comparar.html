@@ -39,7 +39,7 @@ const FILAS = [
     { k: 'tarjeta_grafica', label: 'Gráfica',       fmt: (p) => p.tarjeta_grafica || '—' },
     { k: 'pantalla',        label: 'Pantalla',      fmt: (p) => p.pantalla || '—' },
     { k: 'uso',             label: 'Usos',          fmt: (p) => (p.uso_recomendado || []).join(', ') || '—' },
-    { k: 'stock',           label: 'Disponibilidad',fmt: (p) => (p.stock > 0 ? 'En stock (' + p.stock + ')' : 'Sin stock'), mejor: 'max', num: (p) => p.stock },
+    { k: 'stock',           label: 'Disponibilidad',fmt: (p) => existenciaDe(p).texto, mejor: 'max', num: (p) => p.stock },
     { k: 'rating',          label: 'Calificación',  fmt: (p) => (p._rating ? p._rating.toFixed(1) + ' / 5 (' + p._nres + ')' : 'Sin reseñas'), mejor: 'max', num: (p) => p._rating || 0 },
 ];
 

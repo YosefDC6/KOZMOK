@@ -49,7 +49,7 @@ renderAdminSidebar('clientes');
 document.getElementById('topbar').innerHTML = adminHeader(
     'Clientes', 'Listado, búsqueda y filtro por etapa. Abre un cliente para ver su ficha completa.',
     '<button class="btn btn-outline" onclick="exportar()">Exportar CSV</button>' +
-    '<button class="btn btn-primary" onclick="formNuevo()">Nuevo cliente</button>'
+    (puedeVer((Sesion.usuario() || {}).rol, 'clientes-editar') ? '<button class="btn btn-primary" onclick="formNuevo()">Nuevo cliente</button>' : '')
 );
 
 function exportar() {

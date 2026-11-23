@@ -178,12 +178,13 @@ function requireAdmin(req, res, next) {
 }
 
 // Roles empresariales del ERP (como en SAP, Odoo o Dynamics): administrador,
-// ventas y logística. Para agregar uno nuevo: añádelo aquí, en el CHECK de
+// ventas, logística y soporte. Para agregar uno nuevo: añádelo aquí, en el CHECK de
 // la tabla usuarios (db/database.sql) y en PERMISOS (public/admin/js/permisos.js).
 const ROLES_INTERNOS = {
     admin:     { nombre: 'Administrador', descripcion: 'Acceso total: CRM, SCM y ERP, cuentas, Nivel ERP y Panel por rol.' },
     ventas:    { nombre: 'Ventas',        descripcion: 'Clientes (CRM), consulta de productos (SCM), captura de órdenes de clientes (ERP), reportes y su actividad.' },
     logistica: { nombre: 'Logística',     descripcion: 'Productos e inventario con su reposición (SCM), captura, surtido y envío de las órdenes de clientes (ERP) y reportes.' },
+    soporte:   { nombre: 'Soporte',       descripcion: 'Atención a clientes: Centro de soporte, tickets, reclamos de garantía, devoluciones y reseñas, con la ficha del cliente y sus pedidos a la mano.' },
 };
 
 // Middleware: el rol del usuario debe tener AL MENOS UNO de estos permisos
@@ -1202,6 +1203,7 @@ async function leerCatalogo(q) {
     if (precio_max) { cond.push(`p.precio <= $${i++}`); values.push(precio_max); }
     if (busqueda) { cond.push(`(p.nombre ILIKE $${i} OR p.descripcion ILIKE $${i} OR p.marca ILIKE $${i})`); values.push(`%${busqueda}%`); i++; }
     if (q.destacado === '1' || q.destacado === 'true') cond.push('p.destacado = true');
+    if (q.disponible === '1' || q.disponible === 'true') cond.push('p.stock > 0');
     const orden = q.orden === 'novedades' ? 'p.fecha_creacion DESC, p.id DESC' : 'p.nombre ASC';
     const result = await pool.query(`
         SELECT p.*, c.nombre AS categoria_nombre, c.icono AS categoria_icono
@@ -1233,6 +1235,19 @@ app.get('/api/productos/:id', asyncRoute(async (req, res) => {
     if (!p) return res.status(404).json({ message: 'Producto no encontrado' });
     cachePublica(res);
     res.json(productoPublico(p));
+}));
+
+// Existencia al momento de un producto (la ficha de la tienda la consulta al
+// abrirse; no pasa por la caché del catálogo). Solo dice cuántas piezas hay
+// y cuántas se pueden llevar en un pedido.
+app.get('/api/productos/:id/existencia', asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    const r = await pool.query('SELECT stock, stock_minimo FROM productos WHERE id = $1 AND activo = TRUE', [id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Producto no encontrado' });
+    const { stock, stock_minimo } = r.rows[0];
+    res.set('Cache-Control', 'no-store');
+    res.json({ stock, stock_minimo, disponible: stock > 0, max_por_pedido: Math.min(stock, MAX_PIEZAS_POR_PRODUCTO) });
 }));
 
 // Etapa 4 · 4.1.1 Catálogo de artículos (nombres del documento):
@@ -3889,10 +3904,16 @@ const PERMISOS_API = [
     { ruta: /^\/avisos$/,                               metodos: LEER, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
-    { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes'] },
+    // Con 'clientes' se consulta la ficha, se registran interacciones, se
+    // escribe al cliente y se confirma su correo; editar sus datos o su etapa
+    // pide 'clientes-editar' (Soporte consulta pero no edita).
+    { ruta: /^\/clientes(\/|$)/,                       metodos: LEER, permisos: ['clientes'] },
+    { ruta: /^\/clientes\/\d+\/(interacciones|correo|correo-confirmado)$/, metodos: ['POST', 'PUT'], permisos: ['clientes'] },
+    { ruta: /^\/clientes(\/|$)/,                       metodos: TODO, permisos: ['clientes-editar'] },
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
     { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
+    { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
     { ruta: /^\/chatbot-consultas$/,                   metodos: LEER, permisos: ['chatbot'] },
@@ -3901,7 +3922,7 @@ const PERMISOS_API = [
     // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
     { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
     { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['pedidos', 'ordenes-erp'] },
-    { ruta: /^\/devoluciones(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'inventario'] },
+    { ruta: /^\/devoluciones(\/|$)/,                   metodos: TODO, permisos: ['devoluciones', 'pedidos', 'ordenes-erp', 'inventario'] },
     { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
     // SCM
     { ruta: /^\/metricas-productos$/,                  metodos: LEER, permisos: ['dashboard', 'scm', 'inventario', 'reportes-scm', 'productos'] },
@@ -3953,7 +3974,7 @@ app.use('/api/admin', (req, res, next) => {
 
 app.use('/api/admin', (req, res, next) => {
     const rol = req.usuario && req.usuario.rol;
-    if (!PERMISOS[rol]) return res.status(403).json({ message: 'Tu rol ya no existe. Pide al administrador que te asigne Administrador, Ventas o Logística.' });
+    if (!PERMISOS[rol]) return res.status(403).json({ message: 'Tu rol ya no existe. Pide al administrador que te asigne Administrador, Ventas, Logística o Soporte.' });
     if (rol === 'admin') return next();
     const ruta = req.path.replace(/\/+$/, '') || '/';
     const regla = PERMISOS_API.find((r) => r.ruta.test(ruta) && r.metodos.includes(req.method));
@@ -4247,6 +4268,9 @@ const AVISOS_SQL = {
     'ordenes-compra': `SELECT COUNT(*)::int AS n, MAX(fecha_creacion) AS ultimo FROM ordenes_compra WHERE estado = 'pendiente'`,
     seguridad: `SELECT COUNT(*)::int AS n, MAX(fecha) AS ultimo FROM eventos_seguridad WHERE severidad = 'alta' AND fecha > CURRENT_TIMESTAMP - INTERVAL '1 day'`,
 };
+// Centro de soporte: tickets y reclamos esperando respuesta más devoluciones por revisar.
+AVISOS_SQL['centro-soporte'] = `SELECT COALESCE(SUM(n), 0)::int AS n, MAX(ultimo) AS ultimo FROM (
+    ${AVISOS_SQL.soporte} UNION ALL ${AVISOS_SQL.garantias} UNION ALL ${AVISOS_SQL.devoluciones}) x`;
 app.get('/api/admin/avisos', asyncRoute(async (req, res) => {
     const claves = Object.keys(AVISOS_SQL).filter((k) => puedeVer(req.usuario.rol, k));
     const filas = await Promise.all(claves.map((k) => pool.query(AVISOS_SQL[k]).then((r) => r.rows[0]).catch(() => null)));
@@ -4873,6 +4897,144 @@ app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     );
     if (r.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.json({ message: 'Ticket actualizado', ticket: r.rows[0] });
+}));
+
+// =========================================================
+// ADMIN: CENTRO DE SOPORTE
+// Pantalla de inicio del rol Soporte: lo pendiente de tickets, reclamos de
+// garantía, devoluciones y reseñas en una sola bandeja, ordenada por quién
+// debe dar el siguiente paso (nosotros primero), prioridad y antigüedad.
+// =========================================================
+const PRIO_ORDEN = { alta: 0, media: 1, baja: 2 };
+app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
+    const [tk, rc, dv, rs, tkLista, rcLista, dvLista, rsLista] = await Promise.all([
+        pool.query(`
+            SELECT COUNT(*) FILTER (WHERE t.estado = 'abierto')::int AS abiertos,
+                   COUNT(*) FILTER (WHERE t.estado = 'en_proceso')::int AS en_proceso,
+                   COUNT(*) FILTER (WHERE t.estado IN ('abierto','en_proceso') AND COALESCE(u.autor, 'cliente') = 'cliente')::int AS sin_respuesta,
+                   COUNT(*) FILTER (WHERE t.estado IN ('abierto','en_proceso') AND t.prioridad = 'alta')::int AS alta,
+                   COUNT(*) FILTER (WHERE t.estado IN ('resuelto','cerrado') AND t.fecha_actualizacion > CURRENT_TIMESTAMP - INTERVAL '7 days')::int AS resueltos_7d,
+                   ROUND(AVG(GREATEST(0, EXTRACT(EPOCH FROM (p.fecha - t.fecha_creacion))) / 3600)
+                         FILTER (WHERE t.fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '30 days'), 1) AS primera_respuesta_h
+            FROM tickets t
+            LEFT JOIN LATERAL (SELECT autor FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
+            LEFT JOIN LATERAL (SELECT fecha FROM ticket_mensajes WHERE ticket_id = t.id AND autor = 'equipo' ORDER BY fecha, id LIMIT 1) p ON TRUE`),
+        pool.query(`
+            SELECT COUNT(*)::int AS activos,
+                   COUNT(*) FILTER (WHERE COALESCE(u.autor, 'cliente') = 'cliente')::int AS esperando
+            FROM reclamos_garantia r
+            LEFT JOIN LATERAL (SELECT autor FROM reclamo_mensajes WHERE reclamo_id = r.id AND NOT interno ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
+            WHERE r.estado IN ${SQL_ABIERTOS}`),
+        pool.query(`
+            SELECT COUNT(*) FILTER (WHERE estado = 'solicitada')::int AS por_revisar,
+                   COUNT(*) FILTER (WHERE estado = 'aprobada')::int AS por_recibir,
+                   COUNT(*) FILTER (WHERE estado = 'recibida')::int AS por_cerrar
+            FROM devoluciones`),
+        pool.query(`
+            SELECT COUNT(*) FILTER (WHERE respuesta IS NULL AND NOT oculta)::int AS sin_respuesta,
+                   COUNT(*) FILTER (WHERE respuesta IS NULL AND NOT oculta AND calificacion <= 2)::int AS criticas
+            FROM resenas`),
+        pool.query(`
+            SELECT t.id, t.folio, t.asunto, t.estado, t.prioridad, t.categoria, t.cliente_id, c.nombre AS cliente_nombre,
+                   pe.numero_orden, COALESCE(u.autor, 'cliente') AS ultimo_autor, COALESCE(u.fecha, t.fecha_creacion) AS desde
+            FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+            LEFT JOIN pedidos pe ON pe.id = t.pedido_id
+            LEFT JOIN LATERAL (SELECT autor, fecha FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
+            WHERE t.estado IN ('abierto','en_proceso')`),
+        pool.query(`
+            SELECT r.id, r.folio, r.estado, r.cliente_id, c.nombre AS cliente_nombre, pr.nombre AS producto,
+                   COALESCE(u.autor, 'cliente') AS ultimo_autor, COALESCE(u.fecha, r.fecha) AS desde
+            FROM reclamos_garantia r JOIN clientes c ON c.id = r.cliente_id
+            JOIN garantias g ON g.id = r.garantia_id LEFT JOIN productos pr ON pr.id = g.producto_id
+            LEFT JOIN LATERAL (SELECT autor, fecha FROM reclamo_mensajes WHERE reclamo_id = r.id AND NOT interno ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
+            WHERE r.estado IN ${SQL_ABIERTOS}`),
+        pool.query(`
+            SELECT d.id, d.folio, d.estado, d.motivo, d.resolucion, d.monto, d.cliente_id, c.nombre AS cliente_nombre, p.numero_orden,
+                   COALESCE(d.fecha_recibida, d.fecha_revision, d.fecha) AS desde
+            FROM devoluciones d JOIN pedidos p ON p.id = d.pedido_id LEFT JOIN clientes c ON c.id = d.cliente_id
+            WHERE d.estado IN ('solicitada','aprobada','recibida')`),
+        pool.query(`
+            SELECT re.id, re.calificacion, re.comentario, re.fecha AS desde, re.cliente_id, c.nombre AS cliente_nombre, p.nombre AS producto
+            FROM resenas re JOIN clientes c ON c.id = re.cliente_id JOIN productos p ON p.id = re.producto_id
+            WHERE re.respuesta IS NULL AND NOT re.oculta AND re.calificacion <= 3
+            ORDER BY re.fecha DESC LIMIT 30`),
+    ]);
+    const EST_REC = { recibido: 'Recibido', diagnostico: 'En diagnóstico', reparacion: 'En reparación', reemplazo: 'Reemplazo en proceso', listo: 'Listo para entregar' };
+    const EST_DEV = { solicitada: 'Por revisar', aprobada: 'Esperando el producto', recibida: 'Recibida: falta reembolso o cambio' };
+    const bandeja = [
+        ...tkLista.rows.map((t) => ({
+            tipo: 'ticket', id: t.id, folio: t.folio, titulo: t.asunto,
+            detalle: [t.categoria, t.numero_orden].filter(Boolean).join(' · '),
+            cliente_id: t.cliente_id, cliente_nombre: t.cliente_nombre,
+            estado: t.estado === 'abierto' ? 'Abierto' : 'En proceso', prioridad: t.prioridad,
+            espera: t.ultimo_autor === 'cliente' ? 'nosotros' : 'cliente', desde: t.desde,
+            url: `/admin/soporte.html?ticket=${t.id}`,
+        })),
+        ...rcLista.rows.map((r) => ({
+            tipo: 'garantia', id: r.id, folio: r.folio, titulo: `Reclamo de garantía${r.producto ? ': ' + r.producto : ''}`, detalle: '',
+            cliente_id: r.cliente_id, cliente_nombre: r.cliente_nombre,
+            estado: EST_REC[r.estado] || r.estado, prioridad: r.estado === 'listo' ? 'baja' : 'media',
+            espera: r.ultimo_autor === 'cliente' ? 'nosotros' : 'cliente', desde: r.desde,
+            url: `/admin/garantias.html?reclamo=${r.id}`,
+        })),
+        ...dvLista.rows.map((d) => ({
+            tipo: 'devolucion', id: d.id, folio: d.folio,
+            titulo: `Devolución por ${d.resolucion === 'cambio' ? 'cambio' : 'reembolso'}`, detalle: d.numero_orden || '',
+            cliente_id: d.cliente_id, cliente_nombre: d.cliente_nombre || 'Cliente eliminado',
+            estado: EST_DEV[d.estado], prioridad: d.estado === 'recibida' ? 'alta' : d.estado === 'solicitada' ? 'media' : 'baja',
+            espera: d.estado === 'aprobada' ? 'cliente' : 'nosotros', desde: d.desde,
+            url: `/admin/devoluciones.html?dev=${d.id}`,
+        })),
+        ...rsLista.rows.map((r) => ({
+            tipo: 'resena', id: r.id, folio: `${r.calificacion}★`, titulo: `Reseña de ${r.producto}`,
+            detalle: String(r.comentario || '').slice(0, 90),
+            cliente_id: r.cliente_id, cliente_nombre: r.cliente_nombre,
+            estado: 'Sin responder', prioridad: r.calificacion <= 2 ? 'media' : 'baja',
+            espera: 'nosotros', desde: r.desde,
+            url: `/admin/evaluaciones.html?resena=${r.id}`,
+        })),
+    ].sort((a, b) => (a.espera === 'nosotros' ? 0 : 1) - (b.espera === 'nosotros' ? 0 : 1)
+        || PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad]
+        || new Date(a.desde) - new Date(b.desde));
+    const t = tk.rows[0];
+    res.set('Cache-Control', 'no-store');
+    res.json({
+        tickets: { ...t, primera_respuesta_h: t.primera_respuesta_h == null ? null : Number(t.primera_respuesta_h) },
+        garantias: rc.rows[0], devoluciones: dv.rows[0], resenas: rs.rows[0],
+        bandeja: bandeja.slice(0, 80), total_bandeja: bandeja.length,
+    });
+}));
+
+// Buscador del Centro de soporte: por nombre, correo o teléfono del cliente,
+// o por folio de ticket, reclamo, devolución o número de pedido.
+app.get('/api/admin/soporte/buscar', asyncRoute(async (req, res) => {
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q.length < 2) return res.json({ clientes: [], casos: [], pedidos: [] });
+    const like = `%${q}%`;
+    const [cl, tk, rc, dv, pe] = await Promise.all([
+        pool.query(`
+            SELECT c.id, c.nombre, c.correo, c.telefono, c.estado_cliente,
+                   (SELECT COUNT(*)::int FROM pedidos p WHERE p.cliente_id = c.id) AS pedidos,
+                   (SELECT COUNT(*)::int FROM tickets t WHERE t.cliente_id = c.id AND t.estado IN ('abierto','en_proceso')) AS tickets_abiertos
+            FROM clientes c WHERE c.nombre ILIKE $1 OR c.correo ILIKE $1 OR c.telefono ILIKE $1
+            ORDER BY c.nombre LIMIT 8`, [like]),
+        pool.query(`SELECT t.id, t.folio, t.asunto AS titulo, t.estado, c.nombre AS cliente_nombre FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+                    WHERE t.folio ILIKE $1 OR t.asunto ILIKE $1 ORDER BY t.fecha_actualizacion DESC LIMIT 8`, [like]),
+        pool.query(`SELECT r.id, r.folio, r.estado, c.nombre AS cliente_nombre FROM reclamos_garantia r JOIN clientes c ON c.id = r.cliente_id
+                    JOIN garantias g ON g.id = r.garantia_id WHERE r.folio ILIKE $1 OR g.folio ILIKE $1 ORDER BY r.fecha_actualizacion DESC LIMIT 5`, [like]),
+        pool.query(`SELECT d.id, d.folio, d.estado, c.nombre AS cliente_nombre FROM devoluciones d LEFT JOIN clientes c ON c.id = d.cliente_id
+                    WHERE d.folio ILIKE $1 ORDER BY d.id DESC LIMIT 5`, [like]),
+        pool.query(`SELECT p.id, p.numero_orden, p.estado, p.total, p.fecha_pedido, c.nombre AS cliente_nombre
+                    FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
+                    WHERE p.numero_orden ILIKE $1 ORDER BY p.id DESC LIMIT 8`, [like]),
+    ]);
+    const casos = [
+        ...tk.rows.map((x) => ({ tipo: 'ticket', folio: x.folio, titulo: x.titulo, estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/soporte.html?ticket=${x.id}` })),
+        ...rc.rows.map((x) => ({ tipo: 'garantia', folio: x.folio, titulo: 'Reclamo de garantía', estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/garantias.html?reclamo=${x.id}` })),
+        ...dv.rows.map((x) => ({ tipo: 'devolucion', folio: x.folio, titulo: 'Devolución', estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/devoluciones.html?dev=${x.id}` })),
+    ];
+    res.set('Cache-Control', 'no-store');
+    res.json({ clientes: cl.rows, casos, pedidos: pe.rows });
 }));
 
 // =========================================================
@@ -7395,7 +7557,7 @@ app.post('/api/admin/usuarios/:id/desactivar', requireAdmin, asyncRoute(async (r
 // quitarse a sí mismo el rol de administrador para no quedarse fuera.
 app.put('/api/admin/usuarios/:id/rol', requireAdmin, asyncRoute(async (req, res) => {
     const { rol } = req.body;
-    if (!ROLES_INTERNOS[rol]) return res.status(400).json({ message: 'Rol no válido (admin, ventas o logistica)' });
+    if (!ROLES_INTERNOS[rol]) return res.status(400).json({ message: 'Rol no válido (admin, ventas, logistica o soporte)' });
     if (String(req.params.id) === String(req.usuario.id) && rol !== 'admin') {
         return res.status(400).json({ message: 'No puedes quitarte tu propio rol de administrador' });
     }
@@ -8567,6 +8729,16 @@ async function migrarEsquema() {
         await pool.query(`ALTER TABLE usuarios ALTER COLUMN rol SET DEFAULT 'ventas'`);
         await pool.query(`ALTER TABLE usuarios ADD CONSTRAINT usuarios_rol_check CHECK (rol IN ('admin','ventas','logistica'))`);
         console.log('Roles migrados a Administrador / Ventas / Logística');
+    }
+    // Rol Soporte (cuenta dedicada a la atención de clientes): se agrega al
+    // CHECK de bases anteriores. Ya no se convierte a Ventas.
+    const rolCheck2 = await pool.query(`
+        SELECT c.conname, pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+        WHERE c.conrelid = 'usuarios'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) ILIKE '%rol%'`);
+    if (!rolCheck2.rows.some((r) => r.def.includes('soporte'))) {
+        for (const v of rolCheck2.rows) await pool.query(`ALTER TABLE usuarios DROP CONSTRAINT "${v.conname}"`);
+        await pool.query(`ALTER TABLE usuarios ADD CONSTRAINT usuarios_rol_check CHECK (rol IN ('admin','ventas','logistica','soporte'))`);
+        console.log('Rol Soporte agregado');
     }
 
     // Etapa 3: tablas propias del ERP.

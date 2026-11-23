@@ -61,6 +61,7 @@ montarCuenta('favoritos', async (panel, P) => {
                     <span class="product-brand">${p.marca || ''}</span>
                     <span class="product-name">${p.nombre}</span>
                     <span class="product-price">${formatoMoneda(p.precio)}</span>
+                    ${p.activo === false ? '' : existenciaHTML(p)}
                     <div class="card-actions">
                         ${p.activo === false
                             ? '<span class="tag" style="color:var(--warning);border-color:var(--warning)">Ya no está a la venta</span>'
