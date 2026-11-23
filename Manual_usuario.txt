@@ -449,7 +449,7 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      monedero suficiente). El paso va en la direccion (?paso=2): "atras"
      del navegador regresa al paso anterior.
         2 Envio    : direccion guardada o nueva y notas para la entrega.
-        3 Pago     : metodo de pago y canje de puntos.
+        3 Pago     : metodo de pago, cupon y canje de puntos.
         4 Confirmar: revision de productos, envio y pago, cada uno con
                      "Cambiar", y "Confirmar pedido".
    - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
@@ -468,6 +468,12 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      y Total. Cada producto muestra tambien su promocion.
    - Usar puntos del Club: campo para canjear puntos en multiplos de 100
      (100 puntos = $10 de descuento). El total se recalcula al instante.
+   - Cupon de descuento: en el paso Pago, "Cupon de descuento" lista los
+     cupones disponibles de la cuenta (ver 3.6 "Mis cupones"). Se aplica
+     sobre el total con IVA, junto con los puntos, y aparece en el resumen,
+     en el comprobante y en la factura. Si la compra no llega al minimo del
+     cupon, se avisa y no se aplica. Si el pedido se cancela, el cupon
+     vuelve a quedar disponible.
    - Direccion de envio: escribir una nueva o elegir una guardada.
    - Metodo de pago:
         * PayPal o tarjeta de debito / credito (cobro real por PayPal; en
@@ -544,6 +550,19 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
         ajuste del equipo), metodo, monto y saldo que dejo cada movimiento.
       - Si cancelas un pedido pagado con monedero, el total regresa solo al
         monedero (movimiento "Reembolso").
+
+   Mis cupones (cupones.html)
+      - Al confirmar el correo llega un CUPON DE BIENVENIDA (por defecto 10 %
+        de descuento, hasta $1,500, en compras desde $1,000 sin IVA ni envio,
+        valido 30 dias). Llega en un correo "Aqui esta tu regalo" y tambien
+        se ve aqui. Las cuentas que ya existian no lo reciben.
+      - Cada cupon muestra el descuento, el codigo (con "Copiar"), la compra
+        minima, la vigencia y su estado (Disponible, Usado, Vencido,
+        Cancelado). "Usar en mi carrito" abre el carrito con el cupon ya
+        elegido.
+      - "¿Problema con este cupon?" abre un ticket de Soporte con la
+        categoria "Un cupon de descuento" y el cupon ya ligado (ver 9).
+        Soporte puede extender su vigencia, reactivarlo o enviar uno nuevo.
 
    Mis pedidos (pedidos.html)
       - Cada pedido muestra un RASTREO VISUAL de 4 etapas con iconos y fecha:
@@ -654,8 +673,10 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
           Escribir codigo";
         - el codigo vence en 30 minutos y admite 5 intentos; "envíame otro
           codigo" manda uno nuevo (uno por minuto).
-     Al escribirlo bien la cuenta queda confirmada. Restablecer la contrasena
-     con el enlace del correo tambien la confirma.
+     Al escribirlo bien la cuenta queda confirmada y llega un segundo correo
+     de bienvenida con el CUPON DE DESCUENTO para la primera compra (la
+     pantalla tambien lo muestra; queda en Mi cuenta -> Mis cupones).
+     Restablecer la contrasena con el enlace del correo tambien la confirma.
    - En el panel, la ficha del cliente (CRM) muestra "Correo: Confirmado /
      Sin confirmar" y el boton "Marcar como confirmado" por si al cliente no
      le llega el codigo.
@@ -1697,8 +1718,11 @@ Movimientos
 Diseno de la tarjeta
    - KZK (por defecto): fondo oscuro con el monograma KZK de marca de agua y
      franja y detalles del color del nivel (Bronce, Plata, Oro, Platino).
-   - Clasico: el diseno anterior, degradado del color del nivel.
-   - Se cambia con los botones "Diseno de la tarjeta: KZK / Clasica" debajo
+   - Clasico: el diseno anterior, degradado del color del nivel con la
+     silueta de la mascota de marca de agua.
+   - Tibu: fondo azul de mar con burbujas, franja del color del nivel y
+     Tibu, la mascota de Kozmok, asomandose en la esquina.
+   - Se cambia con los botones "Diseno de la tarjeta: KZK / Clasica / Tibu" debajo
      de la tarjeta (Resumen y Club de puntos) o en Preferencias. Se guarda
      en la cuenta (clientes.preferencias.tarjeta), asi se respeta en
      cualquier dispositivo. Aplica a la tarjeta de socio y a la del Club.
@@ -1758,8 +1782,14 @@ Configuracion (.env)
 
 Lado cliente  (soporte.html, dentro de Mi cuenta)
    - "Nuevo ticket": asunto, categoria (pedido, cuenta, garantia,
-     devolucion o cambio, facturacion, general), PEDIDO RELACIONADO
-     (opcional: se elige de sus propios pedidos) y descripcion.
+     devolucion o cambio, facturacion, cupon de descuento, general), PEDIDO
+     RELACIONADO (opcional: se elige de sus propios pedidos), el CUPON si la
+     categoria es "Un cupon de descuento", descripcion y FOTOS (opcional,
+     hasta 3: JPG, PNG o WebP; p. ej. un producto que llego danado, el
+     empaque o una captura de pantalla).
+   - En cada respuesta tambien se pueden agregar hasta 3 fotos; se puede
+     mandar solo fotos, sin texto. Las fotos se ven como miniaturas en el
+     hilo y se abren en grande con un clic.
    - El cliente NO elige la prioridad: se pone sola segun el caso. Pedido
      y cuenta = alta; garantia, devolucion y facturacion = media; general =
      baja. Si el texto habla de doble cobro, cargo no reconocido, fraude o
@@ -1777,7 +1807,17 @@ Lado equipo  (admin/soporte.html)
    - Al abrir un ticket: hilo completo, y selectores para cambiar ESTADO
      (Abierto, En proceso, Resuelto, Cerrado) y PRIORIDAD (Baja, Media, Alta).
    - "Enviar respuesta" agrega un mensaje del equipo; si el ticket estaba
-     "Abierto" pasa a "En proceso".
+     "Abierto" pasa a "En proceso". Las fotos del cliente se ven en el hilo
+     y "Adjuntar fotos" permite mandarle hasta 3 al responder.
+   - CUPONES DEL CLIENTE (Administrador y Soporte): cuadro a la derecha con
+     los cupones de la cuenta; el del caso va primero y resaltado.
+        * "Dar cupon": porcentaje (con descuento maximo) o monto fijo,
+          compra minima, vigencia y motivo. Le llega al cliente por correo y
+          en Mis cupones. Soporte puede dar hasta 30 % (maximo $1,000) o
+          $1,000 fijos; el administrador no tiene tope (.env CUPON_SOPORTE_*).
+        * "Extender" (dias mas), "Reactivar" (si vencio, se cancelo o se uso
+          en un pedido cancelado) y "Cancelar". Todo pide motivo y queda en
+          la bitacora.
    - PEDIDO RELACIONADO: si el caso trae pedido, se ve ahi mismo (productos,
      estado, pago) y se gestiona sin salir del caso: avanzar el estado,
      registrar el pago o cancelarlo. Al hacerlo se deja escrita una

@@ -30,6 +30,7 @@
         truck: '<path d="M1 4h13v12H1z"/><path d="M14 8h4l4 4v4h-8"/><circle cx="6" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/>',
         card: '<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>',
         undo: '<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/>',
+        tiburon: '<path d="M5 20v-8a7 7 0 0 1 14 0v8z"/><path d="M10 5.3c.8-1.8 2.2-3 4.2-3.3-.5 1.2-.6 2.3-.1 3.4"/><path d="M8 12.5a4 4 0 0 1 8 0v1.3a1.2 1.2 0 0 1-1.2 1.2H9.2A1.2 1.2 0 0 1 8 13.8z"/><path d="M19 16.5l3-2v5l-3-.6"/>',
         ghost: '<path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/>',
         laptop: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M2 20h20l-2-3H4l-2 3Z"/>',
         monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
@@ -52,6 +53,8 @@
         mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 7L22 6"/>',
         calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
         power: '<path d="M12 2v6"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+        tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+        image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
         bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     };
     // Íconos por nombre de categoría (para los tiles de la portada)
@@ -115,49 +118,62 @@
     };
 
     // ---------------------------------------------------------
-    // Mascota: el fantasmita de Kozmok, con el mismo estilo del logo
-    // (relleno blanco, contorno oscuro, sombra sólida del color del tema e
-    // inclinado). mascotaKZK(alto) -> <svg> de ese alto.
+    // Mascota: "Tibu", el tiburoncito de Kozmok (una criatura con disfraz de
+    // tiburón), con el mismo estilo del logo: contorno oscuro, sombra sólida
+    // del color del tema e inclinado. mascotaKZK(alto) -> <svg> de ese alto.
     //   <span data-mascota="120"></span> en HTML estático.
     // ---------------------------------------------------------
     //   Variantes: 'clasico' (saluda; portada y avisos), 'gamer' (con
     //   audífonos; el asesor) y 'pixel' (8-bit; página 404).
-    window.mascotaKZK = function (alto = 40, { titulo = 'Fantasmita de Kozmok', saluda = true, variante = 'clasico' } = {}) {
+    window.mascotaKZK = function (alto = 40, { titulo = 'Tibu, la mascota de Kozmok', saluda = true, variante = 'clasico' } = {}) {
         if (variante === 'pixel') return mascotaPixel(alto, titulo);
         if (variante === 'gamer') saluda = false;
-        const cuerpo = 'M7 25C7 12.5 14.4 5 24 5s17 7.5 17 20v22.5l-5.6-5.2-5.6 6-5.8-6-5.8 6-5.6-6L7 47.5z';
-        const brazo = saluda ? '<path d="M40.4 27.5c3.6-.6 6.2-3.4 6.8-7.4" fill="none" stroke-width="3.4" stroke-linecap="round"/>' : '';
         const tinta = 'stroke:var(--kzk-contorno,#0B0E14)';
+        const piel = 'fill:var(--kzk-tiburon,#7DA6E0)';
+        const cuerpo = 'M9 47V28C9 16.5 16.8 8.5 26 8.5S43 16.5 43 28v19q0 2-2 2H11q-2 0-2-2z';
+        const aleta = 'M21 10.4C23 5.6 26.6 2.2 31.6 1.6c-1.3 2.8-1.5 5.4-.3 7.9z';
+        const cola = 'M41.5 40.5l9-6.2c-.7 4.8-.5 8.8 1 12.8l-10-1.6z';
+        const pies = '<rect x="12.5" y="45.5" width="8" height="7" rx="3"/><rect x="31.5" y="45.5" width="8" height="7" rx="3"/>';
+        const brazo = saluda ? '<path d="M9.4 33c-3.6-.6-6.2-3.6-6.6-7.8" fill="none" stroke-width="3.4" stroke-linecap="round"/>' : '';
+        const boca = 'M14 29c0-8.5 5.4-13.5 12-13.5S38 20.5 38 29c0 3.2-2.2 5-5 5H19c-2.8 0-5-1.8-5-5z';
+        const dientes = ['M19.2 18.9l2.6-1.2-.4 2.9z', 'M24.7 15.8h2.6L26 18.5z', 'M30.2 17.7l2.6 1.2-2.2 1.7z',
+            'M18.6 34l1.4-2.6 1.4 2.6z', 'M24.6 34l1.4-2.6 1.4 2.6z', 'M30.6 34l1.4-2.6 1.4 2.6z'].map((d) => `<path d="${d}"/>`).join('');
         return `<svg class="kzk-mascota" viewBox="0 0 54 56" width="${Math.round(alto * 54 / 56)}" height="${alto}" role="img" aria-label="${titulo}"><title>${titulo}</title>
             <g transform="skewX(-8) translate(5 0)">
                 <g transform="translate(3 3)" style="fill:var(--kzk-sombra,#6E8BF0);stroke:var(--kzk-sombra,#6E8BF0)" stroke-width="3.4" stroke-linejoin="round">
-                    <path d="${cuerpo}"/>${brazo}</g>
-                <g style="fill:var(--kzk-tinta,#fff);${tinta}" stroke-width="3.4" stroke-linejoin="round" paint-order="stroke">
-                    <path d="${cuerpo}"/>${brazo}</g>
-                <g class="km-ojos" style="fill:var(--kzk-contorno,#0B0E14)">
-                    <ellipse cx="18.6" cy="23.5" rx="2.6" ry="3.8"/><ellipse cx="29" cy="23.5" rx="2.6" ry="3.8"/></g>
-                <circle cx="19.4" cy="22.2" r=".9" fill="#fff"/><circle cx="29.8" cy="22.2" r=".9" fill="#fff"/>
-                <path d="M21 31.2q2.8 2.6 5.6 0" fill="none" style="${tinta}" stroke-width="2.2" stroke-linecap="round"/>
-                <ellipse cx="14.6" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
-                <ellipse cx="33.2" cy="29.6" rx="2.4" ry="1.4" style="fill:var(--kzk-sombra,#6E8BF0)" opacity=".75"/>
+                    <path d="${cola}"/>${pies}<path d="${aleta}"/><path d="${cuerpo}"/>${brazo}</g>
+                <g style="${piel};${tinta}" stroke-width="3" stroke-linejoin="round" paint-order="stroke">
+                    <path d="${cola}"/>${pies}<path d="${aleta}"/><path d="${cuerpo}"/>${brazo}</g>
+                <ellipse cx="26" cy="39.5" rx="12.4" ry="8" style="fill:var(--kzk-tinta,#fff)"/>
+                <path d="${boca}" style="fill:var(--kzk-contorno,#0B0E14);${tinta}" stroke-width="2.4" stroke-linejoin="round"/>
+                <g fill="#fff">${dientes}</g>
+                <g class="km-ojos" fill="none" stroke="#FFD43B" stroke-width="1.7">
+                    <ellipse cx="21.4" cy="25.4" rx="2.4" ry="3.1"/><ellipse cx="30.6" cy="25.4" rx="2.4" ry="3.1"/></g>
+                <circle cx="38.7" cy="16.8" r="1.35" style="fill:var(--kzk-contorno,#0B0E14)"/>
+                <path d="M40.3 22.4l1.7-1M40.6 25l1.7-1" fill="none" style="${tinta}" stroke-width="1.2" stroke-linecap="round" opacity=".55"/>
                 ${variante === 'gamer' ? `
-                <path d="M7.5 24C7.5 2 40.5 2 40.5 24" fill="none" style="${tinta}" stroke-width="5.4" stroke-linecap="round"/>
-                <path d="M7.5 24C7.5 2 40.5 2 40.5 24" fill="none" style="stroke:var(--kzk-sombra,#6E8BF0)" stroke-width="2.2" stroke-linecap="round"/>
-                <rect x="2.5" y="18" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
-                <rect x="37.5" y="18" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
-                <path d="M6.5 31c0 5 4 7 9 7" fill="none" style="${tinta}" stroke-width="2"/>
-                <circle cx="16" cy="38" r="2" style="fill:var(--kzk-contorno,#0B0E14)"/>`
+                <path d="M7.5 28C7.5 3.5 44.5 3.5 44.5 28" fill="none" style="${tinta}" stroke-width="5.4" stroke-linecap="round"/>
+                <path d="M7.5 28C7.5 3.5 44.5 3.5 44.5 28" fill="none" style="stroke:var(--kzk-sombra,#6E8BF0)" stroke-width="2.2" stroke-linecap="round"/>
+                <rect x="2.5" y="22" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
+                <rect x="41.5" y="22" width="8" height="13" rx="3" style="fill:var(--kzk-sombra,#6E8BF0);${tinta}" stroke-width="2.6"/>
+                <path d="M6.5 35c0 5 4 7 9 7" fill="none" style="${tinta}" stroke-width="2"/>
+                <circle cx="16" cy="42" r="2" style="fill:var(--kzk-contorno,#0B0E14)"/>`
                 : '<path d="M47 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z" style="fill:var(--kzk-sombra,#6E8BF0)"/>'}
             </g>
         </svg>`;
     };
     // Versión 8-bit: silueta escalonada con sombra sólida del tema.
     function mascotaPixel(alto, titulo) {
-        const silueta = 'M16.5 4h16.6v4H37v4h4v4h4v4h4.1v32.6H40.5v-4h-4v4h-8v-4h-4v4h-4v-4h-8v4h-8v-4H.5V20h4v-8h4v-4h8z';
-        return `<svg class="kzk-mascota kzk-mascota-pixel" viewBox="-1 2 54 56" width="${Math.round(alto * 54 / 56)}" height="${alto}" role="img" aria-label="${titulo}" shape-rendering="crispEdges"><title>${titulo}</title>
+        const silueta = 'M20.5 4h4v4h4v4h8v4h4v4h4v12h4v-4h4v20h-4v-4h-4v4h-4v4h-8v-4h-12v4h-8v-4h-4V20h4v-4h4v-4h4z';
+        return `<svg class="kzk-mascota kzk-mascota-pixel" viewBox="-1 2 57 56" width="${Math.round(alto * 57 / 56)}" height="${alto}" role="img" aria-label="${titulo}" shape-rendering="crispEdges"><title>${titulo}</title>
             <path transform="translate(3 3)" d="${silueta}" style="fill:var(--kzk-sombra,#6E8BF0)"/>
-            <path d="${silueta}" style="fill:var(--kzk-tinta,#fff);stroke:var(--kzk-contorno,#0B0E14)" stroke-width="2" paint-order="stroke"/>
-            <g style="fill:var(--kzk-contorno,#0B0E14)"><rect x="8.5" y="20" width="8.6" height="8.6"/><rect x="32.5" y="20" width="8.6" height="8.6"/><rect x="16.5" y="32" width="16.6" height="4.6"/></g>
+            <path d="${silueta}" style="fill:var(--kzk-tiburon,#7DA6E0);stroke:var(--kzk-contorno,#0B0E14)" stroke-width="2" paint-order="stroke"/>
+            <rect x="12.5" y="36" width="28" height="10" style="fill:var(--kzk-tinta,#fff)"/>
+            <rect x="12.5" y="21" width="28" height="13" style="fill:var(--kzk-contorno,#0B0E14)"/>
+            <g fill="#fff"><rect x="16.5" y="21" width="3" height="3"/><rect x="25" y="21" width="3" height="3"/><rect x="33.5" y="21" width="3" height="3"/>
+                <rect x="20.5" y="31" width="3" height="3"/><rect x="29.5" y="31" width="3" height="3"/></g>
+            <g fill="#FFD43B"><rect x="17.5" y="25" width="5" height="5"/><rect x="30.5" y="25" width="5" height="5"/></g>
+            <g style="fill:var(--kzk-contorno,#0B0E14)"><rect x="19" y="26.5" width="2" height="2"/><rect x="32" y="26.5" width="2" height="2"/><rect x="38.5" y="16" width="2" height="2"/></g>
         </svg>`;
     }
 
@@ -170,7 +186,7 @@
         document.querySelectorAll('[data-mascota]').forEach((el) => {
             el.innerHTML = window.mascotaKZK(Number(el.dataset.mascota) || 40, { variante: el.dataset.variante || 'clasico' });
         });
-        // En la tienda, los avisos de "no hay nada aquí" llevan al fantasmita.
+        // En la tienda, los avisos de "no hay nada aquí" llevan a la mascota.
         if (!location.pathname.startsWith('/admin/')) {
             const ponerMascota = (raiz) => {
                 const lista = raiz.matches && raiz.matches('.empty-state') ? [raiz] : raiz.querySelectorAll ? raiz.querySelectorAll('.empty-state') : [];

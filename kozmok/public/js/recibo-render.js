@@ -76,7 +76,7 @@
             <div class="recibo">
                 <div class="rec-top">
                     <div>
-                        <div class="rec-marca">${window.logoKZK ? logoKZK(22) : ic('ghost', 16)} Kozmok</div>
+                        <div class="rec-marca">${window.logoKZK ? logoKZK(22) : ic('tiburon', 16)} Kozmok</div>
                         <div class="rec-emisor">${[d.emisor.nombre, d.emisor.rfc ? 'RFC ' + d.emisor.rfc : '', d.emisor.domicilio].filter(Boolean).join('<br>')}</div>
                     </div>
                     <div class="rec-folio">
@@ -110,6 +110,7 @@
                     ${impuestosDe(d).map((t) => `<div><span>${t.nombre} (${Number(t.porcentaje)}%)</span><span class="mono">${money(t.monto)}</span></div>`).join('')}
                     <div><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : money(d.envio)}</span></div>
                     ${Number(d.descuento) > 0 ? `<div class="rec-desc"><span>Descuento Club de puntos</span><span class="mono">−${money(d.descuento)}</span></div>` : ''}
+                    ${Number(d.descuento_cupon) > 0 ? `<div class="rec-desc"><span>Cupón de descuento</span><span class="mono">−${money(d.descuento_cupon)}</span></div>` : ''}
                     <div class="rec-total"><span>Total</span><span class="mono">${money(d.total)}</span></div>
                 </div>
 

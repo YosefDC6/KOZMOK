@@ -35,6 +35,9 @@ const COSTO_ENVIO = 199;
 let DIRECCIONES = [];
 let PAYPAL = { activo: false };   // ¿el pago con PayPal / tarjeta está configurado en el servidor?
 let RECOMP = { puntos: 0, valor_punto: 0.10 };
+// Cupones de la cuenta (Mis cupones) y el elegido para este pedido.
+let MIS_CUPONES = [];
+let CUPON_SEL = (() => { const q = new URLSearchParams(location.search).get('cupon'); try { return (q || sessionStorage.getItem('kz_cupon') || '').toUpperCase(); } catch { return (q || '').toUpperCase(); } })();
 let SUBTOTAL = 0;
 let GAR_TOTAL = 0;
 let ITEMS = [];          // líneas del carrito (para cotizar)
@@ -43,13 +46,16 @@ let MONEDERO = { saldo: 0, estado: 'activo' };
 
 async function cargarCarrito() {
     const y = window.scrollY, pasoPrev = PASO_PINTADO;   // al volver a pintar, la página no brinca
-    let [items, dirs, rec, pp, mon] = await Promise.all([
+    let [items, dirs, rec, pp, mon, cups] = await Promise.all([
         api(`/carrito/${cliente.id}`),
         api(`/clientes/${cliente.id}/direcciones`).catch(() => []),
         api(`/clientes/${cliente.id}/recompensas`).catch(() => ({ puntos: 0, valor_punto: 0.10 })),
         api('/pagos/paypal/config').catch(() => ({ activo: false })),
         api('/monedero').catch(() => ({ saldo: 0, estado: 'activo' })),
+        api(`/clientes/${cliente.id}/cupones`).catch(() => []),
     ]);
+    MIS_CUPONES = (cups || []).filter((c) => c.estado === 'disponible');
+    if (CUPON_SEL && !MIS_CUPONES.some((c) => c.codigo === CUPON_SEL)) CUPON_SEL = '';
     MONEDERO = { saldo: Number(mon.saldo) || 0, estado: mon.estado };
     // Los productos que el equipo desactivó siguen en el carrito, pero ya no
     // se pueden comprar: se muestran aparte y no cuentan en el total.
@@ -126,7 +132,7 @@ async function cargarCarrito() {
     GAR_TOTAL = garTotal;
     SUBTOTAL = subtotal;
     // El servidor calcula el desglose con las promociones e impuestos configurados
-    COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS } });
+    COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, cupon: CUPON_SEL || undefined } });
     const base = COT.base_impuestos;
     const envio = COT.envio;
     const falta = Math.max(ENVIO_GRATIS_DESDE - base, 0);
@@ -160,6 +166,20 @@ async function cargarCarrito() {
         : (RECOMP.puntos > 0
             ? `<p class="canje-pocos">${icon('star', 14)} Tienes ${RECOMP.puntos.toLocaleString('es-MX')} puntos del Club. Al juntar 100 podrás usarlos como descuento.</p>`
             : '');
+
+    // Cupón de descuento: los de la cuenta, en un selector.
+    const fechaCorta = (f) => new Date(f).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    const bloqueCupon = MIS_CUPONES.length
+        ? `<div class="cupon-box">
+             <h4>${icon('tag', 15)} Cupón de descuento</h4>
+             <select id="cupon-sel" onchange="elegirCupon(this.value)" aria-label="Cupón de descuento">
+               <option value="">No usar cupón</option>
+               ${MIS_CUPONES.map((c) => `<option value="${escHTML(c.codigo)}" ${c.codigo === CUPON_SEL ? 'selected' : ''}>${escHTML(c.beneficio)} · ${escHTML(c.codigo)}${c.vence ? ` · vence ${fechaCorta(c.vence)}` : ''}</option>`).join('')}
+             </select>
+             <div class="cupon-msg" id="cupon-msg"></div>
+             <small>Un cupón por pedido. ¿Algún problema con tu cupón? <a href="/soporte.html?nuevo=1&categoria=cupon">Escríbenos en Soporte</a>.</small>
+           </div>`
+        : '';
 
     const shipHint = envio === 0
         ? `<div class="ship-hint free"><span>${icon('check', 15)} Tu pedido tiene <strong>envío gratis</strong>.</span><div class="ship-bar"><span style="width:100%"></span></div></div>`
@@ -216,6 +236,7 @@ async function cargarCarrito() {
                     <div class="pb-sub" style="margin:0">Al confirmar pasas a pagar con tu cuenta PayPal o con tarjeta de débito o crédito, sin necesidad de cuenta.
                         Los datos de tu tarjeta los captura PayPal: Kozmok nunca los ve ni los guarda. Tu pedido queda apartado ${PAYPAL.minutos_para_pagar || 60} minutos mientras pagas.</div>
                 </div>
+                ${bloqueCupon}
                 ${bloquePuntos}
                 <div class="ck-acciones">
                     <button class="btn btn-ghost" onclick="irPaso(2)">${icon('arrow', 15, 'flip')} Volver al envío</button>
@@ -351,6 +372,7 @@ function pintarRevision() {
                 <div class="ck-bloque-head"><strong>${icon('card', 15)} Pago</strong><button class="ck-cambiar" onclick="irPaso(3)">Cambiar</button></div>
                 <div>${metodo}</div>
                 ${pts ? `<div class="ck-sub">Canjeas ${pts.toLocaleString('es-MX')} puntos del Club</div>` : ''}
+                ${COT && COT.descuento_cupon > 0 ? `<div class="ck-sub">Cupón ${escHTML(COT.cupon.codigo)}: −${formatoMoneda2(COT.descuento_cupon)}</div>` : ''}
                 ${COT && COT.puntos_a_ganar ? `<div class="ck-sub">Ganas ${Number(COT.puntos_a_ganar).toLocaleString('es-MX')} puntos del Club${sel.value === 'spei' || sel.value === 'tienda' ? ' cuando se confirme tu pago' : ' al confirmar'}</div>` : ''}
                 ${sel.value === 'spei' || sel.value === 'tienda' ? '<div class="ck-sub">Recibirás una ficha de pago; el pedido se confirma al pagar.</div>' : ''}
                 ${sel.value === 'paypal' ? '<div class="ck-sub">Al confirmar pasas a la ventana de PayPal para pagar con tu cuenta o con tarjeta.</div>' : ''}
@@ -399,6 +421,7 @@ function desgloseHTML(c) {
         ...c.impuestos.map((t) => fila(`${t.nombre} (${Number(t.porcentaje)}%)`, formatoMoneda2(t.monto))),
         fila('Envío', c.envio === 0 ? 'Gratis' : formatoMoneda2(c.envio)),
         c.descuento_puntos > 0 ? fila('Descuento por puntos', '-' + formatoMoneda2(c.descuento_puntos), 'color:var(--success)') : '',
+        c.descuento_cupon > 0 ? fila(`${icon('tag', 12)} Cupón ${escHTML(c.cupon ? c.cupon.codigo : '')}`, '-' + formatoMoneda2(c.descuento_cupon), 'color:var(--success)') : '',
         `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.15rem;margin:10px 0 16px"><span>Total</span><span class="mono" id="total-txt">${formatoMoneda2(c.total)}</span></div>`,
         puntosGanarHTML(c),
     ].join('');
@@ -416,6 +439,22 @@ function puntosGanarHTML(c) {
                 ? `Nivel ${escHTML(nivel.nombre)}: x${nivel.multiplicador} puntos por cada $20 de productos (sin IVA ni envío). Se abonan al confirmarse tu pago.`
                 : 'Se abonan a tu cuenta al pagar. Cada $20 de productos (sin IVA ni envío) = 1 punto; con más compras subes de nivel y ganas más.'}</small>
         </div></div>`;
+}
+
+function elegirCupon(codigo) {
+    CUPON_SEL = String(codigo || '').toUpperCase();
+    try { if (CUPON_SEL) sessionStorage.setItem('kz_cupon', CUPON_SEL); else sessionStorage.removeItem('kz_cupon'); } catch { /* nada */ }
+    recalcular();
+}
+// Mensaje bajo el selector: cuánto ahorra o por qué no aplica (p. ej. compra mínima).
+function pintarMsgCupon() {
+    const m = document.getElementById('cupon-msg');
+    if (!m) return;
+    const c = COT && COT.cupon;
+    if (!CUPON_SEL || !c) { m.innerHTML = ''; m.className = 'cupon-msg'; return; }
+    if (c.error) { m.className = 'cupon-msg mal'; m.innerHTML = `${icon('alert', 13)} ${escHTML(c.error)}`; return; }
+    m.className = 'cupon-msg bien';
+    m.innerHTML = `${icon('check', 13)} Ahorras ${formatoMoneda2(COT.descuento_cupon)} con este cupón`;
 }
 
 function puntosCanje() {
@@ -439,8 +478,9 @@ function recalcular() {
     document.querySelectorAll('.canje-chips .chip').forEach((c) => c.classList.toggle('on', Number(c.dataset.v) === pts));
     clearTimeout(_cotTimer);
     _cotTimer = setTimeout(async () => {
-        try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts } }); } catch { return; }
+        try { COT = await api('/checkout/cotizar', { method: 'POST', body: { items: ITEMS, puntos_canjear: pts, cupon: CUPON_SEL || undefined } }); } catch { return; }
         const r = document.getElementById('resumen-totales'); if (r) r.innerHTML = desgloseHTML(COT);
+        pintarMsgCupon();
         const bc = document.getElementById('btn-comprar'); if (bc && !bc.disabled) bc.textContent = textoBotonComprar();
         if (PASO === 4) pintarRevision();
         pintarBoxMonedero();
@@ -562,8 +602,10 @@ async function confirmarCompra() {
                 metodo_pago: mp.texto, metodo_tipo: mp.tipo, direccion_envio: direccion,
                 notas: document.getElementById('notas').value.trim() || null,
                 puntos_canjear: puntosCanje(),
+                cupon: COT && COT.cupon && COT.cupon.aplicado ? COT.cupon.codigo : undefined,
             }
         });
+        try { sessionStorage.removeItem('kz_cupon'); } catch { /* nada */ }
         actualizarBadgeCarrito();
         Club.olvidar();   // el nivel pudo subir con esta compra
         // PayPal: el pedido ya está apartado; falta pagarlo en la ventana de PayPal

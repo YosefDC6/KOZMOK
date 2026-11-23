@@ -8,6 +8,7 @@ const CUENTA_LINKS = [
     { href: '/devoluciones.html', key: 'devoluciones', label: 'Devoluciones', ic: 'undo' },
     { href: '/recompensas.html', key: 'recompensas', label: 'Club de puntos', ic: 'star' },
     { href: '/monedero.html', key: 'monedero', label: 'Mi monedero', ic: 'wallet' },
+    { href: '/cupones.html', key: 'cupones', label: 'Mis cupones', ic: 'tag' },
     { href: '/favoritos.html', key: 'favoritos', label: 'Favoritos', ic: 'heart' },
     { href: '/resenas.html', key: 'resenas', label: 'Mis reseñas', ic: 'chat' },
     { href: '/garantias.html', key: 'garantias', label: 'Mis garantías', ic: 'shield' },
@@ -81,7 +82,8 @@ window.val = (id) => document.getElementById(id).value.trim();
 // =========================================================
 // DISEÑO DE LA TARJETA DE SOCIO / CLUB
 //   'kzk'     -> diseño nuevo con el logo KZK (por defecto)
-//   'clasica' -> diseño anterior (degradado del nivel con el fantasma)
+//   'clasica' -> diseño anterior (degradado del nivel con la silueta de Tibu)
+//   'tiburon' -> Tibu, la mascota, sobre un degradado de mar
 // Se guarda en las preferencias de la cuenta (clientes.preferencias.tarjeta)
 // y una copia en el navegador para pintar sin esperar al servidor.
 // =========================================================
@@ -89,18 +91,20 @@ const DisenoTarjeta = {
     opciones: [
         { clave: 'kzk', nombre: 'KZK' },
         { clave: 'clasica', nombre: 'Clásica' },
+        { clave: 'tiburon', nombre: 'Tibu' },
     ],
     actual(P) {
         const v = (P && P.preferencias && P.preferencias.tarjeta) || localStorage.getItem('kz_tarjeta') || 'kzk';
-        return v === 'clasica' ? 'clasica' : 'kzk';
+        return ['clasica', 'tiburon'].includes(v) ? v : 'kzk';
     },
     // Marca de agua y logo de cada diseño (los dos van en el HTML; el CSS muestra el que toca)
     adornos(tamano = 200) {
         return `<span class="tj-marca tj-solo-kzk" aria-hidden="true">${logoKZK(Math.round(tamano * 0.55))}</span>
-                <span class="tj-marca tj-solo-clasica socio-fantasma-g" aria-hidden="true">${icon('ghost', tamano)}</span>`;
+                <span class="tj-marca tj-solo-clasica socio-fantasma-g" aria-hidden="true">${icon('tiburon', tamano)}</span>
+                <span class="tj-marca tj-solo-tiburon" aria-hidden="true">${mascotaKZK(Math.round(tamano * 0.62), { titulo: 'Tibu' })}</span>`;
     },
     logo() {
-        return `<span class="tj-logo tj-solo-kzk">${logoKZK(15)}</span><span class="tj-logo tj-solo-clasica">${icon('ghost', 16)}</span>`;
+        return `<span class="tj-logo tj-solo-kzk">${logoKZK(15)}</span><span class="tj-logo tj-solo-clasica">${icon('tiburon', 16)}</span><span class="tj-logo tj-solo-tiburon">${logoKZK(15)}</span>`;
     },
     // Botones para cambiar de diseño debajo de la tarjeta
     selector(P, d) {
@@ -114,13 +118,13 @@ const DisenoTarjeta = {
         contenedor.querySelectorAll('[data-tj]').forEach((b) => b.addEventListener('click', () => this.cambiar(P, b.dataset.tj)));
     },
     async cambiar(P, d) {
-        document.querySelectorAll('.tj-card').forEach((c) => { c.classList.remove('diseno-kzk', 'diseno-clasica'); c.classList.add('diseno-' + d); });
+        document.querySelectorAll('.tj-card').forEach((c) => { c.classList.remove('diseno-kzk', 'diseno-clasica', 'diseno-tiburon'); c.classList.add('diseno-' + d); });
         document.querySelectorAll('[data-tj]').forEach((b) => { const on = b.dataset.tj === d; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
         localStorage.setItem('kz_tarjeta', d);
         try {
             P.preferencias = { ...(P.preferencias || {}), tarjeta: d };
             await api(`/clientes/${P.id}/preferencias`, { method: 'PUT', body: P.preferencias });
-            toast(d === 'kzk' ? 'Tarjeta con el diseño KZK' : 'Tarjeta con el diseño clásico', 'ok');
+            toast({ kzk: 'Tarjeta con el diseño KZK', clasica: 'Tarjeta con el diseño clásico', tiburon: 'Tarjeta con Tibu' }[d] || 'Diseño guardado', 'ok');
         } catch (e) { toast('No se pudo guardar el diseño: ' + e.message, 'error'); }
     },
 };

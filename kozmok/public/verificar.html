@@ -59,9 +59,18 @@ else if (sesion.correo_verificado !== false) mostrarListo();
 else document.getElementById('ver-intro').innerHTML =
     `Te enviamos un código de 6 dígitos a <strong>${escHTML(sesion.correo)}</strong>. Escríbelo aquí para poder comprar.`;
 
-function mostrarListo() {
+function mostrarListo(cupon) {
     document.getElementById('form-card').hidden = true;
     document.getElementById('listo').hidden = false;
+    // Regalo de bienvenida: se avisa aquí y también llega por correo.
+    if (cupon && !document.getElementById('listo-cupon')) {
+        document.getElementById('listo').insertAdjacentHTML('beforeend', `
+            <div class="cupon-box" id="listo-cupon" style="text-align:left">
+                <h4>${icon('tag', 15)} Tu regalo de bienvenida</h4>
+                <div><strong>${escHTML(cupon.beneficio)}</strong> con el código <code>${escHTML(cupon.codigo)}</code>.</div>
+                <small>Ya está en <a href="/cupones.html">Mis cupones</a> y lo eliges al pagar. También te lo mandamos por correo.</small>
+            </div>`);
+    }
     document.getElementById('btn-continuar').href = destino();
 }
 
@@ -82,7 +91,7 @@ document.getElementById('form-verificar').addEventListener('submit', async (e) =
         const r = await api('/auth/verificar-correo', { method: 'POST', body: { codigo: inCodigo.value } });
         Sesion.guardarCliente({ ...Sesion.cliente(), ...r.cliente });
         toast('Correo confirmado', 'ok');
-        mostrarListo();
+        mostrarListo(r.cupon_bienvenida);
     } catch (ex) {
         err.textContent = ex.message; err.hidden = false;
         inCodigo.value = ''; inCodigo.focus();

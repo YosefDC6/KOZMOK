@@ -26,6 +26,7 @@
 <script src="/js/layout.js"></script>
 <script src="/js/chatbot.js"></script>
 <script src="/js/cuenta.js"></script>
+<script src="/js/fotos.js"></script>
 <script>
 let CID = null;
 const EST_LABEL = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
@@ -39,6 +40,8 @@ montarCuenta('soporte', async (panel, P) => {
         await vistaLista(panel);
         // Desde "Mis pedidos" → "Ayuda con este pedido"
         if (qs.get('pedido')) formTicket({ categoria: 'pedido', pedido_id: Number(qs.get('pedido')) });
+        // Desde "Mis cupones" → "¿Problema con este cupón?" (o el checkout)
+        else if (qs.get('nuevo')) formTicket({ categoria: qs.get('categoria') || 'general', cupon_id: Number(qs.get('cupon')) || null, asunto: qs.get('asunto') || '' });
     }
 });
 
@@ -75,13 +78,15 @@ async function vistaHilo(panel, id) {
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
             <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
             <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
-               ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}</p>
+               ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}
+               ${t.cupon_codigo ? ` · Cupón <a class="mono" href="/cupones.html">${escHTML(t.cupon_codigo)}</a>` : ''}</p>
         </div>
         <div class="hilo">
             ${t.mensajes.map((m) => `
                 <div class="hilo-msg ${m.autor === 'cliente' ? 'mio' : 'equipo'}">
                     <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : (m.usuario_nombre || 'Equipo Kozmok')} · ${formatoFecha(m.fecha)}</div>
-                    <div class="hm-txt">${m.mensaje.replace(/</g, '&lt;')}</div>
+                    ${m.mensaje ? `<div class="hm-txt">${m.mensaje.replace(/</g, '&lt;')}</div>` : ''}
+                    ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a href="/api/clientes/${CID}/tickets/${t.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/clientes/${CID}/tickets/${t.id}/fotos/${f.id}" alt="${escHTML(f.nombre || 'foto')}" loading="lazy" /></a>`).join('')}</div>` : ''}
                 </div>
             `).join('')}
         </div>
@@ -91,15 +96,21 @@ async function vistaHilo(panel, id) {
                    <button class="btn btn-primary btn-sm" onclick="formTicket(TICKET_PREVIO)">Abrir un ticket nuevo</button>
                </div>`
             : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="Escribe tu mensaje…"></textarea></div>
+               <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="hilo-fotos" accept="image/*" multiple hidden /></label>
+                   <small>Hasta 3 (JPG, PNG o WebP). Útil como evidencia de un producto dañado.</small></div>
+               <div class="foto-lista" id="hilo-prev"></div>
                <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>`}
     `;
+    if (document.getElementById('hilo-fotos')) SEL_HILO = FotosReclamo.selector(document.getElementById('hilo-fotos'), document.getElementById('hilo-prev'), { alError: (m) => toast(m, 'warn') });
 }
+let SEL_HILO = null, SEL_NUEVO = null;
 
 async function responder(id) {
     const mensaje = document.getElementById('hilo-txt').value.trim();
-    if (!mensaje) { toast('Escribe un mensaje', 'warn'); return; }
+    const fotos = SEL_HILO ? SEL_HILO.fotos() : [];
+    if (!mensaje && !fotos.length) { toast('Escribe un mensaje o agrega una foto', 'warn'); return; }
     try {
-        await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje } });
+        await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
         location.reload();
     } catch (e) { toast(e.message, 'error'); }
 }
@@ -115,6 +126,7 @@ function formTicket(previo = {}) {
                     <option value="garantia">Garantía</option>
                     <option value="devolucion">Devolución o cambio</option>
                     <option value="facturacion">Facturación</option>
+                    <option value="cupon">Un cupón de descuento</option>
                     <option value="cuenta">Mi cuenta</option>
                     <option value="general">Otro</option>
                 </select>
@@ -123,14 +135,37 @@ function formTicket(previo = {}) {
             <select id="tk-pedido"><option value="">Cargando tus pedidos…</option></select>
             <small id="tk-ped-nota" style="color:var(--text-muted)"></small>
         </div>
+        <div class="field" id="tk-cup-wrap" style="display:none"><label>¿Qué cupón?</label>
+            <select id="tk-cupon"><option value="">Cargando tus cupones…</option></select>
+        </div>
         <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó."></textarea></div>
+        <div class="field"><label>Fotos <span style="color:var(--text-muted);font-weight:400">(opcional, hasta 3)</span></label>
+            <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="tk-fotos" accept="image/*" multiple hidden /></label>
+                <small>Evidencia de un producto dañado, el empaque o una captura de pantalla.</small></div>
+            <div class="foto-lista" id="tk-prev"></div>
+        </div>
         <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Crear ticket</button>
     `;
+    SEL_NUEVO = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
     if (previo.asunto) document.getElementById('tk-asunto').value = previo.asunto.slice(0, 160);
     if (previo.categoria) document.getElementById('tk-cat').value = previo.categoria;
     document.getElementById('tk-cat').addEventListener('change', mostrarPedidoTicket);
     document.getElementById('modal-generico').classList.add('open');
     cargarPedidosTicket(previo.pedido_id);
+    cargarCuponesTicket(previo.cupon_id);
+}
+
+// Cupones de la cuenta, para la categoría "Un cupón de descuento".
+let CUPONES_CLIENTE = null;
+async function cargarCuponesTicket(elegido) {
+    const sel = document.getElementById('tk-cupon');
+    try { if (!CUPONES_CLIENTE) CUPONES_CLIENTE = await api(`/clientes/${CID}/cupones`); } catch { CUPONES_CLIENTE = []; }
+    if (!document.body.contains(sel)) return;
+    const EST = { disponible: 'disponible', usado: 'usado', vencido: 'vencido', cancelado: 'cancelado' };
+    sel.innerHTML = '<option value="">Ninguno en particular</option>' + CUPONES_CLIENTE.map((c) =>
+        `<option value="${c.id}">${escHTML(c.codigo)} · ${escHTML(c.beneficio)} · ${EST[c.estado] || c.estado}</option>`).join('');
+    if (elegido && CUPONES_CLIENTE.some((c) => Number(c.id) === Number(elegido))) sel.value = String(elegido);
+    mostrarPedidoTicket();
 }
 
 // Categorías en las que tiene sentido elegir un pedido.
@@ -154,6 +189,8 @@ function mostrarPedidoTicket() {
     const ver = CAT_CON_PEDIDO.includes(cat);
     wrap.style.display = ver ? '' : 'none';
     if (!ver) document.getElementById('tk-pedido').value = '';
+    const wc = document.getElementById('tk-cup-wrap');
+    if (wc) { wc.style.display = cat === 'cupon' ? '' : 'none'; if (cat !== 'cupon') document.getElementById('tk-cupon').value = ''; }
     // En "Un pedido" se pide elegirlo si tiene pedidos.
     wrap.querySelector('label span').textContent = cat === 'pedido' && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length ? '' : '(opcional)';
 }
@@ -164,6 +201,8 @@ async function crearTicket() {
         categoria: document.getElementById('tk-cat').value,
         descripcion: document.getElementById('tk-desc').value.trim(),
         pedido_id: Number(document.getElementById('tk-pedido').value) || null,
+        cupon_id: Number(document.getElementById('tk-cupon').value) || null,
+        fotos: SEL_NUEVO ? SEL_NUEVO.fotos() : [],
     };
     if (!body.asunto || !body.descripcion) { toast('Asunto y descripción son obligatorios', 'warn'); return; }
     if (body.categoria === 'pedido' && !body.pedido_id && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length) { toast('Elige el pedido con el que necesitas ayuda', 'warn'); return; }

@@ -54,6 +54,8 @@ const { usaValoresPorDefecto, ...configPg } = dbConfig;
 const pool = new Pool(configPg);
 // Notificaciones del equipo del panel (campana y correo).
 const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null) });
+// Cupones de descuento de los clientes (bienvenida y los que da Soporte).
+const cupones = require('./cupones.js')({ pool, enviarCorreo, urlBase: () => urlBase(null) });
 
 // Cabeceras de seguridad en todas las respuestas (CSP, nosniff, DENY...).
 // Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
@@ -111,7 +113,7 @@ app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 
 // fotos (ya reducidas en el navegador), así que esas rutas aceptan más.
 const jsonChico = express.json({ limit: '100kb' });
 const jsonFotos = express.json({ limit: '6mb' });
-const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes)|admin\/reclamos\/\d+\/mensajes)$/;
+const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes|tickets|tickets\/\d+\/mensajes)|admin\/(reclamos|tickets)\/\d+\/mensajes)$/;
 app.use((req, res, next) => (RUTAS_CON_FOTOS.test(req.path) ? jsonFotos : jsonChico)(req, res, next));
 
 // Capas de protección de la API, en orden:
@@ -764,6 +766,8 @@ const registrarCliente = asyncRoute(async (req, res) => {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
 
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true, motivo: 'registro' });
+    // Sin Gmail la cuenta queda confirmada desde ya: el cupón de bienvenida se da ahora.
+    if (cliente.correo_verificado !== false) await cupones.darBienvenida(pool, cliente.id, { base: urlPublica(req) }).catch(() => null);
     const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(b, true) });
     res.status(201).json({ success: true, cliente, expira: s.expira, ...(b.modo === 'token' ? { token: s.token } : {}) });
 });
@@ -937,7 +941,9 @@ app.post('/api/auth/verificar-correo', limiteAuth, requireCliente, asyncRoute(as
     await pool.query(
         `UPDATE clientes SET correo_verificado = TRUE, verificacion_hash = NULL, verificacion_expira = NULL, verificacion_intentos = 0
          WHERE id = $1`, [c.id]);
-    res.json({ success: true, cliente: await datos() });
+    // Correo confirmado: llega el cupón de bienvenida (una sola vez).
+    const cupon = await cupones.darBienvenida(pool, c.id, { base: urlPublica(req) }).catch(() => null);
+    res.json({ success: true, cliente: await datos(), cupon_bienvenida: cupon ? { codigo: cupon.codigo, beneficio: cupones.beneficio(cupon) } : null });
 }));
 
 // Mandar otro código (uno por minuto).
@@ -1134,7 +1140,7 @@ const ENVIO_GRATIS_DESDE = 10000;
 //   impuestos         = base x cada impuesto activo
 //   envío             = $199, gratis desde $10,000 de base
 //   total             = base + impuestos + envío - descuento_puntos
-function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) {
+function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0, cupon = null } = {}) {
     let productos = 0, garantias = 0, descuentoPromo = 0;
     const promosAplicadas = {};
     const detalle = lineas.map((l) => {
@@ -1157,6 +1163,9 @@ function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) 
     const impTotal = redondear(impDetalle.reduce((a, t) => a + t.monto, 0));
     const envio = lineas.length === 0 ? 0 : (base >= ENVIO_GRATIS_DESDE ? 0 : ENVIO_COSTO);
     const puntos = redondear(Math.min(Number(descuentoPuntos) || 0, base));
+    // Cupón: sobre lo que se cobra con impuestos (como los puntos), sin
+    // dejar el total por debajo del envío.
+    const cc = cupon ? cupones.calcular(cupon, { base, bruto: Math.max(0, base + impTotal - puntos) }) : { monto: 0 };
     return {
         lineas: detalle,
         productos, garantias, subtotal,
@@ -1168,7 +1177,9 @@ function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) 
         envio,
         envio_gratis_desde: ENVIO_GRATIS_DESDE,
         descuento_puntos: puntos,
-        total: redondear(base + impTotal + envio - puntos),
+        descuento_cupon: cc.monto,
+        cupon: cupon ? { codigo: cupon.codigo, beneficio: cupones.beneficio(cupon), aplicado: cc.monto > 0, error: cc.error || null } : null,
+        total: redondear(base + impTotal + envio - puntos - cc.monto),
     };
 }
 
@@ -1296,7 +1307,14 @@ app.post('/api/checkout/cotizar', asyncRoute(async (req, res) => {
     const puntos = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
     const cid = await clienteDeSesion(req);
     const [promos, imps, nivel] = await Promise.all([promocionesVigentes(), impuestosActivos(), nivelDeCliente(cid)]);
-    const cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO });
+    // Cupón elegido (solo con sesión y si es de esta cuenta y sigue vigente)
+    let cupon = null, cupon_error = null;
+    if (req.body.cupon) {
+        if (!cid) cupon_error = 'Inicia sesión para usar tus cupones.';
+        else { const r = await cupones.paraUsar(pool, cid, req.body.cupon); cupon = r.cupon; cupon_error = r.error || null; }
+    }
+    const cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO, cupon });
+    if (cupon_error) cot.cupon = { codigo: String(req.body.cupon).toUpperCase(), aplicado: false, error: cupon_error };
     // Puntos del Club que dará esta compra (sin sesión: nivel Bronce).
     const ganar = puntosPorCompra(cot.base_impuestos, nivel);
     res.json({ ...cot, puntos_a_ganar: ganar, puntos_a_ganar_valor: redondear(ganar * VALOR_PUNTO),
@@ -1676,7 +1694,7 @@ async function aplicarCobroPedido(client, pedido, opciones = {}) {
     const sumarMetricas = opciones.metricas !== false;
     const cliente_id = pedido.cliente_id;
     // Los puntos se ganan sobre lo que se pagó por los productos (ya con promociones).
-    const subtotal = Number(pedido.subtotal) - Number(pedido.descuento_promocion || 0);
+    const subtotal = Math.max(0, Number(pedido.subtotal) - Number(pedido.descuento_promocion || 0) - Number(pedido.descuento_cupon || 0));
     const total = Number(pedido.total);
     const m = await client.query(
         'SELECT COALESCE(valor_total_compras,0) AS gasto, COALESCE(total_compras,0) AS compras FROM metricas_clientes WHERE cliente_id = $1',
@@ -1757,6 +1775,8 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
         );
     }
     await client.query(`UPDATE garantias SET estado = 'cancelada' WHERE pedido_id = $1 AND estado = 'activa'`, [pedido.id]);
+    // El cupón usado en el pedido vuelve a estar disponible (si no ha vencido, se puede usar otra vez).
+    await cupones.liberarDePedido(client, pedido.id);
 
     // Puntos canjeados (el descuento se retuvo al crear el pedido): se devuelven.
     const canjeados = Math.round(Number(pedido.descuento || 0) / VALOR_PUNTO);
@@ -2102,6 +2122,7 @@ async function detallePedidoCorreo(pedidoId) {
         ...imps.map((t) => [`${t.nombre} (${Number(t.porcentaje)}%)`, precioTxt(Number(t.monto))]),
         ['Envío', Number(pe.envio) === 0 ? 'Gratis' : precioTxt(Number(pe.envio))],
         ...(Number(pe.descuento) > 0 ? [['Puntos canjeados', '-' + precioTxt(Number(pe.descuento))]] : []),
+        ...(Number(pe.descuento_cupon) > 0 ? [['Cupón', '-' + precioTxt(Number(pe.descuento_cupon))]] : []),
     ];
     const datos = [
         ['Pedido', `${pe.numero_orden} · ${fecha(pe.fecha_pedido)}`],
@@ -2194,6 +2215,7 @@ async function tareasPeriodicas() {
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
     await notif.revisar().catch((e) => console.error('Notificaciones del panel:', e.message));
+    await cupones.revisarBienvenidas().catch((e) => console.error('Cupones de bienvenida:', e.message));
     // Transferencias al monedero que nadie confirmó en 3 días: se cancelan
     await pool.query(`UPDATE movimientos_monedero SET estado = 'cancelado'
                       WHERE tipo = 'recarga' AND estado = 'pendiente' AND fecha < CURRENT_TIMESTAMP - ($1 || ' days')::interval`, [String(MON.pendienteDias)])
@@ -2408,7 +2430,15 @@ const procesarCompra = asyncRoute(async (req, res) => {
 
         // 2) Totales: promociones vigentes + impuestos configurados + envío + puntos.
         const [promos, imps] = await Promise.all([promocionesVigentes(client), impuestosActivos(client)]);
-        let cot = cotizarLineas(lineas, promos, imps);
+        // Cupón (se bloquea la fila: dos compras juntas no lo usan dos veces)
+        let cupon = null;
+        if (req.body.cupon) {
+            const rc = await cupones.paraUsar(client, cliente_id, req.body.cupon, { bloquear: true });
+            if (rc.error) throw new Error(rc.error);
+            cupon = rc.cupon;
+        }
+        let cot = cotizarLineas(lineas, promos, imps, { cupon });
+        if (cupon && cot.cupon && cot.cupon.error) throw new Error(cot.cupon.error);
         let descuento = 0;
         if (puntos_canjear > 0) {
             const cli = await client.query('SELECT puntos FROM clientes WHERE id = $1 FOR UPDATE', [cliente_id]);
@@ -2417,7 +2447,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
             puntos_canjear = puntos_canjear - (puntos_canjear % 100);                    // solo múltiplos de 100
             descuento = Math.min(puntos_canjear * VALOR_PUNTO, cot.base_impuestos);      // nunca deja la base en negativo
             puntos_canjear = Math.round(descuento / VALOR_PUNTO);
-            cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: descuento });
+            cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: descuento, cupon });
         }
         const { subtotal, envio, total } = cot;
 
@@ -2445,6 +2475,11 @@ const procesarCompra = asyncRoute(async (req, res) => {
                 inmediato ? new Date() : null]
         );
         const pedidoId = pedido.rows[0].id;
+        if (cupon && cot.descuento_cupon > 0) {
+            await client.query('UPDATE pedidos SET cupon_id = $2, descuento_cupon = $3 WHERE id = $1', [pedidoId, cupon.id, cot.descuento_cupon]);
+            await cupones.marcarUsado(client, cupon.id, pedidoId);
+            Object.assign(pedido.rows[0], { cupon_id: cupon.id, descuento_cupon: cot.descuento_cupon });
+        }
 
         // 4) Partidas, inventario (salida + movimiento + reabasto) y garantías.
         for (const d of cot.lineas) {
@@ -2502,7 +2537,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
 
         res.status(201).json({
             ...pedido.rows[0], puntos_ganados, puntos_canjeados: puntos_canjear,
-            metodo_tipo, garantias_total: cot.garantias, promociones: cot.promociones,
+            metodo_tipo, garantias_total: cot.garantias, promociones: cot.promociones, cupon: cot.cupon,
             pago: pago.rows[0] || null, monedero_saldo,
         });
     } catch (error) {
@@ -2606,13 +2641,14 @@ async function armarCFDI(db, pedido, fiscales) {
                 unidad: 'Servicio', claveUnidad: 'E48', precio: Number(it.garantia_costo), cantidad: 1, descuento: 0 });
         }
     }
-    // Los puntos se descontaron del total (con IVA): se reparten como descuento antes de impuestos
-    let puntosBase = r2(Number(pedido.descuento || 0) / (1 + tasa));
+    // Los puntos y el cupón se descontaron del total (con IVA): se reparten como descuento antes de impuestos
+    const descTotal = Number(pedido.descuento || 0) + Number(pedido.descuento_cupon || 0);
+    let puntosBase = r2(descTotal / (1 + tasa));
     const bases = conceptos.map((c) => r2(c.precio * c.cantidad - c.descuento));
     const sumaBases = bases.reduce((a, b) => a + b, 0);
     conceptos.forEach((c, i) => {
         if (puntosBase <= 0 || sumaBases <= 0) return;
-        const parte = i === conceptos.length - 1 ? puntosBase : Math.min(puntosBase, r2(Number(pedido.descuento || 0) / (1 + tasa) * bases[i] / sumaBases));
+        const parte = i === conceptos.length - 1 ? puntosBase : Math.min(puntosBase, r2(descTotal / (1 + tasa) * bases[i] / sumaBases));
         const cabe = Math.min(parte, bases[i]);
         c.descuento = r2(c.descuento + cabe);
         puntosBase = r2(puntosBase - cabe);
@@ -3339,15 +3375,38 @@ app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
 //          dobles, cargos no reconocidos, fraude o cuenta robada
 //   media: garantía, devolución, facturación
 //   baja : otros temas
-const CATEGORIAS_TICKET = ['pedido', 'garantia', 'devolucion', 'facturacion', 'cuenta', 'general'];
-const PRIORIDAD_POR_CATEGORIA = { pedido: 'alta', cuenta: 'alta', garantia: 'media', devolucion: 'media', facturacion: 'media', general: 'baja' };
+const CATEGORIAS_TICKET = ['pedido', 'garantia', 'devolucion', 'facturacion', 'cupon', 'cuenta', 'general'];
+const PRIORIDAD_POR_CATEGORIA = { pedido: 'alta', cuenta: 'alta', garantia: 'media', devolucion: 'media', facturacion: 'media', cupon: 'media', general: 'baja' };
+
+// Fotos de un mensaje de ticket (evidencia de un producto dañado, una
+// captura de pantalla…): mismas reglas que las de garantías (hasta 3, JPG,
+// PNG o WebP de hasta 1.5 MB, ya reducidas en el navegador).
+async function guardarFotosTicket(db, ticketId, mensajeId, fotos) {
+    for (const f of fotos) {
+        await db.query('INSERT INTO ticket_adjuntos (ticket_id, mensaje_id, nombre, tipo, datos, tamano) VALUES ($1,$2,$3,$4,$5,$6)',
+            [ticketId, mensajeId, f.nombre, f.tipo, f.datos, f.tamano]);
+    }
+}
+// Hilo de un ticket con la lista de fotos de cada mensaje (sin los datos).
+async function hiloTicket(ticketId) {
+    const msgs = await pool.query(
+        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m LEFT JOIN usuarios u ON m.usuario_id = u.id
+         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC, m.id ASC`, [ticketId]);
+    const adj = await pool.query('SELECT id, mensaje_id, nombre, tipo, tamano FROM ticket_adjuntos WHERE ticket_id = $1 ORDER BY id', [ticketId]);
+    return msgs.rows.map((m) => ({ ...m, fotos: adj.rows.filter((a) => a.mensaje_id === m.id) }));
+}
+function enviarFoto(res, f) {
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+    res.send(Buffer.from(f.datos, 'base64'));
+}
 const TICKET_URGENTE = /(cobr\w*\s+(doble|dos\s+veces)|doble\s+cobro|cargo\s+no\s+reconocido|no\s+reconozco|fraude|estafa|hacke|robar\w*|me\s+robaron|suplant)/i;
 function prioridadAutomatica(categoria, texto) {
     if (TICKET_URGENTE.test(String(texto || ''))) return 'alta';
     return PRIORIDAD_POR_CATEGORIA[categoria] || 'baja';
 }
 
-async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }, { autor = 'cliente', usuarioId = null } = {}) {
+async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id, cupon_id }, { autor = 'cliente', usuarioId = null, fotos = [] } = {}) {
     categoria = CATEGORIAS_TICKET.includes(categoria) ? categoria : 'general';
     // El cliente no decide la prioridad: se calcula según el caso.
     if (autor !== 'equipo') prioridad = prioridadAutomatica(categoria, `${asunto} ${descripcion}`);
@@ -3356,21 +3415,27 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
         const p = await pool.query('SELECT id FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(pedido_id) || 0, clienteId]);
         pedido_id = p.rows[0] ? p.rows[0].id : null;
     }
+    // Y solo un cupón de este cliente.
+    if (cupon_id) {
+        const c = await pool.query('SELECT id FROM cupones WHERE id = $1 AND cliente_id = $2', [Number(cupon_id) || 0, clienteId]);
+        cupon_id = c.rows[0] ? c.rows[0].id : null;
+    }
     const ins = await pool.query(
-        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje)
-         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6) RETURNING id`,
+        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje, cupon_id)
+         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7) RETURNING id`,
         [clienteId, String(asunto).slice(0, 160), categoria,
-            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion]
+            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion, cupon_id || null]
     );
     const t = await pool.query(
         "UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *",
         [ins.rows[0].id]
     );
     const folio = t.rows[0].folio;
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4)`,
+    const m1 = await pool.query(
+        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4) RETURNING id`,
         [t.rows[0].id, autor === 'equipo' ? 'equipo' : 'cliente', autor === 'equipo' ? usuarioId : null, descripcion]
     );
+    await guardarFotosTicket(pool, t.rows[0].id, m1.rows[0].id, fotos);
     // También queda como interacción CRM
     await pool.query(
         `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, origen) VALUES ($1, $2, 'soporte', $3, $4)`,
@@ -3383,13 +3448,14 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
 
 // Respuesta del equipo: va al hilo y queda como "respuesta" del ticket.
 // Si estaba abierto pasa a En proceso (o al estado que se indique).
-async function responderTicket(ticketId, usuarioId, mensaje, estado) {
+async function responderTicket(ticketId, usuarioId, mensaje, estado, fotos = []) {
     const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [ticketId]);
     if (t.rows.length === 0) return false;
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`,
+    const m = await pool.query(
+        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3) RETURNING id`,
         [ticketId, usuarioId, mensaje]
     );
+    await guardarFotosTicket(pool, ticketId, m.rows[0].id, fotos);
     const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'].includes(estado) ? estado : null;
     await pool.query(
         `UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP, respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP,
@@ -3402,27 +3468,29 @@ async function responderTicket(ticketId, usuarioId, mensaje, estado) {
 app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     const { asunto, descripcion } = req.body;
     if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
-    const ticket = await crearTicket(req.params.id, req.body);
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const ticket = await crearTicket(req.params.id, req.body, { fotos });
     res.status(201).json({ message: 'Ticket creado', ticket });
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT t.*, p.numero_orden, p.estado AS pedido_estado FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
-         WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
+        `SELECT t.*, p.numero_orden, p.estado AS pedido_estado, cu.codigo AS cupon_codigo FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
+         LEFT JOIN cupones cu ON cu.id = t.cupon_id WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    const msgs = await pool.query(
-        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m
-         LEFT JOIN usuarios u ON m.usuario_id = u.id
-         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`,
-        [req.params.ticketId]
-    );
-    res.json({ ...t.rows[0], mensajes: msgs.rows });
+    res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id) });
+}));
+app.get('/api/clientes/:id/tickets/:ticketId/fotos/:fotoId', asyncRoute(async (req, res) => {
+    enviarFoto(res, (await pool.query(
+        `SELECT a.tipo, a.datos FROM ticket_adjuntos a JOIN tickets t ON t.id = a.ticket_id
+         WHERE a.id = $1 AND t.id = $2 AND t.cliente_id = $3`, [Number(req.params.fotoId) || 0, req.params.ticketId, req.params.id])).rows[0]);
 }));
 
 app.post('/api/clientes/:id/tickets/:ticketId/mensajes', asyncRoute(async (req, res) => {
-    const { mensaje } = req.body;
-    if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    if (!req.body.mensaje && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
     const t = await pool.query('SELECT id, folio, estado FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     // Un caso resuelto o cerrado ya no recibe mensajes del cliente ni se
@@ -3431,13 +3499,14 @@ app.post('/api/clientes/:id/tickets/:ticketId/mensajes', asyncRoute(async (req, 
     if (['resuelto', 'cerrado'].includes(t.rows[0].estado)) {
         return res.status(409).json({ message: `El ticket ${t.rows[0].folio} ya está ${t.rows[0].estado}. Si necesitas más ayuda, abre un ticket nuevo.`, cerrado: true });
     }
-    const texto = String(mensaje).trim().slice(0, 4000);
-    if (!texto) return res.status(400).json({ message: 'El mensaje es requerido' });
+    const texto = String(req.body.mensaje || '').trim().slice(0, 4000);
+    if (!texto && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
 
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2)`,
+    const m = await pool.query(
+        `INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2) RETURNING id`,
         [req.params.ticketId, texto]
     );
+    await guardarFotosTicket(pool, Number(req.params.ticketId), m.rows[0].id, fotos);
     await pool.query("UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [req.params.ticketId]);
     res.status(201).json({ message: 'Mensaje enviado' });
 }));
@@ -3922,6 +3991,7 @@ const PERMISOS_API = [
     { ruta: /^\/notificaciones(\/(leer|preferencias))?$/, metodos: TODO, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    { ruta: /^\/clientes\/\d+\/cupones$/,               metodos: TODO, permisos: ['cupones'] },
     // Con 'clientes' se consulta la ficha, se registran interacciones, se
     // escribe al cliente y se confirma su correo; editar sus datos o su etapa
     // pide 'clientes-editar' (Soporte consulta pero no edita).
@@ -3931,6 +4001,7 @@ const PERMISOS_API = [
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
     { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
+    { ruta: /^\/cupones\/\d+$/,                         metodos: TODO, permisos: ['cupones'] },
     { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -4299,6 +4370,7 @@ app.get('/api/admin/avisos', asyncRoute(async (req, res) => {
 }));
 
 notif.rutas(app, asyncRoute);
+cupones.rutas(app, { asyncRoute, requireCliente, mismoCliente, puedeVer });
 
 app.get('/api/admin/mi-2fa', cfg2faUsuario.estado);
 app.post('/api/admin/mi-2fa/app', limiteAuth, cfg2faUsuario.appIniciar);
@@ -4866,24 +4938,25 @@ app.get('/api/admin/tickets', asyncRoute(async (req, res) => {
 app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const t = await pool.query(
         `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
-                p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido
-         FROM tickets t JOIN clientes c ON t.cliente_id = c.id LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.id = $1`,
+                p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido, cu.codigo AS cupon_codigo
+         FROM tickets t JOIN clientes c ON t.cliente_id = c.id LEFT JOIN pedidos p ON p.id = t.pedido_id
+         LEFT JOIN cupones cu ON cu.id = t.cupon_id WHERE t.id = $1`,
         [req.params.id]
     );
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    const msgs = await pool.query(
-        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m
-         LEFT JOIN usuarios u ON m.usuario_id = u.id
-         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`,
-        [req.params.id]
-    );
-    res.json({ ...t.rows[0], mensajes: msgs.rows });
+    res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id) });
+}));
+app.get('/api/admin/tickets/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
+    enviarFoto(res, (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2',
+        [Number(req.params.fotoId) || 0, req.params.id])).rows[0]);
 }));
 
 app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
-    const { mensaje } = req.body;
-    if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const ok = await responderTicket(req.params.id, req.usuario.id, mensaje);
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const mensaje = String(req.body.mensaje || '').trim().slice(0, 4000);
+    if (!mensaje && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
+    const ok = await responderTicket(req.params.id, req.usuario.id, mensaje, null, fotos);
     if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.status(201).json({ message: 'Respuesta enviada' });
 }));
@@ -8930,6 +9003,14 @@ async function migrarEsquema() {
         await pool.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
     }
 
+    await cupones.migrar();
+    await pool.query(`CREATE TABLE IF NOT EXISTS ticket_adjuntos (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        mensaje_id INTEGER REFERENCES ticket_mensajes(id) ON DELETE CASCADE,
+        nombre VARCHAR(80), tipo VARCHAR(20) NOT NULL, datos TEXT NOT NULL, tamano INTEGER,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_ticket_adjuntos ON ticket_adjuntos(ticket_id)');
     await notif.migrar();
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).

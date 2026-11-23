@@ -10,6 +10,8 @@
 //   'productos-editar'  dar de alta, editar o borrar productos del catálogo
 //   'reposicion'        generar pedidos de reposición al proveedor desde
 //                       Inventario, el Dashboard SCM o la Nueva orden
+//   'cupones'           ver los cupones de un cliente, darle uno, extender,
+//                       reactivar o cancelar (desde el ticket del caso)
 //   'clientes-editar'   editar datos y etapa de un cliente (con solo
 //                       'clientes' se consulta la ficha, se registran
 //                       interacciones y se confirma el correo)
@@ -51,7 +53,7 @@
         // facturas cuando el caso lo pide.
         soporte: [
             'centro-soporte', 'soporte', 'garantias', 'devoluciones', 'evaluaciones',
-            'clientes', 'interacciones', 'pedidos', 'facturas',
+            'clientes', 'interacciones', 'pedidos', 'facturas', 'cupones',
         ],
     };
 

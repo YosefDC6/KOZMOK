@@ -24,6 +24,7 @@ kozmok/
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
 ├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
 ├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
+├── cupones.js            # cupones: bienvenida, compensaciones de Soporte y su uso en el checkout
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
@@ -50,7 +51,7 @@ kozmok/
     ├── armar-pc.html, comparar.html, socio.html, ayuda.html, terminos.html, 404.html
     ├── css/style.css, css/arcade.css     # arcade.css: estilo de la tienda (no del panel)
     ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast,
-    │                               #   icons (íconos, logo KZK y fantasmita), dos-pasos, fotos,
+    │                               #   icons (íconos, logo KZK y Tibu, la mascota), dos-pasos, fotos,
     │                               #   garantia, paypal-botones, recibo-render, graficas, vendor/
     └── admin/                      # una pantalla por sección del panel (centro-soporte = inicio de Soporte)
         └── js/
@@ -193,6 +194,27 @@ para que cada rol reciba el enlace de la pantalla que sí abre. Rutas:
 `GET|PUT /api/admin/notificaciones/preferencias`. En el navegador,
 `Notifs` (admin-layout.js) pinta la campana y se actualiza con los avisos
 del menú.
+
+## Cupones
+
+`cupones.js` (tabla `cupones`, columnas `pedidos.cupon_id`,
+`pedidos.descuento_cupon` y `tickets.cupon_id`). Cada cupón es de una cuenta,
+de un solo uso, por porcentaje (con tope) o monto fijo, con compra mínima y
+vencimiento. El de **bienvenida** se crea al confirmar el correo
+(`darBienvenida`, con índice único por cliente) y un barrido en
+`tareasPeriodicas` cubre los demás caminos; un cursor deja fuera a las cuentas
+que ya existían. Llega por correo y se ve en `/cupones.html`. En el checkout,
+`cotizarLineas(..., { cupon })` lo aplica sobre el total con impuestos, igual
+que los puntos, así las devoluciones lo prorratean solas y la factura lo
+reparte como descuento. Al cancelar el pedido el cupón vuelve a quedar
+disponible. Rutas: `GET /api/clientes/:id/cupones`,
+`GET|POST /api/admin/clientes/:id/cupones` y `PUT /api/admin/cupones/:id`
+(`extender`, `reactivar`, `cancelar`; siempre con motivo, permiso `cupones`).
+Soporte tiene tope en lo que regala (`CUPON_SOPORTE_*`).
+
+Los tickets aceptan hasta 3 fotos por mensaje (`ticket_adjuntos`, mismas
+validaciones que los reclamos de garantía) y se ven en
+`GET /api/clientes/:id/tickets/:t/fotos/:f` y `GET /api/admin/tickets/:t/fotos/:f`.
 
 ## Chatbot de recomendaciones
 

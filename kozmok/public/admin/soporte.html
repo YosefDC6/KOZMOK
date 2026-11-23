@@ -20,6 +20,7 @@
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
+<script src="/js/fotos.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('soporte');
@@ -92,10 +93,14 @@ async function vistaHilo(id) {
                     ${t.mensajes.map((m) => `
                         <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
                             <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(t.cliente_nombre)} · ${formatoFechaHora(m.fecha)}</div>
-                            <div class="hm-txt">${escHTML(m.mensaje)}</div>
+                            ${m.mensaje ? `<div class="hm-txt">${escHTML(m.mensaje)}</div>` : ''}
+                            ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a href="/api/admin/tickets/${t.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev" title="Abrir foto"><img src="/api/admin/tickets/${t.id}/fotos/${f.id}" alt="${escHTML(f.nombre || 'foto')}" loading="lazy" /></a>`).join('')}</div>` : ''}
                         </div>`).join('')}
                 </div>
                 <div class="field" style="margin-top:16px"><textarea id="resp" rows="3" placeholder="Responder al cliente…">${escHTML(borrador)}</textarea></div>
+                <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Adjuntar fotos<input type="file" id="resp-fotos" accept="image/*" multiple hidden /></label>
+                    <small>Hasta 3, por ejemplo para mostrarle al cliente cómo hacer algo.</small></div>
+                <div class="foto-lista" id="resp-prev"></div>
                 <button class="btn btn-primary" onclick="responder(${t.id})">Enviar respuesta</button>
             </section>
             <aside class="tk-lado">
@@ -111,10 +116,88 @@ async function vistaHilo(id) {
                     <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}</p>
                 </div>
                 <div class="card" id="tk-pedido"><p style="margin:0;color:var(--text-muted)">Cargando pedido…</p></div>
+                ${puedeVer((Sesion.usuario() || {}).rol, 'cupones') ? '<div class="card" id="tk-cupones"><p style="margin:0;color:var(--text-muted)">Cargando cupones…</p></div>' : ''}
             </aside>
         </div>
     `;
+    SEL_RESP = FotosReclamo.selector(document.getElementById('resp-fotos'), document.getElementById('resp-prev'), { alError: (m) => toast(m, 'warn') });
     pintarPedido();
+    pintarCupones();
+}
+let SEL_RESP = null;
+
+// ---- Cupones del cliente: revisar el problema y resolverlo sin salir del caso ----
+const EST_CUP = { disponible: 'Disponible', usado: 'Usado', vencido: 'Vencido', cancelado: 'Cancelado' };
+const COLOR_CUP = { disponible: 'var(--success)', usado: 'var(--text-muted)', vencido: 'var(--warning)', cancelado: 'var(--danger)' };
+async function pintarCupones() {
+    const caja = document.getElementById('tk-cupones');
+    if (!caja) return;
+    let lista = [];
+    try { lista = await api(`/admin/clientes/${TICKET.cliente_id}/cupones`); } catch (e) { caja.innerHTML = `<p style="margin:0">${escHTML(e.message)}</p>`; return; }
+    // El cupón del caso va primero.
+    lista.sort((a, b) => (b.id === TICKET.cupon_id) - (a.id === TICKET.cupon_id));
+    caja.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <h3 style="margin:0;font-size:1rem">Cupones del cliente</h3>
+            <button class="btn btn-outline btn-sm" onclick="darCupon()">${icon('plus', 14)} Dar cupón</button>
+        </div>
+        ${!lista.length ? '<p style="margin:8px 0 0;font-size:.84rem;color:var(--text-muted)">No tiene cupones.</p>' : lista.map((c) => `
+            <div class="tk-cupon ${c.id === TICKET.cupon_id ? 'del-caso' : ''}">
+                <div class="tk-kv"><span class="mono">${escHTML(c.codigo)}</span><span style="color:${COLOR_CUP[c.estado]}">${EST_CUP[c.estado] || c.estado}</span></div>
+                <div style="font-size:.8rem">${escHTML(c.beneficio)}${c.minimo > 0 ? ` · desde ${formatoMoneda(c.minimo)}` : ''}</div>
+                <div style="font-size:.74rem;color:var(--text-muted)">${c.id === TICKET.cupon_id ? '<strong>Cupón de este caso</strong> · ' : ''}${c.vence ? `vence ${formatoFecha(c.vence)}` : 'sin vencimiento'}${c.numero_orden ? ` · usado en ${escHTML(c.numero_orden)}` : ''}</div>
+                ${c.motivo ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:2px">${escHTML(c.motivo)}</div>` : ''}
+                <div class="tk-cupon-acc">
+                    ${c.estado !== 'usado' && c.estado !== 'cancelado' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'extender')">Extender</button>` : ''}
+                    ${c.estado === 'usado' || c.estado === 'vencido' || c.estado === 'cancelado' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'reactivar')">Reactivar</button>` : ''}
+                    ${c.estado === 'disponible' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'cancelar')">Cancelar</button>` : ''}
+                </div>
+            </div>`).join('')}
+        <p style="margin:8px 0 0;font-size:.74rem;color:var(--text-muted)">Cada cambio pide motivo y queda en la bitácora.</p>`;
+}
+function modalCupon(html, alGuardar) {
+    const m = document.getElementById('modal-generico') || (() => {
+        const d = document.createElement('div'); d.className = 'modal-overlay'; d.id = 'modal-generico';
+        d.innerHTML = '<div class="modal" id="modal-generico-body" style="max-width:480px"></div>';
+        document.body.appendChild(d);
+        d.addEventListener('click', (e) => { if (e.target === d) d.classList.remove('open'); });
+        return d;
+    })();
+    document.getElementById('modal-generico-body').innerHTML = `<button class="modal-close" type="button" onclick="document.getElementById('modal-generico').classList.remove('open')" aria-label="Cerrar">${icon('x', 20)}</button>${html}
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+            <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-generico').classList.remove('open')">Cancelar</button>
+            <button class="btn btn-primary" type="button" id="cup-ok">Guardar</button></div>`;
+    document.getElementById('cup-ok').onclick = async () => {
+        try { const r = await alGuardar(); toast(r.message, 'ok'); m.classList.remove('open'); pintarCupones(); }
+        catch (e) { toast(e.message, 'error'); }
+    };
+    m.classList.add('open');
+}
+function darCupon() {
+    modalCupon(`<h3 style="margin-top:0">Dar un cupón a ${escHTML(TICKET.cliente_nombre)}</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
+            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" step="1" value="10" /></div>
+            <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" step="50" value="500" /></div>
+            <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
+            <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="30" /></div>
+        </div>
+        <div class="field"><label>Motivo</label><input id="cp-motivo" maxlength="300" placeholder="Ej. compensación por ${escHTML(TICKET.folio)}" value="Compensación por ${escHTML(TICKET.folio)}" /></div>
+        <p style="font-size:.78rem;color:var(--text-muted);margin:0">El cliente lo recibe por correo y lo ve en Mis cupones.</p>`,
+        () => api(`/admin/clientes/${TICKET.cliente_id}/cupones`, { method: 'POST', body: {
+            tipo: document.getElementById('cp-tipo').value, valor: Number(document.getElementById('cp-valor').value),
+            tope: Number(document.getElementById('cp-tope').value), minimo: Number(document.getElementById('cp-min').value),
+            dias: Number(document.getElementById('cp-dias').value), motivo: document.getElementById('cp-motivo').value } }));
+    document.getElementById('cp-tipo').onchange = (e) => { document.getElementById('cp-tope-w').style.display = e.target.value === 'porcentaje' ? '' : 'none'; };
+}
+function accionCupon(id, accion) {
+    const TXT = { extender: 'Extender la vigencia', reactivar: 'Reactivar el cupón', cancelar: 'Cancelar el cupón' };
+    modalCupon(`<h3 style="margin-top:0">${TXT[accion]}</h3>
+        ${accion === 'extender' ? '<div class="field"><label>Días más</label><input id="cp-dias" type="number" min="1" max="90" value="15" /></div>' : ''}
+        ${accion === 'reactivar' ? '<p style="font-size:.84rem;margin:0 0 10px">Vuelve a quedar disponible con al menos 7 días de vigencia. Si se usó en un pedido que sigue activo, no se puede: dale un cupón nuevo.</p>' : ''}
+        <div class="field"><label>Motivo</label><input id="cp-motivo" maxlength="300" value="${accion === 'cancelar' ? '' : `Atención del ticket ${escHTML(TICKET.folio)}`}" /></div>`,
+        () => api(`/admin/cupones/${id}`, { method: 'PUT', body: { accion, motivo: document.getElementById('cp-motivo').value,
+            dias: Number((document.getElementById('cp-dias') || {}).value) || undefined } }));
 }
 
 // ---- Pedido del caso: resumen y gestión sin salir del ticket ----
@@ -201,9 +284,10 @@ async function guardarEstado(id) {
 }
 async function responder(id) {
     const mensaje = document.getElementById('resp').value.trim();
-    if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
+    const fotos = SEL_RESP ? SEL_RESP.fotos() : [];
+    if (!mensaje && !fotos.length) { toast('Escribe una respuesta o adjunta una foto', 'warn'); return; }
     try {
-        await api(`/admin/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje } });
+        await api(`/admin/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
         location.reload();
     } catch (e) { toast(e.message, 'error'); }
 }

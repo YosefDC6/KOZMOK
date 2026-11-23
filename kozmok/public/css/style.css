@@ -2053,7 +2053,7 @@ tr.mov-off td { opacity: .7; }
 /* =========================================================
    LOGO KZK
 ========================================================= */
-:root { --kzk-tinta: #fff; --kzk-contorno: #0B0E14; --kzk-sombra: var(--accent); }
+:root { --kzk-tinta: #fff; --kzk-contorno: #0B0E14; --kzk-sombra: var(--accent); --kzk-tiburon: #7DA6E0; }
 .kzk-logo { display: block; flex-shrink: 0; }
 .brand-mark { width: auto; min-width: 0; height: auto; padding: 0; background: none; box-shadow: none; }
 .rec-marca { display: inline-flex; align-items: center; gap: 8px; }
@@ -2063,8 +2063,8 @@ tr.mov-off td { opacity: .7; }
    TARJETA DE SOCIO / CLUB: diseño KZK (nuevo) o clásico
    .tj-card + .diseno-kzk | .diseno-clasica
 ========================================================= */
-.tj-card .tj-solo-kzk, .tj-card .tj-solo-clasica { display: none; }
-.tj-card.diseno-kzk .tj-solo-kzk, .tj-card.diseno-clasica .tj-solo-clasica { display: inline-flex; }
+.tj-card .tj-solo-kzk, .tj-card .tj-solo-clasica, .tj-card .tj-solo-tiburon { display: none; }
+.tj-card.diseno-kzk .tj-solo-kzk, .tj-card.diseno-clasica .tj-solo-clasica, .tj-card.diseno-tiburon .tj-solo-tiburon { display: inline-flex; }
 .tj-card .tj-marca { position: absolute; z-index: -1; pointer-events: none; }
 .tj-card .tj-marca.tj-solo-clasica { color: #fff; opacity: .14; transform: rotate(-12deg); right: -26px; bottom: -40px; }
 .socio-card .tj-marca.tj-solo-clasica { right: auto; left: 34%; bottom: -46px; opacity: .13; }
@@ -2098,6 +2098,30 @@ tr.mov-off td { opacity: .7; }
 .tj-card.diseno-kzk .socio-grid span, .tj-card.diseno-kzk .cc-label { color: color-mix(in srgb, var(--c3) 75%, #fff); }
 .tj-card.diseno-kzk .socio-main, .tj-card.diseno-kzk .cc-saldo { text-shadow: none; }
 
+/* Diseño Tibu: mar profundo con burbujas, la mascota asomándose en la esquina */
+.tj-card.diseno-tiburon {
+    background:
+        radial-gradient(circle at 14% 22%, rgba(255,255,255,.16) 0 3px, transparent 4px),
+        radial-gradient(circle at 22% 68%, rgba(255,255,255,.12) 0 2px, transparent 3px),
+        radial-gradient(circle at 63% 16%, rgba(255,255,255,.10) 0 4px, transparent 5px),
+        radial-gradient(130% 120% at 0% 0%, #2f6fd1 0%, transparent 60%),
+        linear-gradient(160deg, #1b4fa6 0%, #10306e 55%, #0a1c45 100%);
+    box-shadow: 0 24px 48px -22px rgba(4, 18, 52, .8), inset 0 0 0 1px color-mix(in srgb, var(--c3) 30%, transparent);
+    --kzk-sombra: var(--c2); --kzk-tiburon: #8db5ee;
+}
+.tj-card.diseno-tiburon::before {
+    inset: auto 0 0 0; width: auto; height: 5px; transform: none;
+    background: linear-gradient(90deg, var(--c1), var(--c2), var(--c3));
+}
+.tj-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 8px; bottom: 6px; z-index: 0; transform: rotate(-6deg); filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
+.socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 160px; bottom: 10px; }
+.tj-mini.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 4px; bottom: 4px; }
+.tj-card.diseno-tiburon .socio-logo, .tj-card.diseno-tiburon .cc-logo {
+    width: auto; padding: 0 8px; background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); color: #fff;
+}
+.tj-card.diseno-tiburon .socio-tier, .tj-card.diseno-tiburon .cc-nivel { background: rgba(4, 18, 52, .45); color: var(--c3); }
+.tj-card.diseno-tiburon .socio-main, .tj-card.diseno-tiburon .cc-saldo { text-shadow: 0 2px 10px rgba(0,0,0,.3); }
+
 /* Selector bajo la tarjeta */
 .tj-selector { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -12px 0 24px; font-size: .8rem; color: var(--text-muted); }
 .club-hero + .tj-selector { margin: 12px 0 24px; }
@@ -2107,7 +2131,7 @@ tr.mov-off td { opacity: .7; }
 .tj-op.on { border-color: var(--accent); color: var(--accent-light); background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel-2)); }
 
 /* Vistas previas en Preferencias */
-.tj-previews { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+.tj-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-top: 12px; }
 .tj-prev { background: none; border: 2px solid transparent; border-radius: 16px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; color: var(--text); font-weight: 600; font-size: .86rem; }
 .tj-prev.on { border-color: var(--accent); }
 .tj-mini { --c1: #6a4a10; --c2: #c99a2e; --c3: #f3d77a; position: relative; overflow: hidden; isolation: isolate; border-radius: 12px; aspect-ratio: 1.6; color: #fff;
@@ -3069,3 +3093,45 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .np-switch { display: flex; align-items: center; gap: 8px; font-size: .88rem; cursor: pointer; }
 .np-switch input, .np-tabla input { width: auto; }
 .np-tabla td:nth-child(2), .np-tabla td:nth-child(3), .np-tabla th:nth-child(2), .np-tabla th:nth-child(3) { text-align: center; width: 92px; }
+
+/* Cupón en el checkout */
+.cupon-box { margin: 14px 0; padding: 12px 14px; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cupon-box h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: .92rem; }
+.cupon-box select { width: 100%; }
+.cupon-box small { display: block; margin-top: 6px; color: var(--text-muted); font-size: .76rem; }
+.cupon-msg { margin-top: 6px; font-size: .82rem; display: flex; align-items: center; gap: 5px; }
+.cupon-msg:empty { display: none; }
+.cupon-msg.bien { color: var(--success); }
+.cupon-msg.mal { color: var(--warning); }
+
+/* Mis cupones */
+.cupon-seccion { margin: 18px 0 10px; font-size: 1rem; }
+.cupon-lista { display: grid; gap: 12px; }
+.cupon { position: relative; display: grid; grid-template-columns: 130px 1fr; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--bg-panel); }
+.cupon-izq { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px 10px; text-align: center;
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel-2)); color: var(--accent-light); border-right: 2px dashed var(--line); }
+.cupon-ico { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.cupon-origen { font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.cupon-cuerpo { padding: 14px 16px; }
+.cupon-titulo { font-size: 1.1rem; font-weight: 800; }
+.cupon-codigo { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.cupon-codigo code { font-family: var(--font-mono); font-size: .95rem; padding: 3px 8px; border-radius: 6px; background: var(--bg-panel-2); border: 1px solid var(--line); letter-spacing: .04em; }
+.cupon-reglas { margin: 6px 0 10px; padding-left: 18px; font-size: .82rem; color: var(--text-muted); }
+.cupon-acciones { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cupon-estado.disponible { color: var(--success); border-color: var(--success); }
+.cupon-estado.usado, .cupon-estado.cancelado { color: var(--text-muted); }
+.cupon-estado.vencido { color: var(--warning); border-color: var(--warning); }
+.cupon.apagado { opacity: .72; }
+.cupon.apagado .cupon-izq { filter: grayscale(.8); }
+.cupon-ayuda { display: flex; gap: 12px; align-items: flex-start; margin-top: 18px; padding: 14px 16px; }
+.cupon-ayuda span { display: block; margin-top: 3px; font-size: .84rem; color: var(--text-muted); }
+@media (max-width: 560px) { .cupon { grid-template-columns: 1fr; } .cupon-izq { flex-direction: row; border-right: 0; border-bottom: 2px dashed var(--line); } }
+.foto-sel { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 2px; }
+.foto-sel small { color: var(--text-muted); font-size: .76rem; }
+.foto-lista:empty { margin: 0; }
+.hilo-msg .foto-lista { margin-top: 6px; }
+.tk-cupon { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.tk-cupon.del-caso { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tk-cupon .tk-kv { margin: 0 0 2px; }
+.tk-cupon-acc { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.tk-cupon-acc .btn { padding: 3px 8px; font-size: .74rem; }

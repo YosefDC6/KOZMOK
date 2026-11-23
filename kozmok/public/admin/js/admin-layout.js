@@ -174,7 +174,7 @@ function renderAdminSidebar(activo) {
 
     el.innerHTML = `
         <div class="brand-fila">
-            <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
+            <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('tiburon', 16)}</span> <span class="brand-txt">Kozmok</span></div>
             <div class="bf-acciones">
                 <button type="button" class="admin-campana" id="admin-campana" onclick="Notifs.alternar(event)" aria-label="Notificaciones" title="Notificaciones">${ic('bell', 17)}<span class="campana-n" id="campana-n" hidden></span></button>
                 <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
