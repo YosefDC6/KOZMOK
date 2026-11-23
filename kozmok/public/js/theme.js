@@ -12,7 +12,8 @@
         { clave: 'claro',     nombre: 'Claro' },
     ];
     const claves = TEMAS.map((t) => t.clave);
-    const esPanel = location.pathname.startsWith('/admin/');
+    // Las pantallas del panel traen <meta name="kz-panel"> (su dirección).
+    const esPanel = !!document.querySelector('meta[name="kz-panel"]');
     const CLAVE = esPanel ? 'kz_tema_admin' : 'kz_tema_tienda';
     const POR_DEFECTO = esPanel ? 'esmeralda' : 'indigo';
 

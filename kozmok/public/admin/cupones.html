@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cupones · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="stat-grid" id="kpis"></div>
+        <div id="config"></div>
+
+        <div class="filters-bar" style="margin-top:18px">
+            <input type="search" id="f-buscar" placeholder="Buscar por código, cliente o correo…" />
+            <select id="f-estado">
+                <option value="">Todos</option>
+                <option value="disponible">Disponibles</option>
+                <option value="por_vencer">Vencen en 7 días</option>
+                <option value="usado">Usados</option>
+                <option value="vencido">Vencidos</option>
+                <option value="cancelado">Cancelados</option>
+            </select>
+            <select id="f-origen">
+                <option value="">Bienvenida y del equipo</option>
+                <option value="bienvenida">Solo bienvenida</option>
+                <option value="soporte">Solo del equipo</option>
+            </select>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Código</th><th>Cliente</th><th>Descuento</th><th>Origen</th><th>Vigencia</th><th>Estado</th><th>Uso</th><th></th></tr></thead>
+                <tbody id="tabla"><tr><td colspan="8">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-top:10px">
+            El cliente ve sus cupones en Mi cuenta → Mis cupones y los elige en el paso Pago del carrito. Cada cambio pide motivo y queda en la bitácora del cupón.
+        </p>
+    </main>
+</div>
+
+<div class="modal-overlay" id="modal-generico">
+    <div class="modal" id="modal-generico-body" style="max-width:520px"></div>
+</div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('cupones');
+document.getElementById('topbar').innerHTML = adminHeader(
+    'Cupones', 'Cupones de bienvenida y los que da el equipo: quién los tiene, cuáles se usan y cuánto descuentan.',
+    `<button class="btn btn-primary" onclick="darCupon()">${icon('plus', 15)} Dar cupón</button>`
+);
+
+const EST = { disponible: ['Disponible', 'var(--success)'], usado: ['Usado', 'var(--text-muted)'], vencido: ['Vencido', 'var(--warning)'], cancelado: ['Cancelado', 'var(--danger)'] };
+let DATOS = null;
+const qs = new URLSearchParams(location.search);
+['estado', 'origen'].forEach((k) => { if (qs.get(k)) document.getElementById('f-' + k).value = qs.get(k); });
+if (qs.get('q')) document.getElementById('f-buscar').value = qs.get('q');
+
+async function cargar() {
+    const p = new URLSearchParams({ q: document.getElementById('f-buscar').value.trim(), estado: document.getElementById('f-estado').value, origen: document.getElementById('f-origen').value });
+    try { DATOS = await api('/admin/cupones?' + p); }
+    catch (e) { document.getElementById('tabla').innerHTML = `<tr><td colspan="8">${escHTML(e.message)}</td></tr>`; return; }
+    const k = DATOS.resumen;
+    document.getElementById('kpis').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Disponibles</div><div class="stat-value">${k.disponibles}</div><div class="stat-sub">${k.por_vencer} vencen en 7 días</div></div>
+        <div class="stat-card"><div class="stat-label">Usados</div><div class="stat-value">${k.usados}</div><div class="stat-sub">${k.dados_mes} dados este mes</div></div>
+        <div class="stat-card"><div class="stat-label">Bienvenida</div><div class="stat-value">${k.bienvenida}</div><div class="stat-sub">${k.bienvenida ? Math.round(k.bienvenida_usados * 100 / k.bienvenida) : 0}% ya se usaron</div></div>
+        <div class="stat-card"><div class="stat-label">Descuento otorgado</div><div class="stat-value" style="font-size:1.4rem">${formatoMoneda(k.descuento_total)}</div><div class="stat-sub">${formatoMoneda(k.descuento_mes)} este mes · ventas con cupón ${formatoMoneda(k.ventas_con_cupon)}</div></div>`;
+    const c = DATOS.config;
+    document.getElementById('config').innerHTML = `<div class="cup-config">
+        ${icon('tag', 16)}
+        <span>${c.bienvenida ? `<strong>Cupón de bienvenida:</strong> ${escHTML(c.bienvenida.beneficio)}${c.bienvenida.minimo > 0 ? ` en compras desde ${formatoMoneda(c.bienvenida.minimo)}` : ''}, válido ${c.bienvenida.dias} días. Se da al confirmar el correo.`
+            : '<strong>Cupón de bienvenida apagado.</strong>'}
+        ${c.limite_rol ? ` Tu rol puede dar hasta ${c.limite_rol.porcentaje}% (máximo ${formatoMoneda(c.limite_rol.monto)}) o ${formatoMoneda(c.limite_rol.monto)} fijos.` : ''}</span></div>`;
+    pintar();
+}
+function pintar() {
+    const lista = DATOS.cupones;
+    document.getElementById('tabla').innerHTML = !lista.length ? '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">No hay cupones con esos filtros.</td></tr>'
+        : lista.map((c) => {
+            const [txt, col] = EST[c.estado] || [c.estado, ''];
+            return `<tr>
+                <td><span class="mono">${escHTML(c.codigo)}</span></td>
+                <td><a href="/admin/cliente.html?id=${c.cliente_id}">${escHTML(c.cliente_nombre)}</a><div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.cliente_correo || '')}</div></td>
+                <td>${escHTML(c.beneficio)}${c.minimo > 0 ? `<div style="font-size:.74rem;color:var(--text-muted)">desde ${formatoMoneda(c.minimo)}</div>` : ''}</td>
+                <td>${c.origen === 'bienvenida' ? 'Bienvenida' : `Equipo${c.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.usuario_nombre)}</div>` : ''}`}</td>
+                <td style="white-space:nowrap">${c.vence ? formatoFecha(c.vence) : 'Sin vencimiento'}</td>
+                <td><span class="tag" style="color:${col};border-color:${col}">${txt}</span></td>
+                <td>${c.numero_orden ? `<span class="mono">${escHTML(c.numero_orden)}</span>${c.descuento_aplicado != null ? `<div style="font-size:.74rem;color:var(--text-muted)">−${formatoMoneda(c.descuento_aplicado)}</div>` : ''}` : '—'}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-ghost btn-sm" title="Detalle y bitácora" onclick="verCupon(${c.id})">${icon('search', 14)}</button>
+                    ${c.estado !== 'usado' && c.estado !== 'cancelado' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'extender')">Extender</button>` : ''}
+                    ${['usado', 'vencido', 'cancelado'].includes(c.estado) ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'reactivar')">Reactivar</button>` : ''}
+                    ${c.estado === 'disponible' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'cancelar')">Cancelar</button>` : ''}
+                </td></tr>`;
+        }).join('');
+}
+let tBuscar;
+document.getElementById('f-buscar').addEventListener('input', () => { clearTimeout(tBuscar); tBuscar = setTimeout(cargar, 300); });
+['f-estado', 'f-origen'].forEach((id) => document.getElementById(id).addEventListener('change', cargar));
+
+// ---- Ventanas ----
+function modal(html, alGuardar, okTxt = 'Guardar') {
+    document.getElementById('modal-generico-body').innerHTML = `<button class="modal-close" type="button" onclick="cerrar()" aria-label="Cerrar">${icon('x', 20)}</button>${html}
+        ${alGuardar ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+            <button class="btn btn-ghost" type="button" onclick="cerrar()">Cancelar</button>
+            <button class="btn btn-primary" type="button" id="cup-ok">${okTxt}</button></div>` : ''}`;
+    if (alGuardar) document.getElementById('cup-ok').onclick = async (ev) => {
+        ev.target.disabled = true;
+        try { const r = await alGuardar(); toast(r.message, 'ok'); cerrar(); cargar(); }
+        catch (e) { toast(e.message, 'error'); ev.target.disabled = false; }
+    };
+    document.getElementById('modal-generico').classList.add('open');
+}
+function cerrar() { document.getElementById('modal-generico').classList.remove('open'); }
+document.getElementById('modal-generico').addEventListener('click', (e) => { if (e.target.id === 'modal-generico') cerrar(); });
+
+function verCupon(id) {
+    const c = DATOS.cupones.find((x) => x.id === id);
+    const notas = String(c.motivo || '').split(' | ').filter(Boolean);
+    modal(`<h3 style="margin-top:0">Cupón <span class="mono">${escHTML(c.codigo)}</span></h3>
+        <div class="tk-kv"><span>Cliente</span><span><a href="/admin/cliente.html?id=${c.cliente_id}">${escHTML(c.cliente_nombre)}</a></span></div>
+        <div class="tk-kv"><span>Descuento</span><span>${escHTML(c.beneficio)}</span></div>
+        <div class="tk-kv"><span>Compra mínima</span><span>${c.minimo > 0 ? formatoMoneda(c.minimo) + ' (sin IVA ni envío)' : 'Sin mínimo'}</span></div>
+        <div class="tk-kv"><span>Origen</span><span>${c.origen === 'bienvenida' ? 'Bienvenida' : 'Dado por el equipo' + (c.usuario_nombre ? ` (${escHTML(c.usuario_nombre)})` : '')}</span></div>
+        <div class="tk-kv"><span>Creado</span><span>${formatoFecha(c.fecha)}</span></div>
+        <div class="tk-kv"><span>Vence</span><span>${c.vence ? formatoFecha(c.vence) : 'Sin vencimiento'}</span></div>
+        <div class="tk-kv"><span>Estado</span><span>${(EST[c.estado] || [c.estado])[0]}</span></div>
+        ${c.numero_orden ? `<div class="tk-kv"><span>Usado en</span><span class="mono">${escHTML(c.numero_orden)}${c.descuento_aplicado != null ? ` · −${formatoMoneda(c.descuento_aplicado)}` : ''}</span></div>` : ''}
+        <h4 style="margin:14px 0 6px">Bitácora</h4>
+        ${notas.length ? `<ul class="cup-bitacora">${notas.map((n) => `<li>${escHTML(n)}</li>`).join('')}</ul>` : '<p style="margin:0;font-size:.84rem;color:var(--text-muted)">Sin cambios desde que se creó.</p>'}`, null);
+}
+
+function accionCupon(id, accion) {
+    const c = DATOS.cupones.find((x) => x.id === id);
+    const TXT = { extender: 'Extender la vigencia', reactivar: 'Reactivar el cupón', cancelar: 'Cancelar el cupón' };
+    modal(`<h3 style="margin-top:0">${TXT[accion]} <span class="mono" style="font-size:.9rem">${escHTML(c.codigo)}</span></h3>
+        <p style="font-size:.84rem;margin:0 0 10px">${escHTML(c.cliente_nombre)} · ${escHTML(c.beneficio)}</p>
+        ${accion === 'extender' ? '<div class="field"><label>Días más</label><input id="cp-dias" type="number" min="1" max="90" value="15" /></div>' : ''}
+        ${accion === 'reactivar' ? '<p style="font-size:.84rem;margin:0 0 10px">Vuelve a quedar disponible con al menos 7 días de vigencia. Si se usó en un pedido que sigue activo, no se puede: dale un cupón nuevo.</p>' : ''}
+        ${accion === 'cancelar' ? '<p style="font-size:.84rem;margin:0 0 10px">El cliente ya no podrá usarlo. Se puede reactivar después.</p>' : ''}
+        <div class="field"><label>Motivo</label><input id="cp-motivo" maxlength="300" placeholder="Queda en la bitácora del cupón" /></div>`,
+        () => api(`/admin/cupones/${id}`, { method: 'PUT', body: { accion, motivo: document.getElementById('cp-motivo').value,
+            dias: Number((document.getElementById('cp-dias') || {}).value) || undefined } }),
+        accion === 'cancelar' ? 'Cancelar cupón' : 'Guardar');
+}
+
+let CLIENTE_SEL = null;
+function darCupon() {
+    CLIENTE_SEL = null;
+    const lim = DATOS && DATOS.config.limite_rol;
+    modal(`<h3 style="margin-top:0">Dar un cupón</h3>
+        <div class="field" style="position:relative"><label>Cliente</label>
+            <input id="cp-cli" placeholder="Nombre o correo" autocomplete="off" />
+            <div id="cp-cli-sug" class="cup-sug" hidden></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
+            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" step="1" value="10" /></div>
+            <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" step="50" value="500" /></div>
+            <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
+            <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="30" /></div>
+            <div class="field"><label>Nombre que ve el cliente</label><input id="cp-desc" maxlength="160" value="Cupón de regalo" /></div>
+        </div>
+        <div class="field"><label>Motivo</label><input id="cp-motivo" maxlength="300" placeholder="Ej. compensación por un retraso, cliente frecuente…" /></div>
+        <p style="font-size:.78rem;color:var(--text-muted);margin:0">Le llega por correo y lo ve en Mis cupones.${lim ? ` Tu rol puede dar hasta ${lim.porcentaje}% (máximo ${formatoMoneda(lim.monto)}) o ${formatoMoneda(lim.monto)} fijos.` : ''}</p>`,
+        () => {
+            if (!CLIENTE_SEL) return Promise.reject(new Error('Elige al cliente de la lista'));
+            return api(`/admin/clientes/${CLIENTE_SEL.id}/cupones`, { method: 'POST', body: {
+                tipo: document.getElementById('cp-tipo').value, valor: Number(document.getElementById('cp-valor').value),
+                tope: Number(document.getElementById('cp-tope').value), minimo: Number(document.getElementById('cp-min').value),
+                dias: Number(document.getElementById('cp-dias').value), descripcion: document.getElementById('cp-desc').value,
+                motivo: document.getElementById('cp-motivo').value } });
+        }, 'Dar cupón');
+    document.getElementById('cp-tipo').onchange = (e) => { document.getElementById('cp-tope-w').style.display = e.target.value === 'porcentaje' ? '' : 'none'; };
+    const inp = document.getElementById('cp-cli'), sug = document.getElementById('cp-cli-sug');
+    let t;
+    inp.addEventListener('input', () => {
+        CLIENTE_SEL = null; clearTimeout(t);
+        t = setTimeout(async () => {
+            const q = inp.value.trim();
+            if (q.length < 2) { sug.hidden = true; return; }
+            let l = []; try { l = await api('/admin/cupones/clientes?q=' + encodeURIComponent(q)); } catch { /* nada */ }
+            sug.innerHTML = l.length ? l.map((c) => `<button type="button" data-id="${c.id}"><strong>${escHTML(c.nombre)}</strong><span>${escHTML(c.correo || '')}</span></button>`).join('')
+                : '<div class="cup-sug-vacio">Sin coincidencias</div>';
+            sug.hidden = false;
+            sug.querySelectorAll('button').forEach((b) => b.onclick = () => {
+                CLIENTE_SEL = l.find((c) => String(c.id) === b.dataset.id);
+                inp.value = `${CLIENTE_SEL.nombre} (${CLIENTE_SEL.correo || ''})`; sug.hidden = true;
+            });
+        }, 250);
+    });
+    inp.focus();
+}
+
+cargar();
+</script>
+</body>
+</html>

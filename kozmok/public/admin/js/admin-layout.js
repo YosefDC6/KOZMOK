@@ -65,6 +65,7 @@ const ADMIN_SECCIONES = [
     ] },
     { titulo: 'Tienda', home: '/admin/promociones.html', links: [
         { href: '/admin/promociones.html', key: 'promociones', ic: 'star',    label: 'Promociones', desc: 'Descuentos, vigencia y banner' },
+        { href: '/admin/cupones.html',     key: 'cupones',     ic: 'tag',     label: 'Cupones',     desc: 'Bienvenida, compensaciones y su uso' },
         { href: '/admin/impuestos.html',   key: 'impuestos',   ic: 'layers',  label: 'Impuestos',   desc: 'Configuración del cálculo' },
         { href: '/admin/monedero.html',    key: 'monedero',    ic: 'wallet',  label: 'Monedero',    desc: 'Saldos, recargas y ajustes' },
         { href: '/admin/pagos.html',       key: 'pagos',       ic: 'card',    label: 'Pagos',       desc: 'Pago de cada pedido' },

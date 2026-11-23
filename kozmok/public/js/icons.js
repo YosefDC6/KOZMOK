@@ -187,7 +187,7 @@
             el.innerHTML = window.mascotaKZK(Number(el.dataset.mascota) || 40, { variante: el.dataset.variante || 'clasico' });
         });
         // En la tienda, los avisos de "no hay nada aquí" llevan a la mascota.
-        if (!location.pathname.startsWith('/admin/')) {
+        if (!document.querySelector('meta[name="kz-panel"]')) {
             const ponerMascota = (raiz) => {
                 const lista = raiz.matches && raiz.matches('.empty-state') ? [raiz] : raiz.querySelectorAll ? raiz.querySelectorAll('.empty-state') : [];
                 lista.forEach((el) => {

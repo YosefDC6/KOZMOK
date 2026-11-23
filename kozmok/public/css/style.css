@@ -2113,9 +2113,19 @@ tr.mov-off td { opacity: .7; }
     inset: auto 0 0 0; width: auto; height: 5px; transform: none;
     background: linear-gradient(90deg, var(--c1), var(--c2), var(--c3));
 }
-.tj-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 8px; bottom: 6px; z-index: 0; transform: rotate(-6deg); filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
-.socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 160px; bottom: 10px; }
-.tj-mini.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 4px; bottom: 4px; }
+/* Tibu va en un hueco libre de cada tarjeta, sin tapar datos ni el QR */
+.tj-card.diseno-tiburon .tj-marca.tj-solo-tiburon { z-index: 0; transform: rotate(-6deg); filter: drop-shadow(0 5px 8px rgba(0,0,0,.35)); }
+.tj-card.diseno-tiburon .tj-marca.tj-solo-tiburon svg { width: auto; }
+.socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 196px; top: 62px; bottom: auto; }
+.socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon svg { height: 60px; }
+.club-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 26px; top: 50%; bottom: auto; transform: translateY(-58%) rotate(-6deg); }
+.club-card.diseno-tiburon .tj-marca.tj-solo-tiburon svg { height: 78px; }
+.tj-mini.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 8px; top: 50%; bottom: auto; transform: translateY(-60%) rotate(-6deg); }
+.tj-mini.diseno-tiburon .tj-marca.tj-solo-tiburon svg { height: 40px; }
+@media (max-width: 560px) {
+    .socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon { right: 20px; top: 58px; }
+    .socio-card.diseno-tiburon .tj-marca.tj-solo-tiburon svg { height: 52px; }
+}
 .tj-card.diseno-tiburon .socio-logo, .tj-card.diseno-tiburon .cc-logo {
     width: auto; padding: 0 8px; background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); color: #fff;
 }
@@ -3135,3 +3145,13 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .tk-cupon .tk-kv { margin: 0 0 2px; }
 .tk-cupon-acc { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 .tk-cupon-acc .btn { padding: 3px 8px; font-size: .74rem; }
+/* Panel > Cupones */
+.cup-config { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-panel-2); font-size: .84rem; color: var(--text-muted); }
+.cup-config strong { color: var(--text); }
+.cup-config .ic { flex-shrink: 0; margin-top: 2px; color: var(--accent-light); }
+.cup-sug { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 4px; }
+.cup-sug button { display: flex; flex-direction: column; align-items: flex-start; width: 100%; background: none; border: none; color: var(--text); padding: 7px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
+.cup-sug button:hover { background: var(--bg-panel-2); }
+.cup-sug button span, .cup-sug-vacio { font-size: .76rem; color: var(--text-muted); }
+.cup-sug-vacio { padding: 8px 10px; }
+.cup-bitacora { margin: 0; padding-left: 18px; font-size: .82rem; color: var(--text-muted); display: grid; gap: 4px; }

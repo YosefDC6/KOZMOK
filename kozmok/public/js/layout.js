@@ -872,5 +872,5 @@ document.addEventListener('DOMContentLoaded', () => {
     renderFooter();
     renderCookieConsent();
     // Regla de puntos del Club (nivel del cliente) para "+N pts" en el catálogo.
-    if (window.Club && !location.pathname.startsWith('/admin')) Club.cargar();
+    if (window.Club && !document.querySelector('meta[name="kz-panel"]')) Club.cargar();
 });

@@ -76,6 +76,7 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 
 ### Panel interno – TIENDA (Etapa 4: carrito y sus agregados)
 - **Promociones**: alta y edición de descuentos por **porcentaje** o **monto por pieza**, para todo el catálogo, por **categoría, marca y/o palabras del nombre** combinables (p. ej. Periféricos + Logitech + "mouse") o **eligiendo productos uno por uno**, con vista previa en vivo de los productos y su precio final. Vigencia (inicio–fin: el inicio no puede ser anterior a hoy y no cambia si ya empezó), activa/inactiva y "mostrar en el banner". Muestra situación (vigente, programada, vencida, inactiva), pedidos que la usaron y descuento otorgado. Se aplican solas en catálogo, carrito, checkout y órdenes del ERP (si a un producto le tocan varias, gana la que más descuenta).
+- **Cupones**: todos los cupones (bienvenida y los que da el equipo) con indicadores (disponibles, por vencer, usados, descuento otorgado y ventas con cupón), filtros, bitácora de cada cupón, extender / reactivar / cancelar con motivo y **Dar cupón** a cualquier cliente. Ventas y Soporte tienen tope; el administrador no.
 - **Impuestos** (solo admin): configurador del cálculo. Se aplican todos los activos sobre el subtotal ya con promociones (p. ej. subtotal 1000 + IVA 16 % = 1160). Cada pedido guarda su desglose (`impuestos_detalle`), así que cambiar un porcentaje no altera pedidos anteriores.
 - **Monedero**: saldo total en monederos, recargas y consumos del mes, gráfica de 6 meses, recargas por transferencia por confirmar o rechazar, ficha de cada cliente con su historial, **ajustes manuales** (abono o cargo con motivo, quedan a nombre de quien los hizo) y bloqueo del monedero.
 - **Facturas**: CFDI 4.0 de los pedidos de la tienda y del ERP, timbrados con Facturama (PDF y XML).
@@ -84,6 +85,7 @@ Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo
 
 ### Seguridad (Etapa 5)
 Detalle de cada ataque, cómo se prueba y qué lo detiene en [`SEGURIDAD.md`](SEGURIDAD.md).
+- **Panel en dirección secreta** (`panel.js`): las pantallas del panel no se sirven en `/admin/` (da 404, también con mayúsculas o codificada) sino en `/<PANEL_RUTA>/`; los enlaces de las pantallas, las respuestas de `/api/admin` y los correos al equipo se traducen solos. Es una capa extra sobre la sesión, los dos pasos y los permisos.
 - **Fuerza bruta**: la cuenta se bloquea 15 min tras 5 contraseñas equivocadas y la IP 30 min tras 20 fallos; máximo 15 intentos por minuto, retraso progresivo y el mismo mensaje exista o no el correo.
 - **Robo de credenciales y de sesión**: la sesión va en una cookie `HttpOnly; SameSite=Strict` con un token aleatorio (en la base solo su hash), vence, se cierra por inactividad y queda atada al navegador: si alguien la copia a otro, se revoca. Contraseñas con bcrypt y política fuerte (8+ caracteres, mayúsculas, minúsculas, número y símbolo).
 - **Verificación en dos pasos**: código de una app autenticadora (Google o Microsoft Authenticator) o por correo; obligatoria en el panel y opcional en la tienda. El administrador la reinicia si alguien pierde su celular.
@@ -108,7 +110,7 @@ Roles empresariales del ERP: **Administrador**, **Ventas**, **Logística** y **S
 | Rol | Entra a | Acceso |
 |---|---|---|
 | **Administrador** | Dashboard CRM | Todo: CRM, SCM, ERP y Tienda (incluidos Impuestos), cuentas y equipo, Nivel ERP y Panel por rol |
-| **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes, Promociones, Monedero, Pagos y Mi actividad |
+| **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes, Promociones, Cupones, Monedero, Pagos y Mi actividad |
 | **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, captura, surte y envía) y Reportes |
 | **Soporte** | Centro de soporte | Tickets, Garantías, Devoluciones, Evaluaciones, Clientes (solo consulta: ficha, interacciones y confirmar correo), Interacciones, Pedidos, Facturas y Cupones del cliente |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
@@ -162,10 +164,10 @@ SMTP_PASSWORD=abcd efgh ijkl mnop
 Si pruebas desde un celular, pon `URL_PUBLICA=http://192.168.x.x:3000` para que el enlace de recuperación abra desde ese celular (con `localhost` solo abre en la computadora del servidor).
 
 - **Tienda:** http://localhost:3000
-- **Panel interno:** http://localhost:3000/admin/login.html
+- **Panel interno:** en una **dirección secreta**, `http://localhost:3000/<PANEL_RUTA>/login.html`; la consola la muestra al arrancar. `/admin/` responde "página no encontrada". Si el `.env` no trae `PANEL_RUTA`, el servidor inventa una al azar la primera vez y la guarda en `.panel-ruta` (no se sube a GitHub); `PANEL_RUTA=admin` vuelve a la dirección de antes. Los correos al equipo ya llevan la ruta correcta.
 - Las gráficas del panel usan Chart.js instalado con `npm install` (se sirve en `/vendor/chart.js/`), así funcionan sin internet; si falta, se intenta desde cdnjs y, si tampoco carga, cada gráfica muestra un aviso en vez de un error. (a propósito, no hay enlace desde la tienda)
 - **Desde un celular de prueba:** conéctalo a la misma red Wi-Fi que la computadora y abre la dirección que muestra la consola al arrancar (`Desde un celular en la misma red Wi-Fi abre: http://192.168.x.x:3000`). En Windows, la primera vez que corre `npm start` sale un aviso del Firewall: marca **Redes privadas** y dale **Permitir acceso** (y que la red Wi-Fi esté como *Privada*). Si la red es de la escuela y no conecta, puede bloquear la comunicación entre equipos: usa el hotspot de un celular. Con `HOST=127.0.0.1` en el `.env` solo se abre desde la computadora.
-- **Dirección fija aunque cambie la red:** usa **http://kozmok.local:3000** (panel: `/admin/login.html`). El servidor anuncia ese nombre en la red local (mDNS, `mdns.js`, sin dependencias) con la IP que tenga en ese momento. Como el navegador guarda contraseñas, cuentas recordadas, tema y carrito *por dirección*, con la IP todo eso se "pierde" al cambiar de red; con el nombre fijo no. Si la red cambia con el servidor encendido, la consola muestra las direcciones nuevas. `MDNS_NOMBRE` en el `.env` cambia el nombre (`no` lo apaga); si algún celular no abre el nombre, usa la IP.
+- **Dirección fija aunque cambie la red:** usa **http://kozmok.local:3000** (panel: `/<PANEL_RUTA>/login.html`). El servidor anuncia ese nombre en la red local (mDNS, `mdns.js`, sin dependencias) con la IP que tenga en ese momento. Como el navegador guarda contraseñas, cuentas recordadas, tema y carrito *por dirección*, con la IP todo eso se "pierde" al cambiar de red; con el nombre fijo no. Si la red cambia con el servidor encendido, la consola muestra las direcciones nuevas. `MDNS_NOMBRE` en el `.env` cambia el nombre (`no` lo apaga); si algún celular no abre el nombre, usa la IP.
 
 Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, todo está listo.
 
@@ -205,6 +207,7 @@ KOZMOK/
     ├── db.config.js          # conexión a PostgreSQL (lee el .env)
     ├── seguridad.js          # Etapa 5: sesiones, bloqueos, filtros SQL/XSS, CSP
     ├── cupones.js            # cupones de bienvenida y de Soporte
+    ├── panel.js              # sirve el panel en su dirección secreta (PANEL_RUTA)
     ├── .env.example          # plantilla de la configuración (contraseña de la base, límites)
     ├── pruebas-seguridad/    # ataques de prueba contra el servidor local
     ├── db/database.sql       # esquema + triggers + datos de ejemplo

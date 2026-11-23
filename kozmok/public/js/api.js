@@ -3,13 +3,16 @@
 
 const API_BASE = '/api';
 
+// Dirección del panel (la pone el servidor en cada pantalla del panel;
+// en la tienda no existe).
+const RUTA_PANEL = (document.querySelector('meta[name="kz-panel"]') || {}).content || '';
 async function api(path, options = {}) {
     // Etapa 5: la sesión viaja sola en una cookie HttpOnly (kz_sesion en la
     // tienda, kz_admin en el panel) que el JavaScript no puede leer, así
     // que un script inyectado tampoco puede robarla. Las pantallas del panel
     // avisan con "X-Kz-Panel" para que, si el navegador tiene las dos
     // sesiones abiertas, las rutas compartidas usen la del equipo.
-    const esPanel = location.pathname.startsWith('/admin/');
+    const esPanel = !!RUTA_PANEL;
     const res = await fetch(API_BASE + path, {
         credentials: 'same-origin',
         headers: {
@@ -22,9 +25,9 @@ async function api(path, options = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
-        if (res.status === 401 && location.pathname.startsWith('/admin/') && !location.pathname.endsWith('login.html')) {
+        if (res.status === 401 && RUTA_PANEL && !location.pathname.endsWith('login.html')) {
             localStorage.removeItem('kz_usuario');
-            location.href = '/admin/login.html';
+            location.href = RUTA_PANEL + 'login.html';
         }
         const err = new Error(data.message || data.error || 'Error en la solicitud');
         err.status = res.status;
@@ -335,8 +338,8 @@ const ReglasPass = {
 window.addEventListener('pageshow', (ev) => {
     if (!ev.persisted) return;   // carga normal: cada página revisa su sesión
     const p = location.pathname;
-    if (p.startsWith('/admin/') && !/\/(login|activar|recuperar|restablecer)\.html$/.test(p)) {
-        if (!Sesion.usuario()) { location.replace('/admin/login.html'); return; }
+    if (RUTA_PANEL && !/\/(login|activar|recuperar|restablecer)\.html$/.test(p)) {
+        if (!Sesion.usuario()) { location.replace(RUTA_PANEL + 'login.html'); return; }
         api('/admin/whoami').catch(() => {});   // si la sesión ya no existe, api() manda al login
         return;
     }

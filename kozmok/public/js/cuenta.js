@@ -68,7 +68,12 @@ async function montarCuenta(key, render) {
     try {
         await render(panel, PERFIL);
     } catch (e) {
-        panel.innerHTML = `<div class="empty-state">${e.message}</div>`;
+        // Un 404 de la API es que esta sección todavía no existe en el servidor
+        // (por ejemplo, se actualizó la página pero no se reinició el servidor).
+        const msg = e.status === 404 || e.status >= 500 || !e.status
+            ? 'No pudimos cargar esta sección. Intenta de nuevo en unos minutos.'
+            : e.message;
+        panel.innerHTML = `<div class="empty-state">${escHTML(msg)}<br><button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="location.reload()">Reintentar</button></div>`;
     }
 }
 window.montarCuenta = montarCuenta;

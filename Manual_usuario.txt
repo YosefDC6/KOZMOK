@@ -55,12 +55,30 @@ Levantar el servidor
 
 Direcciones
    - Tienda (clientes):     http://localhost:3000/
-   - Panel interno:         http://localhost:3000/admin/login.html
+   - Panel interno:         http://localhost:3000/<ruta-del-panel>/login.html
+
+Direccion secreta del panel
+   - El panel ya NO se abre en /admin/ : esa direccion muestra "pagina no
+     encontrada", como si no existiera. Se abre en una ruta dificil de
+     adivinar, por ejemplo  http://kozmok.local:3000/kz-3f9a1c0b7d2e4a61/login.html
+   - Al arrancar, la consola dice cual es (linea "Panel de admin"). Si en el
+     .env no hay PANEL_RUTA, el servidor inventa una al azar la primera vez y
+     la guarda en el archivo  kozmok/.panel-ruta  (no se sube a GitHub), asi
+     que no cambia al reiniciar. Para elegirla: PANEL_RUTA=mi-ruta-secreta
+     (letras, numeros y guiones, de 4 a 64). PANEL_RUTA=admin regresa a la
+     direccion de antes.
+   - Compartela solo con el equipo y guardala en favoritos. Los correos al
+     equipo (avisos, activar cuenta, restablecer contrasena) ya traen la
+     ruta correcta.
+   - En este manual, donde dice <ruta-del-panel> o /admin/... (por ejemplo
+     /admin/pedidos.html?open=5) se refiere a esa ruta.
+   - Es una capa extra: el panel sigue pidiendo contrasena, verificacion en
+     dos pasos y permisos por rol en cada accion.
 
 Probar desde celulares
    1. Conecta el celular a la MISMA red Wi-Fi que la computadora.
    2. Abre en el navegador del celular la direccion que muestra la consola
-      (http://192.168.x.x:3000). El panel: la misma con /admin/login.html.
+      (http://192.168.x.x:3000). El panel: la misma con /<ruta-del-panel>/login.html.
    3. Windows: la primera vez que corre npm start aparece el aviso del
       Firewall de Windows Defender; marca "Redes privadas" y "Permitir
       acceso". La red Wi-Fi debe estar como "Privada" (Configuracion -> Red
@@ -71,7 +89,7 @@ Probar desde celulares
       equipos entre si: comparte internet desde un celular (hotspot) y
       conecta ahi la computadora y los celulares de prueba.
    - NOMBRE FIJO: usa  http://kozmok.local:3000  (panel:
-     http://kozmok.local:3000/admin/login.html). El servidor anuncia ese
+     http://kozmok.local:3000/<ruta-del-panel>/login.html). El servidor anuncia ese
      nombre en la red con la IP que tenga en ese momento, asi que sirve
      aunque cambie la red o la IP. Importa porque el navegador guarda todo
      POR DIRECCION: con la IP, al cambiar de red se "pierden" la contrasena
@@ -101,7 +119,7 @@ CLIENTE
    - Compra en la tienda. Solo ve y edita SUS datos, pedidos, carrito, puntos.
    - Nunca entra al panel interno.
 
-ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
+ROLES EMPRESARIALES (entran por /<ruta-del-panel>/login.html; el menu se adapta al rol)
    Hay cuatro, como en un ERP comercial (SAP, Odoo, Dynamics):
    - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
                      Nivel ERP y Panel por rol. Entra al
@@ -109,7 +127,8 @@ ROLES EMPRESARIALES (entran por /admin/login.html; el menu se adapta al rol)
    - VENTAS        : Inicio (Dashboard CRM), Clientes (CRM), Productos
                      (SCM, solo consulta), Ordenes de clientes (ERP, SI
                      CAPTURA ordenes), Reportes (ERP), Promociones,
-                     Monedero, Pagos, Facturas, Devoluciones y Mi actividad.
+                     Cupones, Monedero, Pagos, Facturas, Devoluciones y Mi
+                     actividad.
                      Cuenta: laura.ventas@kozmok.mx
    - LOGISTICA     : Inicio (Dashboard SCM), Productos (SCM, con alta y
                      edicion), Inventario (SCM, con movimientos y pedidos de
@@ -157,7 +176,7 @@ Cuentas del panel (tras cargar db/database.sql)
    | Soporte       | Sofía Ramírez| sofia.soporte@kozmok.mx    | Soporte#KZ2026   |
    +---------------+--------------+----------------------------+------------------+
 
-   - Las cuatro entran por /admin/login.html y las cuatro piden cambiar la
+   - Las cuatro entran por /<ruta-del-panel>/login.html y las cuatro piden cambiar la
      contraseña la primera vez (esas contraseñas iniciales vienen en este
      manual, asi que cualquiera que lo lea las conoce).
    - Ventas entra al Dashboard CRM; Logistica entra al Dashboard SCM;
@@ -255,7 +274,7 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      numero y un simbolo; no puede ser de las mas usadas ni contener el
      correo o el nombre.
    - Si la sesion del panel vence, cualquier pantalla regresa sola a
-     /admin/login.html.
+     /<ruta-del-panel>/login.html.
    - "Cerrar sesion": en la tienda esta en el menu de la cuenta (arriba a la
      derecha); en el panel, al pie de la barra lateral.
 
@@ -760,7 +779,7 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 
 
 ===============================================================================
- 4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/admin/login.html)
+ 4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/<ruta-del-panel>/login.html)
 ===============================================================================
 
 La barra lateral esta agrupada en cinco bloques: CRM, SCM, ERP, TIENDA y
@@ -1595,6 +1614,29 @@ NAVEGACION RAPIDA EN EL PANEL
         detalle de su pedido. Cada paso queda en la auditoria. Las
         devoluciones no se editan ni se borran (la base lo impide).
 
+   4.15g CUPONES  (admin/cupones.html)  [Admin, Ventas y Soporte]
+      - Indicadores: cupones disponibles (y cuantos vencen en 7 dias),
+        usados (y dados este mes), cupones de bienvenida y que % ya se uso,
+        y descuento otorgado (total, del mes y ventas hechas con cupon).
+      - Recuadro con la configuracion del cupon de bienvenida (.env
+        CUPON_BIENVENIDA_*) y, si no eres administrador, lo maximo que tu
+        rol puede dar.
+      - Tabla de todos los cupones: codigo, cliente (enlace a su ficha),
+        descuento y compra minima, origen (Bienvenida o Equipo, con quien lo
+        dio), vigencia, estado y en que pedido se uso (con lo que desconto).
+        Busqueda por codigo, cliente o correo; filtros por estado
+        (disponibles, vencen en 7 dias, usados, vencidos, cancelados) y por
+        origen.
+      - Lupa: detalle del cupon con su BITACORA (cada cambio con fecha,
+        quien y motivo).
+      - "Extender", "Reactivar" y "Cancelar", igual que en el ticket (ver 9);
+        todo pide motivo.
+      - "Dar cupon": se busca al cliente por nombre o correo y se elige
+        porcentaje (con descuento maximo) o monto fijo, compra minima,
+        vigencia, el nombre que vera el cliente y el motivo. Le llega por
+        correo y aparece en Mis cupones. Ventas y Soporte tienen tope
+        (CUPON_SOPORTE_*); el administrador no.
+
    PRODUCTOS DESACTIVADOS
       - Eliminar un producto con ventas o movimientos lo DESACTIVA. El panel
         avisa cuantos pedidos en proceso lo incluyen (se surten normal) y en
@@ -1610,13 +1652,13 @@ NAVEGACION RAPIDA EN EL PANEL
  5. ROLES INTERNOS  -  QUE VE Y HACE CADA UNO
 ===============================================================================
 
-Todos entran por /admin/login.html. El menu lateral se arma segun el rol.
+Todos entran por /<ruta-del-panel>/login.html. El menu lateral se arma segun el rol.
 
 VENTAS
    Ve: Inicio (Dashboard CRM), Clientes (CRM), Productos (SCM, solo
    consulta), Ordenes de clientes (ERP, y SI puede capturar ordenes
-   nuevas), Reportes (ERP), Promociones, Monedero y Pagos (TIENDA) y Mi
-   actividad. No ve nada mas (Impuestos es solo del administrador).
+   nuevas), Reportes (ERP), Promociones, Cupones, Monedero y Pagos (TIENDA)
+   y Mi actividad. No ve nada mas (Impuestos es solo del administrador).
    Flujo tipico:
    1. Inicio: clientes en riesgo y productos mas vendidos.
    2. Clientes: buscar al cliente, abrir su ficha y registrar ahi la

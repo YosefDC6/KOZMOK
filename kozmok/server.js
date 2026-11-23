@@ -53,7 +53,7 @@ function ipsDeRed() {
 const { usaValoresPorDefecto, ...configPg } = dbConfig;
 const pool = new Pool(configPg);
 // Notificaciones del equipo del panel (campana y correo).
-const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null) });
+const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null), rutaPanel: (u) => panel.url(u) });
 // Cupones de descuento de los clientes (bienvenida y los que da Soporte).
 const cupones = require('./cupones.js')({ pool, enviarCorreo, urlBase: () => urlBase(null) });
 
@@ -95,6 +95,10 @@ app.use((req, res, next) => {
     };
     next();
 });
+// Panel interno en una dirección secreta (PANEL_RUTA); /admin/... da 404.
+const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public'), dirProyecto: __dirname });
+app.use(panel.middleware);
+app.use(panel.json);
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
 // HTML/JS/CSS se revalidan (ETag), así una actualización se ve al momento.
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -4001,7 +4005,7 @@ const PERMISOS_API = [
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
     { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
-    { ruta: /^\/cupones\/\d+$/,                         metodos: TODO, permisos: ['cupones'] },
+    { ruta: /^\/cupones(\/\d+|\/clientes)?$/,           metodos: TODO, permisos: ['cupones'] },
     { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -7568,7 +7572,7 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     const u = result.rows[0];
     // Bienvenida: dónde entrar y qué esperar. La contraseña NO va en el
     // correo (se la da quien creó la cuenta) y se cambia al primer acceso.
-    const enlace = `${urlPublica(req)}/admin/login.html`;
+    const enlace = `${urlPublica(req)}${panel.url('/admin/login.html')}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Te dieron acceso al panel de Kozmok',
@@ -7608,7 +7612,7 @@ app.post('/api/admin/usuarios/:id/activar', requireAdmin, asyncRoute(async (req,
         `INSERT INTO activaciones_usuario (usuario_id, token_hash, expira, creado_por, ip)
          VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' hours')::interval, $4, $5)`,
         [u.id, seg.sha256(token), String(ACTIVACION_HORAS), req.usuario.id, seg.ipDe(req)]);
-    const enlace = `${urlPublica(req)}/admin/activar.html?token=${token}`;
+    const enlace = `${urlPublica(req)}${panel.url('/admin/activar.html')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Activa tu cuenta del panel de Kozmok',
@@ -8543,7 +8547,7 @@ app.post('/api/auth/recuperar-usuario', limiteAuth, captchaMw, asyncRoute(async 
     const token = crypto.randomBytes(32).toString('base64url');
     await pool.query(`INSERT INTO recuperaciones_usuario (usuario_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
         [u.id, seg.sha256(token), seg.ipDe(req)]);
-    const enlace = `${urlPublica(req)}/admin/restablecer.html?token=${token}`;
+    const enlace = `${urlPublica(req)}${panel.url('/admin/restablecer.html')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'recuperacion',
         asunto: 'Restablece tu contraseña del panel de Kozmok',
@@ -9026,7 +9030,7 @@ app.use((req, res) => {
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
-    console.log(`   Panel de admin:  http://localhost:${PORT}/admin/login.html`);
+    console.log(`   Panel de admin:  http://localhost:${PORT}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
     if (HOST === '0.0.0.0' || HOST === '::') {
         const mostrarRed = (titulo) => {
             const ips = ipsDeRed();
@@ -9035,12 +9039,12 @@ app.listen(PORT, HOST, async () => {
             if (MDNS_NOMBRE) {
                 console.log(`   Con nombre fijo (no cambia aunque cambie la IP):`);
                 console.log(`   Tienda:          http://${MDNS_NOMBRE}:${PORT}`);
-                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}:${PORT}/admin/login.html`);
+                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}:${PORT}${panel.prefijo}login.html`);
                 console.log('   Por IP (si algún celular no abre el nombre):');
             }
             ips.forEach((x) => {
                 console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
-                console.log(`   Panel de admin:  http://${x.ip}:${PORT}/admin/login.html`);
+                console.log(`   Panel de admin:  http://${x.ip}:${PORT}${panel.prefijo}login.html`);
             });
         };
         mostrarRed('Desde un celular en la misma red Wi-Fi abre:');

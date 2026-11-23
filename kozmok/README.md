@@ -25,6 +25,7 @@ kozmok/
 ├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
 ├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
 ├── cupones.js            # cupones: bienvenida, compensaciones de Soporte y su uso en el checkout
+├── panel.js              # panel en dirección secreta (PANEL_RUTA): sirve public/admin y traduce enlaces
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
@@ -76,7 +77,7 @@ npm install
 3. Carga el esquema: `psql -U postgres -d kozmok -f db/database.sql`. Se
    puede repetir: borra todo y lo recrea.
 4. `npm start`. Tienda en http://localhost:3000 y panel en
-   http://localhost:3000/admin/login.html.
+   http://localhost:3000/<PANEL_RUTA>/login.html (la consola muestra la ruta).
 
 La base empieza sin clientes ni pedidos. Trae tres cuentas del panel (una
 por rol) que piden cambiar la contraseña al entrar; están en
@@ -210,7 +211,22 @@ reparte como descuento. Al cancelar el pedido el cupón vuelve a quedar
 disponible. Rutas: `GET /api/clientes/:id/cupones`,
 `GET|POST /api/admin/clientes/:id/cupones` y `PUT /api/admin/cupones/:id`
 (`extender`, `reactivar`, `cancelar`; siempre con motivo, permiso `cupones`).
-Soporte tiene tope en lo que regala (`CUPON_SOPORTE_*`).
+Ventas y Soporte tienen tope en lo que regalan (`CUPON_SOPORTE_*`).
+La pantalla del panel es `admin/cupones.html` (`GET /api/admin/cupones` con
+filtros `q`, `estado`, `origen`; `GET /api/admin/cupones/clientes?q=` para
+elegir a quién darlo).
+
+## Dirección secreta del panel
+
+`panel.js` sirve `public/admin/` en `/<PANEL_RUTA>/` (del `.env`, o generada y
+guardada en `.panel-ruta`). `/admin/...` responde 404 (se normaliza: mayúsculas,
+`%61`, barras invertidas). Al servir HTML/JS/CSS del panel cambia los enlaces a
+archivos (`/admin/x.html`, `/admin/js/y.js`) por la ruta secreta y agrega
+`<meta name="kz-panel">`, que `api.js`, `theme.js`, `icons.js` y `layout.js` usan
+para saber que están en el panel. Las llamadas `api('/admin/...')` no cambian.
+`panel.json` hace lo mismo con las cadenas de las respuestas de `/api/admin`
+(enlaces de notificaciones y de la bandeja de soporte) y `panel.url()` con los
+correos al equipo.
 
 Los tickets aceptan hasta 3 fotos por mensaje (`ticket_adjuntos`, mismas
 validaciones que los reclamos de garantía) y se ven en

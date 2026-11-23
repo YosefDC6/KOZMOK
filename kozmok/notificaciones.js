@@ -23,7 +23,7 @@ const CATEGORIAS = [
 ];
 const POR_CLAVE = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c]));
 
-module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, urlBase }) {
+module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, urlBase, rutaPanel = (u) => u }) {
     const ve = (rol, cat) => (POR_CLAVE[cat] || { permisos: [] }).permisos.some((k) => puedeVer(rol, k));
     const categoriasDe = (rol) => CATEGORIAS.filter((c) => ve(rol, c.clave));
     const prefsDe = (u) => {
@@ -81,8 +81,8 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
         const base = urlBase();
         for (const { u, lista } of correoDe.values()) {
             const asunto = lista.length === 1 ? `Kozmok · ${lista[0].titulo}` : `Kozmok · Tienes ${lista.length} avisos nuevos en el panel`;
-            const lineas = lista.map((e) => `- ${e.titulo}${e.cuerpo ? ` — ${e.cuerpo}` : ''}${e.url ? `\n  ${base}${e.url}` : ''}`).join('\n');
-            const destino = lista.length === 1 && lista[0].url ? `${base}${lista[0].url}` : `${base}/admin/login.html`;
+            const lineas = lista.map((e) => `- ${e.titulo}${e.cuerpo ? ` — ${e.cuerpo}` : ''}${e.url ? `\n  ${base}${rutaPanel(e.url)}` : ''}`).join('\n');
+            const destino = base + rutaPanel(lista.length === 1 && lista[0].url ? lista[0].url : '/admin/login.html');
             await enviarCorreo(pool, {
                 para: u.email, tipo: 'panel', asunto,
                 cuerpo: `Hola ${u.nombre}:\n\n${lista.length === 1 ? 'Hay algo nuevo en el panel de Kozmok:' : 'Hay cosas nuevas en el panel de Kozmok:'}\n\n${lineas}\n\n`

@@ -169,6 +169,53 @@ module.exports = function crearCupones({ pool, enviarCorreo, urlBase }) {
             res.json(r.rows.map(publico));
         }));
 
+        // ---- Panel: pantalla Cupones (Tienda) ----
+        // Todos los cupones con filtros, indicadores y la configuración vigente.
+        app.get('/api/admin/cupones', asyncRoute(async (req, res) => {
+            const q = String(req.query.q || '').trim().slice(0, 80);
+            const est = String(req.query.estado || '');
+            const origen = String(req.query.origen || '');
+            const cond = [], vals = [];
+            if (q) { vals.push(`%${q}%`); cond.push(`(cu.codigo ILIKE $${vals.length} OR c.nombre ILIKE $${vals.length} OR c.correo ILIKE $${vals.length})`); }
+            if (origen === 'bienvenida' || origen === 'soporte') { vals.push(origen); cond.push(`cu.origen = $${vals.length}`); }
+            if (est === 'disponible') cond.push(`cu.estado = 'disponible' AND (cu.vence IS NULL OR cu.vence >= CURRENT_TIMESTAMP)`);
+            else if (est === 'vencido') cond.push(`cu.estado = 'disponible' AND cu.vence < CURRENT_TIMESTAMP`);
+            else if (est === 'por_vencer') cond.push(`cu.estado = 'disponible' AND cu.vence BETWEEN CURRENT_TIMESTAMP AND CURRENT_TIMESTAMP + INTERVAL '7 days'`);
+            else if (est === 'usado' || est === 'cancelado') { vals.push(est); cond.push(`cu.estado = $${vals.length}`); }
+            const r = await pool.query(
+                `SELECT cu.*, p.numero_orden, p.descuento_cupon, u.nombre AS usuario_nombre, c.nombre AS cliente_nombre, c.correo AS cliente_correo
+                   FROM cupones cu JOIN clientes c ON c.id = cu.cliente_id
+                   LEFT JOIN pedidos p ON p.id = cu.pedido_id LEFT JOIN usuarios u ON u.id = cu.usuario_id
+                  ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''} ORDER BY cu.fecha DESC LIMIT 300`, vals);
+            const k = (await pool.query(`SELECT
+                    COUNT(*) FILTER (WHERE estado = 'disponible' AND (vence IS NULL OR vence >= CURRENT_TIMESTAMP))::int AS disponibles,
+                    COUNT(*) FILTER (WHERE estado = 'disponible' AND vence BETWEEN CURRENT_TIMESTAMP AND CURRENT_TIMESTAMP + INTERVAL '7 days')::int AS por_vencer,
+                    COUNT(*) FILTER (WHERE estado = 'usado')::int AS usados,
+                    COUNT(*) FILTER (WHERE origen = 'bienvenida')::int AS bienvenida,
+                    COUNT(*) FILTER (WHERE origen = 'bienvenida' AND estado = 'usado')::int AS bienvenida_usados,
+                    COUNT(*) FILTER (WHERE fecha >= date_trunc('month', CURRENT_TIMESTAMP))::int AS dados_mes
+                  FROM cupones`)).rows[0];
+            const d = (await pool.query(`SELECT COALESCE(SUM(p.descuento_cupon), 0) AS total,
+                    COALESCE(SUM(p.descuento_cupon) FILTER (WHERE p.fecha_pedido >= date_trunc('month', CURRENT_TIMESTAMP)), 0) AS mes,
+                    COALESCE(SUM(p.total), 0) AS ventas
+                  FROM pedidos p WHERE p.cupon_id IS NOT NULL AND p.estado <> 'cancelado'`)).rows[0];
+            res.json({
+                resumen: { ...k, descuento_total: Number(d.total), descuento_mes: Number(d.mes), ventas_con_cupon: Number(d.ventas) },
+                config: { bienvenida: CFG.valor > 0 ? { beneficio: beneficio(CFG), minimo: CFG.minimo, dias: CFG.dias } : null,
+                    limite_rol: req.usuario.rol === 'admin' ? null : { porcentaje: CFG.soportePorcentajeMax, monto: CFG.soporteMontoMax } },
+                cupones: r.rows.map((c) => ({ ...publico(c), cliente_id: c.cliente_id, cliente_nombre: c.cliente_nombre, cliente_correo: c.cliente_correo,
+                    motivo: c.motivo, usuario_nombre: c.usuario_nombre, descuento_aplicado: c.descuento_cupon != null ? Number(c.descuento_cupon) : null })),
+            });
+        }));
+        // Buscar a quién darle un cupón (sin necesitar la sección Clientes).
+        app.get('/api/admin/cupones/clientes', asyncRoute(async (req, res) => {
+            const q = String(req.query.q || '').trim().slice(0, 80);
+            if (q.length < 2) return res.json([]);
+            const r = await pool.query(`SELECT id, nombre, correo FROM clientes WHERE estado_cliente = 'activo'
+                AND (nombre ILIKE $1 OR correo ILIKE $1) ORDER BY nombre LIMIT 8`, [`%${q}%`]);
+            res.json(r.rows);
+        }));
+
         // ---- Panel (Soporte / Administrador) ----
         app.get('/api/admin/clientes/:id/cupones', asyncRoute(async (req, res) => {
             const r = await pool.query(`${SELECT} WHERE cu.cliente_id = $1 ORDER BY cu.fecha DESC`, [req.params.id]);
@@ -188,10 +235,10 @@ module.exports = function crearCupones({ pool, enviarCorreo, urlBase }) {
             if (motivo.length < 5) return res.status(400).json({ message: 'Escribe el motivo (queda en la bitácora)' });
             const esAdmin = req.usuario.rol === 'admin';
             if (!esAdmin && tipo === 'porcentaje' && (valor > CFG.soportePorcentajeMax || !(tope > 0) || tope > CFG.soporteMontoMax)) {
-                return res.status(403).json({ message: `Soporte puede dar hasta ${CFG.soportePorcentajeMax}% con un tope de ${pesos(CFG.soporteMontoMax)}. Para más, pídeselo a un administrador.` });
+                return res.status(403).json({ message: `Tu rol puede dar hasta ${CFG.soportePorcentajeMax}% con un tope de ${pesos(CFG.soporteMontoMax)}. Para más, pídeselo a un administrador.` });
             }
             if (!esAdmin && tipo === 'monto' && valor > CFG.soporteMontoMax) {
-                return res.status(403).json({ message: `Soporte puede dar cupones de hasta ${pesos(CFG.soporteMontoMax)}. Para más, pídeselo a un administrador.` });
+                return res.status(403).json({ message: `Tu rol puede dar cupones de hasta ${pesos(CFG.soporteMontoMax)}. Para más, pídeselo a un administrador.` });
             }
             const c = (await pool.query('SELECT id, nombre, correo FROM clientes WHERE id = $1', [req.params.id])).rows[0];
             if (!c) return res.status(404).json({ message: 'Cliente no encontrado' });
