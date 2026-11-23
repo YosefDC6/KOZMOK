@@ -23,6 +23,7 @@ kozmok/
 ├── server.js              # API REST (Express), migraciones al arrancar y tareas cada minuto
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
 ├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
+├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios

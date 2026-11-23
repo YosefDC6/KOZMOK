@@ -70,9 +70,20 @@ Probar desde celulares
    4. Si no carga en una red de la escuela, esa red puede aislar a los
       equipos entre si: comparte internet desde un celular (hotspot) y
       conecta ahi la computadora y los celulares de prueba.
-   - La IP puede cambiar al cambiar de red: usa siempre la que imprime la
-     consola. Para que solo se abra en la computadora pon HOST=127.0.0.1
-     en el .env.
+   - NOMBRE FIJO: usa  http://kozmok.local:3000  (panel:
+     http://kozmok.local:3000/admin/login.html). El servidor anuncia ese
+     nombre en la red con la IP que tenga en ese momento, asi que sirve
+     aunque cambie la red o la IP. Importa porque el navegador guarda todo
+     POR DIRECCION: con la IP, al cambiar de red se "pierden" la contrasena
+     guardada, la cuenta recordada, el tema y el carrito sin sesion (la
+     cuenta sigue en la base; solo el navegador no la relaciona). Con el
+     nombre fijo eso ya no pasa. En la misma computadora tambien sirve
+     http://localhost:3000.
+     Otro nombre: MDNS_NOMBRE=mitienda en el .env; apagarlo: MDNS_NOMBRE=no.
+     Si algun celular no abre el nombre, usa la IP que imprime la consola.
+   - Si cambia la red con el servidor encendido, la consola muestra las
+     direcciones nuevas sola (no hay que reiniciar). Para que solo se abra
+     en la computadora pon HOST=127.0.0.1 en el .env.
    - Las pruebas de ataque tambien se pueden correr desde otra computadora
      de la misma red contra esta direccion (ver 4.16).
      (no hay enlace desde la tienda; se entra por URL, a proposito)
@@ -518,6 +529,12 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 
    Mi monedero (monedero.html)
       - Saldo disponible en pesos (y lo que esta por acreditar).
+      - Arriba dice de cuanto puede ser la siguiente recarga y, si no es el
+        limite por recarga, que limite la topa (saldo maximo, maximo del dia
+        o del mes). "Otro monto" no deja escribir mas que ese tope (lo ajusta
+        y lo explica). Si ya no se puede recargar (saldo maximo alcanzado,
+        maximo de recargas del dia o del mes) se muestra el motivo y no
+        aparece el formulario.
       - Recargar: montos rapidos ($100, $200, $500, $1,000) u otro monto
         (segun los limites del monedero) y metodo: PayPal o tarjeta (botones
         de PayPal; el saldo sube cuando PayPal confirma el cobro) o

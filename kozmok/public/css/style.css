@@ -2415,6 +2415,11 @@ tr.mov-off td { opacity: .7; }
 .mon-limites { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-panel-2); border-left: 3px solid var(--accent); font-size: .86rem; }
 .mon-limites small { display: block; margin-top: 4px; color: var(--text-muted); font-size: .76rem; line-height: 1.45; }
 .mon-monto:disabled { opacity: .4; cursor: not-allowed; }
+.mon-motivo { font-style: normal; color: var(--text-muted); font-size: .8rem; }
+.mon-aviso-monto { display: block; margin-top: 6px; color: var(--warning); font-size: .8rem; }
+.mon-sin-recarga { border-left-color: var(--warning); }
+.mon-sin-recarga > span { display: flex; align-items: center; gap: 6px; color: var(--warning); }
+.mon-sin-recarga p { margin: 6px 0 0; font-size: .86rem; line-height: 1.45; }
 
 /* Términos y condiciones */
 .terminos { max-width: 1180px; }

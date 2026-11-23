@@ -91,13 +91,27 @@ function pintarRecarga() {
         return;
     }
     const L = MON.limites || {};
-    const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+    const tope = topeRecarga();
+    const reglas = `Límites: ${formatoMoneda(L.por_operacion)} por recarga · ${formatoMoneda(L.por_dia)} y ${L.operaciones_dia} recargas en 24 h · ${formatoMoneda(L.por_mes)} al mes · saldo máximo ${formatoMoneda(L.saldo_maximo)}.
+                <a href="/terminos.html#monedero">Reglamento del monedero</a>`;
+    // Sin margen para recargar: se explica por qué y no se ofrece el formulario.
+    if (tope < MON.recarga_min) {
+        cont.innerHTML = `
+            <h3>Recargar monedero</h3>
+            <div class="mon-limites mon-sin-recarga">
+                <span>${icon('info', 15)} <strong>Por ahora no puedes recargar</strong></span>
+                <p>${textoMotivoTope(true)}</p>
+                <small>${reglas}</small>
+            </div>
+            <p class="mon-nota">Tu saldo se usa como forma de pago al finalizar tu compra.</p>`;
+        return;
+    }
+    if (MONTO > tope || MONTO < MON.recarga_min) MONTO = [...MONTOS].reverse().find((m) => m <= tope && m >= MON.recarga_min) || tope;
     cont.innerHTML = `
         <h3>Recargar monedero</h3>
         <div class="mon-limites">
-            <span>Hoy puedes recargar hasta <strong>${formatoMoneda(MON.disponible_hoy ?? MON.recarga_max)}</strong></span>
-            <small>Límites: ${formatoMoneda(L.por_operacion)} por recarga · ${formatoMoneda(L.por_dia)} y ${L.operaciones_dia} recargas en 24 h · ${formatoMoneda(L.por_mes)} al mes · saldo máximo ${formatoMoneda(L.saldo_maximo)}.
-                <a href="/terminos.html#monedero">Reglamento del monedero</a></small>
+            <span>Tu siguiente recarga puede ser de hasta <strong>${formatoMoneda(tope)}</strong>${MON.motivo_tope && MON.motivo_tope !== 'por_recarga' ? ` <em class="mon-motivo">(${textoMotivoTope(false)})</em>` : ''}</span>
+            <small>${reglas}</small>
         </div>
         <label>Monto de recarga</label>
         <div class="mon-montos">
@@ -105,7 +119,9 @@ function pintarRecarga() {
         </div>
         <div class="field">
             <label for="mon-otro">Otro monto (${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)})</label>
-            <input id="mon-otro" type="number" min="${MON.recarga_min}" max="${tope}" step="50" placeholder="$" oninput="otroMonto(this.value)" />
+            <input id="mon-otro" type="number" min="${MON.recarga_min}" max="${tope}" step="50" placeholder="$" inputmode="numeric" value="${MONTOS.includes(MONTO) ? '' : MONTO}"
+                   oninput="otroMonto(this)" onchange="revisarOtroMonto(this)" />
+            <small class="mon-aviso-monto" id="mon-otro-aviso" hidden></small>
         </div>
         <label>Método de pago</label>
         <div class="mon-metodos">
@@ -126,13 +142,54 @@ function pintarRecarga() {
 function elegirMonto(m) {
     MONTO = m;
     document.getElementById('mon-otro').value = '';
+    avisoMonto('');
     document.querySelectorAll('.mon-monto').forEach((b) => b.classList.toggle('on', b.textContent.trim() === formatoMoneda(m)));
     actualizarBoton();
 }
-function otroMonto(v) {
-    MONTO = Number(v) || 0;
+// Tope de la siguiente recarga: el menor de todos los límites (lo calcula el servidor).
+function topeRecarga() {
+    if (MON.tope_recarga != null) return Number(MON.tope_recarga);
+    return Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+}
+// Por qué no se puede recargar más (largo para el aviso; corto para el paréntesis).
+function textoMotivoTope(largo) {
+    const L = MON.limites || {}, U = MON.uso || {};
+    const enCamino = Number(MON.saldo_pendiente) > 0;
+    switch (MON.motivo_tope) {
+        case 'saldo': return largo
+            ? `Tu monedero llegó a su saldo máximo de ${formatoMoneda(L.saldo_maximo)}${enCamino ? ', contando las transferencias que están por acreditarse' : ''}. Úsalo en tus compras y podrás volver a recargar.`
+            : `por el saldo máximo de ${formatoMoneda(L.saldo_maximo)}`;
+        case 'dia': return largo
+            ? `Ya recargaste ${formatoMoneda(U.dia)} en las últimas 24 horas, el máximo por día. Podrás recargar de nuevo cuando pasen 24 horas de tus recargas.`
+            : `por el máximo de ${formatoMoneda(L.por_dia)} en 24 horas`;
+        case 'mes': return largo
+            ? `Ya recargaste ${formatoMoneda(U.mes)} este mes, el máximo mensual. Podrás recargar de nuevo el próximo mes.`
+            : `por el máximo de ${formatoMoneda(L.por_mes)} al mes`;
+        case 'operaciones': return `Ya hiciste ${U.operaciones_dia} recargas en las últimas 24 horas (máximo ${L.operaciones_dia}). Podrás recargar de nuevo cuando pasen 24 horas.`;
+        default: return largo ? 'Llegaste al límite de recargas de tu monedero.' : '';
+    }
+}
+function avisoMonto(txt) {
+    const a = document.getElementById('mon-otro-aviso');
+    if (!a) return;
+    a.hidden = !txt;
+    a.textContent = txt || '';
+}
+// "Otro monto": no deja escribir más que el tope de la recarga.
+function otroMonto(input) {
+    const tope = topeRecarga();
+    let v = Number(input.value) || 0;
+    if (v > tope) {
+        v = tope;
+        input.value = tope;
+        avisoMonto(`La recarga puede ser de hasta ${formatoMoneda(tope)}${MON.motivo_tope && MON.motivo_tope !== 'por_recarga' ? ` ${textoMotivoTope(false)}` : ''}.`);
+    } else avisoMonto('');
+    MONTO = v;
     document.querySelectorAll('.mon-monto').forEach((b) => b.classList.remove('on'));
     actualizarBoton();
+}
+function revisarOtroMonto(input) {
+    if (input.value !== '' && Number(input.value) < MON.recarga_min) avisoMonto(`La recarga mínima es de ${formatoMoneda(MON.recarga_min)}.`);
 }
 function elegirMetodo(k) {
     METODO = k;
@@ -151,7 +208,7 @@ function pintarPagoRecarga() {
     BOTONES_PP = true;
     PayPalKZ.botones(caja, {
         crearOrden: async () => {
-            const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+            const tope = topeRecarga();
             if (!(MONTO >= MON.recarga_min && MONTO <= tope)) throw new Error(tope < MON.recarga_min ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero.' : `La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)}`);
             return (await api('/monedero/paypal/orden', { method: 'POST', body: { monto: MONTO } })).id;
         },
@@ -173,11 +230,13 @@ function notaMetodo() {
 }
 function actualizarBoton() {
     const b = document.getElementById('mon-btn');
-    if (b) b.innerHTML = `${icon('wallet', 16)} Recargar ${MONTO > 0 ? formatoMoneda(MONTO) : ''}`;
+    if (!b) return;
+    b.innerHTML = `${icon('wallet', 16)} Recargar ${MONTO > 0 ? formatoMoneda(MONTO) : ''}`;
+    b.disabled = !(MONTO >= MON.recarga_min && MONTO <= topeRecarga());
 }
 
 async function recargar() {
-    const tope = Math.min(MON.recarga_max, MON.disponible_hoy ?? MON.recarga_max);
+    const tope = topeRecarga();
     if (!(MONTO >= MON.recarga_min && MONTO <= tope)) {
         toast(tope < MON.recarga_min ? 'Por ahora llegaste al límite de recargas o de saldo de tu monedero.' : `La recarga debe ser de ${formatoMoneda(MON.recarga_min)} a ${formatoMoneda(tope)}`, 'warn');
         return;

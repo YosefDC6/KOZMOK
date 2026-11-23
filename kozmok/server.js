@@ -32,6 +32,13 @@ const PORT = process.env.PORT || 3000;
 // 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
 // prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
 const HOST = process.env.HOST || '0.0.0.0';
+// Nombre fijo en la red local (mdns.js): http://kozmok.local:3000 sin
+// importar la IP. Solo cuando la tienda se abre a la red (HOST 0.0.0.0).
+const MDNS_NOMBRE = (() => {
+    const v = String(process.env.MDNS_NOMBRE ?? 'kozmok').trim().toLowerCase().replace(/\.local$/, '');
+    if (['', 'no', '0', 'false', 'apagado'].includes(v) || !['0.0.0.0', '::'].includes(HOST)) return null;
+    return /^[a-z0-9-]{1,40}$/.test(v) ? `${v}.local` : 'kozmok.local';
+})();
 
 // IPs de esta computadora en la red local (Wi-Fi o cable), para abrir la
 // tienda desde un celular conectado a la misma red.
@@ -417,7 +424,7 @@ function hostDeConfianza(host) {
     const m = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::(\d{1,5}))?$/i.exec(String(host || '').trim());
     if (!m) return false;
     const nombre = m[1].toLowerCase().replace(/^\[|\]$/g, '');
-    if (nombre === 'localhost' || nombre === '::1') return true;
+    if (nombre === 'localhost' || nombre === '::1' || (MDNS_NOMBRE && nombre === MDNS_NOMBRE)) return true;
     const ip = nombre.split('.').map(Number);
     if (ip.length === 4 && ip.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
         if (ip[0] === 127 || ip[0] === 10 || (ip[0] === 192 && ip[1] === 168) || (ip[0] === 172 && ip[1] >= 16 && ip[1] <= 31)) return true;
@@ -1948,7 +1955,8 @@ const bajaUrlDe = (req0, token, tipo) => `${urlBase(req0)}/baja?t=${encodeURICom
 function urlBase(req0) {
     if (req0) return urlPublica(req0);
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
-    return /^https?:\/\/[^\s/]+/.test(base) ? base : `http://localhost:${process.env.PORT || 3000}`;
+    if (/^https?:\/\/[^\s/]+/.test(base)) return base;
+    return `http://${MDNS_NOMBRE || 'localhost'}:${process.env.PORT || 3000}`;
 }
 const precioTxt = (n) => { const v = Number(n); return '$' + v.toLocaleString('es-MX', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
 const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -7983,6 +7991,12 @@ async function usoRecargas(db, monederoId) {
 function disponibleRecarga(m, u) {
     return Math.max(0, Math.min(MON.recargaMax, MON.diaMax - u.dia, MON.mesMax - u.mes, MON.saldoMax - Number(m.saldo) - u.pendiente));
 }
+// Qué límite decide el tope de la siguiente recarga (para explicárselo al cliente).
+function motivoTope(m, u) {
+    if (u.dia_ops >= MON.diaOps) return 'operaciones';
+    const op = { por_recarga: MON.recargaMax, dia: MON.diaMax - u.dia, mes: MON.mesMax - u.mes, saldo: MON.saldoMax - Number(m.saldo) - u.pendiente };
+    return Object.keys(op).reduce((a, k) => (op[k] < op[a] ? k : a), 'por_recarga');
+}
 
 app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
     const m = await monederoDe(pool, req.cliente.id);
@@ -7996,6 +8010,8 @@ app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
         saldo_pendiente: redondear(uso.pendiente), recarga_min: MON.recargaMin, recarga_max: MON.recargaMax,
         limites: { por_operacion: MON.recargaMax, por_dia: MON.diaMax, operaciones_dia: MON.diaOps, por_mes: MON.mesMax, saldo_maximo: MON.saldoMax },
         uso: { dia: uso.dia, mes: uso.mes, operaciones_dia: uso.dia_ops }, disponible_hoy: redondear(disponibleRecarga(m, uso)),
+        // Tope de la siguiente recarga (0 si ya no puede) y qué límite lo pone.
+        tope_recarga: uso.dia_ops >= MON.diaOps ? 0 : redondear(disponibleRecarga(m, uso)), motivo_tope: motivoTope(m, uso),
         movimientos: movs.rows,
         // Para volver a ver a dónde transferir una recarga que sigue pendiente
         transferencia: speiConfigurado() ? { ...datosTransferencia(null), dias: MON.pendienteDias } : null,
@@ -8931,14 +8947,33 @@ app.listen(PORT, HOST, async () => {
     console.log(`   Tienda:          http://localhost:${PORT}`);
     console.log(`   Panel de admin:  http://localhost:${PORT}/admin/login.html`);
     if (HOST === '0.0.0.0' || HOST === '::') {
-        const ips = ipsDeRed();
-        if (ips.length) {
-            console.log('Desde un celular en la misma red Wi-Fi abre:');
+        const mostrarRed = (titulo) => {
+            const ips = ipsDeRed();
+            if (!ips.length) { console.log('Sin red local detectada: solo se puede abrir desde esta computadora.'); return; }
+            console.log(titulo);
+            if (MDNS_NOMBRE) {
+                console.log(`   Con nombre fijo (no cambia aunque cambie la IP):`);
+                console.log(`   Tienda:          http://${MDNS_NOMBRE}:${PORT}`);
+                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}:${PORT}/admin/login.html`);
+                console.log('   Por IP (si algún celular no abre el nombre):');
+            }
             ips.forEach((x) => {
                 console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
                 console.log(`   Panel de admin:  http://${x.ip}:${PORT}/admin/login.html`);
             });
-        } else console.log('Sin red local detectada: solo se puede abrir desde esta computadora.');
+        };
+        mostrarRed('Desde un celular en la misma red Wi-Fi abre:');
+        if (MDNS_NOMBRE) require('./mdns.js').iniciar({ nombre: MDNS_NOMBRE });
+        // Si cambia la red (otro Wi-Fi, se fue la señal y volvió), se avisa la
+        // dirección nueva sin reiniciar el servidor.
+        let redAntes = ipsDeRed().map((x) => x.ip).sort().join(',');
+        setInterval(() => {
+            const ahora = ipsDeRed().map((x) => x.ip).sort().join(',');
+            if (ahora === redAntes) return;
+            redAntes = ahora;
+            console.log(`\n[${new Date().toLocaleTimeString('es-MX')}] Cambió la red.`);
+            mostrarRed('Direcciones nuevas:');
+        }, 10000).unref();
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
