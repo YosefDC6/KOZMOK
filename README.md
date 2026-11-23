@@ -36,6 +36,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ### Navegación del panel
 - **Regresar a <pantalla anterior>** arriba de cada pantalla: recuerda el camino de la pestaña y regresa con sus filtros.
 - **Ir a…** (`Ctrl + K`): busca una sección por nombre y entra con Enter.
+- **Notificaciones** para todas las cuentas del panel, en la página (campana con contador, aviso emergente y, si se permite, aviso del navegador) y **por correo** (un solo correo si llegan varias juntas): tickets y mensajes de clientes, reclamos de garantía, devoluciones, reseñas de 3★ o menos, pedidos nuevos, pagos reportados, recargas por confirmar, stock crítico o agotado, bajas por aprobar y alertas de seguridad. Cada quien recibe solo lo de las secciones de su rol y elige, por tipo, si lo quiere en el panel y por correo.
 - **Puntitos de aviso** en el menú cuando una sección tiene algo nuevo desde la última vez que la abriste (tickets, pedidos, pagos o recargas por confirmar, reclamos, devoluciones, reseñas, stock crítico, alertas de seguridad…).
 
 ### Panel interno – CRM

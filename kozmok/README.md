@@ -22,6 +22,7 @@ Este archivo es la referencia técnica. Qué hace cada pantalla está en
 kozmok/
 ├── server.js              # API REST (Express), migraciones al arrancar y tareas cada minuto
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
+├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
@@ -174,6 +175,23 @@ existentes) **y** en `database.sql` (para bases nuevas).
   bandeja unificada de tickets, reclamos, devoluciones y reseñas ≤ 3★ sin
   respuesta, ordenada por quién debe responder, prioridad y antigüedad) y
   `GET /api/admin/soporte/buscar?q=` (clientes, folios y pedidos).
+
+## Notificaciones del panel
+
+`notificaciones.js` (tablas `notificaciones`, `notif_cursor`, `notif_stock` y
+`usuarios.notif_prefs`). `revisar()` corre en `tareasPeriodicas` cada minuto:
+lee lo nuevo de cada fuente por id (con un cursor por fuente; la primera vez
+arranca desde lo que ya existe), arma los eventos y `crear()` los reparte a
+los usuarios activos cuyo rol ve la categoría (`CATEGORIAS[].permisos` con
+`puedeVer`). Por persona se guarda una fila por aviso y se manda **un solo
+correo** con todo lo de esa revisión (`enviarCorreo`, tipo `panel`). Los
+avisos que no salen de una tabla (pago reportado por el cliente) llaman a
+`notif.crear()` en la ruta. Un evento puede traer `urls: [[permiso, url]]`
+para que cada rol reciba el enlace de la pantalla que sí abre. Rutas:
+`GET /api/admin/notificaciones`, `POST /api/admin/notificaciones/leer`,
+`GET|PUT /api/admin/notificaciones/preferencias`. En el navegador,
+`Notifs` (admin-layout.js) pinta la campana y se actualiza con los avisos
+del menú.
 
 ## Chatbot de recomendaciones
 

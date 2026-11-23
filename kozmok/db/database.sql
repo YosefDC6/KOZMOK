@@ -20,6 +20,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS notificaciones          CASCADE;
+DROP TABLE IF EXISTS notif_cursor            CASCADE;
+DROP TABLE IF EXISTS notif_stock             CASCADE;
 DROP TABLE IF EXISTS correos_salida          CASCADE;
 DROP TABLE IF EXISTS recuperaciones          CASCADE;
 DROP TABLE IF EXISTS eventos_seguridad       CASCADE;
@@ -824,6 +827,24 @@ CREATE TABLE recuperaciones (
 -- aviso de cambio de contraseña). Todos se guardan aquí y se ven en el
 -- panel (Cuenta → Seguridad → Correos enviados); con una cuenta de Gmail
 -- en el .env (SMTP_USUARIO / SMTP_PASSWORD) además se envían de verdad.
+-- Notificaciones del equipo del panel (campana y correo; ver notificaciones.js).
+-- notif_cursor guarda hasta qué registro se revisó cada fuente y notif_stock
+-- qué productos ya se avisaron como críticos o agotados.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_prefs JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE TABLE notificaciones (
+    id          BIGSERIAL PRIMARY KEY,
+    usuario_id  INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    categoria   VARCHAR(20) NOT NULL,
+    titulo      VARCHAR(160) NOT NULL,
+    cuerpo      VARCHAR(400),
+    url         VARCHAR(200),
+    leida       BOOLEAN NOT NULL DEFAULT FALSE,
+    fecha       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_notif_usuario ON notificaciones(usuario_id, leida, id DESC);
+CREATE TABLE notif_cursor (fuente VARCHAR(30) PRIMARY KEY, ultimo_id BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE notif_stock (producto_id INTEGER PRIMARY KEY, agotado BOOLEAN NOT NULL DEFAULT FALSE);
+
 CREATE TABLE correos_salida (
     id          SERIAL PRIMARY KEY,
     para        VARCHAR(150) NOT NULL,

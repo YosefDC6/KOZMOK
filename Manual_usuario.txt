@@ -756,6 +756,8 @@ NAVEGACION RAPIDA EN EL PANEL
      misma pantalla (un ticket, una devolucion) no cuenta como otra
      pantalla. Una pantalla sin anterior (la primera al entrar o en una
      pestana nueva) no muestra el boton.
+   - CAMPANA de notificaciones junto al logo: avisos de lo que tu rol
+     atiende, tambien por correo (ver 4.11b).
    - "Ir a..." (arriba del menu, o Ctrl + K): escribe parte del nombre de
      una seccion y entra con Enter, sin abrir los grupos del menu.
    - PUNTITOS DE AVISO: una seccion del menu (y su modulo) lleva un punto
@@ -1159,6 +1161,40 @@ NAVEGACION RAPIDA EN EL PANEL
 4.11 MI ACTIVIDAD  (admin/mi-actividad.html)  [CUENTA]
    - Interacciones que TU (el usuario interno con la sesion activa) has
      registrado.
+
+4.11b NOTIFICACIONES  (campana junto al logo del panel)  [todas las cuentas]
+   - Cada cuenta del panel recibe avisos de lo que su rol atiende, en la
+     pagina (campana con el numero sin leer y un aviso emergente al llegar)
+     y por correo:
+        Tickets de soporte    -> ticket nuevo y cada mensaje del cliente
+        Reclamos de garantia  -> reclamo nuevo y mensajes o fotos del cliente
+        Devoluciones          -> solicitud nueva
+        Resenas               -> resenas de 3 estrellas o menos
+        Pedidos nuevos        -> compras de la tienda en linea
+        Pagos por confirmar   -> el cliente pulso "Ya realice el pago"
+        Recargas por confirmar-> transferencias al monedero
+        Stock critico         -> un producto llega a su minimo o se agota
+        Bajas por aprobar     -> bajas de inventario pendientes (admin; no
+                                 se le avisa a quien la registro)
+        Alertas de seguridad  -> eventos de severidad alta (si llegan
+                                 varios juntos, un solo aviso)
+     Cada quien solo recibe las de las secciones que ve: Soporte recibe
+     tickets, reclamos, devoluciones, resenas y pagos; Ventas pedidos,
+     pagos, recargas y devoluciones; Logistica pedidos, stock critico y
+     devoluciones; el administrador todas.
+   - El servidor revisa cada minuto. Lo que ya existia antes de esta
+     version no se avisa.
+   - CAMPANA: lista de las ultimas 30 (las nuevas con punto). Clic en una
+     la marca como leida y abre su pantalla (el ticket, el reclamo, la
+     devolucion...). "Marcar todas como leidas".
+   - CORREO: si en una revision hay varias, llega un solo correo con todas
+     y sus enlaces. Se manda al correo de la cuenta (las @kozmok.mx de
+     ejemplo no existen; ver seccion 2).
+   - PREFERENCIAS (menu del panel -> "Notificaciones" o el engrane de la
+     campana): por cada tipo de aviso, en el panel si/no y por correo si/no,
+     y un interruptor general de correo. Tambien "Avisos del navegador":
+     notificaciones del sistema cuando el panel esta en otra pestana (pide
+     permiso al navegador; se guarda solo en ese equipo).
 
 4.12 CUENTAS Y EQUIPO  (admin/usuarios.html)  [CUENTA]  -- solo ADMIN
    - Tabla con el personal interno (Administrador, Ventas, Logistica,

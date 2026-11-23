@@ -45,6 +45,8 @@ function ipsDeRed() {
 
 const { usaValoresPorDefecto, ...configPg } = dbConfig;
 const pool = new Pool(configPg);
+// Notificaciones del equipo del panel (campana y correo).
+const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null) });
 
 // Cabeceras de seguridad en todas las respuestas (CSP, nosniff, DENY...).
 // Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
@@ -2183,6 +2185,7 @@ async function tareasPeriodicas() {
     await conciliarPayPalPendientes().catch((e) => console.error('PayPal en revisión:', e.message));
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
+    await notif.revisar().catch((e) => console.error('Notificaciones del panel:', e.message));
     // Transferencias al monedero que nadie confirmó en 3 días: se cancelan
     await pool.query(`UPDATE movimientos_monedero SET estado = 'cancelado'
                       WHERE tipo = 'recarga' AND estado = 'pendiente' AND fecha < CURRENT_TIMESTAMP - ($1 || ' days')::interval`, [String(MON.pendienteDias)])
@@ -3550,10 +3553,16 @@ app.post('/api/clientes/:id/pedidos/:pedidoId/reportar-pago', asyncRoute(async (
     const r = await pool.query(
         `UPDATE pedidos SET pago_reportado = true
          WHERE id = $1 AND cliente_id = $2 AND pago_estado = 'pendiente'
-         RETURNING id, pago_reportado`,
+         RETURNING id, pago_reportado, numero_orden, total, metodo_tipo,
+                   (SELECT nombre FROM clientes WHERE id = pedidos.cliente_id) AS cliente_nombre`,
         [req.params.pedidoId, req.params.id]
     );
     if (r.rows.length === 0) return res.status(400).json({ message: 'No hay un pago pendiente para reportar en este pedido' });
+    const pr = r.rows[0];
+    notif.crear([{ categoria: 'pagos', titulo: `Pago por confirmar: ${pr.numero_orden}`,
+        cuerpo: `${pr.cliente_nombre || 'El cliente'} avisa que ya pagó ${'$' + Number(pr.total).toLocaleString('es-MX')}${pr.metodo_tipo ? ` (${pr.metodo_tipo})` : ''}`,
+        urls: [['pagos', '/admin/pagos.html'], ['pedidos', `/admin/pedidos.html?open=${pr.id}`], ['ordenes-erp', `/admin/ordenes-erp.html?open=${pr.id}`]] }])
+        .catch((e) => console.error('Notificación de pago:', e.message));
     res.json({ message: 'Gracias, verificaremos tu pago y confirmaremos el pedido.' });
 }));
 
@@ -3902,6 +3911,7 @@ const PERMISOS_API = [
     { ruta: /^\/mi-password$/,                         metodos: ['PUT'], permisos: ['*'] },
     { ruta: /^\/mi-2fa(\/|$)/,                          metodos: TODO, permisos: ['*'] },
     { ruta: /^\/avisos$/,                               metodos: LEER, permisos: ['*'] },
+    { ruta: /^\/notificaciones(\/(leer|preferencias))?$/, metodos: TODO, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
     // Con 'clientes' se consulta la ficha, se registran interacciones, se
@@ -3989,7 +3999,7 @@ app.use('/api/admin', (req, res, next) => {
 const AUDITORIA_PROPIA = [
     /^\/movimientos-inventario/, /^\/productos(\/\d+)?(\/restock)?$/, /^\/(pedidos|erp\/ordenes)\/\d+\/estado$/,
     /^\/pedidos\/\d+\/registrar-pago$/, /^\/clientes\/\d+$/, /^\/mi-password$/, /^\/monederos\//,
-    /^\/facturas(\/|$)/, /^\/devoluciones\//, /^\/mi-2fa(\/|$)/,   // mi-2fa lleva la contraseña: no va a la bitácora genérica
+    /^\/facturas(\/|$)/, /^\/devoluciones\//, /^\/mi-2fa(\/|$)/, /^\/notificaciones\//,   // marcar leídas no es un cambio del negocio   // mi-2fa lleva la contraseña: no va a la bitácora genérica
 ];
 function limpiarParaBitacora(obj, nivel = 0) {
     if (obj == null || typeof obj !== 'object' || nivel > 3) return obj;
@@ -4279,6 +4289,8 @@ app.get('/api/admin/avisos', asyncRoute(async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(avisos);
 }));
+
+notif.rutas(app, asyncRoute);
 
 app.get('/api/admin/mi-2fa', cfg2faUsuario.estado);
 app.post('/api/admin/mi-2fa/app', limiteAuth, cfg2faUsuario.appIniciar);
@@ -8902,6 +8914,7 @@ async function migrarEsquema() {
         await pool.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
     }
 
+    await notif.migrar();
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
     await pool.query(require('fs').readFileSync(path.join(__dirname, 'db', 'control_interno.sql'), 'utf8'));
