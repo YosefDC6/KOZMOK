@@ -20,6 +20,7 @@ Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestr
 | **CSRF** | Que otro sitio mande una petición con la sesión de la víctima | Cookie SameSite=Strict y verificación del `Origin` | Seguridad → Eventos (“CSRF”) |
 | **IDOR** | Cambiar el id de la URL para ver datos de otro cliente | Cada ruta compara el id con el de la sesión | Seguridad → Eventos (“Acceso a datos ajenos”) |
 | **Encontrar el panel** | Escribir `/admin/login.html` (o variantes) para llegar al login del equipo y atacarlo | Entrada en una dirección secreta de 144 bits (`PANEL_RUTA`); las direcciones conocidas dan el mismo 404 que una inventada; sin sesión ninguna pantalla del panel se entrega | Seguridad → Eventos (“Intento de abrir el panel por su dirección pública”) |
+| **Ingeniería social en soporte** | Pedir (o que alguien escriba) contraseñas, tarjeta completa, CVV o códigos en un ticket | El servidor rechaza respuestas de Soporte que piden esos datos y oculta tarjetas, CVV, NIP y contraseñas antes de guardar; el cliente no ve el registro interno | Bitácora del ticket ("Se ocultaron N datos sensibles") |
 | **Robo de rol** | Cambiar el rol guardado en el navegador (p. ej. Logística → admin) para abrir pantallas de otro rol | El servidor valida el rol de la sesión en cada pantalla y en cada llamada a la API; el rol del navegador no cuenta | Regresa a su inicio; la API responde 403 |
 
 ## Cómo correr las pruebas

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Soporte · Admin Kozmok</title>
+<title>Soporte técnico · Admin Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -12,200 +12,557 @@
     <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
     <main class="admin-main" id="main"><p>Cargando…</p></main>
 </div>
+<div class="modal-overlay" id="modal-st"><div class="modal" id="modal-st-body" style="max-width:660px"></div></div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/js/soporte-ti.js"></script>
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
 <script>
+// Soporte técnico TI: cola de tickets y caso. Las reglas (estados, P1-P4,
+// clasificación, metodología, escalamiento, datos sensibles) vienen de
+// /js/soporte-ti.js, las mismas que aplica el servidor.
 requireAuthAdmin();
 renderAdminSidebar('soporte');
-const EST = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
-const PRIO = { baja: 'Baja', media: 'Media', alta: 'Alta' };
+const S = SoporteTI;
 const ID = new URLSearchParams(location.search).get('ticket');
+const main = document.getElementById('main');
+let T = null;          // ticket abierto
+let DIAG = null;       // última corrida del diagnóstico
 
-if (ID) vistaHilo(ID); else vistaLista();
+const P = (k) => S.PRIORIDADES[k] || S.PRIORIDADES.media;
+const badgePrio = (k) => `<span class="tag st-p st-p-${k}" title="${escHTML(P(k).guia)}">${P(k).p} · ${P(k).label}</span>`;
+const badgeEstado = (e) => `<span class="tag st-e st-e-${e}">${S.ESTADOS[e] || e}</span>`;
+const opciones = (obj, actual, etiqueta = (v) => v) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${k === actual ? 'selected' : ''}>${escHTML(etiqueta(v, k))}</option>`).join('');
+const hace = (f) => {
+    const m = Math.max(0, Math.round((Date.now() - new Date(f)) / 60000));
+    if (m < 60) return `hace ${m} min`;
+    const h = Math.round(m / 60);
+    if (h < 48) return `hace ${h} h`;
+    return `hace ${Math.round(h / 24)} días`;
+};
+function abrirModal(html, ancho = 660) {
+    const b = document.getElementById('modal-st-body');
+    b.style.maxWidth = ancho + 'px';
+    b.innerHTML = `<button class="modal-close" onclick="cerrarModal()" aria-label="Cerrar">${icon('x', 20)}</button>${html}`;
+    document.getElementById('modal-st').classList.add('open');
+}
+function cerrarModal() { document.getElementById('modal-st').classList.remove('open'); }
+document.getElementById('modal-st').addEventListener('click', (e) => { if (e.target.id === 'modal-st') cerrarModal(); });
 
-async function vistaLista() {
+if (ID) vistaCaso(ID).catch((e) => { main.innerHTML = `<p>${escHTML(e.message)}</p><a href="/admin/soporte.html">Volver</a>`; });
+else vistaCola().catch((e) => toast(e.message, 'error'));
+
+// =====================================================================
+// COLA DE TICKETS
+// =====================================================================
+async function vistaCola() {
     const f = new URLSearchParams(location.search);
-    const estado = f.get('estado') || 'Todos';
-    const prioridad = f.get('prioridad') || 'Todas';
-    const d = await api(`/admin/tickets?estado=${estado}&prioridad=${prioridad}`);
-    const main = document.getElementById('main');
+    const filtro = { estado: f.get('estado') || 'activos', prioridad: f.get('prioridad') || '', clasificacion: f.get('clasificacion') || '', origen: f.get('origen') || '', q: f.get('q') || '' };
+    const d = await api('/admin/tickets?' + new URLSearchParams(filtro));
+    const quien = (t) => {
+        if (['resuelto', 'cerrado'].includes(t.estado)) return t.estado === 'resuelto' ? (t.confirmacion === 'resuelto' ? '<span style="color:var(--success)">Confirmado: listo para cerrar</span>' : 'Esperando confirmación') : '—';
+        if (t.estado === 'escalado') return `En ${escHTML(S.AREAS[t.escalado_area] || 'otra área')}`;
+        if (t.estado === 'esperando_usuario' && t.ultimo_autor !== 'cliente') return 'Esperando al usuario';
+        return '<strong style="color:var(--warning)">Toca a Soporte</strong>';
+    };
     main.innerHTML = `
-        ${adminHeader('Soporte', 'Cola de tickets de los clientes.')}
-        <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
-            <div class="stat-card"><div class="stat-label">Abiertos</div><div class="stat-value" style="color:var(--info)">${d.conteos.abiertos}</div></div>
-            <div class="stat-card"><div class="stat-label">En proceso</div><div class="stat-value" style="color:var(--warning)">${d.conteos.en_proceso}</div></div>
-            <div class="stat-card"><div class="stat-label">Resueltos</div><div class="stat-value" style="color:var(--success)">${d.conteos.resueltos}</div></div>
-            <div class="stat-card"><div class="stat-label">Cerrados</div><div class="stat-value">${d.conteos.cerrados}</div></div>
+        ${adminHeader('Soporte técnico', 'Tickets de clientes y del equipo: se clasifican, se priorizan por su impacto real, se diagnostican, se documentan y se escalan cuando hace falta.',
+            `<button class="btn btn-outline" onclick="abrirConsultas()">${icon('search', 15)} Consultas técnicas</button>`)}
+        <div class="st-cuentas">
+            ${Object.entries(S.ESTADOS).map(([k, v]) => `<button class="st-cuenta ${filtro.estado === k ? 'on' : ''}" onclick="filtrar('estado','${k}')"><span class="st-e-${k}">${d.conteos[k] || 0}</span>${v}</button>`).join('')}
         </div>
         <div class="filters-bar">
-            <select id="f-estado">
-                ${['Todos', 'abierto', 'en_proceso', 'resuelto', 'cerrado'].map((e) => `<option value="${e}" ${e === estado ? 'selected' : ''}>${EST[e] || e}</option>`).join('')}
-            </select>
-            <select id="f-prio">
-                ${['Todas', 'alta', 'media', 'baja'].map((p) => `<option value="${p}" ${p === prioridad ? 'selected' : ''}>${PRIO[p] || p}</option>`).join('')}
-            </select>
+            <select id="f-estado"><option value="activos" ${filtro.estado === 'activos' ? 'selected' : ''}>Casos activos</option><option value="" ${!filtro.estado ? 'selected' : ''}>Todos los estados</option>${opciones(S.ESTADOS, filtro.estado)}</select>
+            <select id="f-prioridad"><option value="">Todas las prioridades</option>${opciones(S.PRIORIDADES, filtro.prioridad, (v) => `${v.p} · ${v.label}`)}</select>
+            <select id="f-clasificacion"><option value="">Todas las clasificaciones</option>${opciones(S.CLASIFICACIONES, filtro.clasificacion)}</select>
+            <select id="f-origen"><option value="">Clientes y equipo</option><option value="cliente" ${filtro.origen === 'cliente' ? 'selected' : ''}>Solo clientes</option><option value="equipo" ${filtro.origen === 'equipo' ? 'selected' : ''}>Solo equipo (panel)</option></select>
+            <input type="search" id="f-q" placeholder="Folio, asunto o nombre…" value="${escHTML(filtro.q)}" />
         </div>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Folio</th><th>Cliente</th><th>Asunto</th><th>Prioridad</th><th>Estado</th><th>Actualizado</th></tr></thead>
+                <thead><tr><th>Folio</th><th>Prioridad</th><th>Reportó</th><th>Incidencia</th><th>Estado</th><th>Siguiente paso</th><th>Antigüedad</th></tr></thead>
                 <tbody>
-                    ${d.tickets.length === 0 ? '<tr><td colspan="6">Sin tickets.</td></tr>' : d.tickets.map((t) => `
+                    ${d.tickets.length === 0 ? '<tr><td colspan="7">Sin tickets con este filtro.</td></tr>' : d.tickets.map((t) => `
                         <tr onclick="location.href='/admin/soporte.html?ticket=${t.id}'" style="cursor:pointer">
                             <td class="mono">${t.folio}</td>
-                            <td>${t.cliente_nombre}<div style="font-size:.76rem;color:var(--text-muted)">${t.cliente_correo}</div></td>
-                            <td>${t.asunto}<div style="font-size:.76rem;color:var(--text-muted)">${t.mensajes} mensaje(s) · ${t.categoria}${t.numero_orden ? ` · <span class="mono">${t.numero_orden}</span>` : ''}</div></td>
-                            <td><span class="tag prio-${t.prioridad}">${PRIO[t.prioridad]}</span></td>
-                            <td><span class="tag estado-${t.estado}">${EST[t.estado]}</span></td>
-                            <td>${formatoFecha(t.fecha_actualizacion)}</td>
+                            <td>${badgePrio(t.prioridad)}</td>
+                            <td>${escHTML(t.reportante_nombre || '—')}<div class="st-sub">${t.origen === 'equipo' ? `Equipo · ${escHTML(ROL_LABEL[t.reportante_rol] || t.reportante_rol || '')}` : 'Cliente'}</div></td>
+                            <td>${escHTML(t.asunto)}<div class="st-sub">${S.CLASIFICACIONES[t.clasificacion]} · ${t.mensajes} mensaje(s)${t.numero_orden ? ` · <span class="mono">${escHTML(t.numero_orden)}</span>` : ''}${t.alcance !== 'uno' ? ` · <strong>${S.ALCANCES[t.alcance]}</strong>` : ''}</div></td>
+                            <td>${badgeEstado(t.estado)}</td>
+                            <td style="font-size:.82rem">${quien(t)}</td>
+                            <td title="${formatoFechaHora(t.fecha_creacion)}" style="font-size:.82rem;white-space:nowrap">${hace(t.fecha_creacion)}</td>
                         </tr>`).join('')}
                 </tbody>
             </table>
         </div>
-    `;
-    document.getElementById('f-estado').addEventListener('change', (e) => filtrar('estado', e.target.value));
-    document.getElementById('f-prio').addEventListener('change', (e) => filtrar('prioridad', e.target.value));
+        ${guiaHTML()}`;
+    ['estado', 'prioridad', 'clasificacion', 'origen'].forEach((k) => document.getElementById('f-' + k).addEventListener('change', (e) => filtrar(k, e.target.value)));
+    let tq; document.getElementById('f-q').addEventListener('input', (e) => { clearTimeout(tq); tq = setTimeout(() => filtrar('q', e.target.value.trim()), 400); });
 }
 function filtrar(k, v) {
     const q = new URLSearchParams(location.search);
-    q.set(k, v);
+    if (v) q.set(k, v); else q.delete(k);
     location.search = q.toString();
 }
+function guiaHTML() {
+    return `<details class="card st-guia"><summary>${icon('help', 15)} Guía del rol: prioridad, estados y escalamiento</summary>
+        <div class="st-guia-grid">
+            <div><h4>Prioridad (por impacto real, no por la urgencia que exprese el usuario)</h4>
+                ${Object.values(S.PRIORIDADES).map((p, i) => `<p>${badgePrio(Object.keys(S.PRIORIDADES)[i])} ${escHTML(p.guia)}</p>`).join('')}</div>
+            <div><h4>Estados</h4><p>${Object.keys(S.ESTADOS).map(badgeEstado).join(' ')}</p>
+                <p class="st-sub">Nunca se cierra sin evidencia de resolución o la confirmación de quien reportó.</p>
+                <h4>Se escala cuando…</h4><ul>${Object.values(S.MOTIVOS_ESCALAMIENTO).map((m) => `<li>${escHTML(m)}</li>`).join('')}</ul></div>
+        </div></details>`;
+}
 
-async function vistaHilo(id) {
-    let t;
-    try { t = await api(`/admin/tickets/${id}`); }
-    catch (e) { document.getElementById('main').innerHTML = `<p>${escHTML(e.message)}</p><a href="/admin/soporte.html">Volver</a>`; return; }
-    TICKET = t;
+// =====================================================================
+// CASO
+// =====================================================================
+async function vistaCaso(id) {
     const borrador = (document.getElementById('resp') || {}).value || '';
-    document.getElementById('main').innerHTML = `
+    T = await api(`/admin/tickets/${id}`);
+    const cerrado = ['resuelto', 'cerrado'].includes(T.estado);
+    const reportante = T.origen === 'equipo'
+        ? `${escHTML(T.reportante_nombre)} <span class="tag">Equipo · ${escHTML(ROL_LABEL[T.reportante_rol] || T.reportante_rol || '')}</span>`
+        : `<a href="/admin/cliente.html?id=${T.cliente_id}">${escHTML(T.reportante_nombre)}</a>`;
+    main.innerHTML = `
         <a href="/admin/soporte.html" style="font-size:.85rem">← Cola de tickets</a>
-        ${adminHeader(escHTML(t.asunto), `<span class="mono">${t.folio}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${escHTML(t.cliente_nombre)}</a> · ${escHTML(t.cliente_correo)}`)}
+        ${adminHeader(escHTML(T.asunto), `<span class="mono">${T.folio}</span> · ${reportante} · ${escHTML(T.reportante_correo || '')}`,
+            `<button class="btn btn-outline" onclick="verRegistro()">${icon('clipboard', 15)} Registro técnico</button>
+             <button class="btn btn-outline" onclick="abrirConsultas()">${icon('search', 15)} Consultas</button>
+             <button class="btn btn-primary" onclick="abrirEscalar()" ${cerrado ? 'disabled title="Reábrelo para escalarlo"' : ''}>${icon('alert', 15)} Escalar</button>`)}
+        <div class="st-badges">${badgePrio(T.prioridad)} ${badgeEstado(T.estado)} <span class="tag">${S.CLASIFICACIONES[T.clasificacion]}</span> <span class="tag">${S.ALCANCES[T.alcance]}</span>
+            ${T.asignado_nombre ? `<span class="tag">${icon('user', 12)} ${escHTML(T.asignado_nombre)}</span>` : ''}</div>
+        ${avisosCaso()}
         <div class="tk-layout">
-            <section class="tk-hilo">
-                <div class="hilo">
-                    ${t.mensajes.map((m) => `
-                        <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
-                            <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(t.cliente_nombre)} · ${formatoFechaHora(m.fecha)}</div>
-                            <div class="hm-txt">${escHTML(m.mensaje)}</div>
-                        </div>`).join('')}
-                </div>
-                <div class="field" style="margin-top:16px"><textarea id="resp" rows="3" placeholder="Responder al cliente…">${escHTML(borrador)}</textarea></div>
-                <button class="btn btn-primary" onclick="responder(${t.id})">Enviar respuesta</button>
+            <section class="st-col">
+                ${datosReporteHTML()}
+                <div class="card"><h3 style="margin:0 0 10px">Conversación</h3><div class="hilo">${hiloHTML()}</div></div>
+                ${respuestaHTML(borrador)}
             </section>
-            <aside class="tk-lado">
-                <div class="card">
-                    <h3 style="margin:0 0 10px;font-size:1rem">Caso</h3>
-                    <div class="field"><label>Estado</label>
-                        <select id="t-estado">${['abierto', 'en_proceso', 'resuelto', 'cerrado'].map((e) => `<option value="${e}" ${e === t.estado ? 'selected' : ''}>${EST[e]}</option>`).join('')}</select>
-                    </div>
-                    <div class="field"><label>Prioridad</label>
-                        <select id="t-prio">${['baja', 'media', 'alta'].map((p) => `<option value="${p}" ${p === t.prioridad ? 'selected' : ''}>${PRIO[p]}</option>`).join('')}</select>
-                    </div>
-                    <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id})">Actualizar ticket</button>
-                    <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}</p>
-                </div>
+            <aside class="tk-lado st-lado">
+                ${casoHTML()}
+                ${metodologiaHTML()}
+                <div class="card" id="st-diag">${diagnosticoHTML()}</div>
+                ${registroHTML()}
+                ${bitacoraHTML()}
                 <div class="card" id="tk-pedido"><p style="margin:0;color:var(--text-muted)">Cargando pedido…</p></div>
             </aside>
-        </div>
-    `;
+        </div>`;
+    document.getElementById('resp').addEventListener('input', revisarRespuesta);
+    ['c-prioridad', 'c-clasificacion', 'c-alcance'].forEach((x) => document.getElementById(x).addEventListener('change', pintarSugerida));
+    pintarSugerida();
+    revisarRespuesta();
+    if (DIAG) pintarDiagnostico();
     pintarPedido();
 }
 
-// ---- Pedido del caso: resumen y gestión sin salir del ticket ----
-let TICKET = null;
+function avisosCaso() {
+    const a = [];
+    if (T.clasificacion === 'seguridad') a.push(['danger', 'alert', 'Posible incidente de seguridad', 'Prioriza escalarlo a Seguridad y no borres, cambies ni "limpies" nada: así se conserva la evidencia. No se puede resolver sin ese escalamiento.']);
+    if (T.estado === 'escalado') a.push(['warning', 'alert', `Escalado a ${S.AREAS[T.escalado_area] || '—'}`, `${S.MOTIVOS_ESCALAMIENTO[T.escalado_motivo] || ''} · por ${T.escalado_por_nombre || '—'} el ${formatoFechaHora(T.fecha_escalado)}. Cuando el área responda, regresa el ticket a En proceso y documenta lo que hicieron.`]);
+    if (T.confirmacion === 'persiste') a.push(['danger', 'x', 'Quien reportó dice que el problema sigue', 'Se reabrió: revisa de nuevo antes de volver a marcarlo como resuelto.']);
+    if (T.estado === 'resuelto') a.push([T.confirmacion === 'resuelto' ? 'success' : 'info', 'check', T.confirmacion === 'resuelto' ? 'Quien reportó confirmó la solución' : 'Esperando la confirmación de quien reportó',
+        T.confirmacion === 'resuelto' ? 'Ya se puede cerrar.' : 'Para cerrarlo necesitas su confirmación o registrar en la bitácora la evidencia de resolución.']);
+    if (T.similares && T.similares.length >= 2) a.push(['warning', 'layers', `${T.similares.length} reportes parecidos en ±2 horas`, `Puede ser un problema generalizado: revisa los usuarios afectados y la prioridad. ${T.similares.map((s) => `<a href="/admin/soporte.html?ticket=${s.id}" class="mono">${s.folio}</a>`).join(', ')}`]);
+    return a.map(([c, ic, t, d]) => `<div class="st-aviso st-aviso-${c}">${icon(ic, 16)}<div><strong>${t}</strong><div>${d}</div></div></div>`).join('');
+}
+
+// ---- Datos del reporte (sección 3): nunca se inventan, se piden ----
+function datosReporteHTML() {
+    const falta = (campo) => {
+        const f = (T.faltantes || []).find((x) => x.campo === campo);
+        return f ? `<span class="st-falta">Falta</span> <button class="link-btn" onclick="pedirDato('${campo}')">Pedirlo</button>` : '<span class="st-sub">—</span>';
+    };
+    const nFotos = T.mensajes.reduce((n, m) => n + (m.fotos || []).length, 0);
+    const filas = [
+        ['Ticket', `<span class="mono">${T.folio}</span>`],
+        ['Reportó', `${escHTML(T.reportante_nombre)} · ${T.origen === 'equipo' ? 'cuenta del panel' : 'cliente'}`],
+        ['Fecha de creación', formatoFechaHora(T.fecha_creacion)],
+        ['Tipo de incidencia', escHTML((S.CATEGORIAS[T.categoria] || {}).label || T.categoria)],
+        ['Sección afectada', T.seccion ? escHTML(S.SECCIONES[T.seccion] || T.seccion) : falta('seccion')],
+        ['Dispositivo', T.dispositivo ? escHTML(T.dispositivo) : falta('navegador')],
+        ['Navegador', T.navegador ? escHTML(T.navegador) : falta('navegador')],
+        ['Mensaje de error', T.mensaje_error ? `<code class="st-code">${escHTML(T.mensaje_error)}</code>` : falta('mensaje_error')],
+        ['Evidencias', nFotos ? `${nFotos} captura(s) en la conversación` : falta('evidencia')],
+        ['Impacto (según quien reporta)', T.impacto ? escHTML(S.IMPACTOS[T.impacto]) : falta('impacto')],
+        ['Pedido', T.numero_orden ? `<span class="mono">${escHTML(T.numero_orden)}</span>` : '<span class="st-sub">—</span>'],
+    ];
+    return `<div class="card"><div class="st-card-head"><h3>Datos del reporte</h3>
+            ${(T.faltantes || []).length ? `<button class="btn btn-ghost btn-sm" onclick="pedirFaltantes()">Pedir lo que falta</button>` : ''}</div>
+        <dl class="st-datos">${filas.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+        <p class="st-sub" style="margin:8px 0 0">Si falta algo indispensable, pide solo eso. Nunca completes datos con suposiciones.</p></div>`;
+}
+function pedirDato(campo) {
+    const f = (T.faltantes || []).find((x) => x.campo === campo);
+    if (!f) return;
+    const r = document.getElementById('resp');
+    r.value = (r.value.trim() ? r.value.trim() + '\n' : '') + f.texto;
+    document.getElementById('resp-estado').value = 'esperando_usuario';
+    r.focus(); revisarRespuesta();
+}
+function pedirFaltantes() {
+    const r = document.getElementById('resp');
+    const lista = (T.faltantes || []).filter((f, i, a) => a.findIndex((x) => x.texto === f.texto) === i).map((f) => `- ${f.texto}`).join('\n');
+    r.value = `Hola ${primerNombre()}:\n\nGracias por reportarlo. Para revisar tu caso necesitamos estos datos:\n${lista}\n\nRecuerda que nunca te pediremos tu contraseña, el número completo de tu tarjeta ni códigos de verificación.\n\nEquipo de Soporte Kozmok`;
+    document.getElementById('resp-estado').value = 'esperando_usuario';
+    r.focus(); revisarRespuesta();
+}
+const primerNombre = () => String(T.reportante_nombre || '').split(' ')[0] || '';
+
+function hiloHTML() {
+    return T.mensajes.map((m) => `
+        <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
+            <div class="hm-meta">${m.autor === 'equipo' ? `${escHTML(m.usuario_nombre || 'Soporte')} · Soporte` : escHTML(m.usuario_nombre || T.reportante_nombre)} · ${formatoFechaHora(m.fecha)}</div>
+            <div class="hm-txt">${escHTML(m.mensaje)}</div>
+            ${(m.fotos || []).length ? `<div class="st-fotos">${m.fotos.map((f) => `<a href="/api/admin/tickets/${T.id}/adjuntos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/tickets/${T.id}/adjuntos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
+        </div>`).join('');
+}
+
+// ---- Respuesta (sección 10): formato y lo que se debe evitar ----
+function respuestaHTML(borrador) {
+    const cerrado = T.estado === 'cerrado';
+    return `<div class="card">
+        <div class="st-card-head"><h3>Responder a ${escHTML(primerNombre() || 'quien reportó')}</h3>
+            <button class="btn btn-ghost btn-sm" onclick="usarFormato()">${icon('clipboard', 14)} Usar el formato de respuesta</button></div>
+        ${cerrado ? '<p class="st-sub">El ticket está cerrado. Para responder, reábrelo cambiando su estado.</p>' : ''}
+        <textarea id="resp" rows="8" ${cerrado ? 'disabled' : ''} placeholder="Escribe en un lenguaje claro y amable. Usa el formato de 6 partes si no sabes por dónde empezar.">${escHTML(borrador)}</textarea>
+        <div id="resp-avisos"></div>
+        <div class="st-resp-pie">
+            <label>Después de enviar, el ticket queda
+                <select id="resp-estado" ${cerrado ? 'disabled' : ''}>
+                    <option value="">${T.estado === 'abierto' ? 'En revisión' : `Igual (${S.ESTADOS[T.estado]})`}</option>
+                    ${['en_revision', 'en_proceso', 'esperando_usuario', 'resuelto'].filter((e) => e !== T.estado).map((e) => `<option value="${e}">${S.ESTADOS[e]}</option>`).join('')}
+                </select></label>
+            <button class="btn btn-primary" id="btn-responder" onclick="responder()" ${cerrado ? 'disabled' : ''}>Enviar respuesta</button>
+        </div>
+        <p class="st-sub" style="margin:8px 0 0">${icon('lock', 12)} Nunca pidas contraseñas, el número completo de la tarjeta, CVV, NIP ni códigos de verificación. No prometas tiempos no confirmados ni digas que algo quedó resuelto sin verificarlo.</p>
+    </div>`;
+}
+async function usarFormato() {
+    const r = document.getElementById('resp');
+    if (r.value.trim() && !(await confirmar('¿Reemplazar lo que escribiste por el formato de respuesta?', { okText: 'Reemplazar' }))) return;
+    const faltan = (T.faltantes || []).map((f) => `   - ${f.texto}`).join('\n');
+    r.value = `Hola ${primerNombre()}:\n\n`
+        + `1. Entendemos el problema: ${T.asunto}.\n`
+        + `2. Qué está pasando: [explica en palabras sencillas lo que se sabe hasta ahora; si aún es una hipótesis, dilo así].\n`
+        + `3. Lo que necesitamos de ti: ${faltan ? '\n' + faltan : '[información o pruebas necesarias, si hace falta alguna].'}\n`
+        + `4. Qué puedes hacer mientras tanto: [pasos que el usuario puede seguir, si existen].\n`
+        + `5. Estado de tu ticket ${T.folio}: ${S.ESTADOS[T.estado]}.\n`
+        + `6. Próximo paso: [qué haremos nosotros y qué esperamos de ti].\n\n`
+        + 'Nunca te pediremos tu contraseña, el número completo de tu tarjeta ni códigos de verificación.\n\nEquipo de Soporte Kozmok';
+    r.focus(); revisarRespuesta();
+}
+// Revisión en vivo de lo que se va a mandar (la de datos sensibles también la hace el servidor).
+function revisarRespuesta() {
+    const r = document.getElementById('resp');
+    if (!r) return;
+    const t = r.value;
+    const avisos = [];
+    const bloquea = S.pideDatoSensible(t);
+    if (bloquea) avisos.push(['danger', 'Estás pidiendo un dato que nunca se pide (contraseña, tarjeta completa, CVV, NIP o código de verificación). Pide solo el correo de la cuenta, los últimos 4 dígitos o la fecha y monto del cargo.']);
+    if (/\[(explica|información|pasos|qué haremos)/i.test(t)) avisos.push(['warning', 'Completa las partes del formato que siguen entre corchetes.']);
+    if (/(ya\s+(qued[oó]|est[aá])\s+(resuelto|solucionado|arreglado|listo)|problema\s+(resuelto|solucionado))/i.test(t) && !(T.checklist && T.checklist.verificar)) avisos.push(['warning', 'No asegures que está solucionado sin verificarlo: marca primero "Verificar el resultado" en la metodología.']);
+    if (/(en\s+(\d+|unos?|pocos?)\s+(minutos?|horas?|d[ií]as?)|hoy\s+mismo|ma[ñn]ana\s+(mismo|temprano)|a\s+m[aá]s\s+tardar|en\s+breve|en\s+menos\s+de)/i.test(t)) avisos.push(['warning', 'No prometas tiempos de resolución que no estén confirmados.']);
+    if (/(culpa\s+(tuya|suya)|usted\s+(se\s+equivoc|hizo\s+mal)|t[uú]\s+(te\s+equivocaste|hiciste\s+mal)|error\s+(tuyo|suyo)|deber[ií]as\s+haber)/i.test(t)) avisos.push(['warning', 'No culpes al usuario: describe lo que pasó sin señalarlo.']);
+    if (/(te\s+recomendamos\s+(comprar|adquirir)|aprovecha|oferta|promoci[oó]n\s+especial|tambi[eé]n\s+te\s+puede\s+interesar)/i.test(t)) avisos.push(['warning', 'Soporte no da información comercial: limita la respuesta al problema técnico.']);
+    if (/\b(endpoint|backend|query|sql|stack|timeout|cookie|token|cach[eé]|http\s*\d{3}|api|servidor\s+500)\b/i.test(t)) avisos.push(['info', 'Si usas términos técnicos, explícalos en palabras sencillas.']);
+    document.getElementById('resp-avisos').innerHTML = avisos.map(([c, m]) => `<div class="st-aviso st-aviso-${c} st-aviso-mini">${icon(c === 'danger' ? 'lock' : 'alert', 14)}<div>${m}</div></div>`).join('');
+    const btn = document.getElementById('btn-responder');
+    if (btn && T.estado !== 'cerrado') btn.disabled = bloquea;
+}
+async function responder() {
+    const mensaje = document.getElementById('resp').value.trim();
+    if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
+    const estado = document.getElementById('resp-estado').value || undefined;
+    try {
+        const r = await api(`/admin/tickets/${T.id}/mensajes`, { method: 'POST', body: { mensaje, estado } });
+        document.getElementById('resp').value = '';
+        toast(r.message, 'ok');
+        vistaCaso(T.id);
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Caso: estado, prioridad, clasificación, alcance y asignación ----
+function casoHTML() {
+    const estados = Object.entries(S.ESTADOS).map(([k, v]) => `<option value="${k}" ${k === T.estado ? 'selected' : ''} ${k === 'escalado' && T.estado !== 'escalado' ? 'disabled' : ''}>${v}${k === 'escalado' && T.estado !== 'escalado' ? ' (usa "Escalar")' : ''}</option>`).join('');
+    return `<div class="card"><h3 style="margin:0 0 10px">Caso</h3>
+        <div class="field"><label for="c-estado">Estado</label><select id="c-estado">${estados}</select></div>
+        <div class="field"><label for="c-prioridad">Prioridad</label><select id="c-prioridad">${opciones(S.PRIORIDADES, T.prioridad, (v) => `${v.p} · ${v.label}`)}</select>
+            <div class="st-sub" id="c-guia"></div></div>
+        <div class="field"><label for="c-clasificacion">Clasificación</label><select id="c-clasificacion">${opciones(S.CLASIFICACIONES, T.clasificacion)}</select></div>
+        <div class="field"><label for="c-alcance">Usuarios afectados</label><select id="c-alcance">${opciones(S.ALCANCES, T.alcance)}</select>
+            <div class="st-sub">${T.similares.length ? `${T.similares.length} reporte(s) de ${S.CLASIFICACIONES[T.clasificacion]} en ±2 h` : 'Sin otros reportes parecidos en ±2 h'}</div></div>
+        <div class="field"><label for="c-asignado">Asignado a</label><select id="c-asignado"><option value="0">Sin asignar</option>${T.agentes.map((a) => `<option value="${a.id}" ${Number(a.id) === Number(T.asignado_a) ? 'selected' : ''}>${escHTML(a.nombre)}</option>`).join('')}</select></div>
+        <button class="btn btn-primary btn-sm" style="width:100%" onclick="guardarCaso()">Guardar cambios</button>
+    </div>`;
+}
+function pintarSugerida() {
+    const pr = document.getElementById('c-prioridad').value;
+    const sug = S.prioridadSugerida({ clasificacion: document.getElementById('c-clasificacion').value, impacto: T.impacto,
+        alcance: document.getElementById('c-alcance').value, texto: `${T.asunto} ${T.mensaje || ''}` });
+    document.getElementById('c-guia').innerHTML = `${escHTML(P(pr).guia)}<br>Sugerida por el impacto real: <strong>${P(sug).p} · ${P(sug).label}</strong>${sug !== pr ? ' (distinta a la elegida: justifícalo en la bitácora)' : ''}`;
+}
+async function guardarCaso() {
+    const body = {
+        prioridad: document.getElementById('c-prioridad').value,
+        clasificacion: document.getElementById('c-clasificacion').value,
+        alcance: document.getElementById('c-alcance').value,
+        asignado_a: Number(document.getElementById('c-asignado').value) || 0,
+    };
+    const est = document.getElementById('c-estado').value;
+    if (est !== T.estado) body.estado = est;
+    try { const r = await api(`/admin/tickets/${T.id}`, { method: 'PUT', body }); toast(r.message, 'ok'); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); if (e.datos && e.datos.guardado) vistaCaso(T.id); }
+}
+
+// ---- Metodología de resolución (sección 6) ----
+function metodologiaHTML() {
+    const ck = T.checklist || {};
+    const n = S.PASOS.filter(([k]) => ck[k]).length;
+    return `<div class="card"><div class="st-card-head"><h3>Metodología</h3><span class="st-sub">${n} de ${S.PASOS.length}</span></div>
+        <div class="st-barra"><span style="width:${Math.round(n / S.PASOS.length * 100)}%"></span></div>
+        <ol class="st-pasos">${S.PASOS.map(([k, t]) => `<li><label><input type="checkbox" ${ck[k] ? 'checked' : ''} onchange="marcarPaso('${k}', this.checked)" />
+            <span>${t}${ck[k] ? `<small>${escHTML(ck[k].usuario || '')} · ${formatoFechaHora(ck[k].fecha)}</small>` : ''}</span></label></li>`).join('')}</ol>
+    </div>`;
+}
+async function marcarPaso(paso, hecho) {
+    try { await api(`/admin/tickets/${T.id}/checklist`, { method: 'PUT', body: { paso, hecho } }); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Diagnóstico de solo lectura (pruebas autorizadas) ----
+function diagnosticoHTML() {
+    return `<div class="st-card-head"><h3>Diagnóstico</h3><button class="btn btn-outline btn-sm" onclick="correrDiagnostico()">${icon('search', 14)} Correr pruebas</button></div>
+        <p class="st-sub" style="margin:0">Revisa la cuenta, el carrito, los pedidos y pagos, los correos, la seguridad y la plataforma. Solo lee: no cambia nada.</p>
+        <div id="diag-res"></div>`;
+}
+async function correrDiagnostico() {
+    try { DIAG = await api(`/admin/tickets/${T.id}/diagnostico`); pintarDiagnostico(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+function pintarDiagnostico() {
+    const ico = { ok: ['check', 'var(--success)'], alerta: ['alert', 'var(--warning)'], info: ['help', 'var(--text-muted)'] };
+    const tabla = (titulo, filas, cols) => filas && filas.length ? `<details class="st-det"><summary>${titulo} (${filas.length})</summary><table class="st-mini"><tbody>${filas.map((f) => `<tr>${cols.map((c) => `<td>${c(f)}</td>`).join('')}</tr>`).join('')}</tbody></table></details>` : '';
+    document.getElementById('diag-res').innerHTML = `
+        <ul class="st-pruebas">${DIAG.pruebas.map((p) => `<li><span style="color:${ico[p.resultado][1]}">${icon(ico[p.resultado][0], 14)}</span>
+            <div><strong>${escHTML(p.nombre)}</strong> <span class="st-sub">${escHTML(p.area)}</span><div class="st-sub">${escHTML(p.detalle)}</div></div></li>`).join('')}</ul>
+        ${tabla('Correos enviados', DIAG.correos, [(x) => escHTML(x.tipo), (x) => escHTML(x.asunto), (x) => x.estado === 'error' ? `<span style="color:var(--danger)">error: ${escHTML(x.error || '')}</span>` : escHTML(x.estado), (x) => formatoFechaHora(x.fecha)])}
+        ${tabla('Pedidos recientes', DIAG.pedidos, [(x) => `<span class="mono">${escHTML(x.numero_orden)}</span>`, (x) => escHTML(x.estado), (x) => `pago ${escHTML(x.pago || x.pago_estado || '—')}`, (x) => formatoMoneda(x.total)])}
+        ${tabla('Carrito', DIAG.carrito, [(x) => `${x.cantidad} × ${escHTML(x.nombre)}`, (x) => `guardado ${formatoMoneda(x.precio_unitario)}`, (x) => `actual ${formatoMoneda(x.precio)}`, (x) => `stock ${x.stock}${x.activo ? '' : ' · inactivo'}`])}
+        ${tabla('Eventos de seguridad', DIAG.seguridad, [(x) => escHTML(x.tipo.replace(/_/g, ' ')), (x) => escHTML(x.severidad), (x) => escHTML(x.ip || ''), (x) => formatoFechaHora(x.fecha)])}
+        ${tabla('Sesiones cerradas', DIAG.sesiones_cerradas, [(x) => escHTML(x.motivo || ''), (x) => formatoFechaHora(x.fecha)])}
+        ${tabla('Errores del servidor', DIAG.errores, [(x) => `<span class="mono">${escHTML(x.folio)}</span>`, (x) => escHTML(`${x.metodo} ${x.ruta}`), (x) => escHTML(x.mensaje), (x) => formatoFechaHora(x.fecha)])}
+        <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="registrarDiagnostico()">${icon('plus', 14)} Registrar estas pruebas en la bitácora</button>`;
+}
+async function registrarDiagnostico() {
+    if (!DIAG) return;
+    const marca = { ok: 'OK', alerta: 'ALERTA', info: 'INFO' };
+    const texto = 'Pruebas de diagnóstico (solo lectura):\n' + DIAG.pruebas.map((p) => `[${marca[p.resultado]}] ${p.area} · ${p.nombre}: ${p.detalle}`).join('\n');
+    try { await api(`/admin/tickets/${T.id}/notas`, { method: 'POST', body: { tipo: 'prueba', texto } }); toast('Pruebas registradas en la bitácora', 'ok'); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Registro técnico (sección 11): confirmado vs. hipótesis ----
+function registroHTML() {
+    const areas = { soporte: 'Soporte', ...S.AREAS };
+    return `<div class="card"><h3 style="margin:0 0 10px">Registro técnico</h3>
+        <div class="field"><label for="r-diag">Diagnóstico</label><textarea id="r-diag" rows="3" placeholder="Qué se encontró al revisar">${escHTML(T.diagnostico || '')}</textarea></div>
+        <div class="field"><label for="r-causa">Causa raíz</label><textarea id="r-causa" rows="2" placeholder="Por qué pasó">${escHTML(T.causa_raiz || '')}</textarea>
+            <div class="st-seg"><label><input type="radio" name="r-conf" value="0" ${T.causa_confirmada ? '' : 'checked'} /> Hipótesis</label>
+            <label><input type="radio" name="r-conf" value="1" ${T.causa_confirmada ? 'checked' : ''} /> Confirmada</label></div></div>
+        <div class="field"><label for="r-res">Resultado</label><textarea id="r-res" rows="2" placeholder="Qué se logró y cómo se verificó">${escHTML(T.resultado || '')}</textarea></div>
+        <div class="field"><label for="r-area">Área responsable</label><select id="r-area">${opciones(areas, T.area_responsable)}</select></div>
+        <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarRegistro()">Guardar registro</button>
+    </div>`;
+}
+async function guardarRegistro() {
+    const body = {
+        diagnostico: document.getElementById('r-diag').value, causa_raiz: document.getElementById('r-causa').value,
+        causa_confirmada: document.querySelector('input[name="r-conf"]:checked').value === '1',
+        resultado: document.getElementById('r-res').value, area_responsable: document.getElementById('r-area').value,
+    };
+    try { const r = await api(`/admin/tickets/${T.id}`, { method: 'PUT', body }); toast('Registro técnico guardado', 'ok'); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Bitácora (solo agregar) ----
+function bitacoraHTML() {
+    return `<div class="card"><h3 style="margin:0 0 10px">Bitácora técnica</h3>
+        <div class="st-nota-form">
+            <select id="n-tipo">${opciones(S.TIPOS_NOTA, 'hipotesis')}</select>
+            <textarea id="n-texto" rows="2" placeholder="Distingue siempre lo confirmado de las hipótesis"></textarea>
+            <button class="btn btn-outline btn-sm" onclick="agregarNota()">Agregar</button>
+        </div>
+        <ul class="st-notas">${T.notas.slice().reverse().map((n) => `<li class="st-n-${n.tipo}">
+            <div class="st-n-top"><span class="st-n-tipo">${escHTML((S.TIPOS_NOTA[n.tipo]) || (n.tipo === 'estado' ? 'Estado' : n.tipo === 'escalamiento' ? 'Escalamiento' : n.tipo))}</span>
+            <span class="st-sub">${escHTML(n.usuario_nombre || 'Sistema')} · ${formatoFechaHora(n.fecha)}</span></div>
+            <div class="st-n-txt">${escHTML(n.texto)}</div></li>`).join('')}</ul>
+        <p class="st-sub" style="margin:6px 0 0">${icon('lock', 12)} La bitácora no se edita ni se borra: queda como trazabilidad del caso.</p>
+    </div>`;
+}
+async function agregarNota() {
+    const texto = document.getElementById('n-texto').value.trim();
+    if (texto.length < 5) { toast('Describe lo que registras', 'warn'); return; }
+    try { await api(`/admin/tickets/${T.id}/notas`, { method: 'POST', body: { tipo: document.getElementById('n-tipo').value, texto } }); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Escalamiento (sección 8) ----
+function abrirEscalar() {
+    const area = T.clasificacion === 'seguridad' ? 'seguridad' : (S.AREA_SUGERIDA[T.clasificacion] || 'desarrollo');
+    const motivo = T.clasificacion === 'seguridad' ? 'vulnerabilidad' : T.alcance !== 'uno' ? 'multiples_usuarios' : T.clasificacion === 'pagos' ? 'financiero' : 'sin_procedimiento';
+    const resumen = [
+        `Ticket ${T.folio} · ${P(T.prioridad).p} ${P(T.prioridad).label} · ${S.CLASIFICACIONES[T.clasificacion]}`,
+        `Reportó: ${T.reportante_nombre} (${T.origen === 'equipo' ? 'cuenta del panel' : 'cliente'}) el ${formatoFechaHora(T.fecha_creacion)}`,
+        `Problema: ${T.asunto}`,
+        `Impacto: ${T.impacto ? S.IMPACTOS[T.impacto] : 'sin dato'} · Usuarios afectados: ${S.ALCANCES[T.alcance]}${T.similares.length ? ` (${T.similares.length} reportes parecidos)` : ''}`,
+        `Sección: ${T.seccion ? (S.SECCIONES[T.seccion] || T.seccion) : 'sin dato'} · ${T.navegador || 'navegador sin dato'} · ${T.dispositivo || ''}`,
+        T.mensaje_error ? `Error que vio: ${T.mensaje_error}` : '',
+        `Diagnóstico: ${T.diagnostico || '(pendiente)'}`,
+        T.causa_raiz ? `Causa (${T.causa_confirmada ? 'confirmada' : 'hipótesis'}): ${T.causa_raiz}` : '',
+    ].filter(Boolean).join('\n');
+    const pruebas = T.notas.filter((n) => ['prueba', 'confirmado', 'hipotesis'].includes(n.tipo))
+        .map((n) => `${S.TIPOS_NOTA[n.tipo]}: ${n.texto}`).join('\n');
+    abrirModal(`<h3 style="margin-top:0">Escalar ${T.folio}</h3>
+        ${T.clasificacion === 'seguridad' ? `<div class="st-aviso st-aviso-danger">${icon('alert', 16)}<div><strong>Incidente de seguridad</strong><div>Escálalo a Seguridad y no borres ni cambies nada para conservar la evidencia.</div></div></div>` : ''}
+        <div class="field"><label for="e-area">Área</label><select id="e-area">${opciones(S.AREAS, area, (v, k) => `${v} — ${S.AREAS_DESC[k]}`)}</select></div>
+        <div class="field"><label for="e-motivo">Motivo</label><select id="e-motivo">${opciones(S.MOTIVOS_ESCALAMIENTO, motivo)}</select></div>
+        <div class="field"><label for="e-resumen">Resumen técnico completo</label><textarea id="e-resumen" rows="8">${escHTML(resumen)}</textarea></div>
+        <div class="field"><label for="e-pruebas">Pruebas realizadas y su resultado</label><textarea id="e-pruebas" rows="5" placeholder="Qué se revisó y qué salió">${escHTML(pruebas)}</textarea></div>
+        <button class="btn btn-primary" style="width:100%" onclick="escalar()">Escalar</button>`, 720);
+}
+async function escalar() {
+    const body = { area: document.getElementById('e-area').value, motivo: document.getElementById('e-motivo').value,
+        resumen: document.getElementById('e-resumen').value, pruebas: document.getElementById('e-pruebas').value };
+    try { const r = await api(`/admin/tickets/${T.id}/escalar`, { method: 'POST', body }); cerrarModal(); toast(r.message, 'ok'); vistaCaso(T.id); }
+    catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Registro técnico para imprimir o compartir con el área ----
+function textoRegistro() {
+    const notas = (tipos) => T.notas.filter((n) => tipos.includes(n.tipo)).map((n) => `- ${n.texto.replace(/\n/g, '\n  ')} (${n.usuario_nombre || 'Sistema'}, ${formatoFechaHora(n.fecha)})`).join('\n') || '- (ninguna)';
+    return [
+        ['ID del ticket', T.folio], ['Categoría', S.CLASIFICACIONES[T.clasificacion]], ['Prioridad', `${P(T.prioridad).p} ${P(T.prioridad).label}`],
+        ['Descripción', `${T.asunto}\n${T.mensaje || ''}`], ['Diagnóstico', T.diagnostico || '(pendiente)'],
+        ['Causa raíz', T.causa_raiz ? `${T.causa_raiz} [${T.causa_confirmada ? 'CONFIRMADA' : 'HIPÓTESIS, sin confirmar'}]` : '(sin determinar)'],
+        ['Información confirmada', notas(['confirmado'])], ['Hipótesis', notas(['hipotesis'])],
+        ['Pruebas de diagnóstico', notas(['prueba'])], ['Acciones realizadas', notas(['accion'])],
+        ['Evidencias', `${notas(['evidencia'])}${T.confirmacion ? `\n- Confirmación de quien reportó: ${T.confirmacion === 'resuelto' ? 'quedó resuelto' : 'el problema persiste'} (${formatoFechaHora(T.fecha_confirmacion)})` : ''}`],
+        ['Resultado', T.resultado || '(pendiente)'], ['Área responsable', T.area_responsable === 'soporte' ? 'Soporte' : S.AREAS[T.area_responsable]],
+        ['Escalamiento', T.escalado_area ? `${S.AREAS[T.escalado_area]} · ${S.MOTIVOS_ESCALAMIENTO[T.escalado_motivo] || ''}\n${T.escalado_resumen || ''}\nPruebas: ${T.escalado_pruebas || ''}` : 'No escalado'],
+        ['Estado final', S.ESTADOS[T.estado]],
+    ];
+}
+function verRegistro() {
+    const filas = textoRegistro();
+    abrirModal(`<h3 style="margin-top:0">Registro técnico · ${T.folio}</h3>
+        <dl class="st-registro">${filas.map(([k, v]) => `<dt>${k}</dt><dd>${escHTML(v)}</dd>`).join('')}</dl>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+            <button class="btn btn-primary" onclick="imprimirRegistro()">${icon('clipboard', 15)} Imprimir</button>
+            <button class="btn btn-outline" onclick="copiarRegistro()">Copiar como texto</button></div>`, 760);
+}
+function copiarRegistro() {
+    const txt = textoRegistro().map(([k, v]) => `${k.toUpperCase()}:\n${v}`).join('\n\n');
+    navigator.clipboard.writeText(txt).then(() => toast('Registro copiado', 'ok'), () => toast('No se pudo copiar', 'error'));
+}
+function imprimirRegistro() {
+    const w = window.open('', '_blank', 'width=820,height=900');
+    if (!w) { toast('Permite las ventanas emergentes para imprimir', 'warn'); return; }
+    w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Registro técnico ${escHTML(T.folio)}</title>
+        <style>body{font-family:system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px}dt{font-weight:700;margin-top:14px}dd{margin:4px 0 0;white-space:pre-wrap}</style></head>
+        <body><h1>Kozmok · Registro técnico ${escHTML(T.folio)}</h1><p>Generado el ${new Date().toLocaleString('es-MX')} · Documento interno de Soporte</p>
+        <dl>${textoRegistro().map(([k, v]) => `<dt>${escHTML(k)}</dt><dd>${escHTML(v)}</dd>`).join('')}</dl></body></html>`);
+    w.document.close(); w.focus(); w.print();
+}
+
+// ---- Consultas técnicas de solo lectura ----
+function abrirConsultas() {
+    abrirModal(`<h3 style="margin-top:0">Consultas técnicas</h3>
+        <p class="st-sub" style="margin-top:0">Solo lectura: sirven para diagnosticar. Si algo se debe corregir (precios, existencias, promociones), escálalo al área que corresponde.</p>
+        <div class="st-seg" id="cq-tipos">
+            <label><input type="radio" name="cq" value="producto" checked /> Producto o existencias</label>
+            <label><input type="radio" name="cq" value="promocion" /> Promoción</label>
+            <label><input type="radio" name="cq" value="error" /> Folio de error</label></div>
+        <input type="search" id="cq-q" placeholder="Nombre, marca, id o folio (ej. A1B2C3)…" style="width:100%;margin:10px 0" />
+        <div id="cq-res" class="st-sub">Escribe al menos 2 letras. Con "Folio de error" y sin texto se muestran los errores más recientes.</div>`, 780);
+    const correr = async () => {
+        const tipo = document.querySelector('input[name="cq"]:checked').value;
+        const q = document.getElementById('cq-q').value.trim();
+        if (tipo !== 'error' && q.length < 2) return;
+        try {
+            const d = await api(`/admin/soporte/consulta?tipo=${tipo}&q=${encodeURIComponent(q)}`);
+            const res = document.getElementById('cq-res');
+            if (!d.filas.length) { res.textContent = 'Sin resultados.'; return; }
+            const col = {
+                producto: [['Producto', (x) => `${escHTML(x.nombre)} <span class="st-sub">#${x.id} · ${escHTML(x.marca || '')} · ${escHTML(x.categoria || '')}</span>`],
+                    ['Precio', (x) => formatoMoneda(x.precio)], ['Existencias', (x) => `${x.stock}${Number(x.stock) <= Number(x.stock_minimo) ? ' <span style="color:var(--warning)">(mín. ' + x.stock_minimo + ')</span>' : ''}`],
+                    ['Estado', (x) => `${x.activo ? 'Activo' : '<span style="color:var(--danger)">Inactivo</span>'}${x.tiene_imagen ? '' : ' · <span style="color:var(--warning)">sin imagen</span>'}${x.mismos_nombre > 1 ? ' · <span style="color:var(--warning)">posible duplicado</span>' : ''}`]],
+                promocion: [['Promoción', (x) => `${escHTML(x.nombre)} <span class="st-sub">${escHTML(x.alcance || '')}</span>`], ['Descuento', (x) => x.tipo_descuento === 'porcentaje' ? `${Number(x.valor)}%` : formatoMoneda(x.valor)],
+                    ['Vigencia', (x) => `${formatoFecha(x.fecha_inicio)} – ${formatoFecha(x.fecha_fin)}`], ['Estado', (x) => `${escHTML(x.estado)}${x.vigente_ahora ? ' · <span style="color:var(--success)">vigente ahora</span>' : ' · <span style="color:var(--warning)">no vigente ahora</span>'}`]],
+                error: [['Folio', (x) => `<span class="mono">${escHTML(x.folio)}</span>`], ['Ruta', (x) => escHTML(`${x.metodo} ${x.ruta}`)], ['Detalle', (x) => escHTML(x.mensaje)], ['Fecha', (x) => formatoFechaHora(x.fecha)]],
+            }[tipo];
+            res.innerHTML = `<div class="table-wrap"><table><thead><tr>${col.map(([h]) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${d.filas.map((x) => `<tr>${col.map(([, f]) => `<td>${f(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+        } catch (e) { toast(e.message, 'error'); }
+    };
+    let tq; document.getElementById('cq-q').addEventListener('input', () => { clearTimeout(tq); tq = setTimeout(correr, 300); });
+    document.querySelectorAll('input[name="cq"]').forEach((r) => r.addEventListener('change', correr));
+}
+
+// ---- Pedido del caso: consulta (y gestión solo para quien puede) ----
 const EST_PED = ['pendiente', 'confirmado', 'procesando', 'enviado', 'entregado'];
 const EST_PED_TXT = { pendiente: 'Pendiente', confirmado: 'Confirmado', procesando: 'Procesando', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
+const puedeGestionarPedidos = () => ['ordenes-erp', 'ordenes-compra'].some((k) => puedeVer((Sesion.usuario() || {}).rol, k));
 async function pintarPedido() {
     const caja = document.getElementById('tk-pedido');
-    const t = TICKET;
-    if (!t.pedido_id) {
+    if (!T.cliente_id) { caja.innerHTML = '<h3 style="margin:0 0 6px;font-size:1rem">Pedido relacionado</h3><p class="st-sub" style="margin:0">Reporte del equipo: no aplica.</p>'; return; }
+    if (!T.pedido_id) {
         let lista = [];
-        try { lista = await api(`/admin/clientes/${t.cliente_id}/pedidos`); } catch { /* sin permiso o sin pedidos */ }
+        try { lista = await api(`/admin/clientes/${T.cliente_id}/pedidos`); } catch { /* sin pedidos */ }
         caja.innerHTML = `<h3 style="margin:0 0 6px;font-size:1rem">Pedido relacionado</h3>
-            ${lista.length ? `<p style="margin:0 0 10px;font-size:.84rem;color:var(--text-muted)">Este caso no tiene pedido. Si trata de uno, lígalo para verlo y gestionarlo aquí.</p>
-                <div class="field"><select id="tk-ligar"><option value="">Elige un pedido del cliente</option>
+            ${lista.length ? `<p class="st-sub" style="margin:0 0 10px">Si el caso trata de un pedido, lígalo para consultarlo aquí.</p>
+                <div class="field"><select id="tk-ligar"><option value="">Elige un pedido de quien reportó</option>
                     ${lista.map((p) => `<option value="${p.id}">${escHTML(p.numero_orden)} · ${EST_PED_TXT[p.estado] || p.estado} · ${formatoMoneda(p.total)}</option>`).join('')}</select></div>
                 <button class="btn btn-outline btn-sm" style="width:100%" onclick="ligarPedido()">Ligar pedido</button>`
-            : '<p style="margin:0;font-size:.84rem;color:var(--text-muted)">El cliente no tiene pedidos.</p>'}`;
+            : '<p class="st-sub" style="margin:0">No tiene pedidos.</p>'}`;
         return;
     }
     let d;
-    try { d = await api(`/admin/pedidos/${t.pedido_id}`); }
+    try { d = await api(`/admin/pedidos/${T.pedido_id}`); }
     catch {
-        caja.innerHTML = `<h3 style="margin:0 0 6px;font-size:1rem">Pedido relacionado</h3>
-            <p style="margin:0" class="mono">${escHTML(t.numero_orden)}</p>
-            <p style="margin:4px 0 0;font-size:.84rem;color:var(--text-muted)">${EST_PED_TXT[t.pedido_estado] || t.pedido_estado} · ${formatoMoneda(t.pedido_total)}. Tu rol no puede gestionar pedidos.</p>`;
+        caja.innerHTML = `<h3 style="margin:0 0 6px;font-size:1rem">Pedido relacionado</h3><p class="mono" style="margin:0">${escHTML(T.numero_orden)}</p>
+            <p class="st-sub" style="margin:4px 0 0">${EST_PED_TXT[T.pedido_estado] || T.pedido_estado} · ${formatoMoneda(T.pedido_total)}</p>`;
         return;
     }
     const i = EST_PED.indexOf(d.estado);
     caja.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <h3 style="margin:0;font-size:1rem">Pedido relacionado</h3>
-            <button class="btn btn-ghost btn-sm" title="Quitar el pedido de este caso" onclick="desligarPedido()">${icon('x', 14)}</button>
-        </div>
+        <div class="st-card-head"><h3 style="margin:0;font-size:1rem">Pedido relacionado</h3>
+            <button class="btn btn-ghost btn-sm" title="Quitar el pedido de este caso" onclick="desligarPedido()">${icon('x', 14)}</button></div>
         <p style="margin:4px 0 10px"><span class="mono">${escHTML(d.numero_orden)}</span> · ${formatoFecha(d.fecha_pedido)}</p>
         ${d.estado === 'cancelado' ? '<span class="tag" style="color:var(--danger);border-color:var(--danger)">Cancelado</span>' : `
         <div class="tk-mini-pipe">${EST_PED.map((e, k) => `<span class="${k <= i ? 'on' : ''} ${k === i ? 'actual' : ''}" title="${EST_PED_TXT[e]}"></span>`).join('')}</div>
         <p style="margin:6px 0 10px;font-size:.84rem"><strong>${EST_PED_TXT[d.estado]}</strong>${d.numero_guia ? ` · guía <span class="mono">${escHTML(d.numero_guia)}</span>` : ''}</p>`}
         <div class="tk-kv"><span>Pago</span><span>${d.pago_estado === 'pagado' ? '<span style="color:var(--success)">Pagado</span>' : '<span style="color:var(--warning)">Pendiente</span>'}</span></div>
         <div class="tk-kv"><span>Total</span><span class="mono">${formatoMoneda(d.total)}</span></div>
-        <div class="tk-kv"><span>Envío a</span><span style="text-align:right">${escHTML(d.direccion_envio || '—')}</span></div>
         <ul class="tk-items">${(d.items || []).map((it) => `<li><span>${it.cantidad} × ${escHTML(it.nombre)}</span><span class="mono">${formatoMoneda(it.subtotal)}</span></li>`).join('')}</ul>
-        <button class="btn btn-primary btn-sm" style="width:100%" onclick="gestionarPedido()">${icon('truck', 15)} Gestionar pedido</button>
-        <p style="margin:8px 0 0;font-size:.76rem;color:var(--text-muted)">Avanza el estado, registra el pago o cancélalo sin salir del caso.</p>`;
-    PEDIDO_ANTES = d.estado;
-}
-let PEDIDO_ANTES = null;
-function gestionarPedido() {
-    GestionPedido.abrir(TICKET.pedido_id, { onCambio: async () => {
-        const antes = PEDIDO_ANTES;
-        await pintarPedido();
-        // Si cambió el estado, se deja escrita una respuesta para avisarle al cliente.
-        let d; try { d = await api(`/admin/pedidos/${TICKET.pedido_id}`); } catch { return; }
-        if (d.estado !== antes) {
-            const resp = document.getElementById('resp');
-            if (resp && !resp.value.trim()) {
-                resp.value = d.estado === 'cancelado'
-                    ? `Cancelamos tu pedido ${d.numero_orden}. Si pagaste, el reembolso se hace al mismo medio de pago.`
-                    : `Actualizamos tu pedido ${d.numero_orden}: ahora está «${EST_PED_TXT[d.estado]}».${d.numero_guia ? ` Número de guía: ${d.numero_guia}.` : ''}`;
-                toast('Dejamos escrita una respuesta para avisarle al cliente; revísala y envíala.', 'ok');
-            }
-        }
-    } });
+        <button class="btn btn-outline btn-sm" style="width:100%" onclick="GestionPedido.abrir(T.pedido_id, { onCambio: pintarPedido })">${icon('truck', 15)} ${puedeGestionarPedidos() ? 'Gestionar pedido' : 'Ver detalle del pedido'}</button>
+        ${puedeGestionarPedidos() ? '' : `<p class="st-sub" style="margin:8px 0 0">${icon('lock', 12)} Soporte solo consulta el pedido: no cambia su estado, pagos ni hace reembolsos. Si hace falta, escala a Administración o Pagos.</p>`}`;
 }
 async function ligarPedido() {
     const pid = Number(document.getElementById('tk-ligar').value);
     if (!pid) { toast('Elige un pedido', 'warn'); return; }
-    try { const r = await api(`/admin/tickets/${TICKET.id}`, { method: 'PUT', body: { pedido_id: pid } }); toast(r.message, 'ok'); vistaHilo(TICKET.id); }
+    try { const r = await api(`/admin/tickets/${T.id}`, { method: 'PUT', body: { pedido_id: pid } }); toast(r.message, 'ok'); vistaCaso(T.id); }
     catch (e) { toast(e.message, 'error'); }
 }
 async function desligarPedido() {
     if (!(await confirmar('¿Quitar el pedido de este caso? El pedido no cambia.', { okText: 'Quitar' }))) return;
-    try { const r = await api(`/admin/tickets/${TICKET.id}`, { method: 'PUT', body: { pedido_id: 0 } }); toast(r.message, 'ok'); vistaHilo(TICKET.id); }
+    try { const r = await api(`/admin/tickets/${T.id}`, { method: 'PUT', body: { pedido_id: 0 } }); toast(r.message, 'ok'); vistaCaso(T.id); }
     catch (e) { toast(e.message, 'error'); }
-}
-async function guardarEstado(id) {
-    try {
-        await api(`/admin/tickets/${id}`, { method: 'PUT', body: {
-            estado: document.getElementById('t-estado').value,
-            prioridad: document.getElementById('t-prio').value,
-        }});
-        toast('Ticket actualizado', 'ok');
-    } catch (e) { toast(e.message, 'error'); }
-}
-async function responder(id) {
-    const mensaje = document.getElementById('resp').value.trim();
-    if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
-    try {
-        await api(`/admin/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje } });
-        location.reload();
-    } catch (e) { toast(e.message, 'error'); }
 }
 </script>
 </body>

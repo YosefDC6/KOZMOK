@@ -10,7 +10,10 @@
 // solo por persona, para no llenarle la bandeja.
 
 const CATEGORIAS = [
-    { clave: 'tickets',      label: 'Tickets de soporte',      desc: 'Tickets nuevos y mensajes de clientes',          permisos: ['soporte'] },
+    { clave: 'tickets',      label: 'Tickets de soporte',      desc: 'Tickets nuevos y mensajes de clientes y del equipo', permisos: ['soporte'] },
+    { clave: 'escalados',    label: 'Tickets escalados',       desc: 'Casos que Soporte escaló a otra área (desarrollo, seguridad, pagos…)', permisos: ['usuarios'] },
+    // Para cualquier cuenta del panel: respuestas de Soporte a lo que reportó.
+    { clave: 'reportes',     label: 'Mis reportes técnicos',   desc: 'Respuestas y cambios en los problemas que reportaste a Soporte', permisos: [], todos: true },
     { clave: 'garantias',    label: 'Reclamos de garantía',    desc: 'Reclamos nuevos y mensajes de clientes',         permisos: ['garantias'] },
     { clave: 'devoluciones', label: 'Devoluciones',            desc: 'Solicitudes nuevas de devolución o cambio',      permisos: ['devoluciones'] },
     { clave: 'resenas',      label: 'Reseñas',                 desc: 'Reseñas de 3 estrellas o menos',                 permisos: ['evaluaciones'] },
@@ -26,7 +29,7 @@ const POR_CLAVE = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c]));
 const panelOculto = require('./panel-oculto.js');
 
 module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, urlBase }) {
-    const ve = (rol, cat) => (POR_CLAVE[cat] || { permisos: [] }).permisos.some((k) => puedeVer(rol, k));
+    const ve = (rol, cat) => { const c = POR_CLAVE[cat]; return !!c && (!!c.todos || c.permisos.some((k) => puedeVer(rol, k))); };
     const categoriasDe = (rol) => CATEGORIAS.filter((c) => ve(rol, c.clave));
     const prefsDe = (u) => {
         const p = u.notif_prefs || {};
@@ -122,13 +125,15 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
         const ev = [];
         // Tickets: nuevos y mensajes de clientes
         for (const m of await nuevas('ticket_mensajes', 'ticket_mensajes', `
-            SELECT m.id AS _id, m.autor, m.mensaje, t.id, t.folio, t.asunto, t.prioridad, c.nombre,
+            SELECT m.id AS _id, m.autor, m.mensaje, t.id, t.folio, t.asunto, t.prioridad, COALESCE(c.nombre, r.nombre) AS nombre,
                    m.id = (SELECT MIN(id) FROM ticket_mensajes WHERE ticket_id = t.id) AS primero
-            FROM ticket_mensajes m JOIN tickets t ON t.id = m.ticket_id JOIN clientes c ON c.id = t.cliente_id
+            FROM ticket_mensajes m JOIN tickets t ON t.id = m.ticket_id
+            LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por
             WHERE m.id > $1 ORDER BY m.id LIMIT 500`)) {
             if (m.autor !== 'cliente') continue;
+            const prio = { critica: ' (P1 crítica)', alta: ' (P2 alta)' }[m.prioridad] || '';
             ev.push({ categoria: 'tickets', dedupe: 'tk' + m.id, url: `/admin/soporte.html?ticket=${m.id}`,
-                titulo: m.primero ? `Ticket nuevo ${m.folio}${m.prioridad === 'alta' ? ' (prioridad alta)' : ''}` : `${m.nombre} respondió en ${m.folio}`,
+                titulo: m.primero ? `Ticket nuevo ${m.folio}${prio}` : `${m.nombre} respondió en ${m.folio}`,
                 cuerpo: `${m.primero ? `${m.nombre}: ${m.asunto}. ` : ''}${corto(m.mensaje)}` });
         }
         // Reclamos de garantía: nuevos y mensajes de clientes
@@ -261,5 +266,27 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
         }));
     }
 
-    return { CATEGORIAS, migrar, crear, revisar, rutas };
+    // Aviso para una sola cuenta del panel (p. ej. quien reportó un problema),
+    // respetando lo que eligió recibir en el panel y por correo.
+    async function aUsuario(usuarioId, { categoria, titulo, cuerpo, url }) {
+        const u = (await pool.query('SELECT id, nombre, email, rol, notif_prefs, activo FROM usuarios WHERE id = $1', [usuarioId])).rows[0];
+        if (!u || !u.activo || !ve(u.rol, categoria)) return 0;
+        const pr = prefsDe(u);
+        if (!pr.panel_off.has(categoria)) {
+            await pool.query('INSERT INTO notificaciones (usuario_id, categoria, titulo, cuerpo, url) VALUES ($1,$2,$3,$4,$5)',
+                [u.id, categoria, String(titulo).slice(0, 160), cuerpo ? String(cuerpo).slice(0, 400) : null, url || null]);
+        }
+        if (pr.correo && !pr.correo_off.has(categoria) && u.email) {
+            const base = urlBase();
+            const destino = url ? panelOculto.enlace(base, url) : panelOculto.url(base);
+            await enviarCorreo(pool, {
+                para: u.email, tipo: 'panel', asunto: `Kozmok · ${titulo}`,
+                cuerpo: `Hola ${u.nombre}:\n\n${titulo}${cuerpo ? `\n${cuerpo}` : ''}\n\nAbrir el panel: ${destino}`,
+                boton: { texto: 'Abrir el panel', url: destino },
+            }).catch((e) => console.error('Correo de notificación:', e.message));
+        }
+        return 1;
+    }
+
+    return { CATEGORIAS, migrar, crear, aUsuario, revisar, rutas };
 };

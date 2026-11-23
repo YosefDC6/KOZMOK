@@ -44,8 +44,15 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Clientes**: búsqueda, filtros por etapa y por estado, alta (sin contraseña: al cliente le llega un correo con un enlace de 72 h para crear la suya), edición y baja en dos pasos (si ya compró primero se marca inactivo; ya inactivo se elimina por completo y sus pedidos quedan como "Cliente eliminado"); etapas `Prospecto → Activo → Frecuente → Inactivo`; un cliente pasa a *Activo* automáticamente con su primera compra.
 - **Interacciones** (llamada, correo, reunión, soporte y chat) y **reportes** por rango de fechas.
 - **Evaluaciones**: promedio, distribución de estrellas (clic para filtrar), productos peor calificados y filtros (sin responder, con comentario, ocultas). Cada reseña abre su detalle (compra verificada, cliente, reclamos del producto); el equipo **responde en público** (le llega al cliente por correo) u **oculta** la reseña con motivo.
-- **Centro de soporte** (inicio del rol Soporte): buscador por cliente, folio o pedido; indicadores (tickets sin respuesta, reclamos, devoluciones, reseñas sin responder, tiempo de primera respuesta) y una sola bandeja **Por atender** con tickets, reclamos de garantía, devoluciones y reseñas críticas, ordenada por quién debe responder, prioridad y antigüedad; los tickets se responden ahí mismo.
-- **Soporte** con tickets (`TK-1001…`), estados y prioridades. Si el caso trae pedido, se ve y se gestiona ahí mismo (avanzar, registrar pago, cancelar) y se le deja escrita la respuesta al cliente; si no, se puede ligar uno.
+- **Centro de soporte** (inicio del rol Soporte): buscador por cliente, folio o pedido; indicadores (tickets por atender, escalados, reclamos, devoluciones, reseñas sin responder, tiempo de primera respuesta y de resolución) y una sola bandeja **Por atender** con tickets (P1–P4), reclamos de garantía, devoluciones y reseñas críticas, ordenada por quién debe dar el siguiente paso, prioridad y antigüedad.
+- **Soporte técnico TI** (tickets `TK-1001…`), como el rol *Agente de soporte técnico* de la tienda:
+  - **Reportan** los clientes (áreas de acceso, productos, carrito, pedidos, pagos, inventario, promociones, rendimiento, notificaciones…) y **cualquier cuenta del panel** ("Reportar un problema" en su menú, para fallas del panel administrativo). El reporte guarda sección, mensaje de error, impacto, capturas, navegador y dispositivo.
+  - **Clasificación** técnica (12 tipos) y **prioridad P1–P4 por impacto real**, con el alcance estimado por los reportes parecidos de las últimas 2 horas.
+  - **7 estados** (Abierto, En revisión, En proceso, Esperando al usuario, Escalado, Resuelto, Cerrado). No se resuelve sin diagnóstico, acción, resultado y verificación; no se cierra sin la confirmación de quien reportó o evidencia.
+  - **Metodología de 12 pasos**, **diagnóstico de solo lectura** (cuenta, bloqueos, sesiones, correos, carrito, pagos y cargos duplicados, seguridad, plataforma), **consultas** de producto, promoción y **folio de error** (los errores 500 se guardan con el folio que ve el usuario).
+  - **Registro técnico** (causa raíz confirmada o hipótesis) y **bitácora solo-agregar**; **escalamiento** a Desarrollo, Infraestructura, Base de datos, Seguridad, Administración o Pagos con resumen técnico y pruebas; registro imprimible.
+  - **Protección de datos**: no se pueden pedir contraseñas, tarjeta, CVV, NIP ni códigos (la pantalla y el servidor lo bloquean) y si alguien los escribe se ocultan. El cliente nunca ve el registro interno.
+  - **Límites**: Soporte solo consulta pedidos, facturas, devoluciones, productos e inventario; no cambia pedidos ni precios ni hace reembolsos (el servidor responde 403).
 - **Garantías**: reclamos en curso con etapas, resolución, conversación, fotos y notas internas; reclamo en mostrador; validación por código; garantías incluidas y extendidas.
 - **Pedidos** y **analítica del chatbot** (qué se busca y qué búsquedas quedaron sin recomendación).
 
@@ -109,7 +116,7 @@ Roles empresariales del ERP: **Administrador**, **Ventas**, **Logística** y **S
 | **Administrador** | Dashboard CRM | Todo: CRM, SCM, ERP y Tienda (incluidos Impuestos), cuentas y equipo, Nivel ERP y Panel por rol |
 | **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes, Promociones, Monedero, Pagos y Mi actividad |
 | **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, captura, surte y envía) y Reportes |
-| **Soporte** | Centro de soporte | Tickets, Garantías, Devoluciones, Evaluaciones, Clientes (solo consulta: ficha, interacciones y confirmar correo), Interacciones, Pedidos y Facturas |
+| **Soporte** (técnico TI) | Centro de soporte | Tickets (clasifica, prioriza, diagnostica, documenta y escala), Garantías, Evaluaciones, Interacciones y, solo consulta, Clientes, Pedidos, Facturas y Devoluciones |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
 
 Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)* (Soporte se agregó después); la pantalla **Panel por rol** los muestra con su vista previa del menú y la matriz de permisos.

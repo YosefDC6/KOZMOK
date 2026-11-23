@@ -26,9 +26,16 @@
 <script src="/js/layout.js"></script>
 <script src="/js/chatbot.js"></script>
 <script src="/js/cuenta.js"></script>
+<script src="/js/soporte-ti.js"></script>
+<script src="/js/fotos.js"></script>
 <script>
+// Soporte técnico de la tienda: reportar un problema y darle seguimiento.
+// Las categorías, secciones e impacto son las mismas que usa Soporte
+// (js/soporte-ti.js). Nunca pedimos contraseñas ni datos de tarjeta.
+const S = SoporteTI;
 let CID = null;
-const EST_LABEL = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
+const estadoTag = (e) => `<span class="tag st-e-${e}">${S.ESTADOS[e] || e}</span>`;
+const AVISO_SEGURIDAD = 'Nunca te pediremos tu contraseña, el número completo de tu tarjeta, el CVV, tu NIP ni códigos de verificación. No los escribas en el ticket.';
 
 montarCuenta('soporte', async (panel, P) => {
     CID = P.id;
@@ -39,102 +46,162 @@ montarCuenta('soporte', async (panel, P) => {
         await vistaLista(panel);
         // Desde "Mis pedidos" → "Ayuda con este pedido"
         if (qs.get('pedido')) formTicket({ categoria: 'pedido', pedido_id: Number(qs.get('pedido')) });
+        else if (qs.get('nuevo')) formTicket({ categoria: S.CATEGORIAS[qs.get('nuevo')] ? qs.get('nuevo') : 'general' });
     }
 });
+
+function siguientePaso(t) {
+    if (t.estado === 'esperando_usuario') return '<strong style="color:#b47ef0">Necesitamos tu respuesta</strong>';
+    if (t.estado === 'resuelto' && !t.confirmacion) return '<strong style="color:var(--success)">Confírmanos si quedó resuelto</strong>';
+    return '';
+}
 
 async function vistaLista(panel) {
     const list = await api(`/clientes/${CID}/tickets`);
     panel.innerHTML = `
         <div class="cuenta-head" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
-            <div><h1>Soporte</h1><p>Abre un ticket y te damos seguimiento por aquí.</p></div>
-            <button class="btn btn-primary btn-sm" onclick="formTicket()">Nuevo ticket</button>
+            <div><h1>Soporte técnico</h1><p>¿Algo no funciona en la tienda? Repórtalo y te damos seguimiento por aquí.</p></div>
+            <button class="btn btn-primary btn-sm" onclick="formTicket()">Reportar un problema</button>
         </div>
+        <p class="st-sub" style="margin:-6px 0 14px">${icon('lock', 12)} ${AVISO_SEGURIDAD}</p>
         ${list.length === 0
-            ? '<div class="empty-state">No tienes tickets. Si algo salió mal con un pedido, crea uno y te ayudamos.</div>'
+            ? '<div class="empty-state">No tienes tickets. Si algo falla (iniciar sesión, el carrito, un pago, un pedido…), repórtalo y te ayudamos.</div>'
             : list.map((t) => `
                 <a class="card ticket-row" href="/soporte.html?ticket=${t.id}">
                     <div>
                         <span class="mono" style="font-size:.82rem">${t.folio}</span>
                         <div style="font-weight:600">${escHTML(t.asunto)}</div>
                         <div style="font-size:.8rem;color:var(--text-muted)">${t.numero_orden ? `Pedido <span class="mono">${escHTML(t.numero_orden)}</span> · ` : ''}${formatoFecha(t.fecha_actualizacion)} · ${t.mensajes} mensaje(s)</div>
+                        ${siguientePaso(t) ? `<div style="font-size:.8rem;margin-top:2px">${siguientePaso(t)}</div>` : ''}
                     </div>
-                    <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
+                    ${estadoTag(t.estado)}
                 </a>
             `).join('')}
     `;
 }
 
 let TICKET_PREVIO = {};
+let SEL_FOTOS = null;
 async function vistaHilo(panel, id) {
     let t;
     try { t = await api(`/clientes/${CID}/tickets/${id}`); }
     catch (e) { panel.innerHTML = `<div class="empty-state">${escHTML(e.message)}<br><a href="/soporte.html">Volver a soporte</a></div>`; return; }
     TICKET_PREVIO = { asunto: 'Seguimiento a ' + t.folio + ': ' + t.asunto, categoria: t.categoria, pedido_id: t.pedido_id };
+    const banner = {
+        esperando_usuario: ['info', 'Necesitamos información de tu parte', 'Lee el último mensaje de Soporte y respóndenos aquí para continuar con tu caso.'],
+        escalado: ['warning', 'Un especialista está revisando tu caso', 'Lo turnamos al área que puede resolverlo. Te avisaremos por aquí.'],
+        en_revision: ['info', 'Estamos revisando tu caso', 'Analizamos lo que nos contaste. Si necesitamos algo más, te lo pediremos por aquí.'],
+        en_proceso: ['info', 'Estamos trabajando en la solución', 'Te avisaremos por aquí cuando haya novedades.'],
+    }[t.estado];
+    const datos = [
+        ['Tipo', (S.CATEGORIAS[t.categoria] || {}).label],
+        ['Dónde', t.seccion ? (S.SECCIONES[t.seccion] || t.seccion) : null],
+        ['Qué tanto te afecta', t.impacto ? S.IMPACTOS[t.impacto] : null],
+        ['Mensaje de error', t.mensaje_error],
+        ['Desde', [t.navegador, t.dispositivo].filter(Boolean).join(' · ') || null],
+    ].filter(([, v]) => v);
     panel.innerHTML = `
         <div class="cuenta-head">
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
             <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
-            <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
+            <p><span class="mono">${t.folio}</span> · ${estadoTag(t.estado)}
                ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}</p>
         </div>
+        ${banner ? `<div class="st-aviso st-aviso-${banner[0]}">${icon('help', 16)}<div><strong>${banner[1]}</strong><div>${banner[2]}</div></div></div>` : ''}
+        ${datos.length ? `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:600">Datos de tu reporte</summary>
+            <dl class="st-datos" style="margin-top:10px">${datos.map(([k, v]) => `<dt>${k}</dt><dd>${escHTML(v)}</dd>`).join('')}</dl></details>` : ''}
         <div class="hilo">
             ${t.mensajes.map((m) => `
                 <div class="hilo-msg ${m.autor === 'cliente' ? 'mio' : 'equipo'}">
-                    <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : (m.usuario_nombre || 'Equipo Kozmok')} · ${formatoFecha(m.fecha)}</div>
-                    <div class="hm-txt">${m.mensaje.replace(/</g, '&lt;')}</div>
+                    <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : escHTML(m.usuario_nombre || 'Soporte Kozmok')} · ${formatoFechaHora(m.fecha)}</div>
+                    <div class="hm-txt">${escHTML(m.mensaje)}</div>
+                    ${(m.fotos || []).length ? `<div class="foto-lista" style="margin-top:8px">${m.fotos.map((f) => `<a href="/api/clientes/${CID}/tickets/${t.id}/adjuntos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/clientes/${CID}/tickets/${t.id}/adjuntos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
                 </div>
             `).join('')}
         </div>
-        ${['resuelto', 'cerrado'].includes(t.estado)
+        ${t.estado === 'resuelto' ? `
+            <div class="card" style="margin-top:16px">
+                <h3 style="margin:0 0 6px">¿Quedó resuelto?</h3>
+                ${t.confirmacion === 'resuelto'
+                    ? '<p style="margin:0;color:var(--text-muted)">Gracias por confirmarlo. Soporte cerrará tu ticket.</p>'
+                    : `<p style="margin:0 0 10px;color:var(--text-muted);font-size:.9rem">Soporte marcó tu caso como resuelto. Confírmanos para cerrarlo, o avísanos si el problema sigue y lo revisamos de nuevo.</p>
+                       <div class="field"><textarea id="conf-txt" rows="2" maxlength="2000" placeholder="Comentario (opcional)"></textarea></div>
+                       <div style="display:flex;gap:8px;flex-wrap:wrap">
+                           <button class="btn btn-primary" onclick="confirmarResultado(${t.id}, 'resuelto')">Sí, ya quedó</button>
+                           <button class="btn btn-outline" onclick="confirmarResultado(${t.id}, 'persiste')">No, el problema sigue</button></div>`}
+            </div>`
+        : t.estado === 'cerrado'
             ? `<div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes. Si necesitas más ayuda, abre uno nuevo.</p>
+                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>cerrado</strong> y ya no recibe mensajes. Si necesitas más ayuda, abre uno nuevo.</p>
                    <button class="btn btn-primary btn-sm" onclick="formTicket(TICKET_PREVIO)">Abrir un ticket nuevo</button>
                </div>`
-            : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="Escribe tu mensaje…"></textarea></div>
-               <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>`}
+            : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="${t.estado === 'esperando_usuario' ? 'Escribe aquí la información que te pedimos…' : 'Escribe tu mensaje…'}"></textarea></div>
+               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                   <label class="btn btn-outline btn-sm foto-btn">${icon('plus', 14)} Agregar captura<input type="file" id="hilo-fotos" accept="image/*" multiple hidden /></label>
+                   <div class="foto-lista" id="hilo-prev"></div></div>
+               <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>
+               <p class="st-sub" style="margin:8px 0 0">${icon('lock', 12)} ${AVISO_SEGURIDAD}</p>`}
     `;
+    if (document.getElementById('hilo-fotos')) SEL_FOTOS = FotosReclamo.selector(document.getElementById('hilo-fotos'), document.getElementById('hilo-prev'), { alError: (m) => toast(m, 'warn') });
 }
 
 async function responder(id) {
     const mensaje = document.getElementById('hilo-txt').value.trim();
-    if (!mensaje) { toast('Escribe un mensaje', 'warn'); return; }
+    const fotos = SEL_FOTOS ? SEL_FOTOS.fotos() : [];
+    if (!mensaje && !fotos.length) { toast('Escribe un mensaje o agrega una captura', 'warn'); return; }
     try {
-        await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje } });
+        await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
         location.reload();
     } catch (e) { toast(e.message, 'error'); }
 }
 
+async function confirmarResultado(id, resultado) {
+    const comentario = (document.getElementById('conf-txt') || {}).value || '';
+    try {
+        const r = await api(`/clientes/${CID}/tickets/${id}/confirmar`, { method: 'POST', body: { resultado, comentario } });
+        toast(r.message, 'ok');
+        setTimeout(() => location.reload(), 900);
+    } catch (e) { toast(e.message, 'error'); }
+}
+
 function formTicket(previo = {}) {
+    const nav = S.describirNavegador(navigator.userAgent);
+    const cats = Object.entries(S.CATEGORIAS).filter(([, c]) => !c.soloEquipo);
     document.getElementById('modal-generico-body').innerHTML = `
         <button class="modal-close" onclick="document.getElementById('modal-generico').classList.remove('open')">${icon('x', 20)}</button>
-        <h3>Nuevo ticket de soporte</h3>
-        <div class="field"><label>Asunto</label><input id="tk-asunto" placeholder="Resumen del problema" /></div>
-        <div class="field"><label>Categoría</label>
-                <select id="tk-cat">
-                    <option value="pedido">Un pedido</option>
-                    <option value="garantia">Garantía</option>
-                    <option value="devolucion">Devolución o cambio</option>
-                    <option value="facturacion">Facturación</option>
-                    <option value="cuenta">Mi cuenta</option>
-                    <option value="general">Otro</option>
-                </select>
-        </div>
-        <div class="field" id="tk-ped-wrap"><label>Pedido relacionado <span style="color:var(--text-muted);font-weight:400">(opcional)</span></label>
+        <h3>Reportar un problema</h3>
+        <p class="st-sub" style="margin-top:-4px">${icon('lock', 12)} ${AVISO_SEGURIDAD}</p>
+        <div class="field"><label for="tk-cat">¿Con qué tienes el problema?</label>
+            <select id="tk-cat">${cats.map(([k, c]) => `<option value="${k}">${escHTML(c.label)}</option>`).join('')}</select></div>
+        <div class="field"><label for="tk-asunto">Asunto</label><input id="tk-asunto" maxlength="160" placeholder="Resumen del problema (ej. No puedo pagar con tarjeta)" /></div>
+        <div class="field" id="tk-ped-wrap"><label for="tk-pedido">Pedido relacionado <span style="color:var(--text-muted);font-weight:400">(opcional)</span></label>
             <select id="tk-pedido"><option value="">Cargando tus pedidos…</option></select>
             <small id="tk-ped-nota" style="color:var(--text-muted)"></small>
         </div>
-        <div class="field"><label>Describe el problema</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó."></textarea></div>
-        <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Crear ticket</button>
+        <div class="field"><label for="tk-desc">¿Qué pasó?</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué intentabas hacer, qué esperabas que pasara y qué pasó."></textarea></div>
+        <div class="field"><label for="tk-sec">¿En qué parte de la tienda?</label>
+            <select id="tk-sec"><option value="">No estoy seguro</option>${Object.entries(S.SECCIONES).filter(([k]) => k !== 'panel').map(([k, v]) => `<option value="${k}">${escHTML(v)}</option>`).join('')}</select></div>
+        <div class="field"><label for="tk-err">Mensaje de error que apareció <span style="color:var(--text-muted);font-weight:400">(si hubo; copia el texto o el folio)</span></label>
+            <input id="tk-err" maxlength="500" placeholder='Ej. "Ocurrió un error interno. Folio 3F9A1C"' /></div>
+        <div class="field"><label>¿Qué tanto te afecta?</label>
+            <div class="st-seg" style="flex-direction:column;gap:6px">${Object.entries(S.IMPACTOS).map(([k, v]) => `<label><input type="radio" name="tk-imp" value="${k}" /> ${escHTML(v)}</label>`).join('')}</div></div>
+        <div class="field"><label>Capturas de pantalla <span style="color:var(--text-muted);font-weight:400">(opcional, hasta 3)</span></label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label class="btn btn-outline btn-sm foto-btn">${icon('plus', 14)} Agregar captura<input type="file" id="tk-fotos" accept="image/*" multiple hidden /></label>
+                <div class="foto-lista" id="tk-prev"></div></div></div>
+        <p class="st-sub">Enviaremos también tu navegador y dispositivo para ayudarte: <strong>${escHTML([nav.navegador, nav.dispositivo].filter(Boolean).join(' · ') || 'no detectado')}</strong>.</p>
+        <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Enviar reporte</button>
     `;
     if (previo.asunto) document.getElementById('tk-asunto').value = previo.asunto.slice(0, 160);
-    if (previo.categoria) document.getElementById('tk-cat').value = previo.categoria;
+    if (previo.categoria && S.CATEGORIAS[previo.categoria]) document.getElementById('tk-cat').value = previo.categoria;
     document.getElementById('tk-cat').addEventListener('change', mostrarPedidoTicket);
+    SEL_FOTOS = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
     document.getElementById('modal-generico').classList.add('open');
     cargarPedidosTicket(previo.pedido_id);
 }
 
 // Categorías en las que tiene sentido elegir un pedido.
-const CAT_CON_PEDIDO = ['pedido', 'garantia', 'devolucion', 'facturacion'];
+const CAT_CON_PEDIDO = ['pedido', 'pago', 'notificaciones', 'garantia', 'devolucion', 'facturacion'];
 let PEDIDOS_CLIENTE = null;
 async function cargarPedidosTicket(elegido) {
     const sel = document.getElementById('tk-pedido');
@@ -159,13 +226,18 @@ function mostrarPedidoTicket() {
 }
 
 async function crearTicket() {
+    const imp = document.querySelector('input[name="tk-imp"]:checked');
     const body = {
         asunto: document.getElementById('tk-asunto').value.trim(),
         categoria: document.getElementById('tk-cat').value,
         descripcion: document.getElementById('tk-desc').value.trim(),
         pedido_id: Number(document.getElementById('tk-pedido').value) || null,
+        seccion: document.getElementById('tk-sec').value || null,
+        mensaje_error: document.getElementById('tk-err').value.trim() || null,
+        impacto: imp ? imp.value : null,
+        fotos: SEL_FOTOS ? SEL_FOTOS.fotos() : [],
     };
-    if (!body.asunto || !body.descripcion) { toast('Asunto y descripción son obligatorios', 'warn'); return; }
+    if (!body.asunto || !body.descripcion) { toast('Escribe el asunto y qué pasó', 'warn'); return; }
     if (body.categoria === 'pedido' && !body.pedido_id && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length) { toast('Elige el pedido con el que necesitas ayuda', 'warn'); return; }
     try {
         const r = await api(`/clientes/${CID}/tickets`, { method: 'POST', body });

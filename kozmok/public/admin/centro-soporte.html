@@ -45,6 +45,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/js/soporte-ti.js"></script>
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
@@ -65,6 +66,10 @@ const TIPOS = {
     resena:     { label: 'Reseña',     ic: 'star',   permiso: 'evaluaciones' },
 };
 const PRIO = { alta: 'Alta', media: 'Media', baja: 'Baja' };
+// Los tickets usan la prioridad del rol de Soporte técnico (P1 crítica .. P4 baja).
+const prioTag = (x) => x.tipo === 'ticket'
+    ? `<span class="tag st-p st-p-${x.prioridad}">${SoporteTI.PRIORIDADES[x.prioridad].p} · ${SoporteTI.PRIORIDADES[x.prioridad].label}</span>`
+    : `<span class="tag prio-${x.prioridad}">${PRIO[x.prioridad]}</span>`;
 let D = null;
 let FILTRO = 'todo';
 
@@ -103,14 +108,16 @@ function pintarKpis() {
     const t = D.tickets, g = D.garantias, d = D.devoluciones, r = D.resenas;
     const ver = (k, href) => (puedeVer(ROL, k) ? href : null);
     $('cs-kpis').innerHTML = [
-        kpi(t.sin_respuesta, 'Tickets sin respuesta', `${t.abiertos} abiertos · ${t.en_proceso} en proceso${t.alta ? ` · <span style="color:var(--danger)">${t.alta} de prioridad alta</span>` : ''}`,
+        kpi(t.sin_respuesta, 'Tickets por atender', `${t.abiertos} abiertos · ${t.en_revision} en revisión · ${t.en_proceso} en proceso · ${t.esperando} esperando al usuario${t.alta ? ` · <span style="color:var(--danger)">${t.alta} P1/P2</span>` : ''}`,
             ver('soporte', '/admin/soporte.html'), t.sin_respuesta ? 'var(--warning)' : null),
+        kpi(t.escalados, 'Tickets escalados', 'Los atiende otra área (desarrollo, seguridad, pagos…)', ver('soporte', '/admin/soporte.html?estado=escalado'), t.escalados ? 'var(--danger)' : null),
         kpi(g.activos, 'Reclamos de garantía', `${g.esperando} ${g.esperando === 1 ? 'espera' : 'esperan'} respuesta`, ver('garantias', '/admin/garantias.html'), g.esperando ? 'var(--warning)' : null),
         kpi(d.por_revisar + d.por_cerrar, 'Devoluciones', `${d.por_revisar} por revisar · ${d.por_cerrar} por reembolsar o cambiar · ${d.por_recibir} en camino`,
             ver('devoluciones', '/admin/devoluciones.html'), (d.por_revisar + d.por_cerrar) ? 'var(--info)' : null),
         kpi(r.sin_respuesta, 'Reseñas sin responder', `${r.criticas} ${r.criticas === 1 ? 'crítica' : 'críticas'} (1 y 2 ★)`, ver('evaluaciones', '/admin/evaluaciones.html?filtro=sin_respuesta'), r.criticas ? 'var(--danger)' : null),
         kpi(horas(t.primera_respuesta_h), 'Primera respuesta', 'Promedio de los tickets de los últimos 30 días', null),
-        kpi(t.resueltos_7d, 'Tickets resueltos', 'En los últimos 7 días', null, 'var(--success)'),
+        kpi(horas(t.resolucion_h), 'Tiempo de resolución', 'Promedio de los resueltos en los últimos 30 días', null),
+        kpi(t.resueltos_7d, 'Tickets resueltos', `En los últimos 7 días${t.por_confirmar ? ` · ${t.por_confirmar} esperan confirmación` : ''}`, ver('soporte', '/admin/soporte.html?estado=resuelto'), 'var(--success)'),
     ].join('');
 }
 
@@ -134,8 +141,9 @@ function pintarBandeja() {
     $('cs-tabla').innerHTML = lista.map((x) => {
         const t = TIPOS[x.tipo];
         const espera = x.espera === 'nosotros'
-            ? `<span class="cs-espera nos" title="El cliente espera nuestra respuesta">${icon('clock', 13)} ${hace(x.desde)}</span>`
-            : `<span class="cs-espera cli" title="Esperamos al cliente">Cliente · ${hace(x.desde)}</span>`;
+            ? `<span class="cs-espera nos" title="Quien reportó espera nuestra respuesta">${icon('clock', 13)} ${hace(x.desde)}</span>`
+            : x.espera === 'area' ? `<span class="cs-espera cli" title="Escalado a otra área">En ${escHTML(x.area || 'otra área')} · ${hace(x.desde)}</span>`
+            : `<span class="cs-espera cli" title="Esperamos a quien reportó">Usuario · ${hace(x.desde)}</span>`;
         const accion = x.tipo === 'ticket'
             ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); responderRapido(${x.id})">Responder</button>`
             : `<a class="btn btn-outline btn-sm" href="${x.url}" onclick="event.stopPropagation()">Atender</a>`;
@@ -145,7 +153,7 @@ function pintarBandeja() {
                 ${x.detalle ? `<div class="cs-det">${escHTML(x.detalle)}</div>` : ''}</td>
             <td>${x.cliente_id && puedeVer(ROL, 'clientes') ? `<a href="/admin/cliente.html?id=${x.cliente_id}" onclick="event.stopPropagation()">${escHTML(x.cliente_nombre)}</a>` : escHTML(x.cliente_nombre || '—')}</td>
             <td>${escHTML(x.estado)}</td>
-            <td><span class="tag prio-${x.prioridad}">${PRIO[x.prioridad]}</span></td>
+            <td>${prioTag(x)}</td>
             <td>${espera}</td>
             <td style="text-align:right">${accion}</td>
         </tr>`;
@@ -153,7 +161,6 @@ function pintarBandeja() {
 }
 
 // ---- Respuesta rápida a un ticket, sin salir del Centro ----
-const EST_TK = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
 let TK = null;
 function cerrarModal() { $('cs-modal').classList.remove('open'); }
 $('cs-modal').addEventListener('click', (e) => { if (e.target.id === 'cs-modal') cerrarModal(); });
@@ -164,24 +171,24 @@ async function responderRapido(id) {
     const ultimos = TK.mensajes.slice(-4);
     $('cs-modal-body').innerHTML = `
         <button class="modal-close" onclick="cerrarModal()" aria-label="Cerrar">${icon('x', 20)}</button>
-        <p class="mono" style="margin:0;color:var(--text-muted);font-size:.8rem">${escHTML(TK.folio)} · ${escHTML(TK.categoria)}</p>
+        <p class="mono" style="margin:0;color:var(--text-muted);font-size:.8rem">${escHTML(TK.folio)} · ${escHTML(SoporteTI.CLASIFICACIONES[TK.clasificacion])} · ${SoporteTI.PRIORIDADES[TK.prioridad].p} ${SoporteTI.PRIORIDADES[TK.prioridad].label} · ${SoporteTI.ESTADOS[TK.estado]}</p>
         <h3 style="margin:2px 0 4px">${escHTML(TK.asunto)}</h3>
-        <p style="margin:0 0 12px;font-size:.85rem">${escHTML(TK.cliente_nombre)} · ${escHTML(TK.cliente_correo)}</p>
+        <p style="margin:0 0 12px;font-size:.85rem">${escHTML(TK.reportante_nombre)} · ${escHTML(TK.reportante_correo || '')}</p>
         ${TK.mensajes.length > ultimos.length ? `<p style="font-size:.78rem;color:var(--text-muted);margin:0 0 6px">${TK.mensajes.length - ultimos.length} mensaje(s) anteriores en el hilo completo.</p>` : ''}
         <div class="hilo cs-hilo">
             ${ultimos.map((m) => `
                 <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
-                    <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(TK.cliente_nombre)} · ${formatoFechaHora(m.fecha)}</div>
+                    <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(m.usuario_nombre || TK.reportante_nombre)} · ${formatoFechaHora(m.fecha)}</div>
                     <div class="hm-txt">${escHTML(m.mensaje)}</div>
                 </div>`).join('')}
         </div>
-        <div class="field" style="margin-top:12px"><textarea id="cs-resp" rows="4" placeholder="Escribe la respuesta al cliente…"></textarea></div>
+        <div class="field" style="margin-top:12px"><textarea id="cs-resp" rows="4" placeholder="Escribe la respuesta…"></textarea></div>
+        <div id="cs-resp-aviso"></div>
         <div class="cs-resp-pie">
             <label>Después de enviar
                 <select id="cs-estado">
-                    <option value="">Dejarlo en proceso</option>
-                    <option value="resuelto">Marcar como resuelto</option>
-                    <option value="cerrado">Cerrar el ticket</option>
+                    <option value="">${TK.estado === 'abierto' ? 'En revisión' : `Igual (${SoporteTI.ESTADOS[TK.estado]})`}</option>
+                    ${['en_proceso', 'esperando_usuario'].filter((e) => e !== TK.estado).map((e) => `<option value="${e}">${SoporteTI.ESTADOS[e]}</option>`).join('')}
                 </select>
             </label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -191,6 +198,11 @@ async function responderRapido(id) {
             </div>
         </div>`;
     $('cs-modal').classList.add('open');
+    // Nunca se piden contraseñas, tarjeta completa, CVV ni códigos (el servidor también lo rechaza).
+    $('cs-resp').addEventListener('input', () => {
+        const malo = SoporteTI.pideDatoSensible($('cs-resp').value);
+        $('cs-resp-aviso').innerHTML = malo ? `<div class="st-aviso st-aviso-danger st-aviso-mini">${icon('lock', 14)}<div>Estás pidiendo un dato que nunca se pide (contraseña, tarjeta completa, CVV, NIP o código de verificación).</div></div>` : '';
+    });
     setTimeout(() => $('cs-resp').focus(), 50);
 }
 async function enviarRapido() {
@@ -198,9 +210,8 @@ async function enviarRapido() {
     if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
     const estado = $('cs-estado').value;
     try {
-        await api(`/admin/tickets/${TK.id}/mensajes`, { method: 'POST', body: { mensaje } });
-        if (estado) await api(`/admin/tickets/${TK.id}`, { method: 'PUT', body: { estado } });
-        toast(estado ? `Respuesta enviada; ticket ${EST_TK[estado].toLowerCase()}` : 'Respuesta enviada', 'ok');
+        await api(`/admin/tickets/${TK.id}/mensajes`, { method: 'POST', body: { mensaje, estado: estado || undefined } });
+        toast(estado ? `Respuesta enviada; ticket ${SoporteTI.ESTADOS[estado].toLowerCase()}` : 'Respuesta enviada', 'ok');
         cerrarModal();
         cargar();
     } catch (e) { toast(e.message, 'error'); }

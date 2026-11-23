@@ -114,12 +114,14 @@ adapta al rol)
                      CAPTURA ordenes, las surte, envia y registra pagos),
                      Reportes (ERP) y Devoluciones (recibe los paquetes).
                      Cuenta: paola.logistica@kozmok.mx
-   - SOPORTE       : cuenta dedicada a la atencion de clientes. Inicio
-                     (Centro de soporte), Soporte (tickets), Garantias,
-                     Devoluciones, Evaluaciones (resenas), Clientes (solo
-                     consulta: ve la ficha, registra interacciones y
-                     confirma el correo, pero no edita datos ni etapa),
-                     Interacciones, Pedidos y Facturas.
+   - SOPORTE       : agente de SOPORTE TECNICO TI de la tienda (ver seccion
+                     9). Inicio (Centro de soporte), Soporte (tickets:
+                     clasifica, prioriza P1-P4, diagnostica, documenta y
+                     escala), Garantias, Evaluaciones (resenas),
+                     Interacciones y, SOLO CONSULTA, Clientes, Pedidos,
+                     Facturas y Devoluciones: no cambia pedidos, no cancela
+                     facturas, no hace reembolsos ni cambia precios o
+                     inventario (si un caso lo necesita, lo escala).
                      Cuenta: sofia.soporte@kozmok.mx
    Los de Ventas y Logistica son exactamente los menus de la lamina "Panel
    por rol (Menu dinamico)"; Soporte se agrego despues.
@@ -892,27 +894,33 @@ NAVEGACION RAPIDA EN EL PANEL
      (TK-..., RG-..., GAR-..., DEV-...) o numero de pedido. El cliente abre
      su ficha; el caso abre su pantalla; el pedido se gestiona ahi mismo
      en una ventana (avanzar estado, registrar pago, cancelar).
-   - INDICADORES: tickets sin respuesta (con abiertos, en proceso y de
-     prioridad alta), reclamos de garantia que esperan respuesta,
-     devoluciones por revisar / por reembolsar o cambiar / en camino,
-     resenas sin responder (y criticas), tiempo promedio de primera
-     respuesta (tickets de los ultimos 30 dias) y tickets resueltos en
-     7 dias. Cada tarjeta lleva a su seccion.
+   - INDICADORES: tickets por atender (abiertos, en revision, en proceso,
+     esperando al usuario y cuantos son P1/P2), tickets escalados a otra
+     area, reclamos de garantia que esperan respuesta, devoluciones por
+     revisar / por reembolsar o cambiar / en camino, resenas sin responder
+     (y criticas), tiempo promedio de primera respuesta y de resolucion
+     (ultimos 30 dias) y tickets resueltos en 7 dias (con los que esperan
+     confirmacion). Cada tarjeta lleva a su seccion.
    - POR ATENDER: una sola bandeja con tickets abiertos, reclamos activos,
      devoluciones pendientes y resenas de 3 estrellas o menos sin
-     respuesta. Primero lo que espera una respuesta del equipo, luego por
-     prioridad y antiguedad; la columna "Espera" dice cuanto lleva el
-     cliente esperando (o "Cliente" si le toca a el). Pestanas por tipo.
+     respuesta (los tickets incluyen los reportes del equipo). Primero lo
+     que espera una respuesta del equipo, luego por prioridad (P1 a P4 en
+     tickets) y antiguedad; la columna "Espera" dice cuanto lleva esperando
+     quien reporto, "Usuario" si le toca a el o "En <area>" si se escalo.
    - RESPONDER (tickets): abre los ultimos mensajes del hilo y un campo
-     para responder sin salir del Centro; se puede dejar en proceso,
-     marcar como resuelto o cerrar al enviar, y abrir su pedido.
+     para responder sin salir del Centro (avisa si se pide un dato que
+     nunca se pide); se puede dejar igual, en proceso o esperando al
+     usuario. Resolver, escalar y cerrar se hacen en el caso completo.
    - Se actualiza sola cada minuto y tiene puntito de aviso en el menu.
 
-4.6  SOPORTE  (admin/soporte.html)  [CRM]  -> ver seccion 9
-   - Cola de tickets con contadores (Abiertos, En proceso, Resueltos,
-     Cerrados) y filtros por estado y prioridad.
-   - Al abrir un ticket: hilo de mensajes, selector de estado y prioridad,
-     campo para responder al cliente y el PEDIDO RELACIONADO (ver 9).
+4.6  SOPORTE TECNICO  (admin/soporte.html)  [CRM]  -> ver seccion 9
+   - Cola de tickets de clientes y del equipo con contadores por cada uno
+     de los 7 estados y filtros por estado, prioridad (P1-P4),
+     clasificacion, origen (clientes / equipo) y busqueda.
+   - Al abrir un ticket: datos del reporte, conversacion, respuesta con
+     formato, caso (estado, prioridad, clasificacion, usuarios afectados,
+     asignado), metodologia de 12 pasos, diagnostico, registro tecnico,
+     bitacora, escalamiento y pedido relacionado (ver 9).
 
 4.6b GARANTIAS  (admin/garantias.html)  [CRM]
    - "Reclamos en curso": los casos que abrieron los clientes (RG-1xxx) con
@@ -1526,7 +1534,7 @@ NAVEGACION RAPIDA EN EL PANEL
       - "Gestionar" abre el gestor del pedido (4.8) para registrar el cobro,
         moverlo de estado o cancelarlo.
 
-   4.15e FACTURAS  (admin/facturas.html)  [Admin, Ventas y Soporte]
+   4.15e FACTURAS  (admin/facturas.html)  [Admin y Ventas; Soporte solo consulta]
       - Lista de CFDI 4.0 emitidos: fecha, serie/folio y UUID, pedido,
         receptor (RFC, razon social, uso), total, estado (Vigente / En
         cancelacion / Cancelada) y si la pidio el cliente o quien del equipo.
@@ -1546,7 +1554,7 @@ NAVEGACION RAPIDA EN EL PANEL
         deduce de la categoria (laptops 43211503, escritorio 43211507,
         teclados 43211706, mouse 43211708; si no, 01010101).
 
-   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica, Soporte]
+   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica; Soporte solo consulta]
       - El cliente la pide desde Mis pedidos -> Ver detalle (pedido
         entregado, hasta 30 dias): productos y cantidades, motivo
         (defectuoso, danado en el envio, producto equivocado, no me
@@ -1628,21 +1636,27 @@ LOGISTICA
    un pedido de reposicion cuando haga falta (el reabasto automatico lo
    surte al llegar su fecha) y revisar Reportes.
 
-SOPORTE
-   Ve: Centro de soporte (su inicio), Clientes (solo consulta),
-   Interacciones, Evaluaciones, Soporte, Garantias, Pedidos (CRM),
-   Facturas y Devoluciones (TIENDA). No ve nada mas.
-   En Clientes puede abrir la ficha, registrar interacciones, escribirle
-   al cliente y marcar su correo como confirmado; editar sus datos o su
-   etapa queda para Ventas y Administrador (permiso "clientes-editar").
+SOPORTE  (agente de soporte tecnico TI; detalle en la seccion 9)
+   Ve: Centro de soporte (su inicio), Soporte (tickets), Garantias,
+   Evaluaciones, Interacciones y, solo para CONSULTAR, Clientes, Pedidos
+   (CRM), Facturas y Devoluciones (TIENDA). No ve nada mas.
+   No es ventas ni atencion comercial: atiende problemas tecnicos de la
+   tienda (acceso, catalogo, carrito, pedidos, pagos, inventario,
+   promociones, rendimiento, notificaciones y panel administrativo).
+   NO puede (aunque lo intente por URL o con Postman, el servidor responde
+   403): cambiar el estado de un pedido, registrar pagos, cancelar,
+   reembolsar, emitir o cancelar facturas, aprobar devoluciones, cambiar
+   precios, inventario o promociones, ni editar o borrar clientes o
+   usuarios. Para eso escala el ticket al area que corresponde.
    Flujo tipico:
-   1. Centro de soporte: atender la bandeja "Por atender" de arriba hacia
-      abajo (responder tickets ahi mismo).
-   2. Buscar al cliente o el folio que dicta por telefono o correo.
-   3. Si el caso es de un pedido: gestionarlo desde el ticket o el
-      buscador (estado, pago, cancelacion) y avisarle al cliente.
-   4. Reclamos de garantia y devoluciones: seguir sus pasos en Garantias y
-      Devoluciones; responder resenas criticas en Evaluaciones.
+   1. Centro de soporte: atender "Por atender" de arriba hacia abajo.
+   2. Abrir el ticket y seguir la metodologia: leer, clasificar, evaluar
+      el impacto real (prioridad P1-P4), pedir SOLO los datos que falten,
+      correr el diagnostico, registrar hipotesis y pruebas.
+   3. Resolver (con diagnostico, accion, resultado y verificacion) o
+      escalar (area, motivo, resumen tecnico y pruebas).
+   4. Responder con el formato de 6 partes y cerrar solo con la
+      confirmacion de quien reporto o con la evidencia registrada.
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
@@ -1764,42 +1778,150 @@ Configuracion (.env)
 
 
 ===============================================================================
- 9. TICKETS DE SOPORTE  (cliente <-> equipo)
+ 9. SOPORTE TECNICO TI  (tickets de clientes y del equipo)
 ===============================================================================
 
-Lado cliente  (soporte.html, dentro de Mi cuenta)
-   - "Nuevo ticket": asunto, categoria (pedido, cuenta, garantia,
-     devolucion o cambio, facturacion, general), PEDIDO RELACIONADO
-     (opcional: se elige de sus propios pedidos) y descripcion.
-   - El cliente NO elige la prioridad: se pone sola segun el caso. Pedido
-     y cuenta = alta; garantia, devolucion y facturacion = media; general =
-     baja. Si el texto habla de doble cobro, cargo no reconocido, fraude o
-     cuenta robada, sube a alta. El equipo puede cambiarla.
-   - Cada ticket recibe un folio  TK-1001, TK-1002, ...
-   - Al abrir un ticket se ve el hilo de mensajes y un campo para responder.
-   - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
-     aparece "Este ticket esta cerrado..." con el boton "Abrir un ticket
-     nuevo" (que ya trae el asunto, la categoria y el pedido del anterior).
-   - Desde el Centro de ayuda (ayuda.html) el boton de contacto lleva aqui
-     (o al login si no hay sesion).
+El rol Soporte es un AGENTE DE SOPORTE TECNICO TI de la tienda en linea:
+recibe, analiza, clasifica, diagnostica, documenta y da seguimiento a los
+problemas tecnicos de la plataforma. No es ventas ni atencion comercial.
+Las reglas viven en un solo archivo (public/js/soporte-ti.js) que usan el
+servidor y las pantallas, asi que siempre coinciden.
 
-Lado equipo  (admin/soporte.html)
-   - Cola con contadores por estado y filtros por estado y prioridad.
-   - Al abrir un ticket: hilo completo, y selectores para cambiar ESTADO
-     (Abierto, En proceso, Resuelto, Cerrado) y PRIORIDAD (Baja, Media, Alta).
-   - "Enviar respuesta" agrega un mensaje del equipo; si el ticket estaba
-     "Abierto" pasa a "En proceso".
-   - PEDIDO RELACIONADO: si el caso trae pedido, se ve ahi mismo (productos,
-     estado, pago) y se gestiona sin salir del caso: avanzar el estado,
-     registrar el pago o cancelarlo. Al hacerlo se deja escrita una
-     respuesta para avisarle al cliente, para revisarla y enviarla. Si el
-     cliente no lo eligio, "Ligar pedido" lo asocia (solo pedidos de ese
-     cliente) y se puede quitar sin cambiar el pedido.
+9.1 QUIEN REPORTA
+   Cliente (soporte.html, en Mi cuenta -> Soporte, "Reportar un problema"):
+   - Elige con que tiene el problema: acceso a su cuenta, productos,
+     carrito, un pedido, un pago, disponibilidad, cupon o promocion, la
+     pagina no carga / va lenta / marca error, correos o notificaciones,
+     garantia, devolucion, facturacion u otro.
+   - Escribe asunto y que paso, y si quiere: pedido relacionado, en que
+     parte de la tienda paso, el MENSAJE DE ERROR (con su folio), que tanto
+     le afecta (no puedo comprar / funciona a medias / detalle menor) y
+     hasta 3 CAPTURAS de pantalla.
+   - El navegador y el dispositivo se mandan solos (se leen del navegador).
+   - Aviso fijo: nunca te pediremos tu contrasena, el numero completo de tu
+     tarjeta, el CVV, tu NIP ni codigos de verificacion. Si alguien los
+     escribe, el sistema los OCULTA antes de guardarlos (la tarjeta queda
+     como [tarjeta ****1111]).
+   - Ve el estado de su ticket. Si Soporte le pide informacion aparece
+     "Necesitamos informacion de tu parte"; al responder, el caso vuelve a
+     En revision. Cuando lo marcan como Resuelto aparece "¿Quedo
+     resuelto?": "Si, ya quedo" (Soporte lo puede cerrar) o "No, el
+     problema sigue" (se reabre).
+   Cuenta del panel (seccion J, panel administrativo):
+   - Cualquier cuenta (Ventas, Logistica, Soporte, Admin) tiene en su menu
+     "Reportar un problema": asunto, que paso, mensaje de error, impacto y
+     capturas; se guarda tambien la pantalla donde estaba y su navegador.
+   - En "Mis reportes" sigue la conversacion, responde y confirma si quedo
+     resuelto. Le llega aviso en la campana (categoria "Mis reportes
+     tecnicos") cada vez que Soporte responde o cambia el estado.
+
+9.2 CLASIFICACION Y PRIORIDAD
+   - Clasificacion (la sugiere el sistema por lo que eligio y escribio
+     quien reporta; Soporte la corrige): Acceso, Productos, Carrito,
+     Pedidos, Pagos, Inventario, Promociones, Rendimiento, Notificaciones,
+     Administracion, Seguridad, Otros. Si el texto habla de cuenta robada,
+     acceso no autorizado, fraude o cargo no reconocido -> Seguridad.
+   - Prioridad por IMPACTO REAL, no por la urgencia que exprese el usuario:
+       P1 Critica: tienda caida, nadie puede comprar, incidente de
+                   seguridad activo o fallas generalizadas de pago.
+       P2 Alta   : funcion importante interrumpida, un grupo no puede
+                   comprar o errores generalizados.
+       P3 Media  : afecta a usuarios individuales o hay alternativa.
+       P4 Baja   : detalles visuales, consultas o cosas que no impiden
+                   usar la tienda.
+   - USUARIOS AFECTADOS: el sistema cuenta cuantas personas distintas
+     reportaron algo de la misma clasificacion en 2 horas (3+ = varios,
+     10+ = todos) y lo usa para sugerir la prioridad. En el caso se ve la
+     prioridad sugerida y, si eliges otra, conviene justificarlo en la
+     bitacora.
+
+9.3 ESTADOS
+   Abierto -> En revision -> En proceso -> Esperando al usuario ->
+   Escalado -> Resuelto -> Cerrado.
+   - Al responder Soporte un ticket Abierto pasa a En revision.
+   - Si quien reporto contesta mientras esta "Esperando al usuario", vuelve
+     a En revision.
+   - "Escalado" solo se pone con el boton Escalar.
+   - RESUELTO exige: diagnostico, al menos una accion registrada en la
+     bitacora, el resultado y el paso "Verificar el resultado" marcado. Un
+     ticket de Seguridad ademas debe haberse escalado a Seguridad.
+   - CERRADO exige que este Resuelto y la confirmacion de quien reporto o
+     una "Evidencia de resolucion" en la bitacora. Si dijo que el problema
+     sigue, no se cierra.
+   - Cada cambio de estado queda en la bitacora con quien y cuando.
+
+9.4 EL CASO  (admin/soporte.html?ticket=...)
+   - DATOS DEL REPORTE: ticket, quien reporto, fecha, tipo, seccion,
+     dispositivo, navegador, mensaje de error, evidencias, impacto y pedido.
+     Lo que falta dice "Falta - Pedirlo": escribe en la respuesta la
+     pregunta exacta y deja el ticket "Esperando al usuario". Nunca se
+     completan datos con suposiciones.
+   - CASO: estado, prioridad (con la guia P1-P4 y la sugerida), clasificacion,
+     usuarios afectados (con los reportes parecidos) y asignado.
+   - METODOLOGIA (12 pasos): leer, funcionalidad afectada, impacto,
+     clasificar, posibles causas, pedir informacion, pruebas de
+     diagnostico, solucion, verificar, documentar, actualizar estado y
+     escalar. Varios se marcan solos (al clasificar, escalar, registrar
+     pruebas...); cada paso guarda quien y cuando.
+   - DIAGNOSTICO ("Correr pruebas", solo lectura): cuenta activa, correo
+     verificado, bloqueos por intentos, intentos fallidos, sesiones y
+     sesiones que se cerraron solas, correos enviados y con error,
+     servicio de correo configurado, eventos de seguridad, carrito contra
+     precios y existencias actuales, pedidos y pagos (posible cargo
+     duplicado), folio de error que vio el usuario, reportes parecidos,
+     respuesta de la base y errores del servidor de la ultima hora. Con
+     "Registrar estas pruebas en la bitacora" quedan documentadas.
+   - CONSULTAS TECNICAS (solo lectura): producto (precio, existencias,
+     activo, sin imagen, posible duplicado), promocion (vigencia y si esta
+     vigente ahora) y FOLIO DE ERROR: cuando el servidor falla, el usuario
+     ve "Ocurrio un error interno. Folio XXXXXX"; Soporte busca ese folio y
+     ve que ruta fallo y el detalle tecnico para escalarlo a Desarrollo.
+   - REGISTRO TECNICO: diagnostico, causa raiz marcada como HIPOTESIS o
+     CONFIRMADA, resultado y area responsable.
+   - BITACORA (no se edita ni se borra, ni directo en la base): hipotesis,
+     confirmado, prueba de diagnostico, accion realizada, evidencia de
+     resolucion y nota, mas los cambios de estado y escalamientos.
+   - ESCALAR: area (Desarrollo, Infraestructura, Base de datos, Seguridad,
+     Administracion, Pagos), motivo (infraestructura productiva,
+     transaccion financiera, riesgo de perdida de informacion, posible
+     vulnerabilidad, varios usuarios, cambios en codigo o base de datos, sin
+     procedimiento), RESUMEN TECNICO completo (se llena solo con los datos
+     del caso) y PRUEBAS REALIZADAS. Administracion recibe el aviso
+     (campana y correo, categoria "Tickets escalados").
+   - REGISTRO TECNICO para imprimir o copiar: ID, categoria, prioridad,
+     descripcion, diagnostico, causa raiz (confirmada o hipotesis),
+     informacion confirmada, hipotesis, pruebas, acciones, evidencias,
+     resultado, area responsable, escalamiento y estado final.
+   - PEDIDO RELACIONADO: se liga un pedido de quien reporto y se consulta
+     (productos, estado, pago). Soporte no lo modifica.
+
+9.5 RESPONDER  (formato y lo que se evita)
+   - "Usar el formato de respuesta" arma las 6 partes: 1) entendemos el
+     problema, 2) que esta pasando, 3) lo que necesitamos de ti, 4) que
+     puedes hacer mientras, 5) estado del ticket, 6) proximo paso.
+   - Al escribir, la pantalla avisa si: se pide un dato sensible (el boton
+     se bloquea y el servidor tambien lo rechaza), se dice que ya quedo sin
+     haberlo verificado, se prometen tiempos, se culpa al usuario, se da
+     informacion comercial o se usan terminos tecnicos sin explicar.
+   - Se elige en que estado queda el ticket al enviar. El cliente recibe
+     un correo con la respuesta y el estado (con el recordatorio de que
+     nunca le pediremos datos sensibles).
+
+9.6 PROTECCION DE DATOS Y LIMITES
+   - Nunca se piden ni se guardan contrasenas, tarjeta completa, CVV, NIP
+     ni codigos; si vienen en un mensaje se ocultan y queda una nota.
+   - El cliente nunca ve el registro tecnico interno (diagnostico, causa,
+     bitacora, escalamiento ni clasificacion).
+   - El diagnostico muestra solo lo necesario: sin contrasenas ni tokens y
+     con las IP recortadas.
+   - Soporte solo consulta pedidos, facturas, devoluciones, productos,
+     inventario y promociones; cualquier cambio lo hace el area autorizada.
+   - Un posible incidente de seguridad se escala a Seguridad sin borrar ni
+     cambiar nada (la bitacora es solo-agregar para conservar evidencia).
 
 Relacion con el CRM
-   - Cada ticket nuevo tambien se registra como interaccion de tipo
-     "soporte" en la ficha del cliente, para tener la historia completa en
-     un solo lugar.
+   - Cada ticket nuevo de un cliente tambien se registra como interaccion
+     de tipo "soporte" en su ficha.
 
 
 ===============================================================================

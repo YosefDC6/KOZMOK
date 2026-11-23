@@ -20,9 +20,11 @@
     const fila = (k, v, estilo = '') => `<div style="display:flex;justify-content:space-between;gap:10px;${estilo}"><span>${k}</span><span class="mono">${v}</span></div>`;
     const pillOrigen = (o) => (o === 'erp' ? '<span class="origen-pill o-erp">ERP</span>' : '<span class="origen-pill">En línea</span>');
 
+    // Modificar un pedido (estado, pago, cancelación) es de ERP y Compras.
+    // Soporte solo tiene 'pedidos' para CONSULTAR: lo ve sin botones.
     function puedeGestionar() {
         const rol = (Sesion.usuario() || {}).rol;
-        return ['pedidos', 'ordenes-erp', 'ordenes-compra'].some((k) => window.puedeVer && puedeVer(rol, k));
+        return ['ordenes-erp', 'ordenes-compra'].some((k) => window.puedeVer && puedeVer(rol, k));
     }
 
     function overlay() {

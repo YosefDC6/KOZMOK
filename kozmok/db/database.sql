@@ -42,6 +42,9 @@ DROP TABLE IF EXISTS reportes_erp            CASCADE;
 DROP TABLE IF EXISTS procesos_erp            CASCADE;
 DROP TABLE IF EXISTS estado_erp              CASCADE;
 DROP TABLE IF EXISTS garantias               CASCADE;
+DROP TABLE IF EXISTS ticket_notas            CASCADE;
+DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
+DROP TABLE IF EXISTS errores_servidor        CASCADE;
 DROP TABLE IF EXISTS ticket_mensajes         CASCADE;
 DROP TABLE IF EXISTS tickets                 CASCADE;
 DROP TABLE IF EXISTS resenas                 CASCADE;
@@ -670,24 +673,63 @@ CREATE INDEX idx_resenas_cliente  ON resenas(cliente_id);
 -- ---------------------------------------------------------
 -- TICKETS DE SOPORTE (cliente <-> equipo, con hilo de mensajes)
 -- ---------------------------------------------------------
+-- Soporte técnico TI (rol Soporte): cada ticket se clasifica, se prioriza
+-- (P1 crítica .. P4 baja), se diagnostica con la metodología de 12 pasos y
+-- se documenta en un registro técnico. Lo abre un cliente desde la tienda o
+-- una cuenta del panel (problemas del panel administrativo). Ver
+-- db/soporte_ti.sql, que aplica lo mismo a bases ya existentes.
 CREATE TABLE tickets (
     id                  SERIAL PRIMARY KEY,
     folio               VARCHAR(20) UNIQUE NOT NULL,
-    cliente_id          INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    cliente_id          INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+    reportado_por       INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,   -- cuenta del panel que lo reportó
     asunto              VARCHAR(160) NOT NULL,
-    categoria           VARCHAR(40) NOT NULL DEFAULT 'general',
-    prioridad           VARCHAR(10) NOT NULL DEFAULT 'media' CHECK (prioridad IN ('baja','media','alta')),
-    estado              VARCHAR(15) NOT NULL DEFAULT 'abierto'
-                         CHECK (estado IN ('abierto','en_proceso','resuelto','cerrado')),
+    categoria           VARCHAR(40) NOT NULL DEFAULT 'general',            -- lo que eligió quien reporta
+    clasificacion       VARCHAR(20) NOT NULL DEFAULT 'otros'
+                         CHECK (clasificacion IN ('acceso','productos','carrito','pedidos','pagos','inventario',
+                                                  'promociones','rendimiento','notificaciones','administracion','seguridad','otros')),
+    -- P1 crítica, P2 alta, P3 media, P4 baja
+    prioridad           VARCHAR(10) NOT NULL DEFAULT 'media' CHECK (prioridad IN ('critica','alta','media','baja')),
+    estado              VARCHAR(20) NOT NULL DEFAULT 'abierto'
+                         CHECK (estado IN ('abierto','en_revision','en_proceso','esperando_usuario','escalado','resuelto','cerrado')),
     pedido_id           INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     asignado_a          INTEGER REFERENCES usuarios(id),
+    -- Datos del reporte (los que haya; nunca se inventan)
+    seccion             VARCHAR(40),          -- parte de la tienda o del panel afectada
+    dispositivo         VARCHAR(60),
+    navegador           VARCHAR(80),
+    mensaje_error       VARCHAR(500),
+    impacto             VARCHAR(10) CHECK (impacto IN ('bloquea','parcial','menor')),   -- lo que dice quien reporta
+    alcance             VARCHAR(10) NOT NULL DEFAULT 'uno' CHECK (alcance IN ('uno','varios','todos')),   -- usuarios afectados (lo evalúa Soporte)
+    -- Metodología: pasos hechos {paso: {usuario, fecha}}
+    checklist           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Registro técnico (documentación interna)
+    diagnostico         TEXT,
+    causa_raiz          TEXT,
+    causa_confirmada    BOOLEAN NOT NULL DEFAULT FALSE,   -- FALSE = todavía es hipótesis
+    resultado           TEXT,
+    area_responsable    VARCHAR(20) NOT NULL DEFAULT 'soporte'
+                         CHECK (area_responsable IN ('soporte','desarrollo','infraestructura','base_datos','seguridad','administracion','pagos')),
+    -- Escalamiento
+    escalado_area       VARCHAR(20) CHECK (escalado_area IN ('desarrollo','infraestructura','base_datos','seguridad','administracion','pagos')),
+    escalado_motivo     VARCHAR(30),
+    escalado_resumen    TEXT,
+    escalado_pruebas    TEXT,
+    escalado_por        INTEGER REFERENCES usuarios(id),
+    fecha_escalado      TIMESTAMP,
+    -- Confirmación de quien reportó: ¿quedó resuelto o persiste?
+    confirmacion        VARCHAR(10) CHECK (confirmacion IN ('resuelto','persiste')),
+    fecha_confirmacion  TIMESTAMP,
+    fecha_resuelto      TIMESTAMP,
+    fecha_cerrado       TIMESTAMP,
     -- Atención a clientes (Etapa 4): el mensaje inicial y la última
     -- respuesta del equipo quedan en el ticket además de en el hilo.
     mensaje             TEXT,
     respuesta           TEXT,
     fecha_respuesta     TIMESTAMP,
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT tickets_quien_reporta CHECK (cliente_id IS NOT NULL OR reportado_por IS NOT NULL)
 );
 CREATE INDEX idx_tickets_cliente ON tickets(cliente_id);
 CREATE INDEX idx_tickets_estado  ON tickets(estado);
@@ -701,6 +743,48 @@ CREATE TABLE ticket_mensajes (
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ticketmsg_ticket ON ticket_mensajes(ticket_id);
+
+-- Evidencias del reporte (capturas de pantalla, ya reducidas en el navegador).
+CREATE TABLE ticket_adjuntos (
+    id          SERIAL PRIMARY KEY,
+    ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    mensaje_id  INTEGER REFERENCES ticket_mensajes(id) ON DELETE CASCADE,
+    nombre      VARCHAR(80),
+    tipo        VARCHAR(20) NOT NULL,
+    datos       TEXT NOT NULL,
+    tamano      INTEGER,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_ticket_adjuntos ON ticket_adjuntos(ticket_id);
+
+-- Bitácora técnica interna del ticket (solo agregar; ver control_interno.sql):
+-- hipótesis, hallazgos confirmados, pruebas, acciones, evidencias, cambios
+-- de estado y escalamientos. Sin llave foránea al usuario a propósito.
+CREATE TABLE ticket_notas (
+    id              SERIAL PRIMARY KEY,
+    ticket_id       INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    usuario_id      INTEGER,
+    usuario_nombre  VARCHAR(150),
+    tipo            VARCHAR(15) NOT NULL CHECK (tipo IN ('hipotesis','confirmado','prueba','accion','evidencia','escalamiento','estado','nota')),
+    texto           TEXT NOT NULL,
+    fecha           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_ticket_notas ON ticket_notas(ticket_id, id);
+
+-- Errores del servidor (HTTP 500): el usuario ve solo un folio y Soporte lo
+-- busca aquí para diagnosticar (sección "Plataforma y rendimiento").
+CREATE TABLE errores_servidor (
+    id          SERIAL PRIMARY KEY,
+    folio       VARCHAR(12) NOT NULL,
+    metodo      VARCHAR(8),
+    ruta        VARCHAR(200),
+    mensaje     VARCHAR(300),
+    usuario_id  INTEGER,
+    cliente_id  INTEGER,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_errores_folio ON errores_servidor(folio);
+CREATE INDEX idx_errores_fecha ON errores_servidor(fecha DESC);
 
 -- ---------------------------------------------------------
 -- MONEDERO ELECTRÓNICO (Etapa 4): saldo en pesos del cliente.

@@ -42,6 +42,9 @@ let D = { devoluciones: [] };
 const abrir = (html) => { document.getElementById('modal-body').innerHTML = `<button class="modal-close" onclick="cerrar()">${icon('x', 20)}</button>` + html; document.getElementById('modal').classList.add('open'); };
 const cerrar = () => { document.getElementById('modal').classList.remove('open'); history.replaceState(null, '', location.pathname); };
 const yo = () => Sesion.usuario() || {};
+// Aprobar, recibir y reembolsar es de Ventas, Logística o Administración.
+// Soporte (solo consulta) ve el caso sin botones y lo escala desde el ticket.
+const puedeOperar = () => ['ordenes-erp', 'inventario'].some((k) => puedeVer(yo().rol, k));
 
 const COLS = [
     { estado: 'solicitada', titulo: 'Por revisar', sub: 'Aprobar o rechazar', ic: 'clipboard' },
@@ -150,7 +153,8 @@ function detalle(id) {
                 ${d.revisado_nombre ? `<div class="tk-kv"><span>Revisó</span><span>${escHTML(d.revisado_nombre)}</span></div>` : ''}
                 ${d.cerrado_nombre ? `<div class="tk-kv"><span>Cerró</span><span>${escHTML(d.cerrado_nombre)}</span></div>` : ''}
             </div>
-            ${accion ? `<div class="dv-accion">${accion}</div>` : ''}
+            ${accion ? `<div class="dv-accion">${puedeOperar() ? accion
+                : `<h4>${icon('lock', 15)} Solo consulta</h4><p class="dv-mut" style="margin:0">Tu rol no aprueba devoluciones ni hace reembolsos. Si un ticket lo necesita, escálalo a Administración o Pagos.</p>`}</div>` : ''}
         </div>`);
     document.getElementById('modal').querySelector('.modal').classList.add('dv-modal');
 }

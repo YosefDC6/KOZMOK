@@ -20,7 +20,9 @@ const facturama = require('./facturama.js');   // factura electrónica CFDI 4.0 
 const panelOculto = require('./panel-oculto.js');
 const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
-const { PERMISOS, puedeVer } = require('./public/admin/js/permisos.js');
+const { PERMISOS, puedeVer, homeDe, ROL_LABEL } = require('./public/admin/js/permisos.js');
+// Reglas del rol Soporte (técnico TI): las mismas que usan las pantallas.
+const SoporteTI = require('./public/js/soporte-ti.js');
 
 const app = express();
 // Detrás de un túnel o proxy en la misma computadora (Cloudflare Tunnel,
@@ -110,7 +112,7 @@ app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 
 // fotos (ya reducidas en el navegador), así que esas rutas aceptan más.
 const jsonChico = express.json({ limit: '100kb' });
 const jsonFotos = express.json({ limit: '6mb' });
-const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes)|admin\/reclamos\/\d+\/mensajes)$/;
+const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes|tickets(\/\d+\/mensajes)?)|admin\/(reclamos\/\d+\/mensajes|reportes-ti(\/\d+\/mensajes)?))$/;
 app.use((req, res, next) => (RUTAS_CON_FOTOS.test(req.path) ? jsonFotos : jsonChico)(req, res, next));
 
 // Capas de protección de la API, en orden:
@@ -130,7 +132,7 @@ const limiteDinero = seg.limitador({ nombre: 'pagos', ventanaMs: 60000, max: 12 
 
 // Los identificadores de las rutas deben ser números: "/clientes/1 OR 1=1"
 // se rechaza aquí, antes de llegar a la base.
-['id', 'clienteId', 'ticketId', 'dirId', 'mpId', 'garId', 'pedidoId', 'productoId', 'cliente_id', 'movId', 'itemId'].forEach((p) => {
+['id', 'clienteId', 'ticketId', 'adjId', 'dirId', 'mpId', 'garId', 'pedidoId', 'productoId', 'cliente_id', 'movId', 'itemId'].forEach((p) => {
     app.param(p, (req, res, next, valor) => {
         if (seg.esId(valor)) return next();
         return res.status(400).json({ message: 'Identificador no válido' });
@@ -143,6 +145,13 @@ const limiteDinero = seg.limitador({ nombre: 'pagos', ventanaMs: 60000, max: 12 
 const asyncRoute = (fn) => (req, res, next) => fn(req, res, next).catch((err) => {
     const folio = crypto.randomBytes(3).toString('hex').toUpperCase();
     console.error(`[${folio}]`, req.method, req.originalUrl, '->', err.message);
+    // Soporte busca el folio que vio el usuario (sin la parte de la URL
+    // después de "?", que podría llevar tokens).
+    if (!(err.code && String(err.code).startsWith('22')) && !(err.code === 'P0001' && err.hint === 'control_interno')) {
+        pool.query('INSERT INTO errores_servidor (folio, metodo, ruta, mensaje, usuario_id, cliente_id) VALUES ($1,$2,$3,$4,$5,$6)',
+            [folio, req.method, String(req.originalUrl || '').split('?')[0].slice(0, 200), String(err.message || '').slice(0, 300),
+                req.usuario ? req.usuario.id : null, req.cliente ? req.cliente.id : null]).catch(() => {});
+    }
     if (res.headersSent) return;
     if (err.code && String(err.code).startsWith('22')) return res.status(400).json({ message: seg.mensajeSeguro(err) });
     // La base rechazó un cambio prohibido (control interno): 409 con su motivo
@@ -3319,125 +3328,283 @@ app.put('/api/clientes/:id/preferencias', asyncRoute(async (req, res) => {
 }));
 
 // =========================================================
-// TICKETS DE SOPORTE (cliente)
+// TICKETS DE SOPORTE TÉCNICO (rol Soporte; reglas en public/js/soporte-ti.js)
+// Los abre un cliente desde la tienda o una cuenta del panel (problemas del
+// panel administrativo). Cada uno se clasifica y se prioriza P1-P4 por su
+// impacto real, sigue la metodología de 12 pasos, se documenta en un
+// registro técnico (bitácora solo-agregar) y solo se cierra con evidencia
+// de resolución o con la confirmación de quien lo reportó.
 // =========================================================
-app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
+
+// Lo que puede ver quien reportó: nunca el registro técnico interno
+// (diagnóstico, causa, bitácora, escalamiento) ni la clasificación.
+const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.reportado_por, t.asunto, t.categoria, t.estado, t.pedido_id,
+    t.seccion, t.dispositivo, t.navegador, t.mensaje_error, t.impacto, t.confirmacion, t.fecha_confirmacion,
+    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_resuelto, t.fecha_cerrado, t.fecha_creacion, t.fecha_actualizacion`;
+const MSG_DATO_SENSIBLE = 'Por seguridad, Soporte nunca pide contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. '
+    + 'Si necesitas confirmar algo, pide solo el correo de la cuenta, los últimos 4 dígitos de la tarjeta o la fecha y el monto del cargo.';
+
+// Cuántas personas distintas reportaron algo de la misma clasificación en
+// las últimas 2 horas: sirve para estimar el alcance real (caso aislado o
+// algo que les pasa a muchos).
+async function reportesSimilares(clasificacion, excluirId = 0) {
     const r = await pool.query(
-        `SELECT t.*, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes, p.numero_orden
-         FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.cliente_id = $1 ORDER BY t.fecha_actualizacion DESC`,
-        [req.params.id]
-    );
-    res.json(r.rows);
-}));
-
-// Crea un ticket (folio TK-xxxx), su primer mensaje y la interacción CRM.
-// Prioridad automática de los tickets que abre el cliente (el cliente no la
-// elige; el equipo puede cambiarla después en el panel).
-//   alta : un pedido o el acceso a la cuenta, o el texto habla de cobros
-//          dobles, cargos no reconocidos, fraude o cuenta robada
-//   media: garantía, devolución, facturación
-//   baja : otros temas
-const CATEGORIAS_TICKET = ['pedido', 'garantia', 'devolucion', 'facturacion', 'cuenta', 'general'];
-const PRIORIDAD_POR_CATEGORIA = { pedido: 'alta', cuenta: 'alta', garantia: 'media', devolucion: 'media', facturacion: 'media', general: 'baja' };
-const TICKET_URGENTE = /(cobr\w*\s+(doble|dos\s+veces)|doble\s+cobro|cargo\s+no\s+reconocido|no\s+reconozco|fraude|estafa|hacke|robar\w*|me\s+robaron|suplant)/i;
-function prioridadAutomatica(categoria, texto) {
-    if (TICKET_URGENTE.test(String(texto || ''))) return 'alta';
-    return PRIORIDAD_POR_CATEGORIA[categoria] || 'baja';
+        `SELECT COUNT(DISTINCT COALESCE('c' || cliente_id, 'u' || reportado_por))::int AS n FROM tickets
+         WHERE clasificacion = $1 AND id <> $2 AND fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '2 hours'`,
+        [clasificacion, excluirId]);
+    return r.rows[0].n;
 }
 
-async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id }, { autor = 'cliente', usuarioId = null } = {}) {
-    categoria = CATEGORIAS_TICKET.includes(categoria) ? categoria : 'general';
-    // El cliente no decide la prioridad: se calcula según el caso.
-    if (autor !== 'equipo') prioridad = prioridadAutomatica(categoria, `${asunto} ${descripcion}`);
-    // Solo se liga un pedido que sea de este cliente.
-    if (pedido_id) {
-        const p = await pool.query('SELECT id FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(pedido_id) || 0, clienteId]);
-        pedido_id = p.rows[0] ? p.rows[0].id : null;
+// Bitácora técnica del ticket (solo agregar).
+async function notaTicket(db, ticketId, usuario, tipo, texto) {
+    await db.query('INSERT INTO ticket_notas (ticket_id, usuario_id, usuario_nombre, tipo, texto) VALUES ($1,$2,$3,$4,$5)',
+        [ticketId, usuario ? usuario.id : null, usuario ? usuario.nombre : 'Sistema', tipo, String(texto).slice(0, 4000)]);
+}
+async function conteoNotas(ticketId) {
+    const r = await pool.query('SELECT tipo, COUNT(*)::int AS n FROM ticket_notas WHERE ticket_id = $1 GROUP BY tipo', [ticketId]);
+    return Object.fromEntries(r.rows.map((x) => [x.tipo, x.n]));
+}
+// Marca un paso de la metodología como hecho (si no lo estaba).
+async function pasoHecho(ticketId, paso, usuario) {
+    await pool.query(
+        `UPDATE tickets SET checklist = checklist || jsonb_build_object($2::text, jsonb_build_object('usuario', $3::text, 'fecha', CURRENT_TIMESTAMP))
+         WHERE id = $1 AND NOT (checklist ? $2::text)`, [ticketId, paso, usuario ? usuario.nombre : 'Sistema']);
+}
+
+// Cambia el estado y lo deja en la bitácora. Las reglas (no resolver sin
+// diagnóstico, no cerrar sin evidencia...) se revisan antes con
+// SoporteTI.motivoNoCambiar.
+async function aplicarEstado(t, nuevo, usuario, detalle = '') {
+    if (!nuevo || nuevo === t.estado) return false;
+    const sets = ['estado = $2'];
+    if (nuevo === 'resuelto') sets.push('fecha_resuelto = CURRENT_TIMESTAMP', 'fecha_cerrado = NULL', 'confirmacion = NULL', 'fecha_confirmacion = NULL');
+    else if (nuevo === 'cerrado') sets.push('fecha_cerrado = CURRENT_TIMESTAMP');
+    else {
+        sets.push('fecha_resuelto = NULL', 'fecha_cerrado = NULL');
+        // Se reabre: la verificación anterior ya no vale.
+        if (['resuelto', 'cerrado'].includes(t.estado)) sets.push("checklist = checklist - 'verificar'");
     }
-    const ins = await pool.query(
-        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje)
-         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6) RETURNING id`,
-        [clienteId, String(asunto).slice(0, 160), categoria,
-            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion]
-    );
-    const t = await pool.query(
-        "UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *",
-        [ins.rows[0].id]
-    );
-    const folio = t.rows[0].folio;
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4)`,
-        [t.rows[0].id, autor === 'equipo' ? 'equipo' : 'cliente', autor === 'equipo' ? usuarioId : null, descripcion]
-    );
-    // También queda como interacción CRM
-    await pool.query(
-        `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, origen) VALUES ($1, $2, 'soporte', $3, $4)`,
-        [clienteId, autor === 'equipo' ? usuarioId : null,
-            autor === 'equipo' ? `Abrió el ticket ${folio} para el cliente: ${asunto}` : `El cliente abrió el ticket ${folio}: ${asunto}`,
-            autor === 'equipo' ? 'equipo' : 'cliente']
-    );
-    return t.rows[0];
-}
-
-// Respuesta del equipo: va al hilo y queda como "respuesta" del ticket.
-// Si estaba abierto pasa a En proceso (o al estado que se indique).
-async function responderTicket(ticketId, usuarioId, mensaje, estado) {
-    const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [ticketId]);
-    if (t.rows.length === 0) return false;
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`,
-        [ticketId, usuarioId, mensaje]
-    );
-    const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'].includes(estado) ? estado : null;
-    await pool.query(
-        `UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP, respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP,
-             estado = COALESCE($3, CASE WHEN estado = 'abierto' THEN 'en_proceso' ELSE estado END) WHERE id = $1`,
-        [ticketId, mensaje, est]
-    );
+    await pool.query(`UPDATE tickets SET ${sets.join(', ')}, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1`, [t.id, nuevo]);
+    await notaTicket(pool, t.id, usuario, 'estado', `${SoporteTI.ESTADOS[t.estado]} → ${SoporteTI.ESTADOS[nuevo]}${detalle ? `. ${detalle}` : ''}`);
+    if (usuario) await pasoHecho(t.id, 'estado', usuario);
+    t.estado = nuevo;
     return true;
 }
+
+// Aviso dentro del panel para la cuenta del equipo que reportó un problema.
+async function avisarReportante(t, titulo, cuerpo) {
+    if (!t.reportado_por) return;
+    const u = (await pool.query('SELECT rol FROM usuarios WHERE id = $1', [t.reportado_por])).rows[0];
+    if (!u) return;
+    await notif.aUsuario(t.reportado_por, { categoria: 'reportes', titulo, cuerpo, url: `${homeDe(u.rol)}?reporte=${t.id}` }).catch(() => {});
+}
+
+// Crea un ticket (folio TK-xxxx) con su primer mensaje y sus evidencias.
+//   clienteId: cliente que reporta (o null si es una cuenta del panel)
+//   reportadoPor: cuenta del panel que reporta (problemas del panel)
+//   autor 'equipo': Soporte abre el caso a nombre del cliente
+async function crearTicket(clienteId, datos, { autor = 'cliente', usuarioId = null, reportadoPor = null, ua = '' } = {}) {
+    const S = SoporteTI;
+    let { categoria, prioridad, pedido_id, seccion, impacto } = datos;
+    const cat = S.CATEGORIAS[categoria];
+    categoria = cat && (reportadoPor || !cat.soloEquipo) ? categoria : (reportadoPor ? 'panel' : 'general');
+    // Nunca se guardan números de tarjeta, CVV, NIP ni contraseñas.
+    const asunto = S.enmascararSensible(datos.asunto).texto.slice(0, 160);
+    const desc = S.enmascararSensible(datos.descripcion);
+    const descripcion = desc.texto.slice(0, 4000);
+    const errorTxt = datos.mensaje_error ? S.enmascararSensible(datos.mensaje_error).texto.trim().slice(0, 500) || null : null;
+    impacto = S.IMPACTOS[impacto] ? impacto : null;
+    if (reportadoPor) {
+        // Pantalla del panel donde pasó (la manda la ventana de reporte).
+        const m = /^\/admin\/([a-z0-9-]+)\.html/.exec(String(datos.pantalla || ''));
+        seccion = m ? `panel: ${m[1]}`.slice(0, 40) : 'panel';
+    } else seccion = S.SECCIONES[seccion] ? seccion : null;
+
+    const clasificacion = S.clasificar(categoria, `${asunto} ${descripcion}`);
+    const similares = await reportesSimilares(clasificacion);
+    const alcance = S.alcancePorReportes(similares + 1);
+    // Quien reporta no decide la prioridad: se sugiere por el impacto real
+    // (qué tanto impide usar la tienda y a cuántos afecta). Soporte la ajusta.
+    if (autor !== 'equipo' || !S.PRIORIDADES[prioridad]) {
+        prioridad = S.prioridadSugerida({ clasificacion, impacto, alcance, texto: `${asunto} ${descripcion}` });
+    }
+    const nav = autor === 'equipo' ? { navegador: null, dispositivo: null } : S.describirNavegador(ua);
+    // Solo se liga un pedido que sea de este cliente.
+    if (pedido_id && clienteId) {
+        const p = await pool.query('SELECT id FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(pedido_id) || 0, clienteId]);
+        pedido_id = p.rows[0] ? p.rows[0].id : null;
+    } else pedido_id = null;
+
+    const ins = await pool.query(
+        `INSERT INTO tickets (folio, cliente_id, reportado_por, asunto, categoria, clasificacion, prioridad, pedido_id, mensaje,
+                              seccion, dispositivo, navegador, mensaje_error, impacto, alcance)
+         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        [clienteId || null, reportadoPor || null, asunto, categoria, clasificacion, prioridad, pedido_id || null, descripcion,
+            seccion, nav.dispositivo, nav.navegador, errorTxt, impacto, alcance]);
+    const t = (await pool.query("UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *", [ins.rows[0].id])).rows[0];
+    const msg = await pool.query(
+        `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [t.id, autor === 'equipo' ? 'equipo' : 'cliente', autor === 'equipo' ? usuarioId : reportadoPor, descripcion]);
+    for (const f of datos.fotos || []) {
+        await pool.query('INSERT INTO ticket_adjuntos (ticket_id, mensaje_id, nombre, tipo, datos, tamano) VALUES ($1,$2,$3,$4,$5,$6)',
+            [t.id, msg.rows[0].id, f.nombre, f.tipo, f.datos, f.tamano]);
+    }
+    // El registro técnico empieza con lo que se sabe y cómo se calculó.
+    await notaTicket(pool, t.id, null, 'nota',
+        `Clasificado como ${S.CLASIFICACIONES[clasificacion]} y prioridad ${S.PRIORIDADES[prioridad].p} ${S.PRIORIDADES[prioridad].label} `
+        + `(impacto: ${impacto ? S.IMPACTOS[impacto] : 'sin dato'}; ${similares ? `${similares} reporte(s) parecido(s) en 2 horas` : 'sin otros reportes parecidos'}). Soporte lo puede ajustar.`);
+    if (desc.ocultos) await notaTicket(pool, t.id, null, 'nota', `Se ocultaron ${desc.ocultos} dato(s) sensible(s) que venían en el reporte (tarjeta, CVV, NIP o contraseña).`);
+    // También queda como interacción CRM del cliente.
+    if (clienteId) {
+        await pool.query(
+            `INSERT INTO interacciones (cliente_id, usuario_id, tipo, descripcion, origen) VALUES ($1, $2, 'soporte', $3, $4)`,
+            [clienteId, autor === 'equipo' ? usuarioId : null,
+                autor === 'equipo' ? `Abrió el ticket ${t.folio} para el cliente: ${asunto}` : `El cliente abrió el ticket ${t.folio}: ${asunto}`,
+                autor === 'equipo' ? 'equipo' : 'cliente']);
+    }
+    return t;
+}
+
+// Respuesta de Soporte: va al hilo y queda como "respuesta" del ticket.
+// Si estaba abierto pasa a En revisión (o al estado que se indique, si las
+// reglas lo permiten). Nunca se piden datos sensibles.
+async function responderTicket(ticketId, usuario, mensaje, estado) {
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [ticketId])).rows[0];
+    if (!t) return { status: 404, message: 'Ticket no encontrado' };
+    if (SoporteTI.pideDatoSensible(mensaje)) return { status: 400, message: MSG_DATO_SENSIBLE };
+    const texto = SoporteTI.enmascararSensible(mensaje).texto.trim().slice(0, 4000);
+    if (!texto) return { status: 400, message: 'Escribe la respuesta' };
+    let nuevo = SoporteTI.ESTADOS[estado] ? estado : (t.estado === 'abierto' ? 'en_revision' : null);
+    if (nuevo && nuevo !== t.estado) {
+        const motivo = SoporteTI.motivoNoCambiar(t, nuevo, await conteoNotas(t.id));
+        if (motivo) return { status: 409, message: motivo };
+    }
+    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`, [t.id, usuario.id, texto]);
+    await pool.query('UPDATE tickets SET respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [t.id, texto]);
+    if (nuevo === 'esperando_usuario') await pasoHecho(t.id, 'info', usuario);
+    if (nuevo) await aplicarEstado(t, nuevo, usuario);
+    // Aviso a quien reportó (correo al cliente; campana a la cuenta del panel).
+    const estadoTxt = SoporteTI.ESTADOS[t.estado];
+    if (t.cliente_id) {
+        const c = (await pool.query('SELECT nombre, correo FROM clientes WHERE id = $1', [t.cliente_id])).rows[0];
+        if (c && c.correo) {
+            await enviarCorreo(pool, {
+                para: c.correo, tipo: 'soporte', cliente_id: t.cliente_id,
+                asunto: `Soporte Kozmok respondió tu ticket ${t.folio}`,
+                cuerpo: `Hola ${String(c.nombre).split(' ')[0]}:\n\n${texto}\n\nEstado de tu ticket: ${estadoTxt}.`
+                    + (t.estado === 'esperando_usuario' ? '\nNecesitamos tu respuesta para continuar.' : '')
+                    + (t.estado === 'resuelto' ? '\nConfírmanos desde tu cuenta si quedó resuelto o si el problema sigue.' : '')
+                    + '\n\nRecuerda: nunca te pediremos tu contraseña, el número completo de tu tarjeta ni códigos de verificación.',
+                boton: { texto: 'Ver mi ticket', url: `${urlBase(null)}/soporte.html?ticket=${t.id}` },
+            }).catch((e) => console.error('Correo de soporte:', e.message));
+        }
+    }
+    await avisarReportante(t, `Soporte respondió tu reporte ${t.folio}`, `${estadoTxt}: ${texto.slice(0, 200)}`);
+    return { status: 201, message: 'Respuesta enviada', ticket: t };
+}
+
+// Hilo de un ticket con sus evidencias.
+async function hiloTicket(ticketId) {
+    const [msgs, adj] = await Promise.all([
+        pool.query(`SELECT m.id, m.autor, m.usuario_id, m.mensaje, m.fecha, u.nombre AS usuario_nombre FROM ticket_mensajes m
+                    LEFT JOIN usuarios u ON m.usuario_id = u.id WHERE m.ticket_id = $1 ORDER BY m.fecha, m.id`, [ticketId]),
+        pool.query('SELECT id, mensaje_id, nombre, tipo, tamano FROM ticket_adjuntos WHERE ticket_id = $1 ORDER BY id', [ticketId]),
+    ]);
+    return msgs.rows.map((m) => ({ ...m, fotos: adj.rows.filter((a) => a.mensaje_id === m.id) }));
+}
+
+// Mensaje de quien reportó (cliente o cuenta del panel). Si Soporte estaba
+// esperando su información, el caso vuelve a En revisión.
+async function mensajeDeReportante(t, { mensaje, fotos, usuarioId = null }) {
+    if (['resuelto', 'cerrado'].includes(t.estado)) {
+        return { status: 409, cerrado: true, message: t.estado === 'resuelto'
+            ? `El ticket ${t.folio} está resuelto: confírmanos si quedó bien o si el problema sigue con los botones del ticket.`
+            : `El ticket ${t.folio} ya está cerrado. Si necesitas más ayuda, abre un ticket nuevo.` };
+    }
+    const limpio = SoporteTI.enmascararSensible(mensaje);
+    const texto = limpio.texto.trim().slice(0, 4000);
+    if (!texto && !fotos.length) return { status: 400, message: 'Escribe un mensaje o agrega una captura' };
+    const m = await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'cliente', $2, $3) RETURNING id`,
+        [t.id, usuarioId, texto || '(captura adjunta)']);
+    for (const f of fotos) {
+        await pool.query('INSERT INTO ticket_adjuntos (ticket_id, mensaje_id, nombre, tipo, datos, tamano) VALUES ($1,$2,$3,$4,$5,$6)',
+            [t.id, m.rows[0].id, f.nombre, f.tipo, f.datos, f.tamano]);
+    }
+    await pool.query('UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [t.id]);
+    if (limpio.ocultos) await notaTicket(pool, t.id, null, 'nota', `Se ocultaron ${limpio.ocultos} dato(s) sensible(s) de un mensaje de quien reportó.`);
+    if (t.estado === 'esperando_usuario') await aplicarEstado(t, 'en_revision', null, 'Quien reportó respondió con la información');
+    return { status: 201, message: 'Mensaje enviado' };
+}
+
+// ¿Quedó resuelto? Lo responde quien reportó cuando el ticket está Resuelto.
+async function confirmarTicket(t, resultado, comentario, usuarioId = null) {
+    if (t.estado !== 'resuelto') return { status: 409, message: 'Solo se confirma un ticket marcado como resuelto' };
+    if (!['resuelto', 'persiste'].includes(resultado)) return { status: 400, message: 'Indica si quedó resuelto o si el problema persiste' };
+    const extra = SoporteTI.enmascararSensible(comentario).texto.trim().slice(0, 2000);
+    await pool.query('UPDATE tickets SET confirmacion = $2, fecha_confirmacion = CURRENT_TIMESTAMP WHERE id = $1', [t.id, resultado]);
+    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'cliente', $2, $3)`,
+        [t.id, usuarioId, resultado === 'resuelto' ? `✔ Confirmo que quedó resuelto.${extra ? ' ' + extra : ''}` : `✖ El problema sigue.${extra ? ' ' + extra : ''}`]);
+    if (resultado === 'persiste') {
+        t.confirmacion = 'persiste';
+        await aplicarEstado(t, 'en_revision', null, 'Quien reportó indica que el problema persiste');
+        return { status: 200, message: 'Gracias: reabrimos tu ticket para revisarlo de nuevo.' };
+    }
+    await notaTicket(pool, t.id, null, 'nota', 'Quien reportó confirmó que quedó resuelto.');
+    return { status: 200, message: '¡Gracias por confirmar! Soporte cerrará tu ticket.' };
+}
+
+async function enviarAdjunto(res, f) {
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+    res.send(Buffer.from(f.datos, 'base64'));
+}
+
+app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
+    const r = await pool.query(
+        `SELECT ${TICKET_PUBLICO}, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes, p.numero_orden
+         FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.cliente_id = $1 ORDER BY t.fecha_actualizacion DESC`,
+        [req.params.id]);
+    res.json(r.rows);
+}));
 
 app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     const { asunto, descripcion } = req.body;
     if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
-    const ticket = await crearTicket(req.params.id, req.body);
-    res.status(201).json({ message: 'Ticket creado', ticket });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const ticket = await crearTicket(req.params.id, { ...req.body, fotos }, { ua: req.headers['user-agent'] });
+    res.status(201).json({ message: 'Ticket creado', ticket: { id: ticket.id, folio: ticket.folio, estado: ticket.estado } });
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT t.*, p.numero_orden, p.estado AS pedido_estado FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
+        `SELECT ${TICKET_PUBLICO}, p.numero_orden, p.estado AS pedido_estado FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
          WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    const msgs = await pool.query(
-        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m
-         LEFT JOIN usuarios u ON m.usuario_id = u.id
-         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`,
-        [req.params.ticketId]
-    );
-    res.json({ ...t.rows[0], mensajes: msgs.rows });
+    res.json({ ...t.rows[0], mensajes: await hiloTicket(req.params.ticketId) });
 }));
 
 app.post('/api/clientes/:id/tickets/:ticketId/mensajes', asyncRoute(async (req, res) => {
-    const { mensaje } = req.body;
-    if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const t = await pool.query('SELECT id, folio, estado FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id]);
-    if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    // Un caso resuelto o cerrado ya no recibe mensajes del cliente ni se
-    // reabre por su cuenta: solo el equipo lo reabre desde el panel. Si
-    // necesita más ayuda, abre un ticket nuevo.
-    if (['resuelto', 'cerrado'].includes(t.rows[0].estado)) {
-        return res.status(409).json({ message: `El ticket ${t.rows[0].folio} ya está ${t.rows[0].estado}. Si necesitas más ayuda, abre un ticket nuevo.`, cerrado: true });
-    }
-    const texto = String(mensaje).trim().slice(0, 4000);
-    if (!texto) return res.status(400).json({ message: 'El mensaje es requerido' });
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const r = await mensajeDeReportante(t, { mensaje: req.body.mensaje, fotos });
+    res.status(r.status).json(r);
+}));
 
-    await pool.query(
-        `INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2)`,
-        [req.params.ticketId, texto]
-    );
-    await pool.query("UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [req.params.ticketId]);
-    res.status(201).json({ message: 'Mensaje enviado' });
+app.post('/api/clientes/:id/tickets/:ticketId/confirmar', asyncRoute(async (req, res) => {
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const r = await confirmarTicket(t, req.body.resultado, req.body.comentario);
+    res.status(r.status).json(r);
+}));
+
+app.get('/api/clientes/:id/tickets/:ticketId/adjuntos/:adjId', asyncRoute(async (req, res) => {
+    const f = (await pool.query(
+        `SELECT a.tipo, a.datos FROM ticket_adjuntos a JOIN tickets t ON t.id = a.ticket_id
+         WHERE a.id = $1 AND t.id = $2 AND t.cliente_id = $3`, [req.params.adjId, req.params.ticketId, req.params.id])).rows[0];
+    enviarAdjunto(res, f);
 }));
 
 // =========================================================
@@ -3929,6 +4096,10 @@ const PERMISOS_API = [
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
     { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
+    // Soporte técnico: consultas de solo lectura para diagnosticar.
+    { ruta: /^\/soporte\/consulta$/,                   metodos: LEER, permisos: ['soporte'] },
+    // Cualquier cuenta del panel reporta problemas del panel a Soporte.
+    { ruta: /^\/reportes-ti(\/|$)/,                    metodos: TODO, permisos: ['*'] },
     { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -3937,9 +4108,15 @@ const PERMISOS_API = [
     { ruta: /^\/reclamos(\/|$)/,                       metodos: TODO, permisos: ['garantias'] },
     // Pedidos de clientes: se gestionan desde CRM, ERP o SCM
     { ruta: /^\/pedidos$/,                             metodos: LEER, permisos: ['pedidos'] },
-    { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['pedidos', 'ordenes-erp'] },
-    { ruta: /^\/devoluciones(\/|$)/,                   metodos: TODO, permisos: ['devoluciones', 'pedidos', 'ordenes-erp', 'inventario'] },
-    { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    // Soporte (permisos 'pedidos', 'facturas' y 'devoluciones') solo CONSULTA:
+    // no cambia pedidos, no cancela facturas ni hace reembolsos (sus
+    // limitaciones); si un caso lo necesita, lo escala a Administración o Pagos.
+    { ruta: /^\/facturas(\/|$)/,                       metodos: LEER, permisos: ['facturas', 'pedidos', 'ordenes-erp'] },
+    { ruta: /^\/facturas(\/|$)/,                       metodos: TODO, permisos: ['ordenes-erp'] },
+    { ruta: /^\/devoluciones(\/|$)/,                   metodos: LEER, permisos: ['devoluciones', 'pedidos', 'ordenes-erp', 'inventario'] },
+    { ruta: /^\/devoluciones(\/|$)/,                   metodos: TODO, permisos: ['ordenes-erp', 'inventario'] },
+    { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: LEER, permisos: ['pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    { ruta: /^\/pedidos\/\d+(\/|$)/,                   metodos: TODO, permisos: ['ordenes-erp', 'ordenes-compra'] },
     // SCM
     { ruta: /^\/metricas-productos$/,                  metodos: LEER, permisos: ['dashboard', 'scm', 'inventario', 'reportes-scm', 'productos'] },
     { ruta: /^\/productos(\/|$)/,                      metodos: LEER, permisos: ['productos', 'inventario', 'logistica', 'scm', 'ordenes-compra', 'movimientos'] },
@@ -4266,7 +4443,7 @@ const cfg2faUsuario = rutasConfig2fa({ tipo: 'usuario', cuentaDe: (req) => req.u
 const AVISOS_SQL = {
     soporte: `SELECT COUNT(*)::int AS n, MAX(m.fecha) AS ultimo FROM tickets t
                JOIN LATERAL (SELECT autor, fecha FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) m ON TRUE
-               WHERE t.estado IN ('abierto','en_proceso') AND m.autor = 'cliente'`,
+               WHERE t.estado IN ${SoporteTI.SQL_ACTIVOS} AND t.estado <> 'escalado' AND m.autor = 'cliente'`,
     pedidos: `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos
                WHERE estado IN ('confirmado','procesando') OR (estado = 'pendiente' AND pago_reportado AND pago_estado <> 'pagado')`,
     pagos: `SELECT COUNT(*)::int AS n, MAX(fecha_pedido) AS ultimo FROM pedidos
@@ -4535,7 +4712,7 @@ app.get('/api/admin/clientes/:id', asyncRoute(async (req, res) => {
         SELECT (SELECT COUNT(*) FROM pedidos      WHERE cliente_id = $1 AND estado <> 'cancelado') AS pedidos,
                (SELECT COUNT(*) FROM resenas      WHERE cliente_id = $1)                          AS resenas,
                (SELECT COUNT(*) FROM tickets      WHERE cliente_id = $1)                          AS tickets,
-               (SELECT COUNT(*) FROM tickets      WHERE cliente_id = $1 AND estado IN ('abierto','en_proceso')) AS tickets_abiertos
+               (SELECT COUNT(*) FROM tickets      WHERE cliente_id = $1 AND estado IN ${SoporteTI.SQL_ACTIVOS}) AS tickets_abiertos
     `, [req.params.id]);
     const nivel = nivelRecompensas(metricas.rows[0]?.valor_total_compras || 0, metricas.rows[0]?.total_compras || 0).actual;
     res.json({ ...cliente.rows[0], metricas: metricas.rows[0] || null, resumen: extra.rows[0], nivel });
@@ -4828,93 +5005,462 @@ app.put('/api/admin/resenas/:id', asyncRoute(async (req, res) => {
 }));
 
 // =========================================================
-// ADMIN: TICKETS DE SOPORTE
+// ADMIN: TICKETS DE SOPORTE TÉCNICO
+//   Cola y caso, registro técnico, bitácora, metodología, escalamiento y
+//   diagnóstico de solo lectura. Solo roles con el permiso 'soporte'.
 // =========================================================
+const TICKET_QUIEN = `COALESCE(c.nombre, r.nombre) AS reportante_nombre, COALESCE(c.correo, r.email) AS reportante_correo,
+    CASE WHEN t.reportado_por IS NOT NULL THEN 'equipo' ELSE 'cliente' END AS origen, r.rol AS reportante_rol`;
+const TICKET_JOINS = `LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por`;
+
 app.get('/api/admin/tickets', asyncRoute(async (req, res) => {
-    const { estado, prioridad } = req.query;
+    const S = SoporteTI;
+    const { estado, prioridad, clasificacion, origen } = req.query;
     const cond = [];
     const values = [];
-    let i = 1;
-    if (estado && estado !== 'Todos') { cond.push(`t.estado = $${i++}`); values.push(estado); }
-    if (prioridad && prioridad !== 'Todas') { cond.push(`t.prioridad = $${i++}`); values.push(prioridad); }
+    if (estado === 'activos') cond.push(`t.estado IN ${S.SQL_ACTIVOS}`);
+    else if (S.ESTADOS[estado]) { values.push(estado); cond.push(`t.estado = $${values.length}`); }
+    if (S.PRIORIDADES[prioridad]) { values.push(prioridad); cond.push(`t.prioridad = $${values.length}`); }
+    if (S.CLASIFICACIONES[clasificacion]) { values.push(clasificacion); cond.push(`t.clasificacion = $${values.length}`); }
+    if (origen === 'equipo') cond.push('t.reportado_por IS NOT NULL');
+    if (origen === 'cliente') cond.push('t.cliente_id IS NOT NULL');
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q) { values.push(`%${q}%`); cond.push(`(t.folio ILIKE $${values.length} OR t.asunto ILIKE $${values.length} OR c.nombre ILIKE $${values.length} OR r.nombre ILIKE $${values.length})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
-    const rows = await pool.query(
-        `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo,
-                (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes,
-                u.nombre AS asignado_nombre, pe.numero_orden
-         FROM tickets t
-         JOIN clientes c ON t.cliente_id = c.id
-         LEFT JOIN usuarios u ON t.asignado_a = u.id
-         LEFT JOIN pedidos pe ON pe.id = t.pedido_id
-         ${where}
-         ORDER BY CASE t.estado WHEN 'abierto' THEN 0 WHEN 'en_proceso' THEN 1 ELSE 2 END,
-                  CASE t.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END,
-                  t.fecha_actualizacion DESC`,
-        values
-    );
-    const counts = await pool.query(`
-        SELECT COUNT(*) FILTER (WHERE estado = 'abierto')    AS abiertos,
-               COUNT(*) FILTER (WHERE estado = 'en_proceso') AS en_proceso,
-               COUNT(*) FILTER (WHERE estado = 'resuelto')   AS resueltos,
-               COUNT(*) FILTER (WHERE estado = 'cerrado')    AS cerrados
-        FROM tickets`);
-    res.json({ conteos: counts.rows[0], tickets: rows.rows });
+    const [rows, counts] = await Promise.all([
+        pool.query(
+            `SELECT t.id, t.folio, t.asunto, t.categoria, t.clasificacion, t.prioridad, t.estado, t.alcance, t.impacto, t.cliente_id,
+                    t.reportado_por, t.escalado_area, t.confirmacion, t.fecha_creacion, t.fecha_actualizacion, ${TICKET_QUIEN},
+                    (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id)::int AS mensajes,
+                    (SELECT autor FROM ticket_mensajes m WHERE m.ticket_id = t.id ORDER BY m.fecha DESC, m.id DESC LIMIT 1) AS ultimo_autor,
+                    u.nombre AS asignado_nombre, pe.numero_orden
+             FROM tickets t ${TICKET_JOINS}
+             LEFT JOIN usuarios u ON t.asignado_a = u.id
+             LEFT JOIN pedidos pe ON pe.id = t.pedido_id
+             ${where}
+             ORDER BY CASE WHEN t.estado IN ${S.SQL_ACTIVOS} THEN 0 ELSE 1 END,
+                      CASE t.prioridad WHEN 'critica' THEN 0 WHEN 'alta' THEN 1 WHEN 'media' THEN 2 ELSE 3 END,
+                      t.fecha_creacion ASC
+             LIMIT 300`, values),
+        pool.query(`SELECT estado, COUNT(*)::int AS n FROM tickets GROUP BY estado`),
+    ]);
+    const conteos = Object.fromEntries(Object.keys(S.ESTADOS).map((e) => [e, 0]));
+    counts.rows.forEach((r) => { conteos[r.estado] = r.n; });
+    res.json({ conteos, tickets: rows.rows });
 }));
 
 app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
-    const t = await pool.query(
-        `SELECT t.*, c.nombre AS cliente_nombre, c.correo AS cliente_correo, c.telefono AS cliente_telefono,
-                p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido
-         FROM tickets t JOIN clientes c ON t.cliente_id = c.id LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.id = $1`,
-        [req.params.id]
-    );
-    if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    const msgs = await pool.query(
-        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m
-         LEFT JOIN usuarios u ON m.usuario_id = u.id
-         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`,
-        [req.params.id]
-    );
-    res.json({ ...t.rows[0], mensajes: msgs.rows });
+    const t = (await pool.query(
+        `SELECT t.*, ${TICKET_QUIEN}, c.telefono AS reportante_telefono, c.etapa_crm,
+                p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido,
+                a.nombre AS asignado_nombre, e.nombre AS escalado_por_nombre
+         FROM tickets t ${TICKET_JOINS}
+         LEFT JOIN pedidos p ON p.id = t.pedido_id
+         LEFT JOIN usuarios a ON a.id = t.asignado_a
+         LEFT JOIN usuarios e ON e.id = t.escalado_por
+         WHERE t.id = $1`, [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const [mensajes, notas, adj, similares, equipo] = await Promise.all([
+        hiloTicket(t.id),
+        pool.query('SELECT id, usuario_nombre, tipo, texto, fecha FROM ticket_notas WHERE ticket_id = $1 ORDER BY id', [t.id]),
+        pool.query('SELECT COUNT(*)::int AS n FROM ticket_adjuntos WHERE ticket_id = $1', [t.id]),
+        pool.query(
+            `SELECT t2.id, t2.folio, t2.asunto, t2.estado, t2.fecha_creacion FROM tickets t2
+             WHERE t2.clasificacion = $1 AND t2.id <> $2 AND t2.fecha_creacion > $3::timestamp - INTERVAL '2 hours'
+               AND t2.fecha_creacion < $3::timestamp + INTERVAL '2 hours' ORDER BY t2.fecha_creacion DESC LIMIT 8`,
+            [t.clasificacion, t.id, t.fecha_creacion]),
+        pool.query(`SELECT id, nombre, rol FROM usuarios WHERE activo ORDER BY nombre`),
+    ]);
+    const faltantes = SoporteTI.datosFaltantes({ ...t, adjuntos: adj.rows[0].n });
+    res.set('Cache-Control', 'no-store');
+    res.json({ ...t, mensajes, notas: notas.rows, faltantes, similares: similares.rows,
+        agentes: equipo.rows.filter((u) => puedeVer(u.rol, 'soporte')).map(({ id, nombre }) => ({ id, nombre })) });
 }));
 
+// Respuesta al usuario (y, si se indica, el estado en que queda el caso).
 app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
-    const { mensaje } = req.body;
+    const { mensaje, estado } = req.body;
     if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const ok = await responderTicket(req.params.id, req.usuario.id, mensaje);
-    if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
-    res.status(201).json({ message: 'Respuesta enviada' });
+    const r = await responderTicket(req.params.id, req.usuario, mensaje, estado);
+    res.status(r.status).json({ message: r.message });
 }));
 
+// Clasificación, prioridad, alcance, asignación, pedido, estado y registro
+// técnico. Cada cambio queda en la bitácora; el estado respeta las reglas.
 app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
-    const { estado, prioridad, asignado_a } = req.body;
-    // Ligar (o quitar con 0) el pedido del caso: solo pedidos del mismo cliente.
-    if (req.body.pedido_id !== undefined) {
-        const t = (await pool.query('SELECT cliente_id FROM tickets WHERE id = $1', [req.params.id])).rows[0];
-        if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
-        const pid = Number(req.body.pedido_id) || 0;
+    const S = SoporteTI;
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const b = req.body;
+    const yo = req.usuario;
+    const cambios = [];
+    const sets = [];
+    const vals = [t.id];
+    const poner = (col, valor) => { vals.push(valor); sets.push(`${col} = $${vals.length}`); };
+
+    // Pedido del caso: solo pedidos del mismo cliente (0 = quitarlo).
+    if (b.pedido_id !== undefined) {
+        const pid = Number(b.pedido_id) || 0;
         if (pid) {
-            const p = await pool.query('SELECT 1 FROM pedidos WHERE id = $1 AND cliente_id = $2', [pid, t.cliente_id]);
-            if (!p.rows.length) return res.status(400).json({ message: 'Ese pedido no es de este cliente' });
+            const p = await pool.query('SELECT numero_orden FROM pedidos WHERE id = $1 AND cliente_id = $2', [pid, t.cliente_id || 0]);
+            if (!p.rows.length) return res.status(400).json({ message: 'Ese pedido no es de quien reportó' });
+            cambios.push(`Pedido ligado: ${p.rows[0].numero_orden}`);
+        } else if (t.pedido_id) cambios.push('Se quitó el pedido del caso');
+        poner('pedido_id', pid || null);
+    }
+    if (b.prioridad !== undefined && b.prioridad !== t.prioridad) {
+        if (!S.PRIORIDADES[b.prioridad]) return res.status(400).json({ message: 'Prioridad no válida' });
+        cambios.push(`Prioridad ${S.PRIORIDADES[t.prioridad].p} → ${S.PRIORIDADES[b.prioridad].p} ${S.PRIORIDADES[b.prioridad].label}`);
+        poner('prioridad', b.prioridad);
+    }
+    if (b.clasificacion !== undefined && b.clasificacion !== t.clasificacion) {
+        if (!S.CLASIFICACIONES[b.clasificacion]) return res.status(400).json({ message: 'Clasificación no válida' });
+        cambios.push(`Clasificación ${S.CLASIFICACIONES[t.clasificacion]} → ${S.CLASIFICACIONES[b.clasificacion]}`);
+        poner('clasificacion', b.clasificacion);
+    }
+    if (b.alcance !== undefined && b.alcance !== t.alcance) {
+        if (!S.ALCANCES[b.alcance]) return res.status(400).json({ message: 'Alcance no válido' });
+        cambios.push(`Usuarios afectados: ${S.ALCANCES[t.alcance]} → ${S.ALCANCES[b.alcance]}`);
+        poner('alcance', b.alcance);
+    }
+    if (b.asignado_a !== undefined && Number(b.asignado_a || 0) !== Number(t.asignado_a || 0)) {
+        const aid = Number(b.asignado_a) || 0;
+        let nombre = 'nadie';
+        if (aid) {
+            const a = (await pool.query('SELECT nombre, rol, activo FROM usuarios WHERE id = $1', [aid])).rows[0];
+            if (!a || !a.activo || !puedeVer(a.rol, 'soporte')) return res.status(400).json({ message: 'Solo se asigna a una cuenta activa con acceso a Soporte' });
+            nombre = a.nombre;
         }
-        await pool.query('UPDATE tickets SET pedido_id = $1 WHERE id = $2', [pid || null, req.params.id]);
-        if (estado === undefined && prioridad === undefined && asignado_a === undefined) {
-            return res.json({ message: pid ? 'Pedido ligado al ticket' : 'Se quitó el pedido del ticket' });
+        cambios.push(`Asignado a ${nombre}`);
+        poner('asignado_a', aid || null);
+    }
+    if (b.area_responsable !== undefined && b.area_responsable !== t.area_responsable) {
+        if (b.area_responsable !== 'soporte' && !S.AREAS[b.area_responsable]) return res.status(400).json({ message: 'Área no válida' });
+        cambios.push(`Área responsable: ${b.area_responsable === 'soporte' ? 'Soporte' : S.AREAS[b.area_responsable]}`);
+        poner('area_responsable', b.area_responsable);
+    }
+    // Registro técnico. Lo que se escribe aquí es interno; nunca lleva datos sensibles.
+    const texto = (v) => S.enmascararSensible(v).texto.trim().slice(0, 4000) || null;
+    let registro = false;
+    for (const campo of ['diagnostico', 'causa_raiz', 'resultado']) {
+        if (b[campo] !== undefined && (texto(b[campo]) || null) !== (t[campo] || null)) { poner(campo, texto(b[campo])); registro = true; }
+    }
+    if (b.causa_confirmada !== undefined && !!b.causa_confirmada !== t.causa_confirmada) {
+        if (b.causa_confirmada && !String(b.causa_raiz !== undefined ? b.causa_raiz : t.causa_raiz || '').trim()) {
+            return res.status(400).json({ message: 'Escribe la causa raíz antes de marcarla como confirmada' });
+        }
+        cambios.push(b.causa_confirmada ? 'Causa raíz marcada como CONFIRMADA' : 'Causa raíz marcada como hipótesis (sin confirmar)');
+        poner('causa_confirmada', !!b.causa_confirmada);
+        registro = true;
+    }
+    if (sets.length) await pool.query(`UPDATE tickets SET ${sets.join(', ')}, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1`, vals);
+    for (const c of cambios) await notaTicket(pool, t.id, yo, 'nota', c);
+    if (registro) await notaTicket(pool, t.id, yo, 'nota', 'Actualizó el registro técnico (diagnóstico, causa raíz o resultado).');
+    if (b.clasificacion !== undefined) await pasoHecho(t.id, 'clasificar', yo);
+    if (b.prioridad !== undefined || b.alcance !== undefined) await pasoHecho(t.id, 'impacto', yo);
+    if (registro) await pasoHecho(t.id, 'documentar', yo);
+
+    // Estado: al final, con el registro ya guardado.
+    if (b.estado !== undefined && b.estado !== t.estado) {
+        const actual = (await pool.query('SELECT * FROM tickets WHERE id = $1', [t.id])).rows[0];
+        const motivo = S.motivoNoCambiar(actual, b.estado, await conteoNotas(t.id));
+        if (motivo) return res.status(409).json({ message: motivo, guardado: sets.length > 0 });
+        const antes = actual.estado;
+        await aplicarEstado(actual, b.estado, yo, String(b.detalle_estado || '').slice(0, 300));
+        if (['resuelto', 'cerrado'].includes(b.estado) || ['escalado'].includes(antes)) {
+            await avisarReportante(actual, `Tu reporte ${actual.folio} está ${S.ESTADOS[b.estado].toLowerCase()}`, actual.asunto);
         }
     }
-    const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
-    const pri = ['baja', 'media', 'alta'];
+    const final = (await pool.query('SELECT * FROM tickets WHERE id = $1', [t.id])).rows[0];
+    res.json({ message: 'Ticket actualizado', ticket: final });
+}));
+
+// Bitácora técnica: hipótesis, hallazgos confirmados, pruebas, acciones y evidencias.
+app.post('/api/admin/tickets/:id/notas', asyncRoute(async (req, res) => {
+    const S = SoporteTI;
+    const t = (await pool.query('SELECT id FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const tipo = req.body.tipo;
+    if (!S.TIPOS_NOTA[tipo]) return res.status(400).json({ message: 'Tipo de registro no válido' });
+    const txt = S.enmascararSensible(req.body.texto).texto.trim().slice(0, 4000);
+    if (txt.length < 5) return res.status(400).json({ message: 'Describe lo que registras (al menos 5 caracteres)' });
+    await notaTicket(pool, t.id, req.usuario, tipo, txt);
+    await pool.query('UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [t.id]);
+    const paso = { hipotesis: 'causas', confirmado: 'causas', prueba: 'pruebas', accion: 'solucion', evidencia: 'verificar' }[tipo];
+    if (paso && paso !== 'verificar') await pasoHecho(t.id, paso, req.usuario);
+    res.status(201).json({ message: `${S.TIPOS_NOTA[tipo]} registrada en la bitácora` });
+}));
+
+// Metodología: marcar o desmarcar un paso.
+app.put('/api/admin/tickets/:id/checklist', asyncRoute(async (req, res) => {
+    const paso = req.body.paso;
+    if (!SoporteTI.CLAVES_PASOS.includes(paso)) return res.status(400).json({ message: 'Paso no válido' });
+    const t = (await pool.query('SELECT id, checklist FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (req.body.hecho) await pasoHecho(t.id, paso, req.usuario);
+    else await pool.query('UPDATE tickets SET checklist = checklist - $2::text WHERE id = $1', [t.id, paso]);
+    const nombre = SoporteTI.PASOS.find(([k]) => k === paso)[1];
+    await notaTicket(pool, t.id, req.usuario, 'nota', `${req.body.hecho ? 'Paso hecho' : 'Paso desmarcado'}: ${nombre}`);
+    const r = await pool.query('SELECT checklist FROM tickets WHERE id = $1', [t.id]);
+    res.json({ checklist: r.rows[0].checklist });
+}));
+
+// Escalar: área, motivo, resumen técnico completo y pruebas realizadas.
+app.post('/api/admin/tickets/:id/escalar', asyncRoute(async (req, res) => {
+    const S = SoporteTI;
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (['resuelto', 'cerrado'].includes(t.estado)) return res.status(409).json({ message: 'Un ticket resuelto o cerrado no se escala: reábrelo primero' });
+    const { area, motivo } = req.body;
+    if (!S.AREAS[area]) return res.status(400).json({ message: 'Elige el área a la que escalas' });
+    if (!S.MOTIVOS_ESCALAMIENTO[motivo]) return res.status(400).json({ message: 'Elige por qué se escala' });
+    const resumen = S.enmascararSensible(req.body.resumen).texto.trim().slice(0, 4000);
+    const pruebas = S.enmascararSensible(req.body.pruebas).texto.trim().slice(0, 4000);
+    if (resumen.length < 30) return res.status(400).json({ message: 'Escribe un resumen técnico completo (qué falla, desde cuándo, a quién afecta y qué se sabe)' });
+    if (pruebas.length < 15) return res.status(400).json({ message: 'Describe las pruebas que ya se hicieron y su resultado' });
+    await pool.query(
+        `UPDATE tickets SET escalado_area = $2, escalado_motivo = $3, escalado_resumen = $4, escalado_pruebas = $5,
+                escalado_por = $6, fecha_escalado = CURRENT_TIMESTAMP, area_responsable = $2 WHERE id = $1`,
+        [t.id, area, motivo, resumen, pruebas, req.usuario.id]);
+    await notaTicket(pool, t.id, req.usuario, 'escalamiento',
+        `Escalado a ${S.AREAS[area]} (${S.MOTIVOS_ESCALAMIENTO[motivo]}).\nResumen técnico: ${resumen}\nPruebas realizadas: ${pruebas}`);
+    await pasoHecho(t.id, 'escalar', req.usuario);
+    await aplicarEstado(t, 'escalado', req.usuario, `Área: ${S.AREAS[area]}`);
+    // Aviso a quienes atienden escalamientos (administración) en el panel y por correo.
+    notif.crear([{ categoria: 'escalados', titulo: `${t.folio} escalado a ${S.AREAS[area]} (${S.PRIORIDADES[t.prioridad].p})`,
+        cuerpo: `${t.asunto}. ${resumen.slice(0, 220)}`, url: `/admin/soporte.html?ticket=${t.id}`, excluir_usuario: req.usuario.id }])
+        .catch((e) => console.error('Aviso de escalamiento:', e.message));
+    await avisarReportante(t, `Tu reporte ${t.folio} se turnó a ${S.AREAS[area]}`, 'Un especialista lo está revisando.');
+    res.json({ message: `Ticket escalado a ${S.AREAS[area]}` });
+}));
+
+app.get('/api/admin/tickets/:id/adjuntos/:adjId', asyncRoute(async (req, res) => {
+    const f = (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2', [req.params.adjId, req.params.id])).rows[0];
+    enviarAdjunto(res, f);
+}));
+
+// ---------------------------------------------------------
+// DIAGNÓSTICO DE SOLO LECTURA (pruebas autorizadas)
+// Revisa la cuenta, el carrito, los pedidos y pagos, los correos y los
+// eventos de seguridad de quien reportó, y el estado de la plataforma.
+// No cambia nada: Soporte orienta y documenta, no ejecuta operaciones.
+// Datos mínimos: sin contraseñas, tokens ni IP completas.
+// ---------------------------------------------------------
+const ipParcial = (ip) => (ip ? String(ip).replace(/^::ffff:/, '').replace(/(\d+\.\d+)\.\d+\.\d+$/, '$1.x.x').replace(/([0-9a-f]+:[0-9a-f]+):.*$/i, '$1:…') : null);
+app.get('/api/admin/tickets/:id/diagnostico', asyncRoute(async (req, res) => {
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const pruebas = [];
+    const prueba = (area, nombre, resultado, detalle) => pruebas.push({ area, nombre, resultado, detalle });
+    const out = { pruebas };
+
+    // --- Cuenta de quien reportó (cliente o cuenta del panel) ---
+    let correo = null; let ambito = null;
+    if (t.cliente_id) {
+        const c = (await pool.query(
+            `SELECT nombre, correo, estado_cliente, correo_verificado, password_debil, dosf_metodo, fecha_registro FROM clientes WHERE id = $1`,
+            [t.cliente_id])).rows[0];
+        if (c) {
+            correo = c.correo; ambito = 'cliente';
+            out.cuenta = { tipo: 'Cliente', nombre: c.nombre, correo: c.correo, estado: c.estado_cliente, correo_verificado: c.correo_verificado,
+                dos_pasos: !!c.dosf_metodo, registro: c.fecha_registro };
+            prueba('Acceso', 'La cuenta está activa', c.estado_cliente === 'activo' ? 'ok' : 'alerta', c.estado_cliente === 'activo' ? 'Activa' : 'La cuenta está inactiva: no puede iniciar sesión');
+            prueba('Acceso', 'Correo verificado', c.correo_verificado ? 'ok' : 'alerta', c.correo_verificado ? 'Verificado' : 'Falta verificar el correo: puede impedir algunas acciones');
+            if (c.password_debil) prueba('Acceso', 'Contraseña según la política', 'info', 'Su contraseña es anterior a la política: se le pide cambiarla al entrar');
+        }
+    } else if (t.reportado_por) {
+        const u = (await pool.query('SELECT nombre, email, rol, activo, dosf_metodo FROM usuarios WHERE id = $1', [t.reportado_por])).rows[0];
+        if (u) {
+            correo = u.email; ambito = 'usuario';
+            out.cuenta = { tipo: 'Cuenta del panel', nombre: u.nombre, correo: u.email, estado: u.activo ? 'activo' : 'inactivo', rol: ROL_LABEL[u.rol] || u.rol, dos_pasos: !!u.dosf_metodo };
+            prueba('Administración', 'La cuenta del panel está activa', u.activo ? 'ok' : 'alerta', u.activo ? `Activa · rol ${ROL_LABEL[u.rol] || u.rol}` : 'La cuenta está desactivada');
+            prueba('Administración', 'Permisos del rol', 'info', `Pantallas que puede ver su rol: ${PERMISOS[u.rol] === '*' ? 'todas' : (PERMISOS[u.rol] || []).join(', ') || 'ninguna'}`);
+        }
+    }
+    if (correo) {
+        const clave = `${ambito}:${seg.normalizarCorreo(correo)}`;
+        const [bloq, intentos, sesiones, cerradas] = await Promise.all([
+            pool.query(`SELECT motivo, hasta FROM bloqueos WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL AND hasta > CURRENT_TIMESTAMP ORDER BY hasta DESC LIMIT 1`, [clave]),
+            pool.query(`SELECT COUNT(*) FILTER (WHERE NOT exito)::int AS fallidos, MAX(fecha) FILTER (WHERE exito) AS ultimo_ok
+                        FROM intentos_login WHERE tipo = $1 AND correo = $2 AND fecha > CURRENT_TIMESTAMP - INTERVAL '24 hours'`, [ambito, seg.normalizarCorreo(correo)]),
+            pool.query(`SELECT COUNT(*)::int AS n, MAX(ultimo_uso) AS ultimo FROM sesiones
+                        WHERE ${ambito === 'cliente' ? 'cliente_id' : 'usuario_id'} = $1 AND revocada IS NULL AND expira > CURRENT_TIMESTAMP`, [t.cliente_id || t.reportado_por]),
+            pool.query(`SELECT motivo_revocacion AS motivo, revocada AS fecha FROM sesiones
+                        WHERE ${ambito === 'cliente' ? 'cliente_id' : 'usuario_id'} = $1 AND revocada IS NOT NULL ORDER BY revocada DESC LIMIT 5`, [t.cliente_id || t.reportado_por]),
+        ]);
+        const b = bloq.rows[0];
+        prueba('Acceso', 'Sin bloqueo por intentos fallidos', b ? 'alerta' : 'ok',
+            b ? `Bloqueada hasta ${new Date(b.hasta).toLocaleString('es-MX')} (${b.motivo}). La puede levantar Seguridad o la persona con "¿Olvidaste tu contraseña?"` : 'Sin bloqueos activos');
+        const it = intentos.rows[0];
+        prueba('Acceso', 'Intentos fallidos en 24 h', it.fallidos >= 3 ? 'alerta' : 'ok', `${it.fallidos} fallido(s)${it.ultimo_ok ? ` · último acceso correcto ${new Date(it.ultimo_ok).toLocaleString('es-MX')}` : ' · sin accesos correctos en 24 h'}`);
+        prueba('Acceso', 'Sesiones abiertas', 'info', `${sesiones.rows[0].n} sesión(es) activa(s)`);
+        const inesperadas = cerradas.rows.filter((s) => !/^(cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida)$/.test(s.motivo || ''));
+        if (inesperadas.length) prueba('Acceso', 'Sesiones que se cerraron solas', 'info', inesperadas.map((s) => `${s.motivo} (${new Date(s.fecha).toLocaleString('es-MX')})`).join('; '));
+        out.sesiones_cerradas = cerradas.rows;
+
+        // Correos enviados (confirmaciones, recuperación de contraseña, avisos).
+        const correos = (await pool.query(
+            `SELECT tipo, asunto, estado, error, intentos, fecha, enviado FROM correos_salida WHERE LOWER(para) = LOWER($1) ORDER BY id DESC LIMIT 8`, [correo])).rows;
+        out.correos = correos;
+        const fallidos = correos.filter((x) => x.estado === 'error');
+        prueba('Notificaciones', 'Correos recientes entregados', fallidos.length ? 'alerta' : correos.length ? 'ok' : 'info',
+            correos.length ? (fallidos.length ? `${fallidos.length} con error: ${fallidos[0].error || 'sin detalle'}` : `${correos.length} correo(s) recientes sin error`) : 'No hay correos recientes para esta cuenta');
+        if (!correo_.configurado()) prueba('Notificaciones', 'Servicio de correo configurado', 'alerta', 'El servidor no tiene Gmail configurado: los correos solo se guardan en el panel y no le llegan a nadie');
+
+        // Eventos de seguridad de esa cuenta.
+        const ev = (await pool.query(
+            `SELECT tipo, severidad, detalle, ip, fecha FROM eventos_seguridad WHERE ${ambito === 'cliente' ? 'cliente_id' : 'usuario_id'} = $1
+             ORDER BY id DESC LIMIT 8`, [t.cliente_id || t.reportado_por])).rows.map((e) => ({ ...e, ip: ipParcial(e.ip) }));
+        out.seguridad = ev;
+        const graves = ev.filter((e) => ['alta', 'media'].includes(e.severidad));
+        prueba('Seguridad', 'Eventos de seguridad recientes', graves.length ? 'alerta' : 'ok',
+            graves.length ? `${graves.length} evento(s) de atención: ${[...new Set(graves.map((e) => e.tipo.replace(/_/g, ' ')))].join(', ')}. Si hay acceso sospechoso, escala a Seguridad sin borrar nada.` : 'Sin eventos de severidad media o alta');
+    }
+
+    // --- Carrito: precios y disponibilidad contra el catálogo actual ---
+    if (t.cliente_id) {
+        const car = (await pool.query(
+            `SELECT d.cantidad, d.precio_unitario, p.id, p.nombre, p.precio, p.stock, p.activo
+             FROM carrito ca JOIN carrito_detalle d ON d.carrito_id = ca.id JOIN productos p ON p.id = d.producto_id
+             WHERE ca.cliente_id = $1 AND ca.estado = 'activo' ORDER BY d.id`, [t.cliente_id])).rows;
+        out.carrito = car;
+        const raros = car.filter((x) => !x.activo || Number(x.stock) < Number(x.cantidad) || (x.precio_unitario != null && Math.abs(Number(x.precio_unitario) - Number(x.precio)) > 0.009));
+        prueba('Carrito', 'Carrito coherente con el catálogo', raros.length ? 'alerta' : car.length ? 'ok' : 'info',
+            car.length ? (raros.length ? raros.map((x) => `${x.nombre}: ${!x.activo ? 'producto desactivado' : Number(x.stock) < Number(x.cantidad) ? `pide ${x.cantidad}, hay ${x.stock}` : `precio guardado ${formatoMX(x.precio_unitario)} vs actual ${formatoMX(x.precio)}`}`).join('; ') : `${car.length} producto(s) con precio y existencia correctos`)
+                : 'El carrito está vacío');
+
+        // Pedidos y pagos recientes (y posibles cargos duplicados).
+        const ped = (await pool.query(
+            `SELECT p.id, p.numero_orden, p.estado, p.pago_estado, p.metodo_pago, p.total, p.fecha_pedido, pg.estado AS pago, pg.fecha_pago, pg.descripcion AS pago_desc
+             FROM pedidos p LEFT JOIN pagos pg ON pg.pedido_id = p.id WHERE p.cliente_id = $1 ORDER BY p.id DESC LIMIT 6`, [t.cliente_id])).rows;
+        out.pedidos = ped;
+        const pagados = ped.filter((p) => p.pago === 'pagado' && p.fecha_pago);
+        const dobles = pagados.filter((a, i) => pagados.some((b, j) => j !== i && Number(a.total) === Number(b.total)
+            && Math.abs(new Date(a.fecha_pago) - new Date(b.fecha_pago)) < 30 * 60000));
+        prueba('Pagos', 'Sin cargos duplicados', dobles.length ? 'alerta' : 'ok',
+            dobles.length ? `Posible cargo duplicado: ${dobles.map((p) => p.numero_orden).join(' y ')} (mismo monto en menos de 30 min). No confirmes reembolsos: escala a Pagos.` : 'No se ven dos cobros iguales seguidos');
+        const pendientes = ped.filter((p) => p.pago_estado !== 'pagado' && !['cancelado'].includes(p.estado));
+        if (pendientes.length) prueba('Pagos', 'Pagos pendientes', 'info', pendientes.map((p) => `${p.numero_orden}: ${p.estado}, pago ${p.pago_estado || 'pendiente'}`).join('; '));
+    }
+
+    // --- Pedido del caso: productos, existencias y estado ---
+    if (t.pedido_id) {
+        const it = (await pool.query(
+            `SELECT pi.cantidad, pi.precio_unitario, p.nombre, p.stock, p.activo FROM pedido_items pi JOIN productos p ON p.id = pi.producto_id WHERE pi.pedido_id = $1`,
+            [t.pedido_id])).rows;
+        out.pedido_items = it;
+        const sinStock = it.filter((x) => Number(x.stock) <= 0);
+        if (sinStock.length) prueba('Inventario', 'Productos del pedido con existencias', 'info', `Hoy agotado(s): ${sinStock.map((x) => x.nombre).join(', ')}`);
+    }
+
+    // --- Error con folio que vio quien reportó ---
+    const folios = [...new Set((`${t.mensaje_error || ''} ${t.mensaje || ''}`.toUpperCase().match(/\b[0-9A-F]{6}\b/g) || []))];
+    if (folios.length) {
+        const er = (await pool.query('SELECT folio, metodo, ruta, mensaje, fecha FROM errores_servidor WHERE folio = ANY($1) ORDER BY id DESC LIMIT 5', [folios])).rows;
+        out.errores = er;
+        prueba('Rendimiento', `Folio de error ${folios.join(', ')}`, er.length ? 'alerta' : 'info',
+            er.length ? er.map((e) => `${e.metodo} ${e.ruta}: ${e.mensaje}`).join('; ') + ' → escala a Desarrollo con este detalle' : 'No hay errores del servidor con ese folio');
+    }
+
+    // --- Reportes parecidos y estado de la plataforma ---
+    const n = await reportesSimilares(t.clasificacion, t.id);
+    prueba('Alcance', 'Reportes parecidos (2 h)', n >= 3 ? 'alerta' : 'info',
+        n ? `${n} persona(s) más reportaron algo de ${SoporteTI.CLASIFICACIONES[t.clasificacion]}: ${n >= 3 ? 'puede ser un problema generalizado (revisa la prioridad y considera escalar)' : 'por ahora parece aislado'}` : 'Nadie más lo ha reportado: parece un caso individual');
+    const ini = Date.now();
+    await pool.query('SELECT 1');
+    const msBase = Date.now() - ini;
+    const errHora = (await pool.query(`SELECT COUNT(*)::int AS n FROM errores_servidor WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '1 hour'`)).rows[0].n;
+    out.plataforma = { base_datos_ms: msBase, errores_ultima_hora: errHora, encendido_desde: new Date(Date.now() - process.uptime() * 1000) };
+    prueba('Rendimiento', 'Base de datos responde', msBase < 500 ? 'ok' : 'alerta', `${msBase} ms`);
+    prueba('Rendimiento', 'Errores del servidor en la última hora', errHora ? 'alerta' : 'ok', errHora ? `${errHora} error(es) 500: revisa la lista de errores` : 'Ninguno');
+    res.set('Cache-Control', 'no-store');
+    res.json(out);
+}));
+const formatoMX = (n) => `$${Number(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Consultas de solo lectura para diagnosticar (catálogo, inventario,
+// promociones y errores por folio) sin permiso para modificar nada.
+app.get('/api/admin/soporte/consulta', asyncRoute(async (req, res) => {
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    const tipo = req.query.tipo;
+    res.set('Cache-Control', 'no-store');
+    if (tipo === 'error') {
+        const folio = q.toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, 6);
+        const r = folio.length === 6
+            ? await pool.query('SELECT folio, metodo, ruta, mensaje, fecha FROM errores_servidor WHERE folio = $1 ORDER BY id DESC LIMIT 5', [folio])
+            : await pool.query('SELECT folio, metodo, ruta, mensaje, fecha FROM errores_servidor ORDER BY id DESC LIMIT 20');
+        return res.json({ tipo, filas: r.rows });
+    }
+    if (q.length < 2) return res.json({ tipo, filas: [] });
+    if (tipo === 'producto') {
+        const r = await pool.query(
+            `SELECT p.id, p.nombre, p.marca, p.precio, p.stock, p.stock_minimo, p.activo, (p.imagen_url IS NOT NULL AND p.imagen_url <> '') AS tiene_imagen,
+                    c.nombre AS categoria, (SELECT COUNT(*)::int FROM productos x WHERE LOWER(x.nombre) = LOWER(p.nombre)) AS mismos_nombre
+             FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
+             WHERE p.nombre ILIKE $1 OR p.marca ILIKE $1 OR CAST(p.id AS TEXT) = $2 ORDER BY p.nombre LIMIT 10`, [`%${q}%`, q]);
+        return res.json({ tipo, filas: r.rows });
+    }
+    if (tipo === 'promocion') {
+        const r = await pool.query(
+            `SELECT id, nombre, tipo_descuento, valor, alcance, estado, fecha_inicio, fecha_fin,
+                    (estado = 'activa' AND CURRENT_TIMESTAMP BETWEEN fecha_inicio AND fecha_fin) AS vigente_ahora
+             FROM promociones WHERE nombre ILIKE $1 OR texto ILIKE $1 ORDER BY fecha_fin DESC LIMIT 10`, [`%${q}%`]);
+        return res.json({ tipo, filas: r.rows });
+    }
+    res.status(400).json({ message: 'Consulta no válida' });
+}));
+
+// =========================================================
+// REPORTES TÉCNICOS DEL EQUIPO (problemas del panel administrativo)
+// Cualquier cuenta del panel reporta un problema desde su menú y sigue la
+// conversación con Soporte; ve solo sus propios reportes.
+// =========================================================
+async function reporteDe(req) {
+    return (await pool.query('SELECT * FROM tickets WHERE id = $1 AND reportado_por = $2', [req.params.id, req.usuario.id])).rows[0];
+}
+app.get('/api/admin/reportes-ti', asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `UPDATE tickets SET
-            estado    = COALESCE($1, estado),
-            prioridad = COALESCE($2, prioridad),
-            asignado_a = COALESCE($3, asignado_a)
-         WHERE id = $4 RETURNING *`,
-        [est.includes(estado) ? estado : null, pri.includes(prioridad) ? prioridad : null,
-            asignado_a || null, req.params.id]
-    );
-    if (r.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    res.json({ message: 'Ticket actualizado', ticket: r.rows[0] });
+        `SELECT ${TICKET_PUBLICO}, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id)::int AS mensajes
+         FROM tickets t WHERE t.reportado_por = $1 ORDER BY t.fecha_actualizacion DESC LIMIT 50`, [req.usuario.id]);
+    res.set('Cache-Control', 'no-store');
+    res.json(r.rows);
+}));
+app.post('/api/admin/reportes-ti', asyncRoute(async (req, res) => {
+    const { asunto, descripcion } = req.body;
+    if (!asunto || String(asunto).trim().length < 5) return res.status(400).json({ message: 'Escribe un asunto (al menos 5 caracteres)' });
+    if (!descripcion || String(descripcion).trim().length < 10) return res.status(400).json({ message: 'Describe el problema (al menos 10 caracteres)' });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const t = await crearTicket(null, { ...req.body, categoria: req.body.categoria || 'panel', fotos },
+        { reportadoPor: req.usuario.id, ua: req.headers['user-agent'] });
+    res.status(201).json({ message: `Reporte ${t.folio} enviado a Soporte`, ticket: { id: t.id, folio: t.folio } });
+}));
+app.get('/api/admin/reportes-ti/:id', asyncRoute(async (req, res) => {
+    const t = await reporteDe(req);
+    if (!t) return res.status(404).json({ message: 'Reporte no encontrado' });
+    const pub = (await pool.query(`SELECT ${TICKET_PUBLICO} FROM tickets t WHERE t.id = $1`, [t.id])).rows[0];
+    res.set('Cache-Control', 'no-store');
+    res.json({ ...pub, mensajes: await hiloTicket(t.id) });
+}));
+app.post('/api/admin/reportes-ti/:id/mensajes', asyncRoute(async (req, res) => {
+    const t = await reporteDe(req);
+    if (!t) return res.status(404).json({ message: 'Reporte no encontrado' });
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const r = await mensajeDeReportante(t, { mensaje: req.body.mensaje, fotos, usuarioId: req.usuario.id });
+    res.status(r.status).json(r);
+}));
+app.post('/api/admin/reportes-ti/:id/confirmar', asyncRoute(async (req, res) => {
+    const t = await reporteDe(req);
+    if (!t) return res.status(404).json({ message: 'Reporte no encontrado' });
+    const r = await confirmarTicket(t, req.body.resultado, req.body.comentario, req.usuario.id);
+    res.status(r.status).json(r);
+}));
+app.get('/api/admin/reportes-ti/:id/adjuntos/:adjId', asyncRoute(async (req, res) => {
+    const f = (await pool.query(
+        `SELECT a.tipo, a.datos FROM ticket_adjuntos a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = $1 AND t.id = $2 AND t.reportado_por = $3`,
+        [req.params.adjId, req.params.id, req.usuario.id])).rows[0];
+    enviarAdjunto(res, f);
 }));
 
 // =========================================================
@@ -4923,17 +5469,23 @@ app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
 // garantía, devoluciones y reseñas en una sola bandeja, ordenada por quién
 // debe dar el siguiente paso (nosotros primero), prioridad y antigüedad.
 // =========================================================
-const PRIO_ORDEN = { alta: 0, media: 1, baja: 2 };
+const PRIO_ORDEN = { critica: -1, alta: 0, media: 1, baja: 2 };
 app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
     const [tk, rc, dv, rs, tkLista, rcLista, dvLista, rsLista] = await Promise.all([
         pool.query(`
             SELECT COUNT(*) FILTER (WHERE t.estado = 'abierto')::int AS abiertos,
+                   COUNT(*) FILTER (WHERE t.estado = 'en_revision')::int AS en_revision,
                    COUNT(*) FILTER (WHERE t.estado = 'en_proceso')::int AS en_proceso,
-                   COUNT(*) FILTER (WHERE t.estado IN ('abierto','en_proceso') AND COALESCE(u.autor, 'cliente') = 'cliente')::int AS sin_respuesta,
-                   COUNT(*) FILTER (WHERE t.estado IN ('abierto','en_proceso') AND t.prioridad = 'alta')::int AS alta,
-                   COUNT(*) FILTER (WHERE t.estado IN ('resuelto','cerrado') AND t.fecha_actualizacion > CURRENT_TIMESTAMP - INTERVAL '7 days')::int AS resueltos_7d,
+                   COUNT(*) FILTER (WHERE t.estado = 'esperando_usuario')::int AS esperando,
+                   COUNT(*) FILTER (WHERE t.estado = 'escalado')::int AS escalados,
+                   COUNT(*) FILTER (WHERE t.estado IN ('abierto','en_revision','en_proceso','esperando_usuario') AND COALESCE(u.autor, 'cliente') = 'cliente')::int AS sin_respuesta,
+                   COUNT(*) FILTER (WHERE t.estado IN ${SoporteTI.SQL_ACTIVOS} AND t.prioridad IN ('critica','alta'))::int AS alta,
+                   COUNT(*) FILTER (WHERE t.estado = 'resuelto' AND t.confirmacion IS NULL)::int AS por_confirmar,
+                   COUNT(*) FILTER (WHERE t.estado IN ('resuelto','cerrado') AND t.fecha_resuelto > CURRENT_TIMESTAMP - INTERVAL '7 days')::int AS resueltos_7d,
                    ROUND(AVG(GREATEST(0, EXTRACT(EPOCH FROM (p.fecha - t.fecha_creacion))) / 3600)
-                         FILTER (WHERE t.fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '30 days'), 1) AS primera_respuesta_h
+                         FILTER (WHERE t.fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '30 days'), 1) AS primera_respuesta_h,
+                   ROUND(AVG(GREATEST(0, EXTRACT(EPOCH FROM (t.fecha_resuelto - t.fecha_creacion))) / 3600)
+                         FILTER (WHERE t.fecha_resuelto > CURRENT_TIMESTAMP - INTERVAL '30 days'), 1) AS resolucion_h
             FROM tickets t
             LEFT JOIN LATERAL (SELECT autor FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
             LEFT JOIN LATERAL (SELECT fecha FROM ticket_mensajes WHERE ticket_id = t.id AND autor = 'equipo' ORDER BY fecha, id LIMIT 1) p ON TRUE`),
@@ -4953,12 +5505,13 @@ app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
                    COUNT(*) FILTER (WHERE respuesta IS NULL AND NOT oculta AND calificacion <= 2)::int AS criticas
             FROM resenas`),
         pool.query(`
-            SELECT t.id, t.folio, t.asunto, t.estado, t.prioridad, t.categoria, t.cliente_id, c.nombre AS cliente_nombre,
+            SELECT t.id, t.folio, t.asunto, t.estado, t.prioridad, t.clasificacion, t.escalado_area, t.cliente_id,
+                   COALESCE(c.nombre, r.nombre || ' (equipo)') AS cliente_nombre,
                    pe.numero_orden, COALESCE(u.autor, 'cliente') AS ultimo_autor, COALESCE(u.fecha, t.fecha_creacion) AS desde
-            FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+            FROM tickets t LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por
             LEFT JOIN pedidos pe ON pe.id = t.pedido_id
             LEFT JOIN LATERAL (SELECT autor, fecha FROM ticket_mensajes WHERE ticket_id = t.id ORDER BY fecha DESC, id DESC LIMIT 1) u ON TRUE
-            WHERE t.estado IN ('abierto','en_proceso')`),
+            WHERE t.estado IN ${SoporteTI.SQL_ACTIVOS}`),
         pool.query(`
             SELECT r.id, r.folio, r.estado, r.cliente_id, c.nombre AS cliente_nombre, pr.nombre AS producto,
                    COALESCE(u.autor, 'cliente') AS ultimo_autor, COALESCE(u.fecha, r.fecha) AS desde
@@ -4982,10 +5535,13 @@ app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
     const bandeja = [
         ...tkLista.rows.map((t) => ({
             tipo: 'ticket', id: t.id, folio: t.folio, titulo: t.asunto,
-            detalle: [t.categoria, t.numero_orden].filter(Boolean).join(' · '),
+            detalle: [SoporteTI.CLASIFICACIONES[t.clasificacion], t.numero_orden].filter(Boolean).join(' · '),
             cliente_id: t.cliente_id, cliente_nombre: t.cliente_nombre,
-            estado: t.estado === 'abierto' ? 'Abierto' : 'En proceso', prioridad: t.prioridad,
-            espera: t.ultimo_autor === 'cliente' ? 'nosotros' : 'cliente', desde: t.desde,
+            estado: SoporteTI.ESTADOS[t.estado], prioridad: t.prioridad,
+            // Quién da el siguiente paso: Soporte, quien reportó u otra área (escalado).
+            espera: t.estado === 'escalado' ? 'area' : t.ultimo_autor === 'cliente' && t.estado !== 'esperando_usuario' ? 'nosotros'
+                : t.estado === 'abierto' ? 'nosotros' : 'cliente',
+            area: t.escalado_area ? SoporteTI.AREAS[t.escalado_area] : null, desde: t.desde,
             url: `/admin/soporte.html?ticket=${t.id}`,
         })),
         ...rcLista.rows.map((r) => ({
@@ -5033,10 +5589,11 @@ app.get('/api/admin/soporte/buscar', asyncRoute(async (req, res) => {
         pool.query(`
             SELECT c.id, c.nombre, c.correo, c.telefono, c.estado_cliente,
                    (SELECT COUNT(*)::int FROM pedidos p WHERE p.cliente_id = c.id) AS pedidos,
-                   (SELECT COUNT(*)::int FROM tickets t WHERE t.cliente_id = c.id AND t.estado IN ('abierto','en_proceso')) AS tickets_abiertos
+                   (SELECT COUNT(*)::int FROM tickets t WHERE t.cliente_id = c.id AND t.estado IN ${SoporteTI.SQL_ACTIVOS}) AS tickets_abiertos
             FROM clientes c WHERE c.nombre ILIKE $1 OR c.correo ILIKE $1 OR c.telefono ILIKE $1
             ORDER BY c.nombre LIMIT 8`, [like]),
-        pool.query(`SELECT t.id, t.folio, t.asunto AS titulo, t.estado, c.nombre AS cliente_nombre FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+        pool.query(`SELECT t.id, t.folio, t.asunto AS titulo, t.estado, COALESCE(c.nombre, r.nombre) AS cliente_nombre FROM tickets t
+                    LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por
                     WHERE t.folio ILIKE $1 OR t.asunto ILIKE $1 ORDER BY t.fecha_actualizacion DESC LIMIT 8`, [like]),
         pool.query(`SELECT r.id, r.folio, r.estado, c.nombre AS cliente_nombre FROM reclamos_garantia r JOIN clientes c ON c.id = r.cliente_id
                     JOIN garantias g ON g.id = r.garantia_id WHERE r.folio ILIKE $1 OR g.folio ILIKE $1 ORDER BY r.fecha_actualizacion DESC LIMIT 5`, [like]),
@@ -5047,7 +5604,7 @@ app.get('/api/admin/soporte/buscar', asyncRoute(async (req, res) => {
                     WHERE p.numero_orden ILIKE $1 ORDER BY p.id DESC LIMIT 8`, [like]),
     ]);
     const casos = [
-        ...tk.rows.map((x) => ({ tipo: 'ticket', folio: x.folio, titulo: x.titulo, estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/soporte.html?ticket=${x.id}` })),
+        ...tk.rows.map((x) => ({ tipo: 'ticket', folio: x.folio, titulo: x.titulo, estado: SoporteTI.ESTADOS[x.estado] || x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/soporte.html?ticket=${x.id}` })),
         ...rc.rows.map((x) => ({ tipo: 'garantia', folio: x.folio, titulo: 'Reclamo de garantía', estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/garantias.html?reclamo=${x.id}` })),
         ...dv.rows.map((x) => ({ tipo: 'devolucion', folio: x.folio, titulo: 'Devolución', estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/devoluciones.html?dev=${x.id}` })),
     ];
@@ -5160,7 +5717,7 @@ app.get('/api/admin/dashboard', asyncRoute(async (req, res) => {
 
     const q_tickets = pool.query(`
         SELECT
-            COUNT(*) FILTER (WHERE estado IN ('abierto', 'en_proceso')) AS activos,
+            COUNT(*) FILTER (WHERE estado IN ${SoporteTI.SQL_ACTIVOS}) AS activos,
             COUNT(*) FILTER (WHERE estado = 'abierto') AS abiertos
         FROM tickets
     `);
@@ -8307,30 +8864,30 @@ app.get('/api/atencion/tickets', requireSesion, asyncRoute(async (req, res) => {
     const esCliente = req.quien.tipo === 'cliente';
     if (!esCliente && !puedeVer(req.quien.rol, 'soporte')) return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
     const r = await pool.query(
-        `SELECT t.id, t.folio, t.cliente_id, c.nombre AS cliente_nombre, t.asunto, t.mensaje, t.estado, t.prioridad,
+        `SELECT t.id, t.folio, t.cliente_id, COALESCE(c.nombre, r.nombre) AS cliente_nombre, t.asunto, t.mensaje, t.estado,
+                ${esCliente ? '' : 't.prioridad, t.clasificacion,'}
                 t.fecha_creacion AS fecha, t.respuesta, t.fecha_respuesta, t.fecha_actualizacion
-         FROM tickets t JOIN clientes c ON c.id = t.cliente_id
+         FROM tickets t LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por
          ${esCliente ? 'WHERE t.cliente_id = $1' : ''} ORDER BY t.fecha_actualizacion DESC`,
         esCliente ? [req.quien.id] : []);
     res.json(r.rows);
 }));
 app.get('/api/atencion/ticket/:id', requireSesion, asyncRoute(async (req, res) => {
+    // El cliente solo ve los datos públicos de su ticket (nunca el registro técnico interno).
+    const esCliente = req.quien.tipo === 'cliente';
     const t = await pool.query(
-        `SELECT t.*, t.fecha_creacion AS fecha, c.nombre AS cliente_nombre, c.correo AS cliente_correo
-         FROM tickets t JOIN clientes c ON c.id = t.cliente_id WHERE t.id = $1`, [req.params.id]);
+        `SELECT ${esCliente ? TICKET_PUBLICO : 't.*'}, t.fecha_creacion AS fecha, COALESCE(c.nombre, r.nombre) AS cliente_nombre, COALESCE(c.correo, r.email) AS cliente_correo
+         FROM tickets t LEFT JOIN clientes c ON c.id = t.cliente_id LEFT JOIN usuarios r ON r.id = t.reportado_por WHERE t.id = $1`, [req.params.id]);
     if (!t.rows.length) return res.status(404).json({ message: 'Ticket no encontrado' });
-    if (req.quien.tipo === 'cliente' && Number(t.rows[0].cliente_id) !== Number(req.quien.id)) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (esCliente && Number(t.rows[0].cliente_id) !== Number(req.quien.id)) return res.status(404).json({ message: 'Ticket no encontrado' });
     if (req.quien.tipo === 'usuario' && !puedeVer(req.quien.rol, 'soporte')) return res.status(403).json({ message: 'Tu rol no tiene acceso a esta sección' });
-    const msgs = await pool.query(
-        `SELECT m.*, u.nombre AS usuario_nombre FROM ticket_mensajes m LEFT JOIN usuarios u ON m.usuario_id = u.id
-         WHERE m.ticket_id = $1 ORDER BY m.fecha ASC`, [req.params.id]);
-    res.json({ ...t.rows[0], mensajes: msgs.rows });
+    res.json({ ...t.rows[0], mensajes: await hiloTicket(req.params.id) });
 }));
 app.put('/api/atencion/ticket/:id/respuesta', requireInterno('soporte'), asyncRoute(async (req, res) => {
     const respuesta = String(req.body.respuesta || req.body.mensaje || '').trim();
     if (!respuesta) return res.status(400).json({ message: 'Escribe la respuesta' });
-    const ok = await responderTicket(req.params.id, req.usuario.id, respuesta, req.body.estado);
-    if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const r = await responderTicket(req.params.id, req.usuario, respuesta, req.body.estado);
+    if (r.status >= 400) return res.status(r.status).json({ message: r.message });
     const t = await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id]);
     res.json({ message: 'Respuesta enviada', ticket: t.rows[0] });
 }));
@@ -8924,6 +9481,10 @@ async function migrarEsquema() {
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
     await pool.query(require('fs').readFileSync(path.join(__dirname, 'db', 'control_interno.sql'), 'utf8'));
+    // Soporte técnico TI: estados, prioridades P1-P4, clasificación, registro
+    // técnico, escalamiento, bitácora y errores por folio (usa las funciones
+    // de control_interno.sql, por eso va después).
+    await pool.query(require('fs').readFileSync(path.join(__dirname, 'db', 'soporte_ti.sql'), 'utf8'));
 }
 
 // Página no encontrada: la API responde JSON; el resto, la página 404 de la tienda.

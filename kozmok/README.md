@@ -22,7 +22,7 @@ Este archivo es la referencia técnica. Qué hace cada pantalla está en
 kozmok/
 ├── server.js              # API REST (Express), migraciones al arrancar y tareas cada minuto
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
-├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
+├── notificaciones.js     # avisos del panel (campana) y por correo al equipo (incluye escalamientos y "Mis reportes técnicos")
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── panel-oculto.js        # entrada secreta del panel (/admin/<PANEL_RUTA>/) y pantallas solo con sesión y rol
@@ -37,8 +37,10 @@ kozmok/
 ├── pruebas-seguridad/     # ataques contra el propio servidor (npm run prueba:seguridad)
 ├── db/
 │   ├── database.sql       # esquema, triggers, datos iniciales y cuentas del panel (bcrypt vía pgcrypto)
-│   └── control_interno.sql# bitácora encadenada, fechas del servidor, auditoría, facturas y devoluciones
-│                          #   (se ejecuta solo al arrancar)
+│   ├── control_interno.sql# bitácora encadenada, fechas del servidor, auditoría, facturas y devoluciones
+│   │                      #   (se ejecuta solo al arrancar)
+│   └── soporte_ti.sql     # soporte técnico TI: estados, P1-P4, clasificación, registro técnico, bitácora y errores
+│                          #   por folio (se ejecuta solo al arrancar, después de control_interno.sql)
 └── public/
     ├── index.html                 # portada y catálogo (filtros en la URL, ?promo=ID)
     ├── carrito.html, pagar.html, gracias.html, recibo.html
@@ -49,7 +51,7 @@ kozmok/
     ├── cuenta.html, cliente-panel.html   # redirigen a la sección nueva (enlaces viejos)
     ├── armar-pc.html, comparar.html, socio.html, ayuda.html, terminos.html, 404.html
     ├── css/style.css, css/arcade.css     # arcade.css: estilo de la tienda (no del panel)
-    ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast,
+    ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast, soporte-ti (reglas de Soporte),
     │                               #   icons (íconos, logo KZK y fantasmita), dos-pasos, fotos,
     │                               #   garantia, paypal-botones, recibo-render, graficas, vendor/
     └── admin/                      # una pantalla por sección del panel (centro-soporte = inicio de Soporte)
@@ -137,6 +139,14 @@ existentes) **y** en `database.sql` (para bases nuevas).
   verlas (la clave que cada página le pasa a `renderAdminSidebar`, validada
   con `permisos.js`). En el navegador, `rutaLoginPanel()` (api.js) regresa a
   la entrada secreta que se abrió en ese equipo.
+- **Soporte técnico TI**: las reglas del rol (estados, P1-P4, clasificación,
+  metodología, escalamiento, filtro de datos sensibles) están en
+  `public/js/soporte-ti.js`, que cargan el servidor (`require`) y las
+  pantallas (`<script>`). Rutas: `/api/admin/tickets/*` (caso, notas,
+  checklist, escalar, diagnóstico), `/api/admin/soporte/consulta`,
+  `/api/admin/reportes-ti/*` (reportes del equipo) y
+  `/api/clientes/:id/tickets/*` (cliente, sin el registro interno). Los
+  errores 500 quedan en `errores_servidor` con el folio que ve el usuario.
 - **Sesiones**: token aleatorio de 256 bits en cookie HttpOnly
   (`kz_sesion` tienda, `kz_admin` panel); en la tabla `sesiones` solo su
   hash. Desde Postman: `{"modo":"token"}` en el login y

@@ -275,6 +275,7 @@ function renderAdminSidebar(activo) {
             <button class="btn btn-ghost btn-sm au-salir" onclick="abrirCambioPassword()" title="Cambiar mi contraseña">${ic('lock', 15)} <span>Cambiar contraseña${usuario && usuario.password_debil ? ' <span class="au-alerta" title="Tu contraseña es muy sencilla">!</span>' : ''}</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="Notifs.preferencias()" title="Qué avisos recibes en el panel y por correo">${ic('bell', 15)} <span>Notificaciones</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="abrirDosPasos()" title="Verificación en dos pasos">${ic('shield', 15)} <span>Verificación en dos pasos</span></button>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="ReporteTI.abrir()" title="Reportar a Soporte técnico un problema del panel">${ic('headphones', 15)} <span>Reportar un problema</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
     `;
@@ -296,6 +297,9 @@ function renderAdminSidebar(activo) {
         });
     });
     Avisos.iniciar(activo);
+    // Aviso de Soporte sobre un reporte propio (?reporte=ID): se abre su conversación.
+    const rep = Number(new URLSearchParams(location.search).get('reporte'));
+    if (rep) ReporteTI.abrir(rep);
 }
 
 // ---------------------------------------------------------
@@ -786,3 +790,112 @@ const Notifs = {
     },
 };
 window.Notifs = Notifs;
+
+// ---------------------------------------------------------
+// Reportar un problema del panel a Soporte técnico (área "Panel
+// administrativo"): cualquier cuenta del equipo lo reporta desde su menú y
+// sigue la conversación aquí. Solo ve sus propios reportes.
+// ---------------------------------------------------------
+function cargarScript(src) {
+    if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
+    return new Promise((ok, mal) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = mal; document.head.appendChild(s); });
+}
+const ReporteTI = {
+    fotos: null,
+    async abrir(id) {
+        await Promise.all([cargarScript('/js/soporte-ti.js'), cargarScript('/js/fotos.js')]);
+        let ov = document.getElementById('modal-reporte-ti');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.className = 'modal-overlay';
+            ov.id = 'modal-reporte-ti';
+            ov.innerHTML = '<div class="modal" style="max-width:640px" role="dialog" aria-modal="true" aria-label="Reportar un problema"></div>';
+            ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
+            document.body.appendChild(ov);
+        }
+        ov.classList.add('open');
+        if (id) this.ver(id); else this.nuevo();
+    },
+    cuerpo(html, pestana) {
+        const ic = window.icon || (() => '');
+        document.querySelector('#modal-reporte-ti .modal').innerHTML = `
+            <button class="modal-close" onclick="document.getElementById('modal-reporte-ti').classList.remove('open')" aria-label="Cerrar">${ic('x', 20)}</button>
+            <h3 style="margin-top:0">Soporte técnico</h3>
+            <div class="st-seg" style="margin:-4px 0 14px">
+                <button type="button" class="btn btn-sm ${pestana === 'nuevo' ? 'btn-primary' : 'btn-ghost'}" onclick="ReporteTI.nuevo()">Reportar un problema</button>
+                <button type="button" class="btn btn-sm ${pestana === 'lista' ? 'btn-primary' : 'btn-ghost'}" onclick="ReporteTI.lista()">Mis reportes</button></div>
+            ${html}`;
+    },
+    nuevo() {
+        const S = window.SoporteTI;
+        const ic = window.icon || (() => '');
+        const nav = S.describirNavegador(navigator.userAgent);
+        const pantalla = (document.querySelector('.admin-topbar h2') || {}).textContent || location.pathname;
+        this.cuerpo(`
+            <p class="st-sub" style="margin-top:0">Para fallas del panel: no carga una pantalla, un botón marca error, un reporte sale mal, no tienes el permiso que deberías… Soporte lo clasifica, lo diagnostica y te responde aquí.</p>
+            <div class="field"><label for="rt-asunto">Asunto</label><input id="rt-asunto" maxlength="160" placeholder="Ej. No puedo guardar un producto" /></div>
+            <div class="field"><label for="rt-desc">¿Qué pasó?</label><textarea id="rt-desc" rows="4" maxlength="4000" placeholder="Qué intentabas hacer, qué esperabas y qué pasó."></textarea></div>
+            <div class="field"><label for="rt-err">Mensaje de error <span style="color:var(--text-muted);font-weight:400">(si apareció; incluye el folio)</span></label><input id="rt-err" maxlength="500" /></div>
+            <div class="field"><label>¿Qué tanto te afecta?</label><div class="st-seg" style="flex-direction:column;gap:6px">
+                ${Object.entries({ bloquea: 'No puedo hacer mi trabajo en esa pantalla', parcial: 'Funciona a medias o hay otra forma', menor: 'Es un detalle menor' }).map(([k, v]) => `<label><input type="radio" name="rt-imp" value="${k}" /> ${v}</label>`).join('')}</div></div>
+            <div class="field"><label>Capturas <span style="color:var(--text-muted);font-weight:400">(opcional, hasta 3)</span></label>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label class="btn btn-outline btn-sm foto-btn">${ic('plus', 14)} Agregar captura<input type="file" id="rt-fotos" accept="image/*" multiple hidden /></label><div class="foto-lista" id="rt-prev"></div></div></div>
+            <p class="st-sub">Se envía también: pantalla <strong>${escHTML(pantalla.trim())}</strong> · ${escHTML([nav.navegador, nav.dispositivo].filter(Boolean).join(' · '))}. Nunca escribas contraseñas ni códigos de verificación.</p>
+            <button class="btn btn-primary" style="width:100%" onclick="ReporteTI.enviar()">Enviar a Soporte</button>`, 'nuevo');
+        this.fotos = FotosReclamo.selector(document.getElementById('rt-fotos'), document.getElementById('rt-prev'), { alError: (m) => toast(m, 'warn') });
+    },
+    async enviar() {
+        const imp = document.querySelector('input[name="rt-imp"]:checked');
+        const body = {
+            asunto: document.getElementById('rt-asunto').value.trim(), descripcion: document.getElementById('rt-desc').value.trim(),
+            mensaje_error: document.getElementById('rt-err').value.trim() || null, impacto: imp ? imp.value : null,
+            pantalla: location.pathname, fotos: this.fotos ? this.fotos.fotos() : [],
+        };
+        try { const r = await api('/admin/reportes-ti', { method: 'POST', body }); toast(r.message, 'ok'); this.ver(r.ticket.id); }
+        catch (e) { toast(e.message, 'error'); }
+    },
+    async lista() {
+        const S = window.SoporteTI;
+        let l = [];
+        try { l = await api('/admin/reportes-ti'); } catch (e) { toast(e.message, 'error'); }
+        this.cuerpo(l.length ? `<div class="st-notas" style="max-height:none">${l.map((t) => `
+            <button type="button" class="card" style="text-align:left;margin:0 0 8px;cursor:pointer;width:100%;font:inherit;color:inherit" onclick="ReporteTI.ver(${t.id})">
+                <div class="st-n-top"><span class="mono">${t.folio}</span><span class="tag st-e-${t.estado}">${S.ESTADOS[t.estado]}</span></div>
+                <div style="font-weight:600;margin-top:4px">${escHTML(t.asunto)}</div>
+                <div class="st-sub">${formatoFechaHora(t.fecha_actualizacion)} · ${t.mensajes} mensaje(s)${t.estado === 'esperando_usuario' ? ' · <strong style="color:#b47ef0">Soporte espera tu respuesta</strong>' : ''}${t.estado === 'resuelto' && !t.confirmacion ? ' · <strong style="color:var(--success)">Confírmalo</strong>' : ''}</div>
+            </button>`).join('')}</div>` : '<p class="st-sub">Todavía no has reportado problemas.</p>', 'lista');
+    },
+    async ver(id) {
+        const S = window.SoporteTI;
+        const ic = window.icon || (() => '');
+        let t;
+        try { t = await api(`/admin/reportes-ti/${id}`); } catch (e) { toast(e.message, 'error'); return this.lista(); }
+        const abierto = !['resuelto', 'cerrado'].includes(t.estado);
+        this.cuerpo(`
+            <div class="st-n-top"><strong>${escHTML(t.asunto)}</strong><span class="tag st-e-${t.estado}">${S.ESTADOS[t.estado]}</span></div>
+            <p class="st-sub" style="margin:2px 0 12px"><span class="mono">${t.folio}</span> · ${formatoFechaHora(t.fecha_creacion)}</p>
+            <div class="hilo" style="max-height:340px;overflow:auto">${t.mensajes.map((m) => `
+                <div class="hilo-msg ${m.autor === 'equipo' ? 'equipo' : 'mio'}">
+                    <div class="hm-meta">${m.autor === 'equipo' ? `${escHTML(m.usuario_nombre || 'Soporte')} · Soporte` : 'Tú'} · ${formatoFechaHora(m.fecha)}</div>
+                    <div class="hm-txt">${escHTML(m.mensaje)}</div>
+                    ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a class="foto-prev" href="/api/admin/reportes-ti/${t.id}/adjuntos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/reportes-ti/${t.id}/adjuntos/${f.id}" alt="" /></a>`).join('')}</div>` : ''}
+                </div>`).join('')}</div>
+            ${t.estado === 'resuelto' ? (t.confirmacion === 'resuelto' ? '<p class="st-sub">Confirmaste que quedó resuelto. Soporte lo cerrará.</p>' : `
+                <div class="card" style="margin-top:12px"><strong>¿Quedó resuelto?</strong>
+                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="ReporteTI.confirmar(${t.id}, 'resuelto')">Sí, ya quedó</button>
+                    <button class="btn btn-outline btn-sm" onclick="ReporteTI.confirmar(${t.id}, 'persiste')">No, sigue el problema</button></div></div>`)
+            : abierto ? `<div class="field" style="margin-top:12px"><textarea id="rt-resp" rows="3" maxlength="4000" placeholder="${t.estado === 'esperando_usuario' ? 'Soporte te pidió información: respóndele aquí' : 'Escribe a Soporte…'}"></textarea></div>
+                <button class="btn btn-primary btn-sm" onclick="ReporteTI.responder(${t.id})">${ic('chat', 14)} Enviar</button>` : '<p class="st-sub">Este reporte está cerrado.</p>'}`, 'lista');
+    },
+    async responder(id) {
+        const mensaje = document.getElementById('rt-resp').value.trim();
+        if (!mensaje) { toast('Escribe un mensaje', 'warn'); return; }
+        try { await api(`/admin/reportes-ti/${id}/mensajes`, { method: 'POST', body: { mensaje } }); this.ver(id); }
+        catch (e) { toast(e.message, 'error'); }
+    },
+    async confirmar(id, resultado) {
+        try { const r = await api(`/admin/reportes-ti/${id}/confirmar`, { method: 'POST', body: { resultado } }); toast(r.message, 'ok'); this.ver(id); }
+        catch (e) { toast(e.message, 'error'); }
+    },
+};
+window.ReporteTI = ReporteTI;

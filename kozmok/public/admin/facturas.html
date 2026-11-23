@@ -21,7 +21,7 @@
                 <option value="cancelando">En cancelación</option>
                 <option value="cancelada">Canceladas</option>
             </select>
-            <button class="btn btn-primary btn-sm" onclick="facturarPedido()">Facturar un pedido</button>
+            <button class="btn btn-primary btn-sm" id="btn-facturar" onclick="facturarPedido()">Facturar un pedido</button>
         </div>
         <div class="table-wrap">
             <table>
@@ -46,6 +46,9 @@
 <script>
 requireAuthAdmin();
 renderAdminSidebar('facturas');
+// Emitir y cancelar facturas es de Ventas y Administración (ERP). Soporte solo consulta.
+const PUEDE_FACTURAR = puedeVer((Sesion.usuario() || {}).rol, 'ordenes-erp');
+if (!PUEDE_FACTURAR) document.getElementById('btn-facturar').remove();
 document.getElementById('topbar').innerHTML = adminHeader('Facturas', 'CFDI 4.0 emitidos, descargas y cancelaciones.');
 
 const ESTADO = { timbrada: ['Vigente', 'var(--success)'], cancelando: ['En cancelación', 'var(--warning)'], cancelada: ['Cancelada', 'var(--text-muted)'] };
@@ -80,7 +83,7 @@ function pintar() {
             <td style="white-space:nowrap">
                 <a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/pdf">PDF</a>
                 <a class="btn btn-ghost btn-sm" href="/api/facturas/${f.id}/xml">XML</a>
-                ${f.estado === 'timbrada' ? `<button class="btn btn-ghost btn-sm" onclick="cancelarFactura(${f.id})">Cancelar</button>` : ''}
+                ${f.estado === 'timbrada' && PUEDE_FACTURAR ? `<button class="btn btn-ghost btn-sm" onclick="cancelarFactura(${f.id})">Cancelar</button>` : ''}
             </td></tr>`;
     }).join('') : '<tr><td colspan="7" style="color:var(--text-muted)">Aún no hay facturas.</td></tr>';
 }
