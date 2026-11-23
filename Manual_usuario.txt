@@ -11,8 +11,8 @@ para estos perfiles:
 
    - CLIENTE   : la persona que compra en la tienda en linea.
    - ADMIN     : administrador del negocio, acceso total al panel.
-   - VENTAS / LOGISTICA : personal interno con un menu recortado segun su
-                 rol (ver seccion 5).
+   - VENTAS / LOGISTICA / SOPORTE : personal interno con un menu recortado
+                 segun su rol (ver seccion 5).
 
 Si eres un admin nuevo, lee las secciones 1, 2, 4 y 6. El resto sirve de
 consulta.
@@ -154,9 +154,9 @@ Cuentas del panel (tras cargar db/database.sql)
      "ROLES EMPRESARIALES" (arriba).
    - La cuenta de Soporte tambien se crea UNA sola vez al arrancar en bases
      que no la tenian.
-   - Si la base es de una version que no tenia estas dos cuentas (o
-     "limpiar:ejemplo" las desactivo), el servidor las crea o reactiva UNA
-     sola vez al arrancar. Si despues el administrador las desactiva en
+   - Si la base es de una version que no tenia las cuentas de Ventas y
+     Logistica (o "limpiar:ejemplo" las desactivo), el servidor las crea o
+     reactiva UNA sola vez al arrancar. Si despues el administrador las desactiva en
      Cuentas y equipo, se quedan desactivadas.
 
    - IMPORTANTE con Gmail configurado: el panel pide un codigo de
@@ -800,7 +800,9 @@ NAVEGACION RAPIDA EN EL PANEL
 4.3  FICHA DE CLIENTE  (admin/cliente.html?id=...)  [CRM]
    Es la pantalla central del CRM (equivale al "Detalle de cliente").
    - Cabecera: nombre, etiqueta de etapa, estado, correo y empresa.
-   - Botones: "Editar cliente", "Cambiar etapa", "Nueva interaccion".
+   - Botones: "Editar cliente", "Cambiar etapa", "Nueva interaccion". El
+     rol Soporte solo ve "Nueva interaccion" (consulta la ficha pero no
+     edita datos ni etapa).
    - Tarjetas: Compras, Valor total, Interacciones, Club (nivel con insignia
      y puntos).
    - Pestanas:

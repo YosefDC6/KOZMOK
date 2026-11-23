@@ -9,7 +9,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ## Funcionalidades principales
 
 ### Tienda (cliente)
-- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca y "solo en promoción" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
+- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca, "solo en promoción" y "solo disponibles" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
 - **Comercialización**: banner de promociones vigentes en la portada (con más de 3, un cuadro "Ver más" abre todas; cada una lleva al catálogo con exactamente sus productos, `?promo=ID`), productos **destacados** (se marcan en el panel), sección de **novedades** y precio con descuento visible (precio final, precio de lista tachado y etiqueta `-10%` / `-$500`) en catálogo, ficha, carrito y panel lateral.
 - **Panel lateral de carrito y favoritos**: el corazón y el carrito de la barra abren un panel a la derecha (pestañas Carrito / Favoritos) sin cambiar de pantalla. Al agregar un producto el panel se abre solo unos segundos para confirmarlo.
 - **Navegación cómoda**: buscador con sugerencias en vivo (productos con foto y precio, categorías y búsquedas recientes; tecla `/` para buscar), ficha de producto con enlace propio que se cierra con "atrás" y se puede compartir, catálogo de 24 en 24 con "Ver más", la posición del catálogo se conserva al regresar, botón "volver arriba", menú de categorías con sus marcas principales, migas de pan y botón **Regresar** en todas las páginas, y página 404 con buscador.
@@ -221,7 +221,7 @@ KOZMOK/
 
 | Sección | Rutas |
 |---|---|
-| Catálogo | `GET /api/catalogo`, `GET /api/catalogo/:id`, `?categoria=`, `?buscar=`, `?destacado=1`, `?promocion=1`, `?orden=novedades` |
+| Catálogo | `GET /api/catalogo`, `GET /api/catalogo/:id`, `?categoria=`, `?buscar=`, `?destacado=1`, `?promocion=1`, `?disponible=1`, `?orden=novedades`, `GET /api/productos/:id/existencia` |
 | Pagos | `POST /api/pagos/procesar` (valida stock → genera pedido → registra pago → actualiza inventario), `GET /api/pagos/:id`, `GET /api/pedidos/:id/pago`, `GET /api/admin/pagos` |
 | Carrito | `POST /api/carrito/agregar`, `GET /api/carrito/:cliente_id`, `PUT /api/carrito/item/:id`, `DELETE /api/carrito/item/:id`, `DELETE /api/carrito/vaciar/:cliente_id`, `POST /api/checkout/cotizar` |
 | Promociones | `GET /api/promociones`, `POST /api/promociones`, `PUT /api/promociones/:id` (+ `/api/admin/promociones`, con `DELETE`) |
