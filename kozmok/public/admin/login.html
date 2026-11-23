@@ -35,6 +35,14 @@
 <script src="/js/dos-pasos.js"></script>
 <script>
 const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
+// Enlace de un correo (?next=/admin/soporte.html?ticket=5): al entrar se abre
+// esa pantalla. Solo pantallas del panel, nunca otro sitio; si el rol no
+// puede verla, el servidor lo manda a su inicio.
+const NEXT = (() => {
+    const n = new URLSearchParams(location.search).get('next') || '';
+    return /^\/admin\/[a-z0-9-]+\.html(\?[^#\s]*)?$/.test(n) ? n : null;
+})();
+const destinoDe = (rol) => NEXT || homeDe(rol);
 // Si la sesión del panel sigue abierta (p. ej. con "Mantener sesión
 // iniciada"), se entra directo sin volver a escribir la contraseña.
 // Solo si hay otra pestaña del panel abierta; si no, la sesión anterior
@@ -43,7 +51,7 @@ const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
     try {
         const u = await api('/admin/whoami');
         if (!(u && u.rol)) return;
-        if (await PestanaPanel.verificar()) { Sesion.guardarUsuario(u); location.replace(homeDe(u.rol)); }
+        if (await PestanaPanel.verificar()) { Sesion.guardarUsuario(u); location.replace(destinoDe(u.rol)); }
         else await Sesion.cerrarSesionUsuario();
     } catch { /* sin sesión: se muestra el formulario */ }
 })();
@@ -93,7 +101,7 @@ document.getElementById('form-login-admin').addEventListener('submit', async (e)
         Sesion.guardarUsuario(data.usuario);
         PestanaPanel.marcar();
         CuentasRecordadas.guardar('usuario', { correo: data.usuario.email, nombre: data.usuario.nombre });
-        window.location.href = homeDe(data.usuario.rol);
+        window.location.href = destinoDe(data.usuario.rol);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.hidden = false;

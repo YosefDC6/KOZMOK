@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Centro de soporte · Admin Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="admin-shell">
+    <aside class="admin-sidebar" id="admin-sidebar-placeholder"></aside>
+    <main class="admin-main">
+        <div id="topbar"></div>
+
+        <div class="cs-buscar card">
+            <span class="cs-buscar-ico" id="cs-buscar-ico"></span>
+            <input type="search" id="cs-q" placeholder="Busca un cliente (nombre, correo o teléfono) o un folio: TK-…, RG-…, GAR-…, DEV-…, número de pedido" autocomplete="off" />
+        </div>
+        <div id="cs-resultados" hidden></div>
+
+        <div class="stat-grid cs-kpis" id="cs-kpis">
+            <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+        </div>
+
+        <div class="cs-bandeja-head">
+            <div>
+                <h3>Por atender</h3>
+                <p id="cs-sub">Lo que espera una respuesta del equipo va primero, por prioridad y antigüedad.</p>
+            </div>
+            <div class="tabs-seg" role="tablist" id="cs-tabs"></div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Caso</th><th>Cliente</th><th>Estado</th><th>Prioridad</th><th>Espera</th><th></th></tr></thead>
+                <tbody id="cs-tabla"><tr><td colspan="6">Cargando…</td></tr></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div class="modal-overlay" id="cs-modal"><div class="modal cs-modal" role="dialog" aria-modal="true" id="cs-modal-body"></div></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/admin/js/permisos.js"></script>
+<script src="/admin/js/admin-layout.js"></script>
+<script src="/admin/js/gestion-pedido.js"></script>
+<script>
+requireAuthAdmin();
+renderAdminSidebar('centro-soporte');
+document.getElementById('topbar').innerHTML = adminHeader('Centro de soporte',
+    'Tickets, reclamos de garantía, devoluciones y reseñas en una sola bandeja.',
+    `<button class="btn btn-outline" onclick="cargar()">${icon('undo', 15)} Actualizar</button>`);
+document.getElementById('cs-buscar-ico').innerHTML = icon('search', 18);
+
+const $ = (id) => document.getElementById(id);
+const ROL = (Sesion.usuario() || {}).rol;
+const TIPOS = {
+    ticket:     { label: 'Ticket',     ic: 'help',   permiso: 'soporte' },
+    garantia:   { label: 'Garantía',   ic: 'shield', permiso: 'garantias' },
+    devolucion: { label: 'Devolución', ic: 'undo',   permiso: 'devoluciones' },
+    resena:     { label: 'Reseña',     ic: 'star',   permiso: 'evaluaciones' },
+};
+const PRIO = { alta: 'Alta', media: 'Media', baja: 'Baja' };
+let D = null;
+let FILTRO = 'todo';
+
+// Tiempo transcurrido en palabras cortas ("3 h", "2 d").
+function hace(f) {
+    const min = Math.max(0, Math.floor((Date.now() - new Date(f).getTime()) / 60000));
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60);
+    if (h < 48) return `${h} h`;
+    return `${Math.floor(h / 24)} d`;
+}
+function horas(h) {
+    if (h == null) return '—';
+    if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+    if (h < 48) return `${h.toLocaleString('es-MX', { maximumFractionDigits: 1 })} h`;
+    return `${Math.round(h / 24)} d`;
+}
+
+async function cargar() {
+    try { D = await api('/admin/soporte/resumen'); }
+    catch (e) { $('cs-tabla').innerHTML = `<tr><td colspan="6">${escHTML(e.message)}</td></tr>`; return; }
+    pintarKpis();
+    pintarTabs();
+    pintarBandeja();
+}
+
+function kpi(valor, label, sub, href, color) {
+    const tag = href ? 'a' : 'div';
+    return `<${tag} class="stat-card cs-kpi" ${href ? `href="${href}"` : ''}>
+        <div class="stat-label">${label}</div>
+        <div class="stat-value" ${color ? `style="color:${color}"` : ''}>${valor}</div>
+        ${sub ? `<div class="cs-kpi-sub">${sub}</div>` : ''}
+    </${tag}>`;
+}
+function pintarKpis() {
+    const t = D.tickets, g = D.garantias, d = D.devoluciones, r = D.resenas;
+    const ver = (k, href) => (puedeVer(ROL, k) ? href : null);
+    $('cs-kpis').innerHTML = [
+        kpi(t.sin_respuesta, 'Tickets sin respuesta', `${t.abiertos} abiertos · ${t.en_proceso} en proceso${t.alta ? ` · <span style="color:var(--danger)">${t.alta} de prioridad alta</span>` : ''}`,
+            ver('soporte', '/admin/soporte.html'), t.sin_respuesta ? 'var(--warning)' : null),
+        kpi(g.activos, 'Reclamos de garantía', `${g.esperando} ${g.esperando === 1 ? 'espera' : 'esperan'} respuesta`, ver('garantias', '/admin/garantias.html'), g.esperando ? 'var(--warning)' : null),
+        kpi(d.por_revisar + d.por_cerrar, 'Devoluciones', `${d.por_revisar} por revisar · ${d.por_cerrar} por reembolsar o cambiar · ${d.por_recibir} en camino`,
+            ver('devoluciones', '/admin/devoluciones.html'), (d.por_revisar + d.por_cerrar) ? 'var(--info)' : null),
+        kpi(r.sin_respuesta, 'Reseñas sin responder', `${r.criticas} ${r.criticas === 1 ? 'crítica' : 'críticas'} (1 y 2 ★)`, ver('evaluaciones', '/admin/evaluaciones.html?filtro=sin_respuesta'), r.criticas ? 'var(--danger)' : null),
+        kpi(horas(t.primera_respuesta_h), 'Primera respuesta', 'Promedio de los tickets de los últimos 30 días', null),
+        kpi(t.resueltos_7d, 'Tickets resueltos', 'En los últimos 7 días', null, 'var(--success)'),
+    ].join('');
+}
+
+function pintarTabs() {
+    const n = (tipo) => D.bandeja.filter((x) => tipo === 'todo' || x.tipo === tipo).length;
+    const tabs = [['todo', 'Todo'], ...Object.entries(TIPOS).filter(([k, v]) => puedeVer(ROL, v.permiso)).map(([k, v]) => [k, v.label])];
+    $('cs-tabs').innerHTML = tabs.map(([k, l]) => `<button role="tab" class="${FILTRO === k ? 'on' : ''}" onclick="filtrar('${k}')">${l} <span class="cs-n">${n(k)}</span></button>`).join('');
+}
+function filtrar(k) { FILTRO = k; pintarTabs(); pintarBandeja(); }
+
+function pintarBandeja() {
+    const lista = D.bandeja.filter((x) => (FILTRO === 'todo' || x.tipo === FILTRO) && puedeVer(ROL, TIPOS[x.tipo].permiso));
+    const nuestros = lista.filter((x) => x.espera === 'nosotros').length;
+    $('cs-sub').textContent = lista.length
+        ? `${nuestros} esperan una respuesta del equipo${lista.length > nuestros ? ` · ${lista.length - nuestros} esperan al cliente` : ''}.`
+        : 'Sin pendientes.';
+    if (!lista.length) {
+        $('cs-tabla').innerHTML = `<tr><td colspan="6"><div class="empty-state" style="padding:36px 10px">${icon('check', 22)}<p>Todo al día: no hay casos pendientes${FILTRO !== 'todo' ? ' de este tipo' : ''}.</p></div></td></tr>`;
+        return;
+    }
+    $('cs-tabla').innerHTML = lista.map((x) => {
+        const t = TIPOS[x.tipo];
+        const espera = x.espera === 'nosotros'
+            ? `<span class="cs-espera nos" title="El cliente espera nuestra respuesta">${icon('clock', 13)} ${hace(x.desde)}</span>`
+            : `<span class="cs-espera cli" title="Esperamos al cliente">Cliente · ${hace(x.desde)}</span>`;
+        const accion = x.tipo === 'ticket'
+            ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); responderRapido(${x.id})">Responder</button>`
+            : `<a class="btn btn-outline btn-sm" href="${x.url}" onclick="event.stopPropagation()">Atender</a>`;
+        return `<tr onclick="location.href='${x.url}'" style="cursor:pointer">
+            <td><span class="cs-tipo">${icon(t.ic, 14)} ${t.label}</span> <span class="mono">${escHTML(x.folio)}</span>
+                <div class="cs-titulo">${escHTML(x.titulo)}</div>
+                ${x.detalle ? `<div class="cs-det">${escHTML(x.detalle)}</div>` : ''}</td>
+            <td>${x.cliente_id && puedeVer(ROL, 'clientes') ? `<a href="/admin/cliente.html?id=${x.cliente_id}" onclick="event.stopPropagation()">${escHTML(x.cliente_nombre)}</a>` : escHTML(x.cliente_nombre || '—')}</td>
+            <td>${escHTML(x.estado)}</td>
+            <td><span class="tag prio-${x.prioridad}">${PRIO[x.prioridad]}</span></td>
+            <td>${espera}</td>
+            <td style="text-align:right">${accion}</td>
+        </tr>`;
+    }).join('') + (D.total_bandeja > D.bandeja.length ? `<tr><td colspan="6" style="color:var(--text-muted);font-size:.82rem">Se muestran los ${D.bandeja.length} más urgentes de ${D.total_bandeja}.</td></tr>` : '');
+}
+
+// ---- Respuesta rápida a un ticket, sin salir del Centro ----
+const EST_TK = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
+let TK = null;
+function cerrarModal() { $('cs-modal').classList.remove('open'); }
+$('cs-modal').addEventListener('click', (e) => { if (e.target.id === 'cs-modal') cerrarModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarModal(); });
+
+async function responderRapido(id) {
+    try { TK = await api(`/admin/tickets/${id}`); } catch (e) { toast(e.message, 'error'); return; }
+    const ultimos = TK.mensajes.slice(-4);
+    $('cs-modal-body').innerHTML = `
+        <button class="modal-close" onclick="cerrarModal()" aria-label="Cerrar">${icon('x', 20)}</button>
+        <p class="mono" style="margin:0;color:var(--text-muted);font-size:.8rem">${escHTML(TK.folio)} · ${escHTML(TK.categoria)}</p>
+        <h3 style="margin:2px 0 4px">${escHTML(TK.asunto)}</h3>
+        <p style="margin:0 0 12px;font-size:.85rem">${escHTML(TK.cliente_nombre)} · ${escHTML(TK.cliente_correo)}</p>
+        ${TK.mensajes.length > ultimos.length ? `<p style="font-size:.78rem;color:var(--text-muted);margin:0 0 6px">${TK.mensajes.length - ultimos.length} mensaje(s) anteriores en el hilo completo.</p>` : ''}
+        <div class="hilo cs-hilo">
+            ${ultimos.map((m) => `
+                <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
+                    <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(TK.cliente_nombre)} · ${formatoFechaHora(m.fecha)}</div>
+                    <div class="hm-txt">${escHTML(m.mensaje)}</div>
+                </div>`).join('')}
+        </div>
+        <div class="field" style="margin-top:12px"><textarea id="cs-resp" rows="4" placeholder="Escribe la respuesta al cliente…"></textarea></div>
+        <div class="cs-resp-pie">
+            <label>Después de enviar
+                <select id="cs-estado">
+                    <option value="">Dejarlo en proceso</option>
+                    <option value="resuelto">Marcar como resuelto</option>
+                    <option value="cerrado">Cerrar el ticket</option>
+                </select>
+            </label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${TK.pedido_id && puedeVer(ROL, 'pedidos') ? `<button class="btn btn-outline btn-sm" onclick="GestionPedido.abrir(${TK.pedido_id})">${icon('truck', 14)} Pedido ${escHTML(TK.numero_orden || '')}</button>` : ''}
+                <a class="btn btn-ghost btn-sm" href="/admin/soporte.html?ticket=${TK.id}">Ver caso completo</a>
+                <button class="btn btn-primary btn-sm" onclick="enviarRapido()">Enviar respuesta</button>
+            </div>
+        </div>`;
+    $('cs-modal').classList.add('open');
+    setTimeout(() => $('cs-resp').focus(), 50);
+}
+async function enviarRapido() {
+    const mensaje = $('cs-resp').value.trim();
+    if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
+    const estado = $('cs-estado').value;
+    try {
+        await api(`/admin/tickets/${TK.id}/mensajes`, { method: 'POST', body: { mensaje } });
+        if (estado) await api(`/admin/tickets/${TK.id}`, { method: 'PUT', body: { estado } });
+        toast(estado ? `Respuesta enviada; ticket ${EST_TK[estado].toLowerCase()}` : 'Respuesta enviada', 'ok');
+        cerrarModal();
+        cargar();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Buscador: cliente, folio o pedido ----
+let RELOJ = null;
+$('cs-q').addEventListener('input', () => { clearTimeout(RELOJ); RELOJ = setTimeout(buscar, 300); });
+$('cs-q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('cs-q').value = ''; buscar(); } });
+async function buscar() {
+    const q = $('cs-q').value.trim();
+    const caja = $('cs-resultados');
+    if (q.length < 2) { caja.hidden = true; caja.innerHTML = ''; return; }
+    let r;
+    try { r = await api('/admin/soporte/buscar?' + new URLSearchParams({ q })); } catch (e) { toast(e.message, 'error'); return; }
+    if ($('cs-q').value.trim() !== q) return;   // ya escribió otra cosa
+    const EST_PED = { pendiente: 'Pendiente', confirmado: 'Confirmado', procesando: 'Procesando', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };
+    const bloques = [];
+    if (r.clientes.length) bloques.push(`<div class="cs-res-grupo"><h4>Clientes</h4>${r.clientes.map((c) => `
+        <a class="cs-res" href="/admin/cliente.html?id=${c.id}">
+            ${avatarIni(c.nombre)}
+            <span class="cs-res-txt"><strong>${escHTML(c.nombre)}</strong><span>${escHTML(c.correo)}${c.telefono ? ' · ' + escHTML(c.telefono) : ''}</span></span>
+            <span class="cs-res-meta">${c.pedidos} pedido(s)${c.tickets_abiertos ? ` · <span style="color:var(--warning)">${c.tickets_abiertos} ticket(s) abierto(s)</span>` : ''}</span>
+        </a>`).join('')}</div>`);
+    if (r.casos.length) bloques.push(`<div class="cs-res-grupo"><h4>Casos</h4>${r.casos.map((x) => `
+        <a class="cs-res" href="${x.url}">
+            <span class="cs-tipo">${icon(TIPOS[x.tipo].ic, 14)} ${TIPOS[x.tipo].label}</span>
+            <span class="cs-res-txt"><strong class="mono">${escHTML(x.folio)}</strong><span>${escHTML(x.titulo)} · ${escHTML(x.cliente_nombre || '—')}</span></span>
+            <span class="cs-res-meta">${escHTML(String(x.estado).replace('_', ' '))}</span>
+        </a>`).join('')}</div>`);
+    if (r.pedidos.length) bloques.push(`<div class="cs-res-grupo"><h4>Pedidos</h4>${r.pedidos.map((p) => `
+        <button type="button" class="cs-res" onclick="GestionPedido.abrir(${p.id}, { onCambio: buscar })">
+            <span class="cs-tipo">${icon('truck', 14)} Pedido</span>
+            <span class="cs-res-txt"><strong class="mono">${escHTML(p.numero_orden)}</strong><span>${escHTML(p.cliente_nombre || 'Cliente eliminado')} · ${formatoFecha(p.fecha_pedido)}</span></span>
+            <span class="cs-res-meta">${EST_PED[p.estado] || p.estado} · ${formatoMoneda(p.total)}</span>
+        </button>`).join('')}</div>`);
+    caja.innerHTML = bloques.length ? `<div class="card cs-res-card">${bloques.join('')}</div>`
+        : `<div class="card cs-res-card"><p style="margin:0;color:var(--text-muted)">Sin resultados para “${escHTML(q)}”.</p></div>`;
+    caja.hidden = false;
+}
+
+cargar();
+// Se actualiza sola cada minuto mientras la pestaña está a la vista.
+setInterval(() => { if (!document.hidden && !$('cs-modal').classList.contains('open')) cargar(); }, 60000);
+</script>
+</body>
+</html>

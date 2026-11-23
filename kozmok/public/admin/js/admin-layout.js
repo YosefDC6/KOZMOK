@@ -43,6 +43,7 @@ const ADMIN_SECCIONES = [
         { href: '/admin/clientes.html',      key: 'clientes',      ic: 'user',    label: 'Clientes',            desc: 'Fichas y etapa de cada cliente' },
         { href: '/admin/interacciones.html', key: 'interacciones', ic: 'chat',    label: 'Interacciones',       desc: 'Llamadas, correos y reuniones' },
         { href: '/admin/evaluaciones.html',  key: 'evaluaciones',  ic: 'star',    label: 'Evaluaciones',        desc: 'Reseñas de producto' },
+        { href: '/admin/centro-soporte.html', key: 'centro-soporte', ic: 'headphones', label: 'Centro de soporte', desc: 'Todo lo pendiente de atención a clientes' },
         { href: '/admin/soporte.html',       key: 'soporte',       ic: 'help',    label: 'Soporte',             desc: 'Tickets de clientes' },
         { href: '/admin/garantias.html',     key: 'garantias',     ic: 'shield',  label: 'Garantías',           desc: 'Certificados y reclamos' },
         { href: '/admin/pedidos.html',       key: 'pedidos',       ic: 'truck',   label: 'Pedidos',             desc: 'Ventas a clientes' },
@@ -111,9 +112,16 @@ const ICONO_MODULO = { CRM: 'user', SCM: 'package', ERP: 'layers', Tienda: 'cart
 // Secciones del menú que ve un rol. Un módulo solo aparece si el rol ve al
 // menos una pantalla propia de ese módulo (Clientes dentro del ERP no
 // basta para mostrarle el ERP a quien no tiene ERP).
+// El título de cada módulo lleva a su dashboard; si el rol no lo ve
+// (Soporte en CRM, por ejemplo), a la primera sección propia que sí ve.
 function seccionesDeRol(rol) {
     return ADMIN_SECCIONES
-        .map((s) => ({ ...s, links: s.links.filter((l) => puedeVer(rol, l.key)) }))
+        .map((s) => {
+            const links = s.links.filter((l) => puedeVer(rol, l.key));
+            const propio = links.find((l) => !l.modulo);
+            const home = s.home && (links.some((l) => l.href === s.home) ? s.home : (propio || {}).href);
+            return { ...s, links, home };
+        })
         .filter((s) => s.links.some((l) => !l.modulo));
 }
 window.seccionesDeRol = seccionesDeRol;
@@ -218,7 +226,10 @@ function renderAdminSidebar(activo) {
     el.innerHTML = `
         <div class="brand-fila">
             <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
-            <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
+            <div class="bf-acciones">
+                <button type="button" class="admin-campana" id="admin-campana" onclick="Notifs.alternar(event)" aria-label="Notificaciones" title="Notificaciones">${ic('bell', 17)}<span class="campana-n" id="campana-n" hidden></span></button>
+                <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
+            </div>
         </div>
         <button class="admin-nav-toggle" id="admin-nav-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="admin-nav-links">${ic('menu', 20)} <span>Menú${grupoActivo ? ' · ' + grupoActivo : ''}</span></button>
         <nav class="admin-rail" aria-label="Módulos">
@@ -262,6 +273,7 @@ function renderAdminSidebar(activo) {
                 </div>
             </div>
             <button class="btn btn-ghost btn-sm au-salir" onclick="abrirCambioPassword()" title="Cambiar mi contraseña">${ic('lock', 15)} <span>Cambiar contraseña${usuario && usuario.password_debil ? ' <span class="au-alerta" title="Tu contraseña es muy sencilla">!</span>' : ''}</span></button>
+            <button class="btn btn-ghost btn-sm au-salir" onclick="Notifs.preferencias()" title="Qué avisos recibes en el panel y por correo">${ic('bell', 15)} <span>Notificaciones</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="abrirDosPasos()" title="Verificación en dos pasos">${ic('shield', 15)} <span>Verificación en dos pasos</span></button>
             <button class="btn btn-ghost btn-sm au-salir" onclick="cerrarSesionAdmin()" title="Cerrar sesión">${ic('logout', 15)} <span>Cerrar sesión</span></button>
         </div>
@@ -334,6 +346,7 @@ const Avisos = {
         });
     },
     async actualizar() {
+        if (window.Notifs) Notifs.actualizar();
         try { this.datos = await api('/admin/avisos'); } catch { return; }
         if (this.activo) this.marcarVisto(this.activo);
         this.pintar();
@@ -600,3 +613,176 @@ const Regreso = {
     },
 };
 window.Regreso = Regreso;
+
+
+// ---------------------------------------------------------
+// Notificaciones del equipo (campana del menú). El servidor las crea cada
+// minuto según el rol (tickets, reclamos, devoluciones, pedidos, pagos,
+// stock, seguridad…) y también las manda por correo. Aquí se ve la lista,
+// se marcan como leídas y se eligen las preferencias.
+// ---------------------------------------------------------
+const Notifs = {
+    datos: null,
+    ultimo: null,           // último id visto (para avisar de las nuevas)
+    async actualizar() {
+        let d;
+        try { d = await api('/admin/notificaciones?limite=30'); } catch { return; }
+        const nuevas = this.ultimo !== null ? d.items.filter((n) => !n.leida && n.id > this.ultimo) : [];
+        this.datos = d;
+        this.ultimo = Math.max(this.ultimo || 0, d.ultimo_id || 0, ...d.items.map((n) => Number(n.id)));
+        this.pintarContador();
+        if (nuevas.length) this.avisar(nuevas);
+        const p = document.getElementById('notif-panel');
+        if (p && p.classList.contains('open')) this.pintarPanel();
+    },
+    pintarContador() {
+        const el = document.getElementById('campana-n');
+        if (!el || !this.datos) return;
+        const n = this.datos.no_leidas;
+        el.hidden = !n;
+        el.textContent = n > 99 ? '99+' : n;
+        const b = document.getElementById('admin-campana');
+        if (b) b.title = n ? `${n} notificación(es) sin leer` : 'Notificaciones';
+    },
+    // Aviso en la página (y del sistema operativo si la pestaña no está a la vista).
+    avisar(nuevas) {
+        const n = nuevas[0];
+        if (window.toast) toast(nuevas.length === 1 ? n.titulo : `${nuevas.length} notificaciones nuevas`, 'info', 5000);
+        let escritorio = false;
+        try { escritorio = localStorage.getItem('kz_notif_escritorio') === '1'; } catch { /* nada */ }
+        if (escritorio && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+                const w = new Notification(nuevas.length === 1 ? n.titulo : `Kozmok: ${nuevas.length} notificaciones nuevas`,
+                    { body: nuevas.length === 1 ? (n.cuerpo || '') : nuevas.slice(0, 3).map((x) => x.titulo).join('\n'), icon: '/img/kzk.svg', tag: 'kz-panel' });
+                w.onclick = () => { window.focus(); if (nuevas.length === 1 && n.url) this.abrir(n.id, n.url); w.close(); };
+            } catch { /* el navegador no lo permite */ }
+        }
+    },
+    alternar(ev) {
+        if (ev) ev.stopPropagation();
+        let p = document.getElementById('notif-panel');
+        if (!p) {
+            p = document.createElement('div');
+            p.id = 'notif-panel';
+            p.className = 'notif-panel';
+            p.setAttribute('role', 'dialog');
+            p.setAttribute('aria-label', 'Notificaciones');
+            p.addEventListener('click', (e) => e.stopPropagation());
+            document.body.appendChild(p);
+            document.addEventListener('click', () => p.classList.remove('open'));
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') p.classList.remove('open'); });
+            window.addEventListener('resize', () => p.classList.remove('open'));
+        }
+        if (p.classList.contains('open')) { p.classList.remove('open'); return; }
+        const b = document.getElementById('admin-campana').getBoundingClientRect();
+        const ancho = Math.min(380, window.innerWidth - 16);
+        p.style.width = ancho + 'px';
+        p.style.left = Math.max(8, Math.min(b.left, window.innerWidth - ancho - 8)) + 'px';
+        p.style.top = (b.bottom + 8) + 'px';
+        p.classList.add('open');
+        this.pintarPanel();
+        this.actualizar();
+    },
+    pintarPanel() {
+        const p = document.getElementById('notif-panel');
+        const ic = window.icon || (() => '');
+        const d = this.datos;
+        const hace = (f) => {
+            const min = Math.max(0, Math.floor((Date.now() - new Date(f).getTime()) / 60000));
+            if (min < 1) return 'ahora';
+            if (min < 60) return `hace ${min} min`;
+            const h = Math.floor(min / 60);
+            return h < 24 ? `hace ${h} h` : `hace ${Math.floor(h / 24)} d`;
+        };
+        const ICO = { tickets: 'help', garantias: 'shield', devoluciones: 'undo', resenas: 'star', pedidos: 'cart', pagos: 'card',
+            monedero: 'wallet', inventario: 'package', bajas: 'clipboard', seguridad: 'lock' };
+        p.innerHTML = `
+            <div class="np-head">
+                <strong>Notificaciones</strong>
+                <div>
+                    ${d && d.no_leidas ? `<button type="button" class="link-btn" onclick="Notifs.leerTodas()">Marcar todas como leídas</button>` : ''}
+                    <button type="button" class="np-ajustes" onclick="Notifs.preferencias()" title="Preferencias" aria-label="Preferencias">${ic('settings', 15)}</button>
+                </div>
+            </div>
+            <div class="np-lista">
+                ${!d ? '<p class="np-vacio">Cargando…</p>' : !d.items.length ? `<p class="np-vacio">${ic('bell', 22)}<br>No tienes notificaciones todavía.</p>` : d.items.map((n) => `
+                    <button type="button" class="np-item ${n.leida ? '' : 'nueva'}" onclick="Notifs.abrir(${n.id}, ${n.url ? `'${String(n.url).replace(/['"\\<>]/g, '')}'` : 'null'})">
+                        <span class="np-ico">${ic(ICO[n.categoria] || 'bell', 16)}</span>
+                        <span class="np-txt">
+                            <span class="np-titulo">${escHTML(n.titulo)}</span>
+                            ${n.cuerpo ? `<span class="np-cuerpo">${escHTML(n.cuerpo)}</span>` : ''}
+                            <span class="np-meta">${escHTML((d.categorias || {})[n.categoria] || '')} · ${hace(n.fecha)}</span>
+                        </span>
+                    </button>`).join('')}
+            </div>`;
+    },
+    async abrir(id, url) {
+        try { await api('/admin/notificaciones/leer', { method: 'POST', body: { ids: [id] } }); } catch { /* sigue */ }
+        if (url) { location.href = url; return; }
+        this.actualizar();
+    },
+    async leerTodas() {
+        try { await api('/admin/notificaciones/leer', { method: 'POST', body: { todas: true } }); } catch (e) { toast(e.message, 'error'); return; }
+        this.actualizar();
+    },
+    async preferencias() {
+        const p = document.getElementById('notif-panel');
+        if (p) p.classList.remove('open');
+        let pr;
+        try { pr = await api('/admin/notificaciones/preferencias'); } catch (e) { toast(e.message, 'error'); return; }
+        let m = document.getElementById('modal-notif-prefs');
+        if (!m) {
+            m = document.createElement('div');
+            m.className = 'modal-overlay';
+            m.id = 'modal-notif-prefs';
+            document.body.appendChild(m);
+            m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('open'); });
+        }
+        let escritorio = false;
+        try { escritorio = localStorage.getItem('kz_notif_escritorio') === '1'; } catch { /* nada */ }
+        const soportado = 'Notification' in window;
+        m.innerHTML = `<div class="modal" style="max-width:560px">
+            <button class="modal-close" type="button" onclick="document.getElementById('modal-notif-prefs').classList.remove('open')" aria-label="Cerrar">${icon('x', 20)}</button>
+            <h3 style="margin-top:0">Notificaciones</h3>
+            <p style="margin:0 0 14px;font-size:.88rem">Te avisamos en la campana del panel y por correo a <strong>${escHTML(pr.email)}</strong>. Si llegan varias juntas, te mandamos un solo correo.</p>
+            <label class="np-switch"><input type="checkbox" id="np-correo" ${pr.correo ? 'checked' : ''}/> Recibir notificaciones por correo</label>
+            <div class="table-wrap" style="margin:12px 0">
+                <table class="np-tabla">
+                    <thead><tr><th>Aviso</th><th>En el panel</th><th>Por correo</th></tr></thead>
+                    <tbody>${pr.categorias.map((c) => `<tr>
+                        <td><strong>${escHTML(c.label)}</strong><div style="font-size:.76rem;color:var(--text-muted)">${escHTML(c.desc)}</div></td>
+                        <td><input type="checkbox" data-panel="${c.clave}" ${c.panel ? 'checked' : ''} aria-label="${escHTML(c.label)} en el panel"/></td>
+                        <td><input type="checkbox" data-correo="${c.clave}" ${c.correo ? 'checked' : ''} aria-label="${escHTML(c.label)} por correo"/></td>
+                    </tr>`).join('')}</tbody>
+                </table>
+            </div>
+            ${soportado ? `<label class="np-switch"><input type="checkbox" id="np-escritorio" ${escritorio && Notification.permission === 'granted' ? 'checked' : ''}/> Avisos del navegador cuando el panel está en otra pestaña (solo en este equipo)</label>` : ''}
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+                <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-notif-prefs').classList.remove('open')">Cancelar</button>
+                <button class="btn btn-primary" type="button" id="np-guardar">Guardar</button>
+            </div></div>`;
+        const sincronizar = () => m.querySelectorAll('[data-correo]').forEach((c) => { c.disabled = !document.getElementById('np-correo').checked; });
+        document.getElementById('np-correo').onchange = sincronizar;
+        sincronizar();
+        document.getElementById('np-guardar').onclick = async () => {
+            const body = {
+                correo: document.getElementById('np-correo').checked,
+                panel_off: [...m.querySelectorAll('[data-panel]')].filter((c) => !c.checked).map((c) => c.dataset.panel),
+                correo_off: [...m.querySelectorAll('[data-correo]')].filter((c) => !c.checked).map((c) => c.dataset.correo),
+            };
+            const esc = document.getElementById('np-escritorio');
+            if (esc) {
+                let quiere = esc.checked;
+                if (quiere && Notification.permission !== 'granted') {
+                    try { quiere = (await Notification.requestPermission()) === 'granted'; } catch { quiere = false; }
+                    if (!quiere) toast('El navegador no dio permiso para mostrar avisos', 'warn');
+                }
+                try { localStorage.setItem('kz_notif_escritorio', quiere ? '1' : '0'); } catch { /* nada */ }
+            }
+            try { const r = await api('/admin/notificaciones/preferencias', { method: 'PUT', body }); toast(r.message, 'ok'); m.classList.remove('open'); }
+            catch (e) { toast(e.message, 'error'); }
+        };
+        m.classList.add('open');
+    },
+};
+window.Notifs = Notifs;

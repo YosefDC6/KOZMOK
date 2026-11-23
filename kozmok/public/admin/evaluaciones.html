@@ -158,7 +158,10 @@ async function moderar(id, oculta) {
 }
 ['f-estrellas', 'f-filtro'].forEach((x) => $(x).addEventListener('change', cargar));
 $('f-busqueda').addEventListener('keydown', (e) => { if (e.key === 'Enter') cargar(); });
-cargar();
+// Desde el Centro de soporte: ?filtro=sin_respuesta o ?resena=ID abre esa reseña.
+const QS = new URLSearchParams(location.search);
+if (['sin_respuesta', 'con_comentario', 'ocultas'].includes(QS.get('filtro'))) $('f-filtro').value = QS.get('filtro');
+cargar().then(() => { const id = Number(QS.get('resena')); if (id) abrir(id); });
 </script>
 </body>
 </html>

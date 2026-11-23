@@ -9,7 +9,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ## Funcionalidades principales
 
 ### Tienda (cliente)
-- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca y "solo en promoción" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
+- **Catálogo** de 73 productos y 35 marcas, con búsqueda, filtros por categoría, uso, precio, marca, "solo en promoción" y "solo disponibles" (guardados en la URL), orden (precio, más recientes, mayor descuento) y vistos recientemente.
 - **Comercialización**: banner de promociones vigentes en la portada (con más de 3, un cuadro "Ver más" abre todas; cada una lleva al catálogo con exactamente sus productos, `?promo=ID`), productos **destacados** (se marcan en el panel), sección de **novedades** y precio con descuento visible (precio final, precio de lista tachado y etiqueta `-10%` / `-$500`) en catálogo, ficha, carrito y panel lateral.
 - **Panel lateral de carrito y favoritos**: el corazón y el carrito de la barra abren un panel a la derecha (pestañas Carrito / Favoritos) sin cambiar de pantalla. Al agregar un producto el panel se abre solo unos segundos para confirmarlo.
 - **Navegación cómoda**: buscador con sugerencias en vivo (productos con foto y precio, categorías y búsquedas recientes; tecla `/` para buscar), ficha de producto con enlace propio que se cierra con "atrás" y se puede compartir, catálogo de 24 en 24 con "Ver más", la posición del catálogo se conserva al regresar, botón "volver arriba", menú de categorías con sus marcas principales, migas de pan y botón **Regresar** en todas las páginas, y página 404 con buscador.
@@ -18,7 +18,8 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Logo KZK** (estilo Arcade: letras inclinadas con contorno grueso y sombra sólida del color del tema): en la barra, el panel, los comprobantes y el ícono de la pestaña. La **tarjeta de socio** y la del Club usan el diseño KZK; el cliente puede volver al **diseño clásico** desde la propia tarjeta o en Preferencias (se guarda en su cuenta).
 - **Diseño de la tienda en estilo Arcade** (igual que el logo): títulos gruesos, inclinados y en mayúsculas, botones con contorno marcado y sombra sólida del color del tema, etiquetas de promoción tipo calcomanía y pasos de compra en bloques inclinados. Funciona con los cuatro temas (Índigo, Esmeralda, Grafito y Claro); el panel interno conserva su diseño.
 - **Carrito sin sesión**: se puede llenar sin cuenta (catálogo, Arma tu PC, asesor); al iniciar sesión o registrarse pasa solo a la cuenta.
-- **Ficha de producto** con especificaciones, stock real y reseñas (con la **respuesta de Kozmok** si el equipo respondió).
+- **Existencias a la vista**: cada tarjeta del catálogo dice cuántas piezas hay ("24 disponibles", "Quedan 3" o "Agotado") y el filtro **Solo disponibles** esconde los agotados. La ficha consulta la existencia al momento (`GET /api/productos/:id/existencia`) y la cantidad no pasa de las piezas disponibles ni del límite por pedido; también se ve en el carrito, Favoritos, el comparador y Arma tu PC.
+- **Ficha de producto** con especificaciones, existencia al momento y reseñas (con la **respuesta de Kozmok** si el equipo respondió).
 - **Garantía Kozmok de 12 meses incluida** en todo producto entregado (`GARANTIA_BASE_MESES`) y **garantía extendida** opcional de 24 o 36 meses, con certificado, folio y código. En *Mis garantías* el cliente pide servicio (falla y hasta 3 fotos) y sigue su **caso** (`RG-1xxx`) por etapas: Recibido → En diagnóstico → En reparación / Reemplazo → Listo para entregar → Cerrado, con mensajes con el equipo y avisos por correo.
 - **Devoluciones** (*Mi cuenta → Devoluciones*): hasta 30 días después de la entrega, reembolso o cambio por producto y cantidad; cada devolución (`DEV-0000x`) muestra sus 4 pasos (Solicitada → Envía el producto → En revisión → Reembolso o cambio) y las instrucciones de envío cuando se aprueba.
 - **Factura CFDI 4.0** desde *Mis pedidos* (hasta 30 días después del pago), timbrada con Facturama; llegan el PDF y el XML por correo.
@@ -35,6 +36,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 ### Navegación del panel
 - **Regresar a <pantalla anterior>** arriba de cada pantalla: recuerda el camino de la pestaña y regresa con sus filtros.
 - **Ir a…** (`Ctrl + K`): busca una sección por nombre y entra con Enter.
+- **Notificaciones** para todas las cuentas del panel, en la página (campana con contador, aviso emergente y, si se permite, aviso del navegador) y **por correo** (un solo correo si llegan varias juntas): tickets y mensajes de clientes, reclamos de garantía, devoluciones, reseñas de 3★ o menos, pedidos nuevos, pagos reportados, recargas por confirmar, stock crítico o agotado, bajas por aprobar y alertas de seguridad. Cada quien recibe solo lo de las secciones de su rol y elige, por tipo, si lo quiere en el panel y por correo.
 - **Puntitos de aviso** en el menú cuando una sección tiene algo nuevo desde la última vez que la abriste (tickets, pedidos, pagos o recargas por confirmar, reclamos, devoluciones, reseñas, stock crítico, alertas de seguridad…).
 
 ### Panel interno – CRM
@@ -42,6 +44,7 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 - **Clientes**: búsqueda, filtros por etapa y por estado, alta (sin contraseña: al cliente le llega un correo con un enlace de 72 h para crear la suya), edición y baja en dos pasos (si ya compró primero se marca inactivo; ya inactivo se elimina por completo y sus pedidos quedan como "Cliente eliminado"); etapas `Prospecto → Activo → Frecuente → Inactivo`; un cliente pasa a *Activo* automáticamente con su primera compra.
 - **Interacciones** (llamada, correo, reunión, soporte y chat) y **reportes** por rango de fechas.
 - **Evaluaciones**: promedio, distribución de estrellas (clic para filtrar), productos peor calificados y filtros (sin responder, con comentario, ocultas). Cada reseña abre su detalle (compra verificada, cliente, reclamos del producto); el equipo **responde en público** (le llega al cliente por correo) u **oculta** la reseña con motivo.
+- **Centro de soporte** (inicio del rol Soporte): buscador por cliente, folio o pedido; indicadores (tickets sin respuesta, reclamos, devoluciones, reseñas sin responder, tiempo de primera respuesta) y una sola bandeja **Por atender** con tickets, reclamos de garantía, devoluciones y reseñas críticas, ordenada por quién debe responder, prioridad y antigüedad; los tickets se responden ahí mismo.
 - **Soporte** con tickets (`TK-1001…`), estados y prioridades. Si el caso trae pedido, se ve y se gestiona ahí mismo (avanzar, registrar pago, cancelar) y se le deja escrita la respuesta al cliente; si no, se puede ligar uno.
 - **Garantías**: reclamos en curso con etapas, resolución, conversación, fotos y notas internas; reclamo en mostrador; validación por código; garantías incluidas y extendidas.
 - **Pedidos** y **analítica del chatbot** (qué se busca y qué búsquedas quedaron sin recomendación).
@@ -99,20 +102,21 @@ Detalle de cada ataque, cómo se prueba y qué lo detiene en [`SEGURIDAD.md`](SE
 
 ## Roles
 
-Roles empresariales del ERP: solo **Administrador**, **Ventas** y **Logística**.
+Roles empresariales del ERP: **Administrador**, **Ventas**, **Logística** y **Soporte**.
 
 | Rol | Entra a | Acceso |
 |---|---|---|
 | **Administrador** | Dashboard CRM | Todo: CRM, SCM, ERP y Tienda (incluidos Impuestos), cuentas y equipo, Nivel ERP y Panel por rol |
 | **Ventas** | Dashboard CRM | Clientes (CRM), Productos (SCM, solo consulta), Órdenes de clientes (ERP, con captura), Reportes, Promociones, Monedero, Pagos y Mi actividad |
 | **Logística** | Dashboard SCM | Productos e Inventario (SCM, con movimientos y pedidos de reposición en ventana), Órdenes de clientes (ERP, captura, surte y envía) y Reportes |
+| **Soporte** | Centro de soporte | Tickets, Garantías, Devoluciones, Evaluaciones, Clientes (solo consulta: ficha, interacciones y confirmar correo), Interacciones, Pedidos y Facturas |
 | **Cliente** | Tienda | Solo la tienda y su propia cuenta |
 
-Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)*; la pantalla **Panel por rol** los muestra con su vista previa del menú y la matriz de permisos.
+Los menús de Ventas y Logística son exactamente los de la lámina *Panel por rol (Menú dinámico)* (Soporte se agregó después); la pantalla **Panel por rol** los muestra con su vista previa del menú y la matriz de permisos.
 
 Los permisos viven en un solo archivo, `public/admin/js/permisos.js`, que usan **el menú** (menú dinámico según el usuario) **y el servidor** (control de acceso por módulo en cada llamada a `/api/admin/...`), así que nunca se contradicen. Si alguien abre por URL una sección que no le corresponde, el panel lo regresa a su inicio y la API responde 403. El administrador cambia el rol de cualquier persona desde *Cuentas y equipo* (`PUT /api/admin/usuarios/:id/rol`); `GET /api/usuarios/rol` devuelve el rol y los permisos de la sesión, y `POST /api/auth/login` responde también con ellos.
 
-Al arrancar sobre una base anterior, el servidor migra solo los roles viejos: *vendedor* y *soporte* pasan a **Ventas** y *almacén* a **Logística**.
+Al arrancar sobre una base anterior, el servidor migra solo los roles viejos (*vendedor* pasa a **Ventas** y *almacén* a **Logística**) y agrega el rol **Soporte** con su cuenta.
 
 ---
 
@@ -169,17 +173,18 @@ Si al arrancar la consola muestra `Base de datos: conectada … 73 productos`, t
 
 ### Cuentas del panel
 
-La base empieza sin datos de ejemplo: sin clientes, pedidos ni interacciones. Todo lo que aparece en CRM, ERP y reportes viene del uso real de la tienda. El panel trae una cuenta por rol; las tres piden cambiar la contraseña la primera vez que entran:
+La base empieza sin datos de ejemplo: sin clientes, pedidos ni interacciones. Todo lo que aparece en CRM, ERP y reportes viene del uso real de la tienda. El panel trae una cuenta por rol; las cuatro piden cambiar la contraseña la primera vez que entran:
 
 | Rol | Nombre | Correo | Contraseña inicial |
 |---|---|---|---|
 | Administrador | Administrador | admin@kozmok.mx | `Admin#KZ2026` |
 | Ventas | Laura Méndez | laura.ventas@kozmok.mx | `Ventas#KZ2026` |
 | Logística | Paola Nieto | paola.logistica@kozmok.mx | `Logistica#KZ2026` |
+| Soporte | Sofía Ramírez | sofia.soporte@kozmok.mx | `Soporte#KZ2026` |
 
 > **Antes de configurar Gmail:** el panel pide la verificación en dos pasos y, por defecto, manda el código al correo de la cuenta. Los correos `@kozmok.mx` no existen, así que ese código nunca llegaría. Entra como `admin@kozmok.mx`, crea en *Cuentas y equipo* una cuenta de Administrador con tu correo real, entra con ella y desactiva las de `@kozmok.mx` que no uses. Sin Gmail configurado el código no se pide (para no dejar fuera al equipo).
 
-Si tu base es de una versión que no tenía las cuentas de Ventas y Logística (o `limpiar:ejemplo` las desactivó), el servidor las crea o reactiva una sola vez al arrancar. Si después el administrador las desactiva, se quedan desactivadas.
+Si tu base es de una versión que no tenía las cuentas de Ventas, Logística o Soporte (o `limpiar:ejemplo` las desactivó), el servidor las crea o reactiva una sola vez al arrancar. Si después el administrador las desactiva, se quedan desactivadas.
 
 Los clientes se registran en la tienda y más empleados se dan de alta en el panel (Cuentas y equipo); a cada empleado nuevo se le pide cambiar la contraseña la primera vez.
 
@@ -218,7 +223,7 @@ KOZMOK/
 
 | Sección | Rutas |
 |---|---|
-| Catálogo | `GET /api/catalogo`, `GET /api/catalogo/:id`, `?categoria=`, `?buscar=`, `?destacado=1`, `?promocion=1`, `?orden=novedades` |
+| Catálogo | `GET /api/catalogo`, `GET /api/catalogo/:id`, `?categoria=`, `?buscar=`, `?destacado=1`, `?promocion=1`, `?disponible=1`, `?orden=novedades`, `GET /api/productos/:id/existencia` |
 | Pagos | `POST /api/pagos/procesar` (valida stock → genera pedido → registra pago → actualiza inventario), `GET /api/pagos/:id`, `GET /api/pedidos/:id/pago`, `GET /api/admin/pagos` |
 | Carrito | `POST /api/carrito/agregar`, `GET /api/carrito/:cliente_id`, `PUT /api/carrito/item/:id`, `DELETE /api/carrito/item/:id`, `DELETE /api/carrito/vaciar/:cliente_id`, `POST /api/checkout/cotizar` |
 | Promociones | `GET /api/promociones`, `POST /api/promociones`, `PUT /api/promociones/:id` (+ `/api/admin/promociones`, con `DELETE`) |

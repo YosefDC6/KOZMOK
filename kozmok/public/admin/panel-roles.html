@@ -174,7 +174,7 @@ const ROLES = Object.keys(PERMISOS);
 // Ventas usa un violeta fijo para no confundirse con el color de acento de
 // ningún tema (índigo, esmeralda, grafito o claro).
 const PALETA = ['var(--accent)', '#9B6FE8', 'var(--warning)', 'var(--info)', 'var(--danger)'];
-const ICONO = { admin: 'shield', ventas: 'cart', logistica: 'truck' };
+const ICONO = { admin: 'shield', ventas: 'cart', logistica: 'truck', soporte: 'headphones' };
 const colorDe = (rol) => PALETA[ROLES.indexOf(rol) % PALETA.length];
 const iconoDe = (rol) => ICONO[rol] || 'user';
 

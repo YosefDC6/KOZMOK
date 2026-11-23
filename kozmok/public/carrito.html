@@ -98,6 +98,7 @@ async function cargarCarrito() {
                 <div class="nm">${i.nombre}</div>
                 <div class="mono" style="color:var(--text-muted);font-size:.82rem">${precioHTML(i)} c/u</div>
                 ${i.promocion ? `<div class="cart-promo">${icon('star', 12)} ${i.promocion.nombre}</div>` : ''}
+                <div class="cart-existencia">${existenciaCarrito(i.stock, i.cantidad)}</div>
                 <div class="qty-stepper" style="margin-top:8px">
                     <button onclick="cambiarCantidad(${i.id}, ${i.cantidad - 1}, ${i.stock})" ${i.cantidad <= 1 ? 'disabled' : ''}>−</button>
                     <span class="qty-val">${i.cantidad}</span>
@@ -455,6 +456,13 @@ function usarDireccionGuardada() {
     if (d) { input.value = [d.calle, d.ciudad, d.estado, d.codigo_postal].filter(Boolean).join(', '); input.readOnly = true; }
 }
 
+// Existencia de cada producto del carrito (cuántas piezas hay al momento).
+function existenciaCarrito(stock, cantidad, minimo) {
+    const n = Number(stock) || 0;
+    if (n > 0 && cantidad >= n) return `<span class="product-stock stock-low">${n === 1 ? 'Es la única pieza disponible' : `Llevas las ${n} piezas disponibles`}</span>`;
+    return existenciaHTML({ stock: n, stock_minimo: minimo });
+}
+
 async function cambiarCantidad(itemId, nueva, stock) {
     nueva = Math.max(1, Math.min(Number(nueva), stock));
     try {
@@ -611,6 +619,7 @@ async function cargarCarritoInvitado() {
                 <div class="nm">${i.p.nombre}</div>
                 <div class="mono" style="color:var(--text-muted);font-size:.82rem">${precioHTML(i.p)} c/u</div>
                 ${i.p.promocion ? `<div class="cart-promo">${icon('star', 12)} ${i.p.promocion.nombre}</div>` : ''}
+                <div class="cart-existencia">${existenciaCarrito(i.p.stock, i.cantidad, i.p.stock_minimo)}</div>
                 <div class="qty-stepper" style="margin-top:8px">
                     <button type="button" onclick="cantidadInvitado(${i.producto_id}, ${i.cantidad - 1}, ${i.p.stock})" ${i.cantidad <= 1 ? 'disabled' : ''}>−</button>
                     <span class="qty-val">${i.cantidad}</span>

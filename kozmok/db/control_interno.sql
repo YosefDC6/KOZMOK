@@ -601,3 +601,17 @@ BEGIN
                 'Cuentas base de Ventas y Logística');
     END IF;
 END $$;
+
+-- Cuenta de Soporte (una sola vez por base), igual que las de arriba: en
+-- bases anteriores al rol Soporte se crea con cambio de contraseña
+-- obligatorio. Si después el admin la desactiva, se queda desactivada.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM auditoria WHERE accion = 'alta_cuenta_soporte') THEN
+        INSERT INTO usuarios (nombre, email, password_hash, rol, activo, cambiar_password) VALUES
+            ('Sofía Ramírez', 'sofia.soporte@kozmok.mx', crypt('Soporte#KZ2026', gen_salt('bf', 10)), 'soporte', TRUE, TRUE)
+        ON CONFLICT (email) DO NOTHING;
+        INSERT INTO auditoria (usuario_nombre, rol, accion, entidad, motivo)
+        VALUES ('Sistema', 'sistema', 'alta_cuenta_soporte', 'usuarios', 'Cuenta base de Soporte');
+    END IF;
+END $$;

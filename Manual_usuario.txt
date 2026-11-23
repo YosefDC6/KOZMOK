@@ -11,8 +11,8 @@ para estos perfiles:
 
    - CLIENTE   : la persona que compra en la tienda en linea.
    - ADMIN     : administrador del negocio, acceso total al panel.
-   - VENTAS / LOGISTICA : personal interno con un menu recortado segun su
-                 rol (ver seccion 5).
+   - VENTAS / LOGISTICA / SOPORTE : personal interno con un menu recortado
+                 segun su rol (ver seccion 5).
 
 Si eres un admin nuevo, lee las secciones 1, 2, 4 y 6. El resto sirve de
 consulta.
@@ -99,7 +99,7 @@ CLIENTE
 
 ROLES EMPRESARIALES (entran por la direccion secreta del panel; el menu se
 adapta al rol)
-   Solo hay tres, como en un ERP comercial (SAP, Odoo, Dynamics):
+   Hay cuatro, como en un ERP comercial (SAP, Odoo, Dynamics):
    - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
                      Nivel ERP y Panel por rol. Entra al
                      Dashboard CRM.
@@ -114,7 +114,15 @@ adapta al rol)
                      CAPTURA ordenes, las surte, envia y registra pagos),
                      Reportes (ERP) y Devoluciones (recibe los paquetes).
                      Cuenta: paola.logistica@kozmok.mx
-   Son exactamente los menus de la lamina "Panel por rol (Menu dinamico)".
+   - SOPORTE       : cuenta dedicada a la atencion de clientes. Inicio
+                     (Centro de soporte), Soporte (tickets), Garantias,
+                     Devoluciones, Evaluaciones (resenas), Clientes (solo
+                     consulta: ve la ficha, registra interacciones y
+                     confirma el correo, pero no edita datos ni etapa),
+                     Interacciones, Pedidos y Facturas.
+                     Cuenta: sofia.soporte@kozmok.mx
+   Los de Ventas y Logistica son exactamente los menus de la lamina "Panel
+   por rol (Menu dinamico)"; Soporte se agrego despues.
    El menu lateral solo muestra las secciones permitidas para ese rol, y si
    alguien abre por URL una seccion que no le toca, se le manda a su inicio.
    Ademas el SERVIDOR valida cada llamada: aunque alguien llame a la API a
@@ -124,8 +132,8 @@ adapta al rol)
    Lo usan el menu (navegador) y el control de acceso (server.js), asi que
    nunca se contradicen.
 
-   Al arrancar sobre una base vieja, el servidor migra los roles anteriores:
-   vendedor y soporte -> Ventas;  almacen -> Logistica.
+   Al arrancar sobre una base vieja, el servidor migra los roles anteriores
+   (vendedor -> Ventas; almacen -> Logistica) y agrega el rol Soporte.
 
    Para AGREGAR un rol nuevo hay que tocar 3 lugares:
      1. db/database.sql        -> CHECK (rol IN (...)) de la tabla usuarios
@@ -143,16 +151,20 @@ Cuentas del panel (tras cargar db/database.sql)
    | Administrador | Administrador| admin@kozmok.mx            | Admin#KZ2026     |
    | Ventas        | Laura Méndez | laura.ventas@kozmok.mx     | Ventas#KZ2026    |
    | Logistica     | Paola Nieto  | paola.logistica@kozmok.mx  | Logistica#KZ2026 |
+   | Soporte       | Sofía Ramírez| sofia.soporte@kozmok.mx    | Soporte#KZ2026   |
    +---------------+--------------+----------------------------+------------------+
 
-   - Las tres entran por la direccion secreta del panel y las tres piden cambiar la
+   - Las cuatro entran por la direccion secreta del panel y las cuatro piden cambiar la
      contraseña la primera vez (esas contraseñas iniciales vienen en este
      manual, asi que cualquiera que lo lea las conoce).
-   - Ventas entra al Dashboard CRM; Logistica entra al Dashboard SCM. Lo
-     que ve cada una esta en "ROLES EMPRESARIALES" (arriba).
-   - Si la base es de una version que no tenia estas dos cuentas (o
-     "limpiar:ejemplo" las desactivo), el servidor las crea o reactiva UNA
-     sola vez al arrancar. Si despues el administrador las desactiva en
+   - Ventas entra al Dashboard CRM; Logistica entra al Dashboard SCM;
+     Soporte entra al Centro de soporte. Lo que ve cada una esta en
+     "ROLES EMPRESARIALES" (arriba).
+   - La cuenta de Soporte tambien se crea UNA sola vez al arrancar en bases
+     que no la tenian.
+   - Si la base es de una version que no tenia las cuentas de Ventas y
+     Logistica (o "limpiar:ejemplo" las desactivo), el servidor las crea o
+     reactiva UNA sola vez al arrancar. Si despues el administrador las desactiva en
      Cuentas y equipo, se quedan desactivadas.
 
    - IMPORTANTE con Gmail configurado: el panel pide un codigo de
@@ -269,7 +281,12 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    - Cuando la URL lleva un filtro (busqueda, categoria, uso, precio, marca,
      promocion=1 u orden=novedades) la portada se convierte en CATALOGO: solo
      la lista de productos con filtros.
-   - Filtro "Solo en promocion" y orden "Mas recientes" / "Mayor descuento".
+   - Filtro "Solo en promocion", filtro "Solo disponibles" (esconde los
+     agotados; queda en la URL como disponible=1) y orden "Mas recientes" /
+     "Mayor descuento".
+   - EXISTENCIAS A LA VISTA: cada tarjeta dice cuantas piezas hay
+     ("24 disponibles"), "Quedan N" cuando ya va en su stock minimo o
+     "Agotado".
    - El catalogo muestra 24 productos y el boton "Ver 24 mas" (con barra de
      cuantos llevas). Si sales a otra pagina y regresas, vuelves al mismo
      punto con los mismos productos cargados.
@@ -333,9 +350,16 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      tambien, y al cerrarla sigues en el mismo punto del catalogo. El boton
      de compartir copia el enlace del producto. Arriba muestra donde esta
      (Inicio / Categoria / Marca) con enlaces.
-   - Fotos, especificaciones (procesador, RAM, grafica, pantalla), precio y
-     stock real.
-   - Selector de cantidad y aviso "Solo quedan N" cuando hay poco stock.
+   - Fotos, especificaciones (procesador, RAM, grafica, pantalla) y precio.
+   - EXISTENCIA: un recuadro con las piezas disponibles ("18 piezas
+     disponibles", en naranja "Ultimas N piezas disponibles" si ya va en su
+     stock minimo, o "Sin existencias por ahora" con la sugerencia de
+     guardarlo en favoritos para que avise cuando vuelva). Al abrir la ficha
+     se consulta la existencia al momento (GET /api/productos/<id>/existencia),
+     asi que si alguien acaba de comprar se ve el numero real.
+   - Selector de cantidad: no deja pasar de las piezas disponibles ni del
+     limite por pedido (MAX_PIEZAS_POR_PRODUCTO, 10 por defecto; si hay mas
+     piezas que el limite lo dice: "Puedes llevar hasta 10 por pedido").
    - Boton "Agregar al carrito".
    - Resenas del producto: promedio de estrellas y comentarios. Solo puede
      dejar o editar una resena quien ya recibio el producto (pedido
@@ -759,6 +783,8 @@ NAVEGACION RAPIDA EN EL PANEL
      misma pantalla (un ticket, una devolucion) no cuenta como otra
      pantalla. Una pantalla sin anterior (la primera al entrar o en una
      pestana nueva) no muestra el boton.
+   - CAMPANA de notificaciones junto al logo: avisos de lo que tu rol
+     atiende, tambien por correo (ver 4.11b).
    - "Ir a..." (arriba del menu, o Ctrl + K): escribe parte del nombre de
      una seccion y entra con Enter, sin abrir los grupos del menu.
    - PUNTITOS DE AVISO: una seccion del menu (y su modulo) lleva un punto
@@ -803,7 +829,9 @@ NAVEGACION RAPIDA EN EL PANEL
 4.3  FICHA DE CLIENTE  (admin/cliente.html?id=...)  [CRM]
    Es la pantalla central del CRM (equivale al "Detalle de cliente").
    - Cabecera: nombre, etiqueta de etapa, estado, correo y empresa.
-   - Botones: "Editar cliente", "Cambiar etapa", "Nueva interaccion".
+   - Botones: "Editar cliente", "Cambiar etapa", "Nueva interaccion". El
+     rol Soporte solo ve "Nueva interaccion" (consulta la ficha pero no
+     edita datos ni etapa).
    - Tarjetas: Compras, Valor total, Interacciones, Club (nivel con insignia
      y puntos).
    - Pestanas:
@@ -856,6 +884,29 @@ NAVEGACION RAPIDA EN EL PANEL
      vez). Se puede editar o quitar.
    - OCULTAR RESENA: la quita de la tienda (pide el motivo y queda en la
      auditoria). "Volver a mostrar" la regresa.
+
+4.5b CENTRO DE SOPORTE  (admin/centro-soporte.html)  [CRM]
+   Pantalla de inicio del rol Soporte (el administrador tambien la ve).
+   Todo lo que espera atencion de clientes en un solo lugar:
+   - BUSCADOR: por nombre, correo o telefono del cliente, o por folio
+     (TK-..., RG-..., GAR-..., DEV-...) o numero de pedido. El cliente abre
+     su ficha; el caso abre su pantalla; el pedido se gestiona ahi mismo
+     en una ventana (avanzar estado, registrar pago, cancelar).
+   - INDICADORES: tickets sin respuesta (con abiertos, en proceso y de
+     prioridad alta), reclamos de garantia que esperan respuesta,
+     devoluciones por revisar / por reembolsar o cambiar / en camino,
+     resenas sin responder (y criticas), tiempo promedio de primera
+     respuesta (tickets de los ultimos 30 dias) y tickets resueltos en
+     7 dias. Cada tarjeta lleva a su seccion.
+   - POR ATENDER: una sola bandeja con tickets abiertos, reclamos activos,
+     devoluciones pendientes y resenas de 3 estrellas o menos sin
+     respuesta. Primero lo que espera una respuesta del equipo, luego por
+     prioridad y antiguedad; la columna "Espera" dice cuanto lleva el
+     cliente esperando (o "Cliente" si le toca a el). Pestanas por tipo.
+   - RESPONDER (tickets): abre los ultimos mensajes del hilo y un campo
+     para responder sin salir del Centro; se puede dejar en proceso,
+     marcar como resuelto o cerrar al enviar, y abrir su pedido.
+   - Se actualiza sola cada minuto y tiene puntito de aviso en el menu.
 
 4.6  SOPORTE  (admin/soporte.html)  [CRM]  -> ver seccion 9
    - Cola de tickets con contadores (Abiertos, En proceso, Resueltos,
@@ -1138,8 +1189,43 @@ NAVEGACION RAPIDA EN EL PANEL
    - Interacciones que TU (el usuario interno con la sesion activa) has
      registrado.
 
+4.11b NOTIFICACIONES  (campana junto al logo del panel)  [todas las cuentas]
+   - Cada cuenta del panel recibe avisos de lo que su rol atiende, en la
+     pagina (campana con el numero sin leer y un aviso emergente al llegar)
+     y por correo:
+        Tickets de soporte    -> ticket nuevo y cada mensaje del cliente
+        Reclamos de garantia  -> reclamo nuevo y mensajes o fotos del cliente
+        Devoluciones          -> solicitud nueva
+        Resenas               -> resenas de 3 estrellas o menos
+        Pedidos nuevos        -> compras de la tienda en linea
+        Pagos por confirmar   -> el cliente pulso "Ya realice el pago"
+        Recargas por confirmar-> transferencias al monedero
+        Stock critico         -> un producto llega a su minimo o se agota
+        Bajas por aprobar     -> bajas de inventario pendientes (admin; no
+                                 se le avisa a quien la registro)
+        Alertas de seguridad  -> eventos de severidad alta (si llegan
+                                 varios juntos, un solo aviso)
+     Cada quien solo recibe las de las secciones que ve: Soporte recibe
+     tickets, reclamos, devoluciones, resenas y pagos; Ventas pedidos,
+     pagos, recargas y devoluciones; Logistica pedidos, stock critico y
+     devoluciones; el administrador todas.
+   - El servidor revisa cada minuto. Lo que ya existia antes de esta
+     version no se avisa.
+   - CAMPANA: lista de las ultimas 30 (las nuevas con punto). Clic en una
+     la marca como leida y abre su pantalla (el ticket, el reclamo, la
+     devolucion...). "Marcar todas como leidas".
+   - CORREO: si en una revision hay varias, llega un solo correo con todas
+     y sus enlaces. Se manda al correo de la cuenta (las @kozmok.mx de
+     ejemplo no existen; ver seccion 2).
+   - PREFERENCIAS (menu del panel -> "Notificaciones" o el engrane de la
+     campana): por cada tipo de aviso, en el panel si/no y por correo si/no,
+     y un interruptor general de correo. Tambien "Avisos del navegador":
+     notificaciones del sistema cuando el panel esta en otra pestana (pide
+     permiso al navegador; se guarda solo en ese equipo).
+
 4.12 CUENTAS Y EQUIPO  (admin/usuarios.html)  [CUENTA]  -- solo ADMIN
-   - Tabla con el personal interno (Administrador, Ventas, Logistica) y su
+   - Tabla con el personal interno (Administrador, Ventas, Logistica,
+     Soporte) y su
      estado. En la columna Rol el admin cambia el rol de cualquier persona
      con un selector (pide confirmacion). No puede quitarse a si mismo el
      rol de administrador.
@@ -1150,7 +1236,8 @@ NAVEGACION RAPIDA EN EL PANEL
                               tabla). Ofrece abrir su ficha al terminar.
         * Rol interno       -> nombre, email, contrasena, telefono. El rol es
           (Administrador/     el tipo elegido.
-           Ventas/Logistica)
+           Ventas/Logistica/
+           Soporte)
    - Tambien puedes crear un cliente desde Clientes -> "Nuevo cliente".
    - Estado de cada cuenta del equipo:
         * "Desactivar": ya no puede entrar (no se puede a si mismo).
@@ -1349,7 +1436,7 @@ NAVEGACION RAPIDA EN EL PANEL
 
    4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
       - Menu dinamico: una columna por rol (Administrador, Ventas,
-        Logistica) con la pantalla a la que entra y las secciones que ve,
+        Logistica, Soporte) con la pantalla a la que entra y las secciones que ve,
         agrupadas por modulo (CRM, SCM, ERP, Tienda, Cuenta), incluido el permiso
         de "Capturar ordenes".
       - Matriz de permisos: cada seccion contra cada rol.
@@ -1439,7 +1526,7 @@ NAVEGACION RAPIDA EN EL PANEL
       - "Gestionar" abre el gestor del pedido (4.8) para registrar el cobro,
         moverlo de estado o cancelarlo.
 
-   4.15e FACTURAS  (admin/facturas.html)  [Admin y Ventas]
+   4.15e FACTURAS  (admin/facturas.html)  [Admin, Ventas y Soporte]
       - Lista de CFDI 4.0 emitidos: fecha, serie/folio y UUID, pedido,
         receptor (RFC, razon social, uso), total, estado (Vigente / En
         cancelacion / Cancelada) y si la pidio el cliente o quien del equipo.
@@ -1459,7 +1546,7 @@ NAVEGACION RAPIDA EN EL PANEL
         deduce de la categoria (laptops 43211503, escritorio 43211507,
         teclados 43211706, mouse 43211708; si no, 01010101).
 
-   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica]
+   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica, Soporte]
       - El cliente la pide desde Mis pedidos -> Ver detalle (pedido
         entregado, hasta 30 dias): productos y cantidades, motivo
         (defectuoso, danado en el envio, producto equivocado, no me
@@ -1540,6 +1627,22 @@ LOGISTICA
    enviado -> entregado), vigilar el stock critico en Inventario, generar
    un pedido de reposicion cuando haga falta (el reabasto automatico lo
    surte al llegar su fecha) y revisar Reportes.
+
+SOPORTE
+   Ve: Centro de soporte (su inicio), Clientes (solo consulta),
+   Interacciones, Evaluaciones, Soporte, Garantias, Pedidos (CRM),
+   Facturas y Devoluciones (TIENDA). No ve nada mas.
+   En Clientes puede abrir la ficha, registrar interacciones, escribirle
+   al cliente y marcar su correo como confirmado; editar sus datos o su
+   etapa queda para Ventas y Administrador (permiso "clientes-editar").
+   Flujo tipico:
+   1. Centro de soporte: atender la bandeja "Por atender" de arriba hacia
+      abajo (responder tickets ahi mismo).
+   2. Buscar al cliente o el folio que dicta por telefono o correo.
+   3. Si el caso es de un pedido: gestionarlo desde el ticket o el
+      buscador (estado, pago, cancelacion) y avisarle al cliente.
+   4. Reclamos de garantia y devoluciones: seguir sus pasos en Garantias y
+      Devoluciones; responder resenas criticas en Evaluaciones.
 
 ADMINISTRADOR
    Ve todo, incluido "Cuentas y equipo" (alta de cuentas y cambio de rol),
@@ -1751,7 +1854,7 @@ R: Es correcto: la compra requiere una cuenta de cliente. Tras iniciar
 
 P: Un cliente no puede entrar al panel.
 R: Es correcto. El panel solo acepta usuarios internos
-   (Administrador, Ventas o Logistica).
+   (Administrador, Ventas, Logistica o Soporte).
 
 P: Como doy de alta una cuenta nueva (cliente o de personal)?
 R: Con una cuenta de admin: panel -> "Cuentas y equipo" -> "Nueva cuenta".
@@ -1811,6 +1914,7 @@ Estructura
        admin/  login.html (se sirve solo en /admin/<codigo>/)
                dashboard.html clientes.html cliente.html
                interacciones.html evaluaciones.html soporte.html
+               centro-soporte.html  (inicio del rol Soporte)
                reportes.html pedidos.html productos.html proveedores.html
                movimientos.html ordenes-compra.html scm.html chatbot.html
                garantias.html recibo.html mi-actividad.html usuarios.html
@@ -1899,7 +2003,10 @@ Endpoints utiles
    GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
    POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
    -- Etapa 4 (nombres del documento) --
-   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&orden=novedades]
+   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&disponible=1&orden=novedades]
+   GET  /api/productos/:id/existencia     piezas disponibles al momento (ficha)
+   GET  /api/admin/soporte/resumen        Centro de soporte: indicadores y bandeja
+   GET  /api/admin/soporte/buscar?q=      Centro de soporte: clientes, folios, pedidos
    GET  /api/catalogo/:id                 producto con su promocion vigente
    POST /api/checkout/cotizar             desglose de una compra (promos,
                                           impuestos, envio, puntos)

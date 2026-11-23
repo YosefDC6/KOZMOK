@@ -30,6 +30,8 @@ const DIR_ADMIN = path.join(__dirname, 'public', 'admin');
 const PAGINA_404 = path.join(__dirname, 'public', '404.html');
 const ARCHIVO_ENV = path.join(__dirname, '.env');
 const FORMATO = /^[A-Za-z0-9_-]{16,64}$/;
+// Pantallas del panel a las que puede llevar ?next= (nunca a otro sitio).
+const FORMATO_PANTALLA = /^\/admin\/[a-z0-9-]+\.html(\?[^#\s]*)?$/;
 
 // Páginas de acceso: solo se entregan bajo la dirección secreta.
 const ACCESO = { '': 'login.html', recuperar: 'recuperar.html', restablecer: 'restablecer.html', activar: 'activar.html' };
@@ -96,6 +98,15 @@ function url(origen, pagina = '') {
     return `${String(origen).replace(/\/+$/, '')}/admin/${RUTA}/${pagina}`;
 }
 
+// Enlace de un correo a una pantalla del panel (p. ej. /admin/soporte.html?ticket=5).
+// Pasa por la entrada secreta con ?next=: la cookie de sesión es SameSite=Strict
+// y no viaja al dar clic desde Gmail, así que abrir la pantalla directo daría
+// 404. La entrada revisa la sesión (o pide iniciarla) y luego abre esa pantalla.
+function enlace(origen, pantalla) {
+    const p = String(pantalla || '');
+    return FORMATO_PANTALLA.test(p) ? `${url(origen)}?next=${encodeURIComponent(p)}` : url(origen);
+}
+
 function instalar(app, { pool, seg }) {
     const estado = cargarRuta();
     const claves = clavesDePaginas();
@@ -154,4 +165,4 @@ function instalar(app, { pool, seg }) {
     return estado;
 }
 
-module.exports = { instalar, url };
+module.exports = { instalar, url, enlace };

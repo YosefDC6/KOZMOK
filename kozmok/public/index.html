@@ -136,6 +136,7 @@
         </select>
         <select id="f-marca" aria-label="Marca"><option value="">Todas las marcas</option></select>
         <label class="f-promo"><input type="checkbox" id="f-promocion" /> Solo en promoción</label>
+        <label class="f-promo"><input type="checkbox" id="f-disponible" /> Solo disponibles</label>
         <button class="btn btn-outline btn-sm" onclick="limpiarFiltros()">Limpiar</button>
         <button class="btn btn-primary filtros-ver" id="filtros-ver" type="button">Ver productos</button>
     </div>
@@ -334,11 +335,8 @@ function specsTabla(p) {
     return `<dl class="pm-specs">${filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
 }
 
-function stockTexto(p) {
-    if (p.stock === 0) return '<span class="product-stock stock-out">Agotado</span>';
-    if (p.stock <= p.stock_minimo) return `<span class="product-stock stock-low">Últimas ${p.stock} piezas</span>`;
-    return `<span class="product-stock stock-ok">En stock</span>`;
-}
+// Existencias a la vista: cuántas piezas hay de cada producto (js/api.js).
+function stockTexto(p) { return existenciaHTML(p, { corto: true }); }
 
 function tarjetasProducto(lista, { nuevo = false } = {}) {
     return lista.map((p) => {
@@ -447,7 +445,8 @@ document.getElementById('filtros-abrir').addEventListener('click', () => abrirFi
 ['filtros-cerrar', 'filtros-overlay', 'filtros-ver'].forEach((id) => document.getElementById(id).addEventListener('click', () => abrirFiltros(false)));
 function contarFiltros() {
     const n = ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].filter((id) => document.getElementById(id).value).length
-        + (document.getElementById('f-promocion').checked ? 1 : 0);
+        + (document.getElementById('f-promocion').checked ? 1 : 0)
+        + (document.getElementById('f-disponible').checked ? 1 : 0);
     document.getElementById('filtros-n').textContent = n ? n : '';
 }
 
@@ -484,6 +483,8 @@ async function cargarProductos() {
     if (marca) params.set('marca', marca);
     const soloPromo = document.getElementById('f-promocion').checked;
     if (soloPromo) params.set('promocion', '1');
+    const soloDisp = document.getElementById('f-disponible').checked;
+    if (soloDisp) params.set('disponible', '1');
     if (PROMO_SEL) params.set('promo', PROMO_SEL.id);
     const orden = document.getElementById('f-orden').value;
     if (orden === 'novedades') params.set('orden', 'novedades');
@@ -496,7 +497,7 @@ async function cargarProductos() {
 
     const grid = document.getElementById('grid-productos');
     grid.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
-    renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo);
+    renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo, soloDisp);
     try {
         const consulta = new URLSearchParams(params); consulta.delete('marca');
         const productos = await api('/productos?' + consulta.toString());
@@ -521,7 +522,7 @@ async function cargarProductos() {
 }
 
 const USO_LABEL = { gaming: 'Gaming', oficina: 'Oficina', diseno: 'Diseño', programacion: 'Programación', estudiante: 'Estudiante', streaming: 'Streaming' };
-function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo) {
+function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo, soloDisp) {
     const cont = document.getElementById('active-filters');
     const chips = [];
     if (busqueda) chips.push(['busqueda', `“${busqueda}”`]);
@@ -530,6 +531,7 @@ function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo) {
     if (precio) chips.push(['f-precio', `Hasta ${formatoMoneda(precio)}`]);
     if (marca) chips.push(['f-marca', marca]);
     if (soloPromo) chips.push(['f-promocion', 'En promoción']);
+    if (soloDisp) chips.push(['f-disponible', 'Disponibles']);
     if (PROMO_SEL) chips.push(['promo', `Promoción: ${escHTML(PROMO_SEL.nombre)}`]);
     cont.innerHTML = chips.length === 0 ? '' : (
         chips.map(([campo, txt]) =>
@@ -541,7 +543,7 @@ function renderFilterChips(busqueda, categoria, uso, precio, marca, soloPromo) {
 function quitarFiltro(campo) {
     if (campo === 'promo') PROMO_SEL = null;
     else if (campo === 'busqueda') BUSQUEDA = '';
-    else if (campo === 'f-promocion') document.getElementById(campo).checked = false;
+    else if (campo === 'f-promocion' || campo === 'f-disponible') document.getElementById(campo).checked = false;
     else document.getElementById(campo).value = '';
     cargarProductos();
 }
@@ -575,13 +577,14 @@ function limpiarFiltros() {
     BUSQUEDA = ''; PROMO_SEL = null;
     ['f-categoria', 'f-uso', 'f-precio', 'f-marca'].forEach((id) => document.getElementById(id).value = '');
     document.getElementById('f-promocion').checked = false;
+    document.getElementById('f-disponible').checked = false;
     cargarProductos();
 }
 
 // La ficha tiene su propia dirección (#producto-<id>): se puede compartir,
 // "atrás" la cierra y al cerrarla te quedas en el mismo punto del catálogo.
-async function verProducto(id, { desdeHistorial = false } = {}) {
-    let p = TODOS_LOS_PRODUCTOS.find((x) => x.id === id);
+async function verProducto(id, { desdeHistorial = false, producto = null } = {}) {
+    let p = producto || TODOS_LOS_PRODUCTOS.find((x) => x.id === id);
     if (!p) {   // producto que no está en el filtro actual (enlace compartido, buscador)
         try { p = await api(`/catalogo/${id}`); } catch { toast('Ese producto ya no está disponible', 'warn'); return; }
     }
@@ -591,8 +594,7 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
     }
     guardarVisto(id);
     const fav = Favoritos.tiene(id);
-    const urgencia = (p.stock > 0 && p.stock <= p.stock_minimo)
-        ? `<div class="stock-urgente">${icon('alert', 14)} ¡Solo quedan ${p.stock}! Cómpralo antes de que se agote.</div>` : '';
+    FICHA_MAX = Math.min(p.stock, LIMITE_PIEZAS);
     document.getElementById('modal-producto-body').innerHTML = `
         <button class="modal-close" onclick="cerrarFicha()" aria-label="Cerrar">${icon('x', 20)}</button>
         <div class="pm-grid">
@@ -606,18 +608,17 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
         <p class="pm-desc">${p.descripcion || ''}</p>
         <div class="pm-precio">
             <span class="product-price">${precioHTML(p)}</span>
-            ${stockTexto(p)}
         </div>
         ${p.promocion ? `<div class="pm-promo">${icon('star', 14)} <strong>${p.promocion.nombre}</strong> · ahorras ${formatoMoneda(p.descuento_unitario)} por pieza · válida hasta ${formatoFecha(p.promocion.fecha_fin)}</div>` : ''}
+        <div id="modal-existencia">${existenciaFicha(p)}</div>
         ${p.stock > 0 ? '<div class="pm-puntos" id="modal-puntos"></div>' : ''}
-        ${urgencia}
         ${p.stock > 0 ? `
         <div class="modal-qty-row">
             <label>Cantidad</label>
             <div class="qty-stepper">
-                <button type="button" onclick="ajustarQty(-1, ${p.stock})">−</button>
+                <button type="button" onclick="ajustarQty(-1)">−</button>
                 <span class="qty-val" id="modal-qty">1</span>
-                <button type="button" onclick="ajustarQty(1, ${p.stock})">+</button>
+                <button type="button" onclick="ajustarQty(1)">+</button>
             </div>
         </div>
         <div class="field" style="margin-top:6px">
@@ -645,6 +646,7 @@ async function verProducto(id, { desdeHistorial = false } = {}) {
     document.getElementById('modal-garantia')?.addEventListener('change', puntosFicha);
     puntosFicha();
     document.getElementById('modal-producto').classList.add('open');
+    refrescarExistencia(p);
     cargarResenas(id);
 }
 
@@ -743,10 +745,50 @@ async function enviarResena(pid) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-function ajustarQty(delta, max) {
+// ---- Existencias en la ficha ----
+// Piezas por producto en un pedido (lo fija el servidor; ver /api/reglamento).
+let LIMITE_PIEZAS = 10;
+let FICHA_MAX = 1;
+api('/reglamento').then((r) => { if (r && r.compras && r.compras.piezas_por_producto) LIMITE_PIEZAS = Number(r.compras.piezas_por_producto); }).catch(() => {});
+function existenciaFicha(p) {
+    const e = existenciaDe(p);
+    if (!e.n) {
+        return `<div class="pm-existencia stock-out">${icon('package', 16)}<div><strong>Sin existencias por ahora</strong>
+            <span>Guárdalo en favoritos y te avisamos por correo cuando vuelva.</span></div></div>`;
+    }
+    const tope = Math.min(e.n, LIMITE_PIEZAS);
+    const detalle = e.clase === 'stock-low'
+        ? 'Cómpralo antes de que se agote.'
+        : (e.n > LIMITE_PIEZAS ? `Puedes llevar hasta ${tope} por pedido.` : 'Listo para enviarse.');
+    return `<div class="pm-existencia ${e.clase}">${icon(e.clase === 'stock-low' ? 'alert' : 'package', 16)}<div><strong>${e.texto}</strong>
+        <span>${detalle}</span></div></div>`;
+}
+// Al abrir la ficha se consulta la existencia al momento (el catálogo puede
+// tener unos segundos): si cambió, se actualizan la ficha, la tarjeta y la cantidad.
+async function refrescarExistencia(p) {
+    let r;
+    try { r = await api(`/productos/${p.id}/existencia`); } catch { return; }
+    if (!r || Number(r.stock) === Number(p.stock)) return;
+    const antes = Number(p.stock);
+    p.stock = Number(r.stock);
+    if (r.stock_minimo != null) p.stock_minimo = Number(r.stock_minimo);
+    const enLista = TODOS_LOS_PRODUCTOS.find((x) => x.id === p.id);
+    if (enLista && enLista !== p) { enLista.stock = p.stock; enLista.stock_minimo = p.stock_minimo; }
+    // Si pasó de agotado a disponible (o al revés) cambian los botones: se vuelve a pintar.
+    if ((antes === 0) !== (p.stock === 0)) { verProducto(p.id, { desdeHistorial: true, producto: p }); return; }
+    FICHA_MAX = Math.min(p.stock, LIMITE_PIEZAS);
+    const caja = document.getElementById('modal-existencia');
+    if (caja) caja.innerHTML = existenciaFicha(p);
+    const q = document.getElementById('modal-qty');
+    if (q && Number(q.textContent) > FICHA_MAX) { q.textContent = FICHA_MAX; puntosFicha(); }
+    const tarjeta = document.querySelector(`#producto-${p.id} .product-stock`);
+    if (tarjeta) tarjeta.outerHTML = stockTexto(p);
+}
+
+function ajustarQty(delta) {
     const el = document.getElementById('modal-qty');
     if (!el) return;
-    let v = Math.max(1, Math.min(Number(el.textContent) + delta, max));
+    let v = Math.max(1, Math.min(Number(el.textContent) + delta, FICHA_MAX));
     el.textContent = v;
     puntosFicha();
 }
@@ -802,7 +844,7 @@ window.addEventListener('popstate', () => {
 document.getElementById('modal-producto').addEventListener('click', (e) => { if (e.target.id === 'modal-producto') cerrarFicha(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('modal-producto').classList.contains('open')) cerrarFicha(); });
 
-['f-categoria', 'f-uso', 'f-precio', 'f-marca', 'f-promocion'].forEach((id) => {
+['f-categoria', 'f-uso', 'f-precio', 'f-marca', 'f-promocion', 'f-disponible'].forEach((id) => {
     document.getElementById(id).addEventListener('change', cargarProductos);
 });
 document.getElementById('f-orden').addEventListener('change', () => {
@@ -821,6 +863,7 @@ function aplicarFiltrosDeURL() {
     if (q.get('uso')) document.getElementById('f-uso').value = q.get('uso');
     if (q.get('precio_max')) document.getElementById('f-precio').value = q.get('precio_max');
     if (q.get('promocion')) document.getElementById('f-promocion').checked = true;
+    if (q.get('disponible')) document.getElementById('f-disponible').checked = true;
     if (/^\d+$/.test(q.get('promo') || '')) PROMO_SEL = { id: Number(q.get('promo')), nombre: 'cargando…' };
     if (q.get('orden') === 'novedades') document.getElementById('f-orden').value = 'novedades';
     if (q.get('marca')) document.getElementById('f-marca').innerHTML = `<option value="${q.get('marca').replace(/"/g, '')}" selected>${q.get('marca').replace(/</g, '')}</option>`;

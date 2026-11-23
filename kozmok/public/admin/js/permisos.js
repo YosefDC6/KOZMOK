@@ -10,6 +10,9 @@
 //   'productos-editar'  dar de alta, editar o borrar productos del catálogo
 //   'reposicion'        generar pedidos de reposición al proveedor desde
 //                       Inventario, el Dashboard SCM o la Nueva orden
+//   'clientes-editar'   editar datos y etapa de un cliente (con solo
+//                       'clientes' se consulta la ficha, se registran
+//                       interacciones y se confirma el correo)
 //
 // Etapa 4 (bloque TIENDA del menú): 'promociones', 'impuestos',
 // 'monedero' (administración de monederos) y 'pagos'. Impuestos queda
@@ -28,7 +31,7 @@
         // Ventas: Inicio, Clientes (CRM), Productos (SCM, solo consulta),
         // Órdenes (ERP, con captura), Reportes y Mi actividad.
         ventas: [
-            'dashboard', 'clientes', 'productos',
+            'dashboard', 'clientes', 'clientes-editar', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
             'promociones', 'monedero', 'pagos', 'facturas', 'devoluciones',
             'mi-actividad',
@@ -40,13 +43,23 @@
             'scm', 'productos', 'productos-editar', 'inventario', 'reposicion',
             'ordenes-erp', 'orden-nueva', 'reportes-erp', 'devoluciones',
         ],
+
+        // Soporte: cuenta dedicada a la atención de clientes. Entra al Centro
+        // de soporte (todo lo pendiente en una sola bandeja) y desde ahí
+        // atiende tickets, reclamos de garantía, devoluciones y reseñas; ve la
+        // ficha del cliente (sin editar sus datos) y gestiona sus pedidos y
+        // facturas cuando el caso lo pide.
+        soporte: [
+            'centro-soporte', 'soporte', 'garantias', 'devoluciones', 'evaluaciones',
+            'clientes', 'interacciones', 'pedidos', 'facturas',
+        ],
     };
 
-    const ROL_LABEL = { admin: 'Administrador', ventas: 'Ventas', logistica: 'Logística' };
+    const ROL_LABEL = { admin: 'Administrador', ventas: 'Ventas', logistica: 'Logística', soporte: 'Soporte' };
 
     // Pantalla de inicio de cada rol (a donde llega al entrar y a donde se
     // le regresa si abre por URL una sección que no le toca).
-    const ROL_HOME = { admin: '/admin/dashboard.html', ventas: '/admin/dashboard.html', logistica: '/admin/scm.html' };
+    const ROL_HOME = { admin: '/admin/dashboard.html', ventas: '/admin/dashboard.html', logistica: '/admin/scm.html', soporte: '/admin/centro-soporte.html' };
 
     function puedeVer(rol, key) {
         const p = PERMISOS[rol];

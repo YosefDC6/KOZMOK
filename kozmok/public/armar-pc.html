@@ -169,7 +169,7 @@ function opcionesSlot(tipo) {
         ].filter(Boolean).join(' · ');
         const agotado = p.stock === 0;
         return `<option value="${p.id}" ${actual === p.id ? 'selected' : ''} ${agotado ? 'disabled' : ''}>
-            ${p.nombre}${detalle ? ` (${detalle})` : ''} — ${formatoMoneda(p.precio)}${agotado ? ' · agotado' : ''}
+            ${p.nombre}${detalle ? ` (${detalle})` : ''} — ${formatoMoneda(p.precio)} · ${agotado ? 'agotado' : existenciaDe(p).corto.toLowerCase()}
         </option>`;
     })).join('');
 }

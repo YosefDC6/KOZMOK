@@ -248,6 +248,7 @@ curl -i http://localhost:3000/admin/<PANEL_RUTA>/        # 200: la entrada del e
 - `panel-oculto.js` va **antes** de los archivos estáticos: ninguna página de `/admin` se sirve directo de la carpeta. La ruta se revisa como la entendería el servidor de archivos (decodificada, sin `..`, sin distinguir mayúsculas, como en Windows), así que las variantes no se cuelan.
 - La dirección secreta se compara en tiempo constante y tiene 144 bits al azar: no se puede adivinar. Para cambiarla basta con editar `PANEL_RUTA` en el `.env` y reiniciar; la anterior deja de servir.
 - Cada pantalla del panel pide la misma clave de permiso que usa el menú (`renderAdminSidebar('…')`) y el servidor la valida con `permisos.js` contra el rol guardado en la base, no contra lo que diga el navegador. La API ya hacía lo mismo con `PERMISOS_API`.
+- Los correos del equipo (bienvenida, recuperar contraseña y notificaciones del panel) llevan el enlace por la entrada secreta. Para abrir una pantalla concreta usan `/admin/<PANEL_RUTA>/?next=/admin/soporte.html?ticket=5`: la cookie `SameSite=Strict` no viaja al dar clic desde el correo, así que la entrada revisa la sesión (o la pide) y luego abre esa pantalla. `next` solo acepta pantallas del panel, nunca otro sitio.
 - Las páginas de acceso salen con `Cache-Control: no-store` y `X-Robots-Tag: noindex`, y `Referrer-Policy: same-origin` evita que la dirección secreta viaje a otros sitios.
 - Esconder la entrada no reemplaza a las demás defensas: el login del panel sigue con bloqueo por intentos, captcha y verificación en dos pasos.
 
