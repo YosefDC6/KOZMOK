@@ -1161,7 +1161,8 @@ NAVEGACION RAPIDA EN EL PANEL
      registrado.
 
 4.12 CUENTAS Y EQUIPO  (admin/usuarios.html)  [CUENTA]  -- solo ADMIN
-   - Tabla con el personal interno (Administrador, Ventas, Logistica) y su
+   - Tabla con el personal interno (Administrador, Ventas, Logistica,
+     Soporte) y su
      estado. En la columna Rol el admin cambia el rol de cualquier persona
      con un selector (pide confirmacion). No puede quitarse a si mismo el
      rol de administrador.
@@ -1172,7 +1173,8 @@ NAVEGACION RAPIDA EN EL PANEL
                               tabla). Ofrece abrir su ficha al terminar.
         * Rol interno       -> nombre, email, contrasena, telefono. El rol es
           (Administrador/     el tipo elegido.
-           Ventas/Logistica)
+           Ventas/Logistica/
+           Soporte)
    - Tambien puedes crear un cliente desde Clientes -> "Nuevo cliente".
    - Estado de cada cuenta del equipo:
         * "Desactivar": ya no puede entrar (no se puede a si mismo).
@@ -1371,7 +1373,7 @@ NAVEGACION RAPIDA EN EL PANEL
 
    4.14f PANEL POR ROL  (admin/panel-roles.html)  -- solo ADMIN
       - Menu dinamico: una columna por rol (Administrador, Ventas,
-        Logistica) con la pantalla a la que entra y las secciones que ve,
+        Logistica, Soporte) con la pantalla a la que entra y las secciones que ve,
         agrupadas por modulo (CRM, SCM, ERP, Tienda, Cuenta), incluido el permiso
         de "Capturar ordenes".
       - Matriz de permisos: cada seccion contra cada rol.
@@ -1461,7 +1463,7 @@ NAVEGACION RAPIDA EN EL PANEL
       - "Gestionar" abre el gestor del pedido (4.8) para registrar el cobro,
         moverlo de estado o cancelarlo.
 
-   4.15e FACTURAS  (admin/facturas.html)  [Admin y Ventas]
+   4.15e FACTURAS  (admin/facturas.html)  [Admin, Ventas y Soporte]
       - Lista de CFDI 4.0 emitidos: fecha, serie/folio y UUID, pedido,
         receptor (RFC, razon social, uso), total, estado (Vigente / En
         cancelacion / Cancelada) y si la pidio el cliente o quien del equipo.
@@ -1481,7 +1483,7 @@ NAVEGACION RAPIDA EN EL PANEL
         deduce de la categoria (laptops 43211503, escritorio 43211507,
         teclados 43211706, mouse 43211708; si no, 01010101).
 
-   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica]
+   4.15f DEVOLUCIONES  (admin/devoluciones.html)  [Admin, Ventas, Logistica, Soporte]
       - El cliente la pide desde Mis pedidos -> Ver detalle (pedido
         entregado, hasta 30 dias): productos y cantidades, motivo
         (defectuoso, danado en el envio, producto equivocado, no me
@@ -1788,7 +1790,7 @@ R: Es correcto: la compra requiere una cuenta de cliente. Tras iniciar
 
 P: Un cliente no puede entrar al panel.
 R: Es correcto. El panel solo acepta usuarios internos
-   (Administrador, Ventas o Logistica).
+   (Administrador, Ventas, Logistica o Soporte).
 
 P: Como doy de alta una cuenta nueva (cliente o de personal)?
 R: Con una cuenta de admin: panel -> "Cuentas y equipo" -> "Nueva cuenta".
@@ -1847,6 +1849,7 @@ Estructura
        img/ producto.svg (imagen generica de producto)
        admin/  login.html dashboard.html clientes.html cliente.html
                interacciones.html evaluaciones.html soporte.html
+               centro-soporte.html  (inicio del rol Soporte)
                reportes.html pedidos.html productos.html proveedores.html
                movimientos.html ordenes-compra.html scm.html chatbot.html
                garantias.html recibo.html mi-actividad.html usuarios.html
@@ -1935,7 +1938,10 @@ Endpoints utiles
    GET  /api/admin/erp/recursos           recursos humanos/materiales/financieros
    POST/PUT/DELETE /api/admin/erp/recursos[/:id]  equipo, vehiculos, etc.
    -- Etapa 4 (nombres del documento) --
-   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&orden=novedades]
+   GET  /api/catalogo[?categoria=&buscar=&destacado=1&promocion=1&disponible=1&orden=novedades]
+   GET  /api/productos/:id/existencia     piezas disponibles al momento (ficha)
+   GET  /api/admin/soporte/resumen        Centro de soporte: indicadores y bandeja
+   GET  /api/admin/soporte/buscar?q=      Centro de soporte: clientes, folios, pedidos
    GET  /api/catalogo/:id                 producto con su promocion vigente
    POST /api/checkout/cotizar             desglose de una compra (promos,
                                           impuestos, envio, puntos)
