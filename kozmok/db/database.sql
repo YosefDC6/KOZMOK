@@ -20,6 +20,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
+DROP TABLE IF EXISTS cupones                 CASCADE;
 DROP TABLE IF EXISTS notificaciones          CASCADE;
 DROP TABLE IF EXISTS notif_cursor            CASCADE;
 DROP TABLE IF EXISTS notif_stock             CASCADE;
@@ -43,7 +45,6 @@ DROP TABLE IF EXISTS procesos_erp            CASCADE;
 DROP TABLE IF EXISTS estado_erp              CASCADE;
 DROP TABLE IF EXISTS garantias               CASCADE;
 DROP TABLE IF EXISTS ticket_notas            CASCADE;
-DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
 DROP TABLE IF EXISTS errores_servidor        CASCADE;
 DROP TABLE IF EXISTS ticket_mensajes         CASCADE;
 DROP TABLE IF EXISTS tickets                 CASCADE;
@@ -376,6 +377,7 @@ CREATE TABLE pedidos (
     fecha_pedido          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- último estado que ya se avisó por correo al cliente
     estado_notificado     VARCHAR(20),
+    regresado_carrito     BOOLEAN NOT NULL DEFAULT FALSE,
     fecha_confirmacion    TIMESTAMP,
     fecha_envio           TIMESTAMP,
     fecha_entrega         TIMESTAMP,
@@ -743,8 +745,7 @@ CREATE TABLE ticket_mensajes (
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ticketmsg_ticket ON ticket_mensajes(ticket_id);
-
--- Evidencias del reporte (capturas de pantalla, ya reducidas en el navegador).
+-- Fotos de los mensajes de un ticket (evidencia de un producto dañado…)
 CREATE TABLE ticket_adjuntos (
     id          SERIAL PRIMARY KEY,
     ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
@@ -756,6 +757,36 @@ CREATE TABLE ticket_adjuntos (
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ticket_adjuntos ON ticket_adjuntos(ticket_id);
+
+-- ---------------------------------------------------------
+-- Cupones de descuento de cada cliente ("Mis cupones"): el de bienvenida
+-- (uno por cliente, al confirmar su correo) y los que da Soporte. Se aplican
+-- en el checkout; el pedido guarda cuál y cuánto descontó (si se cancela,
+-- el cupón vuelve a quedar disponible). Ver cupones.js.
+-- ---------------------------------------------------------
+CREATE TABLE cupones (
+    id          SERIAL PRIMARY KEY,
+    codigo      VARCHAR(20) UNIQUE NOT NULL,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    origen      VARCHAR(20) NOT NULL DEFAULT 'bienvenida',
+    descripcion VARCHAR(160),
+    tipo        VARCHAR(12) NOT NULL CHECK (tipo IN ('porcentaje','monto')),
+    valor       NUMERIC(10,2) NOT NULL CHECK (valor > 0),
+    tope        NUMERIC(10,2) NOT NULL DEFAULT 0,
+    minimo      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    vence       TIMESTAMP,
+    estado      VARCHAR(12) NOT NULL DEFAULT 'disponible' CHECK (estado IN ('disponible','usado','cancelado')),
+    pedido_id   INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    fecha_uso   TIMESTAMP,
+    usuario_id  INTEGER REFERENCES usuarios(id),
+    motivo      VARCHAR(300),
+    fecha       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_cupones_cliente ON cupones(cliente_id);
+CREATE UNIQUE INDEX uq_cupon_bienvenida ON cupones(cliente_id) WHERE origen = 'bienvenida';
+ALTER TABLE pedidos ADD COLUMN cupon_id INTEGER REFERENCES cupones(id) ON DELETE SET NULL;
+ALTER TABLE pedidos ADD COLUMN descuento_cupon NUMERIC(10,2) NOT NULL DEFAULT 0;
+ALTER TABLE tickets ADD COLUMN cupon_id INTEGER REFERENCES cupones(id) ON DELETE SET NULL;
 
 -- Bitácora técnica interna del ticket (solo agregar; ver control_interno.sql):
 -- hipótesis, hallazgos confirmados, pruebas, acciones, evidencias, cambios

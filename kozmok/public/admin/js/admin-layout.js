@@ -4,7 +4,7 @@ function requireAuthAdmin() {
     // La sesión real es la cookie HttpOnly "kz_admin"; aquí solo se
     // guardan los datos para pintar el menú y se confirman con el servidor.
     const usuario = Sesion.usuario();
-    if (!usuario) { window.location.href = rutaLoginPanel(); return null; }
+    if (!usuario) { window.location.href = '/admin/login.html'; return null; }
     // Pestaña nueva sin otra del panel abierta = se cerró la anterior: la
     // sesión termina y se pide entrar otra vez.
     if (!PestanaPanel.tiene()) {
@@ -12,7 +12,7 @@ function requireAuthAdmin() {
         PestanaPanel.verificar().then(async (ok) => {
             if (ok) { document.documentElement.style.visibility = ''; return; }
             await Sesion.cerrarSesionUsuario();
-            window.location.replace(rutaLoginPanel());
+            window.location.replace('/admin/login.html');
         });
     } else PestanaPanel.escuchar();
     api('/admin/whoami')
@@ -32,7 +32,7 @@ function requireAuthAdmin() {
             // Un TypeError es que la petición ni llegó (p. ej. se canceló porque
             // la página se fue a otra pantalla): eso no es una sesión inválida.
             if (e instanceof TypeError) return;
-            Sesion.cerrarSesionUsuario(); window.location.href = rutaLoginPanel();
+            Sesion.cerrarSesionUsuario(); window.location.href = '/admin/login.html';
         });
     return usuario;
 }
@@ -77,6 +77,7 @@ const ADMIN_SECCIONES = [
     ] },
     { titulo: 'Tienda', home: '/admin/promociones.html', links: [
         { href: '/admin/promociones.html', key: 'promociones', ic: 'star',    label: 'Promociones', desc: 'Descuentos, vigencia y banner' },
+        { href: '/admin/cupones.html',     key: 'cupones',     ic: 'tag',     label: 'Cupones',     desc: 'Bienvenida, compensaciones y su uso' },
         { href: '/admin/impuestos.html',   key: 'impuestos',   ic: 'layers',  label: 'Impuestos',   desc: 'Configuración del cálculo' },
         { href: '/admin/monedero.html',    key: 'monedero',    ic: 'wallet',  label: 'Monedero',    desc: 'Saldos, recargas y ajustes' },
         { href: '/admin/pagos.html',       key: 'pagos',       ic: 'card',    label: 'Pagos',       desc: 'Pago de cada pedido' },
@@ -225,7 +226,7 @@ function renderAdminSidebar(activo) {
 
     el.innerHTML = `
         <div class="brand-fila">
-            <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('ghost', 16)}</span> <span class="brand-txt">Kozmok</span></div>
+            <div class="brand"><span class="brand-mark">${window.logoKZK ? logoKZK(24) : ic('tiburon', 16)}</span> <span class="brand-txt">Kozmok</span></div>
             <div class="bf-acciones">
                 <button type="button" class="admin-campana" id="admin-campana" onclick="Notifs.alternar(event)" aria-label="Notificaciones" title="Notificaciones">${ic('bell', 17)}<span class="campana-n" id="campana-n" hidden></span></button>
                 <button type="button" class="admin-colapsar" onclick="alternarMenuCorto()" aria-label="Ocultar o mostrar el menú" title="Ocultar / mostrar menú">${ic('chevron', 16)}</button>
@@ -497,7 +498,7 @@ window.abrirDosPasos = abrirDosPasos;
 
 async function cerrarSesionAdmin() {
     await Sesion.cerrarSesionUsuario();
-    window.location.replace(rutaLoginPanel());
+    window.location.replace('/admin/login.html');
 }
 
 // Exporta un array de objetos a CSV y lo descarga.
@@ -878,7 +879,7 @@ const ReporteTI = {
                 <div class="hilo-msg ${m.autor === 'equipo' ? 'equipo' : 'mio'}">
                     <div class="hm-meta">${m.autor === 'equipo' ? `${escHTML(m.usuario_nombre || 'Soporte')} · Soporte` : 'Tú'} · ${formatoFechaHora(m.fecha)}</div>
                     <div class="hm-txt">${escHTML(m.mensaje)}</div>
-                    ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a class="foto-prev" href="/api/admin/reportes-ti/${t.id}/adjuntos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/reportes-ti/${t.id}/adjuntos/${f.id}" alt="" /></a>`).join('')}</div>` : ''}
+                    ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a class="foto-prev" href="/api/admin/reportes-ti/${t.id}/fotos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/reportes-ti/${t.id}/fotos/${f.id}" alt="" /></a>`).join('')}</div>` : ''}
                 </div>`).join('')}</div>
             ${t.estado === 'resuelto' ? (t.confirmacion === 'resuelto' ? '<p class="st-sub">Confirmaste que quedó resuelto. Soporte lo cerrará.</p>' : `
                 <div class="card" style="margin-top:12px"><strong>¿Quedó resuelto?</strong>

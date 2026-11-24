@@ -16,8 +16,6 @@ const captcha = require('./captcha.js');   // Google reCAPTCHA en login, registr
 const correo = require('./correo.js');
 const paypal = require('./paypal.js');
 const facturama = require('./facturama.js');   // factura electrónica CFDI 4.0 (sandbox por defecto)   // pagos con PayPal / tarjeta (sandbox por defecto)
-// Entrada del panel en una dirección secreta y pantallas solo con sesión.
-const panelOculto = require('./panel-oculto.js');
 const correo_ = correo;   // alias para funciones donde "correo" es la dirección del cliente
 // Permisos por rol: el mismo archivo que arma el menú del panel.
 const { PERMISOS, puedeVer, homeDe, ROL_LABEL } = require('./public/admin/js/permisos.js');
@@ -36,6 +34,13 @@ const PORT = process.env.PORT || 3000;
 // 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
 // prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
 const HOST = process.env.HOST || '0.0.0.0';
+// Nombre fijo en la red local (mdns.js): http://kozmok.local:3000 sin
+// importar la IP. Solo cuando la tienda se abre a la red (HOST 0.0.0.0).
+const MDNS_NOMBRE = (() => {
+    const v = String(process.env.MDNS_NOMBRE ?? 'kozmok').trim().toLowerCase().replace(/\.local$/, '');
+    if (['', 'no', '0', 'false', 'apagado'].includes(v) || !['0.0.0.0', '::'].includes(HOST)) return null;
+    return /^[a-z0-9-]{1,40}$/.test(v) ? `${v}.local` : 'kozmok.local';
+})();
 
 // IPs de esta computadora en la red local (Wi-Fi o cable), para abrir la
 // tienda desde un celular conectado a la misma red.
@@ -50,7 +55,9 @@ function ipsDeRed() {
 const { usaValoresPorDefecto, ...configPg } = dbConfig;
 const pool = new Pool(configPg);
 // Notificaciones del equipo del panel (campana y correo).
-const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null) });
+const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null), rutaPanel: (u) => panel.url(u) });
+// Cupones de descuento de los clientes (bienvenida y los que da Soporte).
+const cupones = require('./cupones.js')({ pool, enviarCorreo, urlBase: () => urlBase(null) });
 
 // Cabeceras de seguridad en todas las respuestas (CSP, nosniff, DENY...).
 // Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
@@ -90,10 +97,12 @@ app.use((req, res, next) => {
     };
     next();
 });
-// Panel oculto (va antes de los archivos estáticos): /admin/login.html ya no
-// existe; la entrada es /admin/<PANEL_RUTA>/ y las demás pantallas del
-// panel solo se entregan con sesión del equipo y si el rol las puede ver.
-const PANEL = panelOculto.instalar(app, { pool, seg });
+// Panel interno en una dirección secreta (PANEL_RUTA); /admin/... da 404.
+// Además, sus pantallas solo se entregan con sesión del equipo y si el rol
+// de esa sesión las puede ver (contra el robo de roles; ver panel.js).
+const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public'), dirProyecto: __dirname, pool, seg });
+app.use(panel.middleware);
+app.use(panel.json);
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
 // HTML/JS/CSS se revalidan (ETag), así una actualización se ve al momento.
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -112,7 +121,7 @@ app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 
 // fotos (ya reducidas en el navegador), así que esas rutas aceptan más.
 const jsonChico = express.json({ limit: '100kb' });
 const jsonFotos = express.json({ limit: '6mb' });
-const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes|tickets(\/\d+\/mensajes)?)|admin\/(reclamos\/\d+\/mensajes|reportes-ti(\/\d+\/mensajes)?))$/;
+const RUTAS_CON_FOTOS = /^\/api\/(clientes\/\d+\/(garantias\/\d+\/reclamo|reclamos\/\d+\/mensajes|tickets|tickets\/\d+\/mensajes)|admin\/((reclamos|tickets)\/\d+\/mensajes|reportes-ti(\/\d+\/mensajes)?))$/;
 app.use((req, res, next) => (RUTAS_CON_FOTOS.test(req.path) ? jsonFotos : jsonChico)(req, res, next));
 
 // Capas de protección de la API, en orden:
@@ -132,7 +141,7 @@ const limiteDinero = seg.limitador({ nombre: 'pagos', ventanaMs: 60000, max: 12 
 
 // Los identificadores de las rutas deben ser números: "/clientes/1 OR 1=1"
 // se rechaza aquí, antes de llegar a la base.
-['id', 'clienteId', 'ticketId', 'adjId', 'dirId', 'mpId', 'garId', 'pedidoId', 'productoId', 'cliente_id', 'movId', 'itemId'].forEach((p) => {
+['id', 'clienteId', 'ticketId', 'fotoId', 'dirId', 'mpId', 'garId', 'pedidoId', 'productoId', 'cliente_id', 'movId', 'itemId'].forEach((p) => {
     app.param(p, (req, res, next, valor) => {
         if (seg.esId(valor)) return next();
         return res.status(400).json({ message: 'Identificador no válido' });
@@ -432,7 +441,7 @@ function hostDeConfianza(host) {
     const m = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::(\d{1,5}))?$/i.exec(String(host || '').trim());
     if (!m) return false;
     const nombre = m[1].toLowerCase().replace(/^\[|\]$/g, '');
-    if (nombre === 'localhost' || nombre === '::1') return true;
+    if (nombre === 'localhost' || nombre === '::1' || (MDNS_NOMBRE && nombre === MDNS_NOMBRE)) return true;
     const ip = nombre.split('.').map(Number);
     if (ip.length === 4 && ip.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
         if (ip[0] === 127 || ip[0] === 10 || (ip[0] === 192 && ip[1] === 168) || (ip[0] === 172 && ip[1] >= 16 && ip[1] <= 31)) return true;
@@ -772,6 +781,8 @@ const registrarCliente = asyncRoute(async (req, res) => {
     } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
 
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true, motivo: 'registro' });
+    // Sin Gmail la cuenta queda confirmada desde ya: el cupón de bienvenida se da ahora.
+    if (cliente.correo_verificado !== false) await cupones.darBienvenida(pool, cliente.id, { base: urlPublica(req) }).catch(() => null);
     const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(b, true) });
     res.status(201).json({ success: true, cliente, expira: s.expira, ...(b.modo === 'token' ? { token: s.token } : {}) });
 });
@@ -945,7 +956,9 @@ app.post('/api/auth/verificar-correo', limiteAuth, requireCliente, asyncRoute(as
     await pool.query(
         `UPDATE clientes SET correo_verificado = TRUE, verificacion_hash = NULL, verificacion_expira = NULL, verificacion_intentos = 0
          WHERE id = $1`, [c.id]);
-    res.json({ success: true, cliente: await datos() });
+    // Correo confirmado: llega el cupón de bienvenida (una sola vez).
+    const cupon = await cupones.darBienvenida(pool, c.id, { base: urlPublica(req) }).catch(() => null);
+    res.json({ success: true, cliente: await datos(), cupon_bienvenida: cupon ? { codigo: cupon.codigo, beneficio: cupones.beneficio(cupon) } : null });
 }));
 
 // Mandar otro código (uno por minuto).
@@ -1142,7 +1155,7 @@ const ENVIO_GRATIS_DESDE = 10000;
 //   impuestos         = base x cada impuesto activo
 //   envío             = $199, gratis desde $10,000 de base
 //   total             = base + impuestos + envío - descuento_puntos
-function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) {
+function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0, cupon = null } = {}) {
     let productos = 0, garantias = 0, descuentoPromo = 0;
     const promosAplicadas = {};
     const detalle = lineas.map((l) => {
@@ -1165,6 +1178,9 @@ function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) 
     const impTotal = redondear(impDetalle.reduce((a, t) => a + t.monto, 0));
     const envio = lineas.length === 0 ? 0 : (base >= ENVIO_GRATIS_DESDE ? 0 : ENVIO_COSTO);
     const puntos = redondear(Math.min(Number(descuentoPuntos) || 0, base));
+    // Cupón: sobre lo que se cobra con impuestos (como los puntos), sin
+    // dejar el total por debajo del envío.
+    const cc = cupon ? cupones.calcular(cupon, { base, bruto: Math.max(0, base + impTotal - puntos) }) : { monto: 0 };
     return {
         lineas: detalle,
         productos, garantias, subtotal,
@@ -1176,7 +1192,9 @@ function cotizarLineas(lineas, promos, impuestos, { descuentoPuntos = 0 } = {}) 
         envio,
         envio_gratis_desde: ENVIO_GRATIS_DESDE,
         descuento_puntos: puntos,
-        total: redondear(base + impTotal + envio - puntos),
+        descuento_cupon: cc.monto,
+        cupon: cupon ? { codigo: cupon.codigo, beneficio: cupones.beneficio(cupon), aplicado: cc.monto > 0, error: cc.error || null } : null,
+        total: redondear(base + impTotal + envio - puntos - cc.monto),
     };
 }
 
@@ -1304,7 +1322,14 @@ app.post('/api/checkout/cotizar', asyncRoute(async (req, res) => {
     const puntos = Math.max(0, Math.floor(Number(req.body.puntos_canjear) || 0));
     const cid = await clienteDeSesion(req);
     const [promos, imps, nivel] = await Promise.all([promocionesVigentes(), impuestosActivos(), nivelDeCliente(cid)]);
-    const cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO });
+    // Cupón elegido (solo con sesión y si es de esta cuenta y sigue vigente)
+    let cupon = null, cupon_error = null;
+    if (req.body.cupon) {
+        if (!cid) cupon_error = 'Inicia sesión para usar tus cupones.';
+        else { const r = await cupones.paraUsar(pool, cid, req.body.cupon); cupon = r.cupon; cupon_error = r.error || null; }
+    }
+    const cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: (puntos - (puntos % 100)) * VALOR_PUNTO, cupon });
+    if (cupon_error) cot.cupon = { codigo: String(req.body.cupon).toUpperCase(), aplicado: false, error: cupon_error };
     // Puntos del Club que dará esta compra (sin sesión: nivel Bronce).
     const ganar = puntosPorCompra(cot.base_impuestos, nivel);
     res.json({ ...cot, puntos_a_ganar: ganar, puntos_a_ganar_valor: redondear(ganar * VALOR_PUNTO),
@@ -1684,7 +1709,7 @@ async function aplicarCobroPedido(client, pedido, opciones = {}) {
     const sumarMetricas = opciones.metricas !== false;
     const cliente_id = pedido.cliente_id;
     // Los puntos se ganan sobre lo que se pagó por los productos (ya con promociones).
-    const subtotal = Number(pedido.subtotal) - Number(pedido.descuento_promocion || 0);
+    const subtotal = Math.max(0, Number(pedido.subtotal) - Number(pedido.descuento_promocion || 0) - Number(pedido.descuento_cupon || 0));
     const total = Number(pedido.total);
     const m = await client.query(
         'SELECT COALESCE(valor_total_compras,0) AS gasto, COALESCE(total_compras,0) AS compras FROM metricas_clientes WHERE cliente_id = $1',
@@ -1765,6 +1790,8 @@ async function cancelarPedido(client, pedido, { usuarioId = null } = {}) {
         );
     }
     await client.query(`UPDATE garantias SET estado = 'cancelada' WHERE pedido_id = $1 AND estado = 'activa'`, [pedido.id]);
+    // El cupón usado en el pedido vuelve a estar disponible (si no ha vencido, se puede usar otra vez).
+    await cupones.liberarDePedido(client, pedido.id);
 
     // Puntos canjeados (el descuento se retuvo al crear el pedido): se devuelven.
     const canjeados = Math.round(Number(pedido.descuento || 0) / VALOR_PUNTO);
@@ -1911,6 +1938,36 @@ async function conciliarPayPalPendientes() {
     return n;
 }
 
+// Regresa al carrito del cliente los productos de un pedido que se va a
+// cancelar sin haberse pagado (con la misma garantía). Se suman a lo que ya
+// tenga en el carrito, sin pasar de las existencias (el stock del pedido ya
+// se liberó al cancelarlo). Devuelve cuántas líneas regresaron.
+async function regresarAlCarrito(client, pedido) {
+    if (!pedido.cliente_id) return 0;
+    const items = (await client.query(
+        `SELECT pi.producto_id, pi.cantidad, pi.garantia_meses, p.precio, p.stock, p.activo
+           FROM pedido_items pi JOIN productos p ON p.id = pi.producto_id WHERE pi.pedido_id = $1`, [pedido.id])).rows;
+    const carrito = await carritoDe(client, pedido.cliente_id);
+    let n = 0;
+    for (const it of items) {
+        if (!it.activo || Number(it.stock) <= 0) continue;
+        const plan = PLANES_GARANTIA.find((g) => g.meses === Number(it.garantia_meses)) || PLANES_GARANTIA[0];
+        const ya = (await client.query('SELECT id, cantidad FROM carrito_detalle WHERE carrito_id = $1 AND producto_id = $2', [carrito.id, it.producto_id])).rows[0];
+        const cant = Math.min(Number(it.stock), Number(it.cantidad) + (ya ? Number(ya.cantidad) : 0));
+        const costo = costoGarantia(it.precio, plan.clave) * cant;
+        if (ya) {
+            await client.query(`UPDATE carrito_detalle SET cantidad = $2, precio_unitario = $3, garantia_clave = $4, garantia_plan = $5, garantia_meses = $6, garantia_costo = $7 WHERE id = $1`,
+                [ya.id, cant, it.precio, plan.clave, plan.meses ? plan.label : null, plan.meses, costo]);
+        } else {
+            await client.query(`INSERT INTO carrito_detalle (carrito_id, producto_id, cantidad, precio_unitario, garantia_clave, garantia_plan, garantia_meses, garantia_costo)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [carrito.id, it.producto_id, cant, it.precio, plan.clave, plan.meses ? plan.label : null, plan.meses, costo]);
+        }
+        n++;
+    }
+    if (n) await client.query(`UPDATE carrito SET estado = 'activo' WHERE id = $1`, [carrito.id]);
+    return n;
+}
+
 // Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
 // cuyo plazo de pago ya venció: se cancelan solos para liberar el stock
 // apartado. Usa la misma rutina que una cancelación manual (stock,
@@ -1928,6 +1985,9 @@ async function cancelarPagosVencidos() {
                 `SELECT * FROM pedidos WHERE id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente' FOR UPDATE`, [id]);
             if (!r.rows.length) { await client.query('ROLLBACK'); continue; }
             await cancelarPedido(client, r.rows[0]);
+            // De la tienda en línea: los productos vuelven al carrito del cliente
+            // para que pueda pagarlos de otra forma sin buscarlos otra vez.
+            if (r.rows[0].origen !== 'erp') await regresarAlCarrito(client, r.rows[0]);
             await client.query(
                 `UPDATE pedidos SET notas = CONCAT_WS(' · ', NULLIF(notas, ''), 'Cancelado automáticamente: venció el plazo de pago') WHERE id = $1`, [id]);
             await registrarProceso(client, id, 'cancelacion', 'Cancelada automáticamente: venció el plazo de pago y se liberó el stock apartado');
@@ -1963,7 +2023,8 @@ const bajaUrlDe = (req0, token, tipo) => `${urlBase(req0)}/baja?t=${encodeURICom
 function urlBase(req0) {
     if (req0) return urlPublica(req0);
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
-    return /^https?:\/\/[^\s/]+/.test(base) ? base : `http://localhost:${process.env.PORT || 3000}`;
+    if (/^https?:\/\/[^\s/]+/.test(base)) return base;
+    return `http://${MDNS_NOMBRE || 'localhost'}:${process.env.PORT || 3000}`;
 }
 const precioTxt = (n) => { const v = Number(n); return '$' + v.toLocaleString('es-MX', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
 const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -2109,6 +2170,7 @@ async function detallePedidoCorreo(pedidoId) {
         ...imps.map((t) => [`${t.nombre} (${Number(t.porcentaje)}%)`, precioTxt(Number(t.monto))]),
         ['Envío', Number(pe.envio) === 0 ? 'Gratis' : precioTxt(Number(pe.envio))],
         ...(Number(pe.descuento) > 0 ? [['Puntos canjeados', '-' + precioTxt(Number(pe.descuento))]] : []),
+        ...(Number(pe.descuento_cupon) > 0 ? [['Cupón', '-' + precioTxt(Number(pe.descuento_cupon))]] : []),
     ];
     const datos = [
         ['Pedido', `${pe.numero_orden} · ${fecha(pe.fecha_pedido)}`],
@@ -2201,6 +2263,7 @@ async function tareasPeriodicas() {
     await cancelarPagosVencidos().catch((e) => console.error('Pagos vencidos:', e.message));
     await enviarAvisos();
     await notif.revisar().catch((e) => console.error('Notificaciones del panel:', e.message));
+    await cupones.revisarBienvenidas().catch((e) => console.error('Cupones de bienvenida:', e.message));
     // Transferencias al monedero que nadie confirmó en 3 días: se cancelan
     await pool.query(`UPDATE movimientos_monedero SET estado = 'cancelado'
                       WHERE tipo = 'recarga' AND estado = 'pendiente' AND fecha < CURRENT_TIMESTAMP - ($1 || ' days')::interval`, [String(MON.pendienteDias)])
@@ -2415,7 +2478,15 @@ const procesarCompra = asyncRoute(async (req, res) => {
 
         // 2) Totales: promociones vigentes + impuestos configurados + envío + puntos.
         const [promos, imps] = await Promise.all([promocionesVigentes(client), impuestosActivos(client)]);
-        let cot = cotizarLineas(lineas, promos, imps);
+        // Cupón (se bloquea la fila: dos compras juntas no lo usan dos veces)
+        let cupon = null;
+        if (req.body.cupon) {
+            const rc = await cupones.paraUsar(client, cliente_id, req.body.cupon, { bloquear: true });
+            if (rc.error) throw new Error(rc.error);
+            cupon = rc.cupon;
+        }
+        let cot = cotizarLineas(lineas, promos, imps, { cupon });
+        if (cupon && cot.cupon && cot.cupon.error) throw new Error(cot.cupon.error);
         let descuento = 0;
         if (puntos_canjear > 0) {
             const cli = await client.query('SELECT puntos FROM clientes WHERE id = $1 FOR UPDATE', [cliente_id]);
@@ -2424,7 +2495,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
             puntos_canjear = puntos_canjear - (puntos_canjear % 100);                    // solo múltiplos de 100
             descuento = Math.min(puntos_canjear * VALOR_PUNTO, cot.base_impuestos);      // nunca deja la base en negativo
             puntos_canjear = Math.round(descuento / VALOR_PUNTO);
-            cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: descuento });
+            cot = cotizarLineas(lineas, promos, imps, { descuentoPuntos: descuento, cupon });
         }
         const { subtotal, envio, total } = cot;
 
@@ -2452,6 +2523,11 @@ const procesarCompra = asyncRoute(async (req, res) => {
                 inmediato ? new Date() : null]
         );
         const pedidoId = pedido.rows[0].id;
+        if (cupon && cot.descuento_cupon > 0) {
+            await client.query('UPDATE pedidos SET cupon_id = $2, descuento_cupon = $3 WHERE id = $1', [pedidoId, cupon.id, cot.descuento_cupon]);
+            await cupones.marcarUsado(client, cupon.id, pedidoId);
+            Object.assign(pedido.rows[0], { cupon_id: cupon.id, descuento_cupon: cot.descuento_cupon });
+        }
 
         // 4) Partidas, inventario (salida + movimiento + reabasto) y garantías.
         for (const d of cot.lineas) {
@@ -2509,7 +2585,7 @@ const procesarCompra = asyncRoute(async (req, res) => {
 
         res.status(201).json({
             ...pedido.rows[0], puntos_ganados, puntos_canjeados: puntos_canjear,
-            metodo_tipo, garantias_total: cot.garantias, promociones: cot.promociones,
+            metodo_tipo, garantias_total: cot.garantias, promociones: cot.promociones, cupon: cot.cupon,
             pago: pago.rows[0] || null, monedero_saldo,
         });
     } catch (error) {
@@ -2613,13 +2689,14 @@ async function armarCFDI(db, pedido, fiscales) {
                 unidad: 'Servicio', claveUnidad: 'E48', precio: Number(it.garantia_costo), cantidad: 1, descuento: 0 });
         }
     }
-    // Los puntos se descontaron del total (con IVA): se reparten como descuento antes de impuestos
-    let puntosBase = r2(Number(pedido.descuento || 0) / (1 + tasa));
+    // Los puntos y el cupón se descontaron del total (con IVA): se reparten como descuento antes de impuestos
+    const descTotal = Number(pedido.descuento || 0) + Number(pedido.descuento_cupon || 0);
+    let puntosBase = r2(descTotal / (1 + tasa));
     const bases = conceptos.map((c) => r2(c.precio * c.cantidad - c.descuento));
     const sumaBases = bases.reduce((a, b) => a + b, 0);
     conceptos.forEach((c, i) => {
         if (puntosBase <= 0 || sumaBases <= 0) return;
-        const parte = i === conceptos.length - 1 ? puntosBase : Math.min(puntosBase, r2(Number(pedido.descuento || 0) / (1 + tasa) * bases[i] / sumaBases));
+        const parte = i === conceptos.length - 1 ? puntosBase : Math.min(puntosBase, r2(descTotal / (1 + tasa) * bases[i] / sumaBases));
         const cabe = Math.min(parte, bases[i]);
         c.descuento = r2(c.descuento + cabe);
         puntosBase = r2(puntosBase - cabe);
@@ -3002,7 +3079,7 @@ app.post('/api/pagos/paypal/capturar', limiteDinero, requireCliente, asyncRoute(
         const pp = (await client.query('SELECT * FROM pagos_paypal WHERE orden_id = $1 FOR UPDATE', [ordenId])).rows[0];
         if (!p || !pp || Number(pp.pedido_id) !== Number(p.id)) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pago no encontrado' }); }
         if (p.pago_estado === 'pagado') { await client.query('ROLLBACK'); return res.json({ message: 'El pedido ya estaba pagado', pedido: p }); }
-        if (p.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido se canceló antes de pagarse (venció el tiempo). No se hizo ningún cargo.' }); }
+        if (p.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido se canceló antes de pagarse. No se hizo ningún cargo.' }); }
 
         const cap = await paypal.capturarOrden(ordenId, { requestId: `kz-cap-${pp.id}` });
         const coincide = cap.referencia === `pedido-${p.id}` && cap.moneda === paypal.CFG.moneda
@@ -3048,7 +3125,7 @@ app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRo
                    FROM facturas f WHERE f.pedido_id = p.id ORDER BY f.id DESC LIMIT 1) AS factura
          FROM pedidos p LEFT JOIN pedido_items pi ON p.id = pi.pedido_id
          LEFT JOIN productos pr ON pi.producto_id = pr.id
-         WHERE p.cliente_id = $1 GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
+         WHERE p.cliente_id = $1 AND NOT COALESCE(p.regresado_carrito, FALSE) GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
         [req.cliente.id]
     );
     res.json(result.rows);
@@ -3339,7 +3416,7 @@ app.put('/api/clientes/:id/preferencias', asyncRoute(async (req, res) => {
 // Lo que puede ver quien reportó: nunca el registro técnico interno
 // (diagnóstico, causa, bitácora, escalamiento) ni la clasificación.
 const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.reportado_por, t.asunto, t.categoria, t.estado, t.pedido_id,
-    t.seccion, t.dispositivo, t.navegador, t.mensaje_error, t.impacto, t.confirmacion, t.fecha_confirmacion,
+    t.cupon_id, t.seccion, t.dispositivo, t.navegador, t.mensaje_error, t.impacto, t.confirmacion, t.fecha_confirmacion,
     t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_resuelto, t.fecha_cerrado, t.fecha_creacion, t.fecha_actualizacion`;
 const MSG_DATO_SENSIBLE = 'Por seguridad, Soporte nunca pide contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. '
     + 'Si necesitas confirmar algo, pide solo el correo de la cuenta, los últimos 4 dígitos de la tarjeta o la fecha y el monto del cargo.';
@@ -3429,18 +3506,23 @@ async function crearTicket(clienteId, datos, { autor = 'cliente', usuarioId = nu
         prioridad = S.prioridadSugerida({ clasificacion, impacto, alcance, texto: `${asunto} ${descripcion}` });
     }
     const nav = autor === 'equipo' ? { navegador: null, dispositivo: null } : S.describirNavegador(ua);
-    // Solo se liga un pedido que sea de este cliente.
+    // Solo se liga un pedido y un cupón que sean de este cliente.
     if (pedido_id && clienteId) {
         const p = await pool.query('SELECT id FROM pedidos WHERE id = $1 AND cliente_id = $2', [Number(pedido_id) || 0, clienteId]);
         pedido_id = p.rows[0] ? p.rows[0].id : null;
     } else pedido_id = null;
+    let cuponId = null;
+    if (datos.cupon_id && clienteId) {
+        const c = await pool.query('SELECT id FROM cupones WHERE id = $1 AND cliente_id = $2', [Number(datos.cupon_id) || 0, clienteId]);
+        cuponId = c.rows[0] ? c.rows[0].id : null;
+    }
 
     const ins = await pool.query(
         `INSERT INTO tickets (folio, cliente_id, reportado_por, asunto, categoria, clasificacion, prioridad, pedido_id, mensaje,
-                              seccion, dispositivo, navegador, mensaje_error, impacto, alcance)
-         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+                              seccion, dispositivo, navegador, mensaje_error, impacto, alcance, cupon_id)
+         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
         [clienteId || null, reportadoPor || null, asunto, categoria, clasificacion, prioridad, pedido_id || null, descripcion,
-            seccion, nav.dispositivo, nav.navegador, errorTxt, impacto, alcance]);
+            seccion, nav.dispositivo, nav.navegador, errorTxt, impacto, alcance, cuponId]);
     const t = (await pool.query("UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *", [ins.rows[0].id])).rows[0];
     const msg = await pool.query(
         `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, $2, $3, $4) RETURNING id`,
@@ -3468,18 +3550,22 @@ async function crearTicket(clienteId, datos, { autor = 'cliente', usuarioId = nu
 // Respuesta de Soporte: va al hilo y queda como "respuesta" del ticket.
 // Si estaba abierto pasa a En revisión (o al estado que se indique, si las
 // reglas lo permiten). Nunca se piden datos sensibles.
-async function responderTicket(ticketId, usuario, mensaje, estado) {
+async function responderTicket(ticketId, usuario, mensaje, estado, fotos = []) {
     const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [ticketId])).rows[0];
     if (!t) return { status: 404, message: 'Ticket no encontrado' };
     if (SoporteTI.pideDatoSensible(mensaje)) return { status: 400, message: MSG_DATO_SENSIBLE };
-    const texto = SoporteTI.enmascararSensible(mensaje).texto.trim().slice(0, 4000);
+    const texto = SoporteTI.enmascararSensible(mensaje).texto.trim().slice(0, 4000) || (fotos.length ? '(fotos adjuntas)' : '');
     if (!texto) return { status: 400, message: 'Escribe la respuesta' };
     let nuevo = SoporteTI.ESTADOS[estado] ? estado : (t.estado === 'abierto' ? 'en_revision' : null);
     if (nuevo && nuevo !== t.estado) {
         const motivo = SoporteTI.motivoNoCambiar(t, nuevo, await conteoNotas(t.id));
         if (motivo) return { status: 409, message: motivo };
     }
-    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`, [t.id, usuario.id, texto]);
+    const msg = await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3) RETURNING id`, [t.id, usuario.id, texto]);
+    for (const f of fotos) {
+        await pool.query('INSERT INTO ticket_adjuntos (ticket_id, mensaje_id, nombre, tipo, datos, tamano) VALUES ($1,$2,$3,$4,$5,$6)',
+            [t.id, msg.rows[0].id, f.nombre, f.tipo, f.datos, f.tamano]);
+    }
     await pool.query('UPDATE tickets SET respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [t.id, texto]);
     if (nuevo === 'esperando_usuario') await pasoHecho(t.id, 'info', usuario);
     if (nuevo) await aplicarEstado(t, nuevo, usuario);
@@ -3578,7 +3664,8 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT ${TICKET_PUBLICO}, p.numero_orden, p.estado AS pedido_estado FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
+        `SELECT ${TICKET_PUBLICO}, p.numero_orden, p.estado AS pedido_estado, cu.codigo AS cupon_codigo FROM tickets t
+         LEFT JOIN pedidos p ON p.id = t.pedido_id LEFT JOIN cupones cu ON cu.id = t.cupon_id
          WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.json({ ...t.rows[0], mensajes: await hiloTicket(req.params.ticketId) });
@@ -3600,10 +3687,10 @@ app.post('/api/clientes/:id/tickets/:ticketId/confirmar', asyncRoute(async (req,
     res.status(r.status).json(r);
 }));
 
-app.get('/api/clientes/:id/tickets/:ticketId/adjuntos/:adjId', asyncRoute(async (req, res) => {
+app.get('/api/clientes/:id/tickets/:ticketId/fotos/:fotoId', asyncRoute(async (req, res) => {
     const f = (await pool.query(
         `SELECT a.tipo, a.datos FROM ticket_adjuntos a JOIN tickets t ON t.id = a.ticket_id
-         WHERE a.id = $1 AND t.id = $2 AND t.cliente_id = $3`, [req.params.adjId, req.params.ticketId, req.params.id])).rows[0];
+         WHERE a.id = $1 AND t.id = $2 AND t.cliente_id = $3`, [req.params.fotoId, req.params.ticketId, req.params.id])).rows[0];
     enviarAdjunto(res, f);
 }));
 
@@ -4029,6 +4116,41 @@ app.delete('/api/clientes/:id/favoritos/:productoId', asyncRoute(async (req, res
     res.json({ message: 'Quitado de favoritos' });
 }));
 
+// "Regresar al carrito": el cliente creó un pedido sin pagar (PayPal, SPEI o
+// tienda) y quiere cambiar el método de pago, la dirección o los productos.
+// El pedido se cancela sin aviso por correo (no fue una compra), sus
+// productos vuelven al carrito y deja de mostrarse en Mis pedidos.
+app.post('/api/pedidos/:id/al-carrito', requireCliente, asyncRoute(async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('kz-compra'), $1)`, [req.cliente.id]);
+        const pedido = (await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [Number(req.params.id) || 0])).rows[0];
+        if (!pedido || Number(pedido.cliente_id) !== Number(req.cliente.id)) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pedido no encontrado' }); }
+        if (pedido.estado !== 'pendiente' || pedido.pago_estado !== 'pendiente' || !['paypal', 'spei', 'tienda'].includes(pedido.metodo_tipo)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: pedido.pago_estado === 'pagado' ? 'Este pedido ya está pagado.' : 'Este pedido ya no se puede regresar al carrito.' });
+        }
+        if (pedido.pago_reportado) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Ya nos avisaste que pagaste este pedido; si fue un error, escríbenos desde Soporte.' });
+        }
+        const cup = pedido.cupon_id ? (await client.query('SELECT codigo FROM cupones WHERE id = $1', [pedido.cupon_id])).rows[0] : null;
+        await cancelarPedido(client, pedido);
+        const n = await regresarAlCarrito(client, pedido);
+        await client.query(`UPDATE pedidos SET regresado_carrito = TRUE, estado_notificado = 'cancelado',
+            notas = CONCAT_WS(' · ', NULLIF(notas, ''), 'El cliente lo regresó al carrito antes de pagar') WHERE id = $1`, [pedido.id]);
+        await registrarProceso(client, pedido.id, 'cancelacion', 'El cliente regresó los productos al carrito antes de pagar; se liberó el stock apartado');
+        await client.query('COMMIT');
+        res.json({ message: n ? 'Tus productos regresaron al carrito.' : 'El pedido se canceló, pero sus productos ya no están disponibles.', productos: n, cupon: cup ? cup.codigo : null });
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(400).json({ message: seg.mensajeSeguro(error) });
+    } finally {
+        client.release();
+    }
+}));
+
 // Cancelar un pedido propio (solo si aún no se procesó) y devolver stock
 app.put('/api/pedidos/:id/cancelar', requireCliente, asyncRoute(async (req, res) => {
     const cliente_id = req.cliente.id;
@@ -4087,6 +4209,7 @@ const PERMISOS_API = [
     { ruta: /^\/notificaciones(\/(leer|preferencias))?$/, metodos: TODO, permisos: ['*'] },
     // CRM
     { ruta: /^\/clientes\/\d+\/pedidos$/,              metodos: LEER, permisos: ['clientes', 'pedidos', 'ordenes-erp', 'ordenes-compra'] },
+    { ruta: /^\/clientes\/\d+\/cupones$/,               metodos: TODO, permisos: ['cupones'] },
     // Con 'clientes' se consulta la ficha, se registran interacciones, se
     // escribe al cliente y se confirma su correo; editar sus datos o su etapa
     // pide 'clientes-editar' (Soporte consulta pero no edita).
@@ -4100,6 +4223,7 @@ const PERMISOS_API = [
     { ruta: /^\/soporte\/consulta$/,                   metodos: LEER, permisos: ['soporte'] },
     // Cualquier cuenta del panel reporta problemas del panel a Soporte.
     { ruta: /^\/reportes-ti(\/|$)/,                    metodos: TODO, permisos: ['*'] },
+    { ruta: /^\/cupones(\/\d+|\/clientes)?$/,           metodos: TODO, permisos: ['cupones'] },
     { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -4474,6 +4598,7 @@ app.get('/api/admin/avisos', asyncRoute(async (req, res) => {
 }));
 
 notif.rutas(app, asyncRoute);
+cupones.rutas(app, { asyncRoute, requireCliente, mismoCliente, puedeVer });
 
 app.get('/api/admin/mi-2fa', cfg2faUsuario.estado);
 app.post('/api/admin/mi-2fa/app', limiteAuth, cfg2faUsuario.appIniciar);
@@ -5053,9 +5178,10 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const t = (await pool.query(
         `SELECT t.*, ${TICKET_QUIEN}, c.telefono AS reportante_telefono, c.etapa_crm,
                 p.numero_orden, p.estado AS pedido_estado, p.total AS pedido_total, p.fecha_pedido,
-                a.nombre AS asignado_nombre, e.nombre AS escalado_por_nombre
+                a.nombre AS asignado_nombre, e.nombre AS escalado_por_nombre, cu.codigo AS cupon_codigo
          FROM tickets t ${TICKET_JOINS}
          LEFT JOIN pedidos p ON p.id = t.pedido_id
+         LEFT JOIN cupones cu ON cu.id = t.cupon_id
          LEFT JOIN usuarios a ON a.id = t.asignado_a
          LEFT JOIN usuarios e ON e.id = t.escalado_por
          WHERE t.id = $1`, [req.params.id])).rows[0];
@@ -5079,9 +5205,11 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
 
 // Respuesta al usuario (y, si se indica, el estado en que queda el caso).
 app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
     const { mensaje, estado } = req.body;
-    if (!mensaje) return res.status(400).json({ message: 'El mensaje es requerido' });
-    const r = await responderTicket(req.params.id, req.usuario, mensaje, estado);
+    if (!String(mensaje || '').trim() && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
+    const r = await responderTicket(req.params.id, req.usuario, mensaje, estado, fotos);
     res.status(r.status).json({ message: r.message });
 }));
 
@@ -5234,8 +5362,8 @@ app.post('/api/admin/tickets/:id/escalar', asyncRoute(async (req, res) => {
     res.json({ message: `Ticket escalado a ${S.AREAS[area]}` });
 }));
 
-app.get('/api/admin/tickets/:id/adjuntos/:adjId', asyncRoute(async (req, res) => {
-    const f = (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2', [req.params.adjId, req.params.id])).rows[0];
+app.get('/api/admin/tickets/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
+    const f = (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2', [req.params.fotoId, req.params.id])).rows[0];
     enviarAdjunto(res, f);
 }));
 
@@ -5456,10 +5584,10 @@ app.post('/api/admin/reportes-ti/:id/confirmar', asyncRoute(async (req, res) => 
     const r = await confirmarTicket(t, req.body.resultado, req.body.comentario, req.usuario.id);
     res.status(r.status).json(r);
 }));
-app.get('/api/admin/reportes-ti/:id/adjuntos/:adjId', asyncRoute(async (req, res) => {
+app.get('/api/admin/reportes-ti/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
     const f = (await pool.query(
         `SELECT a.tipo, a.datos FROM ticket_adjuntos a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = $1 AND t.id = $2 AND t.reportado_por = $3`,
-        [req.params.adjId, req.params.id, req.usuario.id])).rows[0];
+        [req.params.fotoId, req.params.id, req.usuario.id])).rows[0];
     enviarAdjunto(res, f);
 }));
 
@@ -8050,7 +8178,7 @@ app.post('/api/admin/usuarios', requireAdmin, asyncRoute(async (req, res) => {
     const u = result.rows[0];
     // Bienvenida: dónde entrar y qué esperar. La contraseña NO va en el
     // correo (se la da quien creó la cuenta) y se cambia al primer acceso.
-    const enlace = panelOculto.url(urlPublica(req));
+    const enlace = `${urlPublica(req)}${panel.url('/admin/login.html')}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Te dieron acceso al panel de Kozmok',
@@ -8090,7 +8218,7 @@ app.post('/api/admin/usuarios/:id/activar', requireAdmin, asyncRoute(async (req,
         `INSERT INTO activaciones_usuario (usuario_id, token_hash, expira, creado_por, ip)
          VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' hours')::interval, $4, $5)`,
         [u.id, seg.sha256(token), String(ACTIVACION_HORAS), req.usuario.id, seg.ipDe(req)]);
-    const enlace = `${panelOculto.url(urlPublica(req), 'activar')}?token=${token}`;
+    const enlace = `${urlPublica(req)}${panel.url('/admin/activar.html')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'registro',
         asunto: 'Activa tu cuenta del panel de Kozmok',
@@ -8546,6 +8674,12 @@ async function usoRecargas(db, monederoId) {
 function disponibleRecarga(m, u) {
     return Math.max(0, Math.min(MON.recargaMax, MON.diaMax - u.dia, MON.mesMax - u.mes, MON.saldoMax - Number(m.saldo) - u.pendiente));
 }
+// Qué límite decide el tope de la siguiente recarga (para explicárselo al cliente).
+function motivoTope(m, u) {
+    if (u.dia_ops >= MON.diaOps) return 'operaciones';
+    const op = { por_recarga: MON.recargaMax, dia: MON.diaMax - u.dia, mes: MON.mesMax - u.mes, saldo: MON.saldoMax - Number(m.saldo) - u.pendiente };
+    return Object.keys(op).reduce((a, k) => (op[k] < op[a] ? k : a), 'por_recarga');
+}
 
 app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
     const m = await monederoDe(pool, req.cliente.id);
@@ -8559,6 +8693,8 @@ app.get('/api/monedero', requireCliente, asyncRoute(async (req, res) => {
         saldo_pendiente: redondear(uso.pendiente), recarga_min: MON.recargaMin, recarga_max: MON.recargaMax,
         limites: { por_operacion: MON.recargaMax, por_dia: MON.diaMax, operaciones_dia: MON.diaOps, por_mes: MON.mesMax, saldo_maximo: MON.saldoMax },
         uso: { dia: uso.dia, mes: uso.mes, operaciones_dia: uso.dia_ops }, disponible_hoy: redondear(disponibleRecarga(m, uso)),
+        // Tope de la siguiente recarga (0 si ya no puede) y qué límite lo pone.
+        tope_recarga: uso.dia_ops >= MON.diaOps ? 0 : redondear(disponibleRecarga(m, uso)), motivo_tope: motivoTope(m, uso),
         movimientos: movs.rows,
         // Para volver a ver a dónde transferir una recarga que sigue pendiente
         transferencia: speiConfigurado() ? { ...datosTransferencia(null), dias: MON.pendienteDias } : null,
@@ -9017,7 +9153,7 @@ app.post('/api/auth/recuperar-usuario', limiteAuth, captchaMw, asyncRoute(async 
     const token = crypto.randomBytes(32).toString('base64url');
     await pool.query(`INSERT INTO recuperaciones_usuario (usuario_id, token_hash, expira, ip) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes', $3)`,
         [u.id, seg.sha256(token), seg.ipDe(req)]);
-    const enlace = `${panelOculto.url(urlPublica(req), 'restablecer')}?token=${token}`;
+    const enlace = `${urlPublica(req)}${panel.url('/admin/restablecer.html')}?token=${token}`;
     await enviarCorreo(pool, {
         para: u.email, tipo: 'recuperacion',
         asunto: 'Restablece tu contraseña del panel de Kozmok',
@@ -9259,6 +9395,8 @@ async function migrarEsquema() {
     await pool.query(`UPDATE clientes SET token_baja = md5(random()::text || clock_timestamp()::text || id) WHERE token_baja IS NULL`);
     const yaHabia = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'pedidos' AND column_name = 'estado_notificado'`);
     await pool.query('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS estado_notificado VARCHAR(20)');
+    // Pedido sin pagar que el cliente regresó al carrito (no se muestra en Mis pedidos)
+    await pool.query('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS regresado_carrito BOOLEAN NOT NULL DEFAULT FALSE');
     if (!yaHabia.rows.length) await pool.query('UPDATE pedidos SET estado_notificado = estado');
     const yaHabiaPromo = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'promociones' AND column_name = 'boletin_enviado'`);
     await pool.query('ALTER TABLE promociones ADD COLUMN IF NOT EXISTS boletin_enviado TIMESTAMP');
@@ -9477,6 +9615,14 @@ async function migrarEsquema() {
         await pool.query(`UPDATE garantias SET folio = 'GAR-' || (100000 + id) WHERE id = $1`, [g.rows[0].id]);
     }
 
+    await cupones.migrar();
+    await pool.query(`CREATE TABLE IF NOT EXISTS ticket_adjuntos (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        mensaje_id INTEGER REFERENCES ticket_mensajes(id) ON DELETE CASCADE,
+        nombre VARCHAR(80), tipo VARCHAR(20) NOT NULL, datos TEXT NOT NULL, tamano INTEGER,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_ticket_adjuntos ON ticket_adjuntos(ticket_id)');
     await notif.migrar();
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).
@@ -9496,21 +9642,35 @@ app.use((req, res) => {
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
-    console.log(`   Panel de admin:  ${panelOculto.url(`http://localhost:${PORT}`)}   (dirección secreta, PANEL_RUTA en el .env)`);
-    if (PANEL.generada) {
-        console.log(PANEL.guardada
-            ? `   Se generó la dirección secreta del panel${PANEL.invalida ? ' (la PANEL_RUTA anterior no era válida)' : ''} y se guardó en el .env (PANEL_RUTA).`
-            : '   Se generó una dirección secreta solo para esta vez: no se pudo escribir en el .env. Copia la de arriba como PANEL_RUTA=... en tu .env para que no cambie.');
-    }
+    console.log(`   Panel de admin:  http://localhost:${PORT}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
     if (HOST === '0.0.0.0' || HOST === '::') {
-        const ips = ipsDeRed();
-        if (ips.length) {
-            console.log('Desde un celular en la misma red Wi-Fi abre:');
+        const mostrarRed = (titulo) => {
+            const ips = ipsDeRed();
+            if (!ips.length) { console.log('Sin red local detectada: solo se puede abrir desde esta computadora.'); return; }
+            console.log(titulo);
+            if (MDNS_NOMBRE) {
+                console.log(`   Con nombre fijo (no cambia aunque cambie la IP):`);
+                console.log(`   Tienda:          http://${MDNS_NOMBRE}:${PORT}`);
+                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}:${PORT}${panel.prefijo}login.html`);
+                console.log('   Por IP (si algún celular no abre el nombre):');
+            }
             ips.forEach((x) => {
                 console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
-                console.log(`   Panel de admin:  ${panelOculto.url(`http://${x.ip}:${PORT}`)}`);
+                console.log(`   Panel de admin:  http://${x.ip}:${PORT}${panel.prefijo}login.html`);
             });
-        } else console.log('Sin red local detectada: solo se puede abrir desde esta computadora.');
+        };
+        mostrarRed('Desde un celular en la misma red Wi-Fi abre:');
+        if (MDNS_NOMBRE) require('./mdns.js').iniciar({ nombre: MDNS_NOMBRE });
+        // Si cambia la red (otro Wi-Fi, se fue la señal y volvió), se avisa la
+        // dirección nueva sin reiniciar el servidor.
+        let redAntes = ipsDeRed().map((x) => x.ip).sort().join(',');
+        setInterval(() => {
+            const ahora = ipsDeRed().map((x) => x.ip).sort().join(',');
+            if (ahora === redAntes) return;
+            redAntes = ahora;
+            console.log(`\n[${new Date().toLocaleTimeString('es-MX')}] Cambió la red.`);
+            mostrarRed('Direcciones nuevas:');
+        }, 10000).unref();
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {

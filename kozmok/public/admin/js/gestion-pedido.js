@@ -179,6 +179,7 @@
             ${impuestosDe(d).map((t) => fila(`${t.nombre} (${Number(t.porcentaje)}%)`, formatoMoneda(t.monto), 'color:var(--text-muted)')).join('')}
             ${fila('Envío', Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio), 'color:var(--text-muted)')}
             ${Number(d.descuento) > 0 ? fila('Descuento Club de puntos', '-' + formatoMoneda(d.descuento), 'color:var(--success)') : ''}
+            ${Number(d.descuento_cupon) > 0 ? fila('Cupón de descuento', '-' + formatoMoneda(d.descuento_cupon), 'color:var(--success)') : ''}
             ${fila('Total', formatoMoneda(d.total), 'font-weight:700;font-size:1.05rem')}
             ${d.notas ? `<p style="margin:10px 0 0;font-size:.84rem;color:var(--text-muted)">Notas: ${d.notas}</p>` : ''}
             ${d.garantias && d.garantias.length ? `<p style="margin:10px 0 0;font-size:.8rem;color:var(--text-muted)">Garantías: ${d.garantias.map((g) => `${g.folio} (${g.estado})`).join(', ')}</p>` : ''}

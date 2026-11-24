@@ -67,6 +67,7 @@ async function cargar() {
                         ${impuestosDe(d).map((t) => `<div class="tc-line tc-suave"><span>${t.nombre} (${Number(t.porcentaje)}%)</span><span class="mono">${formatoMoneda(t.monto)}</span></div>`).join('')}
                         <div class="tc-line tc-suave"><span>Envío</span><span class="mono">${Number(d.envio) === 0 ? 'Gratis' : formatoMoneda(d.envio)}</span></div>
                         ${Number(d.descuento) > 0 ? `<div class="tc-line" style="color:var(--success)"><span>Descuento por puntos</span><span class="mono">-${formatoMoneda(d.descuento)}</span></div>` : ''}
+                        ${Number(d.descuento_cupon) > 0 ? `<div class="tc-line" style="color:var(--success)"><span>Cupón de descuento</span><span class="mono">-${formatoMoneda(d.descuento_cupon)}</span></div>` : ''}
                         <div class="tc-line tc-total"><span>Total</span><span class="mono">${formatoMoneda(d.total)}</span></div>
                     </div>
                 </section>
@@ -78,6 +79,7 @@ async function cargar() {
                         <div class="mono" style="font-size:1.15rem;margin:2px 0 6px">${escHTML(d.pago_referencia)}</div>
                         <div style="font-size:.84rem;color:var(--text-muted)">Monto: <strong>${formatoMoneda(d.total)}</strong> · Vence: ${d.pago_vence ? new Date(d.pago_vence).toLocaleDateString('es-MX') : '—'}</div>
                         <a class="btn btn-primary btn-sm" style="margin-top:12px;width:100%" href="/recibo.html?id=${d.id}">Ver ficha de pago completa</a>
+                        ${d.estado === 'pendiente' && !d.pago_reportado ? `<button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="regresarPedidoAlCarrito(${d.id}, { numero: '${escHTML(d.numero_orden)}' })">${icon('undo', 14)} Pagar de otra forma</button>` : ''}
                     </section>` : `
                     <section class="card">
                         <div class="rastreo">

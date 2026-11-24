@@ -55,19 +55,35 @@ Levantar el servidor
 
 Direcciones
    - Tienda (clientes):     http://localhost:3000/
-   - Panel interno:         direccion secreta que muestra la consola al
-                            arrancar: http://localhost:3000/admin/<codigo>/
-     El <codigo> (PANEL_RUTA en el .env) se genera solo la primera vez: son
-     24 letras y numeros al azar. Compartelo solo con el equipo. La direccion
-     vieja /admin/login.html ya NO existe (sale "Pagina no encontrada") y, sin
-     sesion, ninguna pantalla del panel se deja ver. Para cambiar el codigo,
-     edita PANEL_RUTA en el .env y reinicia el servidor.
+   - Panel interno:         http://localhost:3000/<ruta-del-panel>/login.html
+
+Direccion secreta del panel
+   - El panel ya NO se abre en /admin/ : esa direccion muestra "pagina no
+     encontrada", como si no existiera. Se abre en una ruta dificil de
+     adivinar, por ejemplo  http://kozmok.local:3000/kz-3f9a1c0b7d2e4a61/login.html
+   - Al arrancar, la consola dice cual es (linea "Panel de admin"). Si en el
+     .env no hay PANEL_RUTA, el servidor inventa una al azar la primera vez y
+     la guarda en el archivo  kozmok/.panel-ruta  (no se sube a GitHub), asi
+     que no cambia al reiniciar. Para elegirla: PANEL_RUTA=mi-ruta-secreta
+     (letras, numeros y guiones, de 4 a 64). PANEL_RUTA=admin regresa a la
+     direccion de antes.
+   - Compartela solo con el equipo y guardala en favoritos. Los correos al
+     equipo (avisos, activar cuenta, restablecer contrasena) ya traen la
+     ruta correcta.
+   - En este manual, donde dice <ruta-del-panel> o /admin/... (por ejemplo
+     /admin/pedidos.html?open=5) se refiere a esa ruta.
+   - Ademas, dentro de esa ruta las pantallas solo se entregan con sesion
+     del equipo (sin sesion lleva al inicio de sesion, y despues de entrar
+     abre la pantalla que se pidio) y solo las que el rol de la sesion puede
+     ver: aunque alguien cambie su rol en el navegador, el servidor lo manda
+     a su inicio (contra el robo de roles).
+   - Es una capa extra: el panel sigue pidiendo contrasena, verificacion en
+     dos pasos y permisos por rol en cada accion.
 
 Probar desde celulares
    1. Conecta el celular a la MISMA red Wi-Fi que la computadora.
    2. Abre en el navegador del celular la direccion que muestra la consola
-      (http://192.168.x.x:3000). El panel: la direccion secreta que tambien
-      muestra la consola (http://192.168.x.x:3000/admin/<codigo>/).
+      (http://192.168.x.x:3000). El panel: la misma con /<ruta-del-panel>/login.html.
    3. Windows: la primera vez que corre npm start aparece el aviso del
       Firewall de Windows Defender; marca "Redes privadas" y "Permitir
       acceso". La red Wi-Fi debe estar como "Privada" (Configuracion -> Red
@@ -77,9 +93,20 @@ Probar desde celulares
    4. Si no carga en una red de la escuela, esa red puede aislar a los
       equipos entre si: comparte internet desde un celular (hotspot) y
       conecta ahi la computadora y los celulares de prueba.
-   - La IP puede cambiar al cambiar de red: usa siempre la que imprime la
-     consola. Para que solo se abra en la computadora pon HOST=127.0.0.1
-     en el .env.
+   - NOMBRE FIJO: usa  http://kozmok.local:3000  (panel:
+     http://kozmok.local:3000/<ruta-del-panel>/login.html). El servidor anuncia ese
+     nombre en la red con la IP que tenga en ese momento, asi que sirve
+     aunque cambie la red o la IP. Importa porque el navegador guarda todo
+     POR DIRECCION: con la IP, al cambiar de red se "pierden" la contrasena
+     guardada, la cuenta recordada, el tema y el carrito sin sesion (la
+     cuenta sigue en la base; solo el navegador no la relaciona). Con el
+     nombre fijo eso ya no pasa. En la misma computadora tambien sirve
+     http://localhost:3000.
+     Otro nombre: MDNS_NOMBRE=mitienda en el .env; apagarlo: MDNS_NOMBRE=no.
+     Si algun celular no abre el nombre, usa la IP que imprime la consola.
+   - Si cambia la red con el servidor encendido, la consola muestra las
+     direcciones nuevas sola (no hay que reiniciar). Para que solo se abra
+     en la computadora pon HOST=127.0.0.1 en el .env.
    - Las pruebas de ataque tambien se pueden correr desde otra computadora
      de la misma red contra esta direccion (ver 4.16).
      (no hay enlace desde la tienda; se entra por URL, a proposito)
@@ -97,8 +124,7 @@ CLIENTE
    - Compra en la tienda. Solo ve y edita SUS datos, pedidos, carrito, puntos.
    - Nunca entra al panel interno.
 
-ROLES EMPRESARIALES (entran por la direccion secreta del panel; el menu se
-adapta al rol)
+ROLES EMPRESARIALES (entran por /<ruta-del-panel>/login.html; el menu se adapta al rol)
    Hay cuatro, como en un ERP comercial (SAP, Odoo, Dynamics):
    - ADMINISTRADOR : acceso total: CRM, SCM y ERP, Cuentas y equipo,
                      Nivel ERP y Panel por rol. Entra al
@@ -106,7 +132,8 @@ adapta al rol)
    - VENTAS        : Inicio (Dashboard CRM), Clientes (CRM), Productos
                      (SCM, solo consulta), Ordenes de clientes (ERP, SI
                      CAPTURA ordenes), Reportes (ERP), Promociones,
-                     Monedero, Pagos, Facturas, Devoluciones y Mi actividad.
+                     Cupones, Monedero, Pagos, Facturas, Devoluciones y Mi
+                     actividad.
                      Cuenta: laura.ventas@kozmok.mx
    - LOGISTICA     : Inicio (Dashboard SCM), Productos (SCM, con alta y
                      edicion), Inventario (SCM, con movimientos y pedidos de
@@ -156,7 +183,7 @@ Cuentas del panel (tras cargar db/database.sql)
    | Soporte       | Sofía Ramírez| sofia.soporte@kozmok.mx    | Soporte#KZ2026   |
    +---------------+--------------+----------------------------+------------------+
 
-   - Las cuatro entran por la direccion secreta del panel y las cuatro piden cambiar la
+   - Las cuatro entran por /<ruta-del-panel>/login.html y las cuatro piden cambiar la
      contraseña la primera vez (esas contraseñas iniciales vienen en este
      manual, asi que cualquiera que lo lea las conoce).
    - Ventas entra al Dashboard CRM; Logistica entra al Dashboard SCM;
@@ -253,8 +280,8 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    - Contrasenas nuevas: 8 caracteres o mas, mayusculas y minusculas, un
      numero y un simbolo; no puede ser de las mas usadas ni contener el
      correo o el nombre.
-   - Si la sesion del panel vence, cualquier pantalla regresa sola a la
-     entrada secreta del panel (la que se abrio en esa computadora).
+   - Si la sesion del panel vence, cualquier pantalla regresa sola a
+     /<ruta-del-panel>/login.html.
    - El servidor revisa el rol de la sesion en cada pantalla: aunque alguien
      cambie su rol en el navegador, solo ve lo que su rol real permite.
    - "Cerrar sesion": en la tienda esta en el menu de la cuenta (arriba a la
@@ -450,7 +477,8 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      monedero suficiente). El paso va en la direccion (?paso=2): "atras"
      del navegador regresa al paso anterior.
         2 Envio    : direccion guardada o nueva y notas para la entrega.
-        3 Pago     : metodo de pago y canje de puntos.
+        3 Pago     : metodo de pago (no viene ninguno marcado: hay que
+                     elegirlo para seguir), cupon y canje de puntos.
         4 Confirmar: revision de productos, envio y pago, cada uno con
                      "Cambiar", y "Confirmar pedido".
    - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
@@ -469,6 +497,12 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      y Total. Cada producto muestra tambien su promocion.
    - Usar puntos del Club: campo para canjear puntos en multiplos de 100
      (100 puntos = $10 de descuento). El total se recalcula al instante.
+   - Cupon de descuento: en el paso Pago, "Cupon de descuento" lista los
+     cupones disponibles de la cuenta (ver 3.6 "Mis cupones"). Se aplica
+     sobre el total con IVA, junto con los puntos, y aparece en el resumen,
+     en el comprobante y en la factura. Si la compra no llega al minimo del
+     cupon, se avisa y no se aplica. Si el pedido se cancela, el cupon
+     vuelve a quedar disponible.
    - Direccion de envio: escribir una nueva o elegir una guardada.
    - Metodo de pago:
         * PayPal o tarjeta de debito / credito (cobro real por PayPal; en
@@ -508,6 +542,23 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      (desde la tienda o desde el panel) se devuelven el stock y los puntos
      canjeados, se retiran los puntos que se hubieran ganado con el y se
      resta de las compras del cliente.
+   - CAMBIAR DE OPINION ANTES DE PAGAR: el pedido se crea al pulsar
+     "Confirmar pedido" (y el carrito se vacia). Si todavia no se paga:
+        * En "Paga tu pedido" (PayPal) esta "Cambiar metodo de pago o
+          regresar al carrito"; en la pantalla de gracias de SPEI o pago en
+          tienda, "Pagar de otra forma".
+        * Si se regresa con la flecha del navegador o "Regresar", el carrito
+          muestra arriba "Tu pedido ... esta apartado esperando tu pago" con
+          "Pagar ahora" (o "Ver ficha de pago") y "Regresar al carrito".
+     "Regresar al carrito" cancela ese pedido sin ningun cargo y sin correo
+     de cancelacion, regresa sus productos al carrito (con su garantia y
+     sumados a lo que ya hubiera, sin pasar de las existencias), libera el
+     cupon (queda elegido otra vez) y los puntos canjeados, y abre el paso
+     Pago. Ese pedido ya no aparece en Mis pedidos (el equipo lo ve como
+     cancelado, con la nota "El cliente lo regreso al carrito"). No se puede
+     si ya se pago o si el cliente ya aviso "Ya realice el pago".
+   - Si el tiempo para pagar se termina, el pedido se cancela solo y sus
+     productos tambien regresan al carrito.
    - Boton "Ya realice el pago": el cliente avisa al equipo (no confirma el
      pago por si solo).
    - Plazo de pago: SPEI 3 dias, pago en tienda 5 dias (transferencia de una
@@ -530,6 +581,12 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 
    Mi monedero (monedero.html)
       - Saldo disponible en pesos (y lo que esta por acreditar).
+      - Arriba dice de cuanto puede ser la siguiente recarga y, si no es el
+        limite por recarga, que limite la topa (saldo maximo, maximo del dia
+        o del mes). "Otro monto" no deja escribir mas que ese tope (lo ajusta
+        y lo explica). Si ya no se puede recargar (saldo maximo alcanzado,
+        maximo de recargas del dia o del mes) se muestra el motivo y no
+        aparece el formulario.
       - Recargar: montos rapidos ($100, $200, $500, $1,000) u otro monto
         (segun los limites del monedero) y metodo: PayPal o tarjeta (botones
         de PayPal; el saldo sube cuando PayPal confirma el cobro) o
@@ -539,6 +596,19 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
         ajuste del equipo), metodo, monto y saldo que dejo cada movimiento.
       - Si cancelas un pedido pagado con monedero, el total regresa solo al
         monedero (movimiento "Reembolso").
+
+   Mis cupones (cupones.html)
+      - Al confirmar el correo llega un CUPON DE BIENVENIDA (por defecto 10 %
+        de descuento, hasta $1,500, en compras desde $1,000 sin IVA ni envio,
+        valido 30 dias). Llega en un correo "Aqui esta tu regalo" y tambien
+        se ve aqui. Las cuentas que ya existian no lo reciben.
+      - Cada cupon muestra el descuento, el codigo (con "Copiar"), la compra
+        minima, la vigencia y su estado (Disponible, Usado, Vencido,
+        Cancelado). "Usar en mi carrito" abre el carrito con el cupon ya
+        elegido.
+      - "¿Problema con este cupon?" abre un ticket de Soporte con la
+        categoria "Un cupon de descuento" y el cupon ya ligado (ver 9).
+        Soporte puede extender su vigencia, reactivarlo o enviar uno nuevo.
 
    Mis pedidos (pedidos.html)
       - Cada pedido muestra un RASTREO VISUAL de 4 etapas con iconos y fecha:
@@ -649,8 +719,10 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
           Escribir codigo";
         - el codigo vence en 30 minutos y admite 5 intentos; "envíame otro
           codigo" manda uno nuevo (uno por minuto).
-     Al escribirlo bien la cuenta queda confirmada. Restablecer la contrasena
-     con el enlace del correo tambien la confirma.
+     Al escribirlo bien la cuenta queda confirmada y llega un segundo correo
+     de bienvenida con el CUPON DE DESCUENTO para la primera compra (la
+     pantalla tambien lo muestra; queda en Mi cuenta -> Mis cupones).
+     Restablecer la contrasena con el enlace del correo tambien la confirma.
    - En el panel, la ficha del cliente (CRM) muestra "Correo: Confirmado /
      Sin confirmar" y el boton "Marcar como confirmado" por si al cliente no
      le llega el codigo.
@@ -734,7 +806,7 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
 
 
 ===============================================================================
- 4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/admin/<codigo>/)
+ 4. LADO ADMIN  -  PANEL CRM  (http://localhost:3000/<ruta-del-panel>/login.html)
 ===============================================================================
 
 La barra lateral esta agrupada en cinco bloques: CRM, SCM, ERP, TIENDA y
@@ -1592,6 +1664,29 @@ NAVEGACION RAPIDA EN EL PANEL
         detalle de su pedido. Cada paso queda en la auditoria. Las
         devoluciones no se editan ni se borran (la base lo impide).
 
+   4.15g CUPONES  (admin/cupones.html)  [Admin, Ventas y Soporte]
+      - Indicadores: cupones disponibles (y cuantos vencen en 7 dias),
+        usados (y dados este mes), cupones de bienvenida y que % ya se uso,
+        y descuento otorgado (total, del mes y ventas hechas con cupon).
+      - Recuadro con la configuracion del cupon de bienvenida (.env
+        CUPON_BIENVENIDA_*) y, si no eres administrador, lo maximo que tu
+        rol puede dar.
+      - Tabla de todos los cupones: codigo, cliente (enlace a su ficha),
+        descuento y compra minima, origen (Bienvenida o Equipo, con quien lo
+        dio), vigencia, estado y en que pedido se uso (con lo que desconto).
+        Busqueda por codigo, cliente o correo; filtros por estado
+        (disponibles, vencen en 7 dias, usados, vencidos, cancelados) y por
+        origen.
+      - Lupa: detalle del cupon con su BITACORA (cada cambio con fecha,
+        quien y motivo).
+      - "Extender", "Reactivar" y "Cancelar", igual que en el ticket (ver 9);
+        todo pide motivo.
+      - "Dar cupon": se busca al cliente por nombre o correo y se elige
+        porcentaje (con descuento maximo) o monto fijo, compra minima,
+        vigencia, el nombre que vera el cliente y el motivo. Le llega por
+        correo y aparece en Mis cupones. Ventas y Soporte tienen tope
+        (CUPON_SOPORTE_*); el administrador no.
+
    PRODUCTOS DESACTIVADOS
       - Eliminar un producto con ventas o movimientos lo DESACTIVA. El panel
         avisa cuantos pedidos en proceso lo incluyen (se surten normal) y en
@@ -1607,14 +1702,13 @@ NAVEGACION RAPIDA EN EL PANEL
  5. ROLES INTERNOS  -  QUE VE Y HACE CADA UNO
 ===============================================================================
 
-Todos entran por la direccion secreta del panel (/admin/<codigo>/). El menu
-lateral se arma segun el rol.
+Todos entran por /<ruta-del-panel>/login.html. El menu lateral se arma segun el rol.
 
 VENTAS
    Ve: Inicio (Dashboard CRM), Clientes (CRM), Productos (SCM, solo
    consulta), Ordenes de clientes (ERP, y SI puede capturar ordenes
-   nuevas), Reportes (ERP), Promociones, Monedero y Pagos (TIENDA) y Mi
-   actividad. No ve nada mas (Impuestos es solo del administrador).
+   nuevas), Reportes (ERP), Promociones, Cupones, Monedero y Pagos (TIENDA)
+   y Mi actividad. No ve nada mas (Impuestos es solo del administrador).
    Flujo tipico:
    1. Inicio: clientes en riesgo y productos mas vendidos.
    2. Clientes: buscar al cliente, abrir su ficha y registrar ahi la
@@ -1722,8 +1816,11 @@ Movimientos
 Diseno de la tarjeta
    - KZK (por defecto): fondo oscuro con el monograma KZK de marca de agua y
      franja y detalles del color del nivel (Bronce, Plata, Oro, Platino).
-   - Clasico: el diseno anterior, degradado del color del nivel.
-   - Se cambia con los botones "Diseno de la tarjeta: KZK / Clasica" debajo
+   - Clasico: el diseno anterior, degradado del color del nivel con la
+     silueta de la mascota de marca de agua.
+   - Tibu: fondo azul de mar con burbujas, franja del color del nivel y
+     Tibu, la mascota de Kozmok, asomandose en la esquina.
+   - Se cambia con los botones "Diseno de la tarjeta: KZK / Clasica / Tibu" debajo
      de la tarjeta (Resumen y Club de puntos) o en Preferencias. Se guarda
      en la cuenta (clientes.preferencias.tarjeta), asi se respeta en
      cualquier dispositivo. Aplica a la tarjeta de socio y a la del Club.
@@ -1790,13 +1887,16 @@ servidor y las pantallas, asi que siempre coinciden.
 9.1 QUIEN REPORTA
    Cliente (soporte.html, en Mi cuenta -> Soporte, "Reportar un problema"):
    - Elige con que tiene el problema: acceso a su cuenta, productos,
-     carrito, un pedido, un pago, disponibilidad, cupon o promocion, la
+     carrito, un pedido, un pago, disponibilidad, promocion, UN CUPON DE
+     DESCUENTO (elige cual de sus cupones; tambien se llega desde Mis
+     cupones -> "¿Problema con este cupon?" o desde el checkout), la
      pagina no carga / va lenta / marca error, correos o notificaciones,
      garantia, devolucion, facturacion u otro.
    - Escribe asunto y que paso, y si quiere: pedido relacionado, en que
      parte de la tienda paso, el MENSAJE DE ERROR (con su folio), que tanto
      le afecta (no puedo comprar / funciona a medias / detalle menor) y
-     hasta 3 CAPTURAS de pantalla.
+     hasta 3 FOTOS o capturas (JPG, PNG o WebP; p. ej. un producto que llego
+     danado). En cada respuesta tambien puede mandar fotos, aun sin texto.
    - El navegador y el dispositivo se mandan solos (se leen del navegador).
    - Aviso fijo: nunca te pediremos tu contrasena, el numero completo de tu
      tarjeta, el CVV, tu NIP ni codigos de verificacion. Si alguien los
@@ -1894,6 +1994,17 @@ servidor y las pantallas, asi que siempre coinciden.
      resultado, area responsable, escalamiento y estado final.
    - PEDIDO RELACIONADO: se liga un pedido de quien reporto y se consulta
      (productos, estado, pago). Soporte no lo modifica.
+   - FOTOS: las de quien reporto se ven en el hilo (clic = grande) y Soporte
+     puede adjuntar hasta 3 al responder (p. ej. para mostrar como hacer
+     algo).
+   - CUPONES DEL CLIENTE (Administrador y Soporte): cuadro con los cupones
+     de la cuenta; el del caso va primero. "Dar cupon" (porcentaje con
+     descuento maximo o monto fijo, compra minima, vigencia y motivo; le
+     llega por correo y en Mis cupones), "Extender", "Reactivar" y
+     "Cancelar". Es una herramienta autorizada con limite: Soporte da hasta
+     30 % (maximo $1,000) o $1,000 fijos (.env CUPON_SOPORTE_*); para mas,
+     el administrador. Todo pide motivo y queda en la auditoria y en la
+     bitacora del ticket como accion realizada.
 
 9.5 RESPONDER  (formato y lo que se evita)
    - "Usar el formato de respuesta" arma las 6 partes: 1) entendemos el
@@ -2033,7 +2144,7 @@ Estructura
        admin/  ... garantias.html  recibo.html
        css/ style.css
        img/ producto.svg (imagen generica de producto)
-       admin/  login.html (se sirve solo en /admin/<codigo>/)
+       admin/  login.html (se sirve en /<ruta-del-panel>/login.html)
                dashboard.html clientes.html cliente.html
                interacciones.html evaluaciones.html soporte.html
                centro-soporte.html  (inicio del rol Soporte)

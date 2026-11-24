@@ -23,9 +23,11 @@ kozmok/
 ├── server.js              # API REST (Express), migraciones al arrancar y tareas cada minuto
 ├── seguridad.js           # sesiones, bloqueos, límites, filtros SQL/XSS, CSRF, CSP, contraseñas
 ├── notificaciones.js     # avisos del panel (campana) y por correo al equipo (incluye escalamientos y "Mis reportes técnicos")
+├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
+├── cupones.js            # cupones: bienvenida, compensaciones de Soporte y su uso en el checkout
+├── panel.js              # panel en dirección secreta (PANEL_RUTA): sirve public/admin, traduce enlaces y exige sesión y rol
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
-├── panel-oculto.js        # entrada secreta del panel (/admin/<PANEL_RUTA>/) y pantallas solo con sesión y rol
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
 ├── paypal.js              # API de PayPal (órdenes, captura y reembolsos)
 ├── facturama.js           # API de Facturama (CFDI 4.0)
@@ -52,7 +54,7 @@ kozmok/
     ├── armar-pc.html, comparar.html, socio.html, ayuda.html, terminos.html, 404.html
     ├── css/style.css, css/arcade.css     # arcade.css: estilo de la tienda (no del panel)
     ├── js/                         # api (fetch + controles numéricos), layout, chatbot, toast, soporte-ti (reglas de Soporte),
-    │                               #   icons (íconos, logo KZK y fantasmita), dos-pasos, fotos,
+    │                               #   icons (íconos, logo KZK y Tibu, la mascota), dos-pasos, fotos,
     │                               #   garantia, paypal-botones, recibo-render, graficas, vendor/
     └── admin/                      # una pantalla por sección del panel (centro-soporte = inicio de Soporte)
         └── js/
@@ -76,9 +78,8 @@ npm install
    `.env` no se sube a GitHub.
 3. Carga el esquema: `psql -U postgres -d kozmok -f db/database.sql`. Se
    puede repetir: borra todo y lo recrea.
-4. `npm start`. Tienda en http://localhost:3000; el panel en la dirección
-   secreta que muestra la consola (`/admin/<PANEL_RUTA>/`, se genera sola la
-   primera vez y queda en el `.env`). `/admin/login.html` ya no existe.
+4. `npm start`. Tienda en http://localhost:3000 y panel en
+   http://localhost:3000/<PANEL_RUTA>/login.html (la consola muestra la ruta).
 
 La base empieza sin clientes ni pedidos. Trae tres cuentas del panel (una
 por rol) que piden cambiar la contraseña al entrar; están en
@@ -131,14 +132,16 @@ existentes) **y** en `database.sql` (para bases nuevas).
 - **Rutas**: tienda en `/api/*`, panel en `/api/admin/*`. Todas las de
   `/api/admin/*` exigen sesión del equipo; `PERMISOS_API` (regex por ruta y
   método) más `admin/js/permisos.js` deciden qué rol entra a cada una.
-- **Panel oculto** (`panel-oculto.js`, antes de los archivos estáticos): la
-  entrada del equipo es `/admin/<PANEL_RUTA>/` (más `recuperar`,
-  `restablecer` y `activar`); `/admin/login.html` responde el mismo 404 que
-  cualquier dirección inventada y queda en Seguridad. Las demás pantallas de
-  `/admin/*.html` solo se entregan con sesión del equipo y si su rol puede
-  verlas (la clave que cada página le pasa a `renderAdminSidebar`, validada
-  con `permisos.js`). En el navegador, `rutaLoginPanel()` (api.js) regresa a
-  la entrada secreta que se abrió en ese equipo.
+- **Panel oculto** (`panel.js`, antes de los archivos estáticos): el panel se
+  sirve en `/<PANEL_RUTA>/...` y `/admin/...` responde el mismo 404 que
+  cualquier dirección inventada (los intentos de abrir el login quedan en
+  Seguridad). Al servir, los enlaces `/admin/...` de las pantallas, de las
+  respuestas de `/api/admin` y de los correos se cambian por la ruta
+  secreta. Dentro de esa ruta, las pantallas que no son de acceso (login,
+  recuperar, restablecer, activar) solo se entregan con sesión del equipo
+  (sin ella, al login con `?next=`) y si el rol de la sesión puede verlas
+  (la clave que cada página le pasa a `renderAdminSidebar`, validada con
+  `permisos.js`); si no, a su inicio.
 - **Soporte técnico TI**: las reglas del rol (estados, P1-P4, clasificación,
   metodología, escalamiento, filtro de datos sensibles) están en
   `public/js/soporte-ti.js`, que cargan el servidor (`require`) y las
@@ -212,6 +215,42 @@ para que cada rol reciba el enlace de la pantalla que sí abre. Rutas:
 `GET|PUT /api/admin/notificaciones/preferencias`. En el navegador,
 `Notifs` (admin-layout.js) pinta la campana y se actualiza con los avisos
 del menú.
+
+## Cupones
+
+`cupones.js` (tabla `cupones`, columnas `pedidos.cupon_id`,
+`pedidos.descuento_cupon` y `tickets.cupon_id`). Cada cupón es de una cuenta,
+de un solo uso, por porcentaje (con tope) o monto fijo, con compra mínima y
+vencimiento. El de **bienvenida** se crea al confirmar el correo
+(`darBienvenida`, con índice único por cliente) y un barrido en
+`tareasPeriodicas` cubre los demás caminos; un cursor deja fuera a las cuentas
+que ya existían. Llega por correo y se ve en `/cupones.html`. En el checkout,
+`cotizarLineas(..., { cupon })` lo aplica sobre el total con impuestos, igual
+que los puntos, así las devoluciones lo prorratean solas y la factura lo
+reparte como descuento. Al cancelar el pedido el cupón vuelve a quedar
+disponible. Rutas: `GET /api/clientes/:id/cupones`,
+`GET|POST /api/admin/clientes/:id/cupones` y `PUT /api/admin/cupones/:id`
+(`extender`, `reactivar`, `cancelar`; siempre con motivo, permiso `cupones`).
+Ventas y Soporte tienen tope en lo que regalan (`CUPON_SOPORTE_*`).
+La pantalla del panel es `admin/cupones.html` (`GET /api/admin/cupones` con
+filtros `q`, `estado`, `origen`; `GET /api/admin/cupones/clientes?q=` para
+elegir a quién darlo).
+
+## Dirección secreta del panel
+
+`panel.js` sirve `public/admin/` en `/<PANEL_RUTA>/` (del `.env`, o generada y
+guardada en `.panel-ruta`). `/admin/...` responde 404 (se normaliza: mayúsculas,
+`%61`, barras invertidas). Al servir HTML/JS/CSS del panel cambia los enlaces a
+archivos (`/admin/x.html`, `/admin/js/y.js`) por la ruta secreta y agrega
+`<meta name="kz-panel">`, que `api.js`, `theme.js`, `icons.js` y `layout.js` usan
+para saber que están en el panel. Las llamadas `api('/admin/...')` no cambian.
+`panel.json` hace lo mismo con las cadenas de las respuestas de `/api/admin`
+(enlaces de notificaciones y de la bandeja de soporte) y `panel.url()` con los
+correos al equipo.
+
+Los tickets aceptan hasta 3 fotos por mensaje (`ticket_adjuntos`, mismas
+validaciones que los reclamos de garantía) y se ven en
+`GET /api/clientes/:id/tickets/:t/fotos/:f` y `GET /api/admin/tickets/:t/fotos/:f`.
 
 ## Chatbot de recomendaciones
 

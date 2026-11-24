@@ -3,32 +3,16 @@
 
 const API_BASE = '/api';
 
-// La entrada del panel es una dirección secreta (/admin/<PANEL_RUTA>/, ver
-// panel-oculto.js): /admin/login.html ya no existe. Las páginas de acceso
-// (iniciar sesión, recuperar, restablecer, activar) llevan
-// data-panel-acceso en <html>; al abrir una, este navegador recuerda la
-// dirección para volver a ella al cerrar sesión o si la sesión vence.
-const PANEL_ACCESO = document.documentElement.hasAttribute('data-panel-acceso');
-const RUTA_PANEL = /^\/admin\/[A-Za-z0-9_-]{16,64}\/$/;
-if (PANEL_ACCESO) {
-    const base = (location.pathname.match(/^\/admin\/[A-Za-z0-9_-]{16,64}\//) || [])[0];
-    if (base) { try { localStorage.setItem('kz_panel_acceso', base); } catch { /* sin storage */ } }
-}
-// Entrada del panel que conoce este navegador; si nunca la abrió, la tienda.
-function rutaLoginPanel() {
-    let r = null;
-    try { r = localStorage.getItem('kz_panel_acceso'); } catch { /* sin storage */ }
-    return r && RUTA_PANEL.test(r) ? r : '/';
-}
-window.rutaLoginPanel = rutaLoginPanel;
-
+// Dirección del panel (la pone el servidor en cada pantalla del panel;
+// en la tienda no existe).
+const RUTA_PANEL = (document.querySelector('meta[name="kz-panel"]') || {}).content || '';
 async function api(path, options = {}) {
     // Etapa 5: la sesión viaja sola en una cookie HttpOnly (kz_sesion en la
     // tienda, kz_admin en el panel) que el JavaScript no puede leer, así
     // que un script inyectado tampoco puede robarla. Las pantallas del panel
     // avisan con "X-Kz-Panel" para que, si el navegador tiene las dos
     // sesiones abiertas, las rutas compartidas usen la del equipo.
-    const esPanel = location.pathname.startsWith('/admin/');
+    const esPanel = !!RUTA_PANEL;
     const res = await fetch(API_BASE + path, {
         credentials: 'same-origin',
         headers: {
@@ -41,9 +25,9 @@ async function api(path, options = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         // Sesión interna vencida/ inválida -> de vuelta al login del panel
-        if (res.status === 401 && esPanel && !PANEL_ACCESO) {
+        if (res.status === 401 && RUTA_PANEL && !location.pathname.endsWith('login.html')) {
             localStorage.removeItem('kz_usuario');
-            location.href = rutaLoginPanel();
+            location.href = RUTA_PANEL + 'login.html';
         }
         const err = new Error(data.message || data.error || 'Error en la solicitud');
         err.status = res.status;
@@ -354,8 +338,8 @@ const ReglasPass = {
 window.addEventListener('pageshow', (ev) => {
     if (!ev.persisted) return;   // carga normal: cada página revisa su sesión
     const p = location.pathname;
-    if (p.startsWith('/admin/') && !PANEL_ACCESO) {
-        if (!Sesion.usuario()) { location.replace(rutaLoginPanel()); return; }
+    if (RUTA_PANEL && !/\/(login|activar|recuperar|restablecer)\.html$/.test(p)) {
+        if (!Sesion.usuario()) { location.replace(RUTA_PANEL + 'login.html'); return; }
         api('/admin/whoami').catch(() => {});   // si la sesión ya no existe, api() manda al login
         return;
     }
@@ -487,6 +471,23 @@ function formatoFechaHora(fecha) {
     return new Date(fecha).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 // Escapa texto antes de meterlo en HTML (contra XSS al mostrar datos).
+// Pedido sin pagar -> sus productos regresan al carrito (para cambiar el
+// método de pago, la dirección o lo que se lleva). Pide confirmación.
+async function regresarPedidoAlCarrito(id, { numero = '', paso = 3 } = {}) {
+    const ok = await confirmar(`El pedido ${numero} se cancela sin ningún cargo y sus productos regresan a tu carrito para que elijas otro método de pago o hagas cambios.`,
+        { okText: 'Regresar al carrito' });
+    if (!ok) return false;
+    try {
+        const r = await api(`/pedidos/${id}/al-carrito`, { method: 'POST' });
+        try { if (r.cupon) sessionStorage.setItem('kz_cupon', r.cupon); } catch { /* nada */ }
+        if (typeof actualizarBadgeCarrito === 'function') actualizarBadgeCarrito();
+        toast(r.message, 'ok');
+        if (location.pathname === '/carrito.html') return r;
+        location.href = '/carrito.html' + (r.productos && paso > 1 ? '?paso=' + paso : '');
+        return r;
+    } catch (e) { toast(e.message, 'error'); return false; }
+}
+
 function escHTML(t) {
     return String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

@@ -46,7 +46,11 @@ montarCuenta('soporte', async (panel, P) => {
         await vistaLista(panel);
         // Desde "Mis pedidos" → "Ayuda con este pedido"
         if (qs.get('pedido')) formTicket({ categoria: 'pedido', pedido_id: Number(qs.get('pedido')) });
-        else if (qs.get('nuevo')) formTicket({ categoria: S.CATEGORIAS[qs.get('nuevo')] ? qs.get('nuevo') : 'general' });
+        // Desde "Mis cupones" o el checkout (?nuevo=1&categoria=cupon&cupon=ID&asunto=…)
+        else if (qs.get('nuevo')) {
+            const cat = qs.get('categoria') || qs.get('nuevo');
+            formTicket({ categoria: S.CATEGORIAS[cat] ? cat : 'general', cupon_id: Number(qs.get('cupon')) || null, asunto: qs.get('asunto') || '' });
+        }
     }
 });
 
@@ -105,7 +109,8 @@ async function vistaHilo(panel, id) {
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
             <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
             <p><span class="mono">${t.folio}</span> · ${estadoTag(t.estado)}
-               ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}</p>
+               ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}
+               ${t.cupon_codigo ? ` · Cupón <a class="mono" href="/cupones.html">${escHTML(t.cupon_codigo)}</a>` : ''}</p>
         </div>
         ${banner ? `<div class="st-aviso st-aviso-${banner[0]}">${icon('help', 16)}<div><strong>${banner[1]}</strong><div>${banner[2]}</div></div></div>` : ''}
         ${datos.length ? `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:600">Datos de tu reporte</summary>
@@ -115,7 +120,7 @@ async function vistaHilo(panel, id) {
                 <div class="hilo-msg ${m.autor === 'cliente' ? 'mio' : 'equipo'}">
                     <div class="hm-meta">${m.autor === 'cliente' ? 'Tú' : escHTML(m.usuario_nombre || 'Soporte Kozmok')} · ${formatoFechaHora(m.fecha)}</div>
                     <div class="hm-txt">${escHTML(m.mensaje)}</div>
-                    ${(m.fotos || []).length ? `<div class="foto-lista" style="margin-top:8px">${m.fotos.map((f) => `<a href="/api/clientes/${CID}/tickets/${t.id}/adjuntos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/clientes/${CID}/tickets/${t.id}/adjuntos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
+                    ${(m.fotos || []).length ? `<div class="foto-lista" style="margin-top:8px">${m.fotos.map((f) => `<a href="/api/clientes/${CID}/tickets/${t.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/clientes/${CID}/tickets/${t.id}/fotos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
                 </div>
             `).join('')}
         </div>
@@ -178,6 +183,8 @@ function formTicket(previo = {}) {
             <select id="tk-pedido"><option value="">Cargando tus pedidos…</option></select>
             <small id="tk-ped-nota" style="color:var(--text-muted)"></small>
         </div>
+        <div class="field" id="tk-cup-wrap" style="display:none"><label for="tk-cupon">¿Qué cupón?</label>
+            <select id="tk-cupon"><option value="">Cargando tus cupones…</option></select></div>
         <div class="field"><label for="tk-desc">¿Qué pasó?</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué intentabas hacer, qué esperabas que pasara y qué pasó."></textarea></div>
         <div class="field"><label for="tk-sec">¿En qué parte de la tienda?</label>
             <select id="tk-sec"><option value="">No estoy seguro</option>${Object.entries(S.SECCIONES).filter(([k]) => k !== 'panel').map(([k, v]) => `<option value="${k}">${escHTML(v)}</option>`).join('')}</select></div>
@@ -198,6 +205,19 @@ function formTicket(previo = {}) {
     SEL_FOTOS = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
     document.getElementById('modal-generico').classList.add('open');
     cargarPedidosTicket(previo.pedido_id);
+    cargarCuponesTicket(previo.cupon_id);
+}
+
+// Cupones de la cuenta, para la categoría "Un cupón de descuento".
+let CUPONES_CLIENTE = null;
+async function cargarCuponesTicket(elegido) {
+    const sel = document.getElementById('tk-cupon');
+    try { if (!CUPONES_CLIENTE) CUPONES_CLIENTE = await api(`/clientes/${CID}/cupones`); } catch { CUPONES_CLIENTE = []; }
+    if (!document.body.contains(sel)) return;
+    sel.innerHTML = '<option value="">Ninguno en particular</option>' + CUPONES_CLIENTE.map((c) =>
+        `<option value="${c.id}">${escHTML(c.codigo)} · ${escHTML(c.beneficio)} · ${escHTML(c.estado)}</option>`).join('');
+    if (elegido && CUPONES_CLIENTE.some((c) => Number(c.id) === Number(elegido))) sel.value = String(elegido);
+    mostrarPedidoTicket();
 }
 
 // Categorías en las que tiene sentido elegir un pedido.
@@ -223,6 +243,8 @@ function mostrarPedidoTicket() {
     if (!ver) document.getElementById('tk-pedido').value = '';
     // En "Un pedido" se pide elegirlo si tiene pedidos.
     wrap.querySelector('label span').textContent = cat === 'pedido' && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length ? '' : '(opcional)';
+    const wc = document.getElementById('tk-cup-wrap');
+    if (wc) { wc.style.display = cat === 'cupon' ? '' : 'none'; if (cat !== 'cupon') document.getElementById('tk-cupon').value = ''; }
 }
 
 async function crearTicket() {
@@ -235,6 +257,7 @@ async function crearTicket() {
         seccion: document.getElementById('tk-sec').value || null,
         mensaje_error: document.getElementById('tk-err').value.trim() || null,
         impacto: imp ? imp.value : null,
+        cupon_id: Number(document.getElementById('tk-cupon').value) || null,
         fotos: SEL_FOTOS ? SEL_FOTOS.fotos() : [],
     };
     if (!body.asunto || !body.descripcion) { toast('Escribe el asunto y qué pasó', 'warn'); return; }

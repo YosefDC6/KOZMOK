@@ -179,7 +179,8 @@ async function responderRapido(id) {
             ${ultimos.map((m) => `
                 <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
                     <div class="hm-meta">${m.autor === 'equipo' ? escHTML(m.usuario_nombre || 'Equipo') : escHTML(m.usuario_nombre || TK.reportante_nombre)} · ${formatoFechaHora(m.fecha)}</div>
-                    <div class="hm-txt">${escHTML(m.mensaje)}</div>
+                    ${m.mensaje ? `<div class="hm-txt">${escHTML(m.mensaje)}</div>` : ''}
+                    ${(m.fotos || []).length ? `<div class="foto-lista">${m.fotos.map((f) => `<a href="/api/admin/tickets/${TK.id}/fotos/${f.id}" target="_blank" rel="noopener" class="foto-prev"><img src="/api/admin/tickets/${TK.id}/fotos/${f.id}" alt="" loading="lazy" /></a>`).join('')}</div>` : ''}
                 </div>`).join('')}
         </div>
         <div class="field" style="margin-top:12px"><textarea id="cs-resp" rows="4" placeholder="Escribe la respuesta…"></textarea></div>

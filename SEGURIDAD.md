@@ -19,7 +19,7 @@ Guía para la **defensa**: qué ataques se prueban, cómo se hacen contra nuestr
 | **Inyección SQL** | `' OR '1'='1`, `UNION SELECT`, `; DROP TABLE` | Consultas parametrizadas en todo el servidor + filtro que bloquea y registra + ids numéricos validados + errores de la base ocultos | Seguridad → Eventos (“Inyección SQL”) |
 | **CSRF** | Que otro sitio mande una petición con la sesión de la víctima | Cookie SameSite=Strict y verificación del `Origin` | Seguridad → Eventos (“CSRF”) |
 | **IDOR** | Cambiar el id de la URL para ver datos de otro cliente | Cada ruta compara el id con el de la sesión | Seguridad → Eventos (“Acceso a datos ajenos”) |
-| **Encontrar el panel** | Escribir `/admin/login.html` (o variantes) para llegar al login del equipo y atacarlo | Entrada en una dirección secreta de 144 bits (`PANEL_RUTA`); las direcciones conocidas dan el mismo 404 que una inventada; sin sesión ninguna pantalla del panel se entrega | Seguridad → Eventos (“Intento de abrir el panel por su dirección pública”) |
+| **Encontrar el panel** | Escribir `/admin/login.html` (o variantes) para llegar al login del equipo y atacarlo | Panel en una dirección secreta (`PANEL_RUTA`); `/admin/...` da el mismo 404 que una dirección inventada; sin sesión ninguna pantalla del panel se entrega | Seguridad → Eventos (“Intento de abrir el panel por su dirección pública”) |
 | **Ingeniería social en soporte** | Pedir (o que alguien escriba) contraseñas, tarjeta completa, CVV o códigos en un ticket | El servidor rechaza respuestas de Soporte que piden esos datos y oculta tarjetas, CVV, NIP y contraseñas antes de guardar; el cliente no ve el registro interno | Bitácora del ticket ("Se ocultaron N datos sensibles") |
 | **Robo de rol** | Cambiar el rol guardado en el navegador (p. ej. Logística → admin) para abrir pantallas de otro rol | El servidor valida el rol de la sesión en cada pantalla y en cada llamada a la API; el rol del navegador no cuenta | Regresa a su inicio; la API responde 403 |
 
@@ -234,23 +234,22 @@ del proyecto; las reglas para el cliente en la tienda, `terminos.html`.
 **Ataque.** Quien conoce el proyecto sabe que el panel estaba en `/admin/login.html`: con solo agregar eso a la dirección llegaba al login del equipo para probar contraseñas. Y quien ya trabaja en el panel (por ejemplo, Logística) puede abrir las herramientas del navegador, cambiar su rol a `admin` en `localStorage` (`kz_usuario`) y escribir la dirección de una pantalla que no le toca, como *Cuentas y equipo*.
 
 **Qué se ve.**
-- `/admin/login.html`, `/admin/LOGIN.HTML`, `/admin/%6Cogin.html`, `/admin/js/../login.html`, `/admin/` y cualquier otra pantalla del panel sin sesión responden **la misma página 404** que una dirección inventada (mismo código y mismo tamaño): no se puede saber que el panel existe. Cada intento de abrir el login por su dirección pública queda en *Seguridad → Eventos*.
-- La entrada real es `http://localhost:3000/admin/<PANEL_RUTA>/`, un código aleatorio de 24 caracteres que la consola muestra al arrancar y que vive en el `.env` (no se sube a GitHub). De ahí salen también `…/recuperar`, `…/restablecer` y `…/activar` (los correos del equipo ya traen esos enlaces).
-- Con el rol cambiado en el navegador, el servidor revisa el rol **de la sesión** y regresa a la persona a su inicio; la API responde 403 y el menú vuelve a su rol real al recargar.
+- `/admin/login.html`, `/admin/LOGIN.HTML`, `/admin/%6Cogin.html`, `/admin/js/../login.html`, `/admin/` y cualquier otra dirección bajo `/admin` responden **la misma página 404** que una dirección inventada: no se puede saber que el panel existe. Cada intento de abrir el login por su dirección conocida queda en *Seguridad → Eventos*.
+- La entrada real es `http://localhost:3000/<PANEL_RUTA>/login.html`. La consola la muestra al arrancar; si el `.env` no trae `PANEL_RUTA`, el servidor inventa una al azar (`kz-` + 16 caracteres) y la guarda en `.panel-ruta` (no se sube a GitHub).
+- Dentro de esa ruta, una pantalla del panel sin sesión manda al login (`…/login.html?next=…`) y, después de entrar, abre la pantalla pedida. Con el rol cambiado en el navegador, el servidor revisa el rol **de la sesión** y regresa a la persona a su inicio; la API responde 403 y el menú vuelve a su rol real al recargar.
 
 **A mano.**
 ```bash
-curl -i http://localhost:3000/admin/login.html          # 404, igual que /no-existe.html
-curl -i http://localhost:3000/admin/dashboard.html      # 404 sin sesión
-curl -i http://localhost:3000/admin/<PANEL_RUTA>/        # 200: la entrada del equipo
+curl -i http://localhost:3000/admin/login.html                 # 404, igual que /no-existe.html
+curl -i http://localhost:3000/<PANEL_RUTA>/login.html          # 200: la entrada del equipo
+curl -i http://localhost:3000/<PANEL_RUTA>/dashboard.html      # 302 al login (sin sesión)
 ```
 
 **Defensas.**
-- `panel-oculto.js` va **antes** de los archivos estáticos: ninguna página de `/admin` se sirve directo de la carpeta. La ruta se revisa como la entendería el servidor de archivos (decodificada, sin `..`, sin distinguir mayúsculas, como en Windows), así que las variantes no se cuelan.
-- La dirección secreta se compara en tiempo constante y tiene 144 bits al azar: no se puede adivinar. Para cambiarla basta con editar `PANEL_RUTA` en el `.env` y reiniciar; la anterior deja de servir.
-- Cada pantalla del panel pide la misma clave de permiso que usa el menú (`renderAdminSidebar('…')`) y el servidor la valida con `permisos.js` contra el rol guardado en la base, no contra lo que diga el navegador. La API ya hacía lo mismo con `PERMISOS_API`.
-- Los correos del equipo (bienvenida, recuperar contraseña y notificaciones del panel) llevan el enlace por la entrada secreta. Para abrir una pantalla concreta usan `/admin/<PANEL_RUTA>/?next=/admin/soporte.html?ticket=5`: la cookie `SameSite=Strict` no viaja al dar clic desde el correo, así que la entrada revisa la sesión (o la pide) y luego abre esa pantalla. `next` solo acepta pantallas del panel, nunca otro sitio.
-- Las páginas de acceso salen con `Cache-Control: no-store` y `X-Robots-Tag: noindex`, y `Referrer-Policy: same-origin` evita que la dirección secreta viaje a otros sitios.
+- `panel.js` va **antes** de los archivos estáticos: la carpeta `public/admin` no se sirve directo. Sirve el panel bajo la ruta secreta y, al entregarlo, cambia los enlaces `/admin/...` de las pantallas, de las respuestas de `/api/admin` y de los correos por la ruta secreta. La ruta se revisa como la entendería el servidor de archivos (decodificada, sin `..`, sin distinguir mayúsculas, como en Windows), así que las variantes no se cuelan.
+- Cada pantalla (menos las de acceso: login, recuperar, restablecer y activar) pide una sesión válida del equipo y la misma clave de permiso que usa el menú (`renderAdminSidebar('…')`); el servidor la valida con `permisos.js` contra el rol guardado en la base, no contra lo que diga el navegador. La API ya hacía lo mismo con `PERMISOS_API`.
+- Los enlaces de los correos del equipo abren su pantalla aunque la cookie `SameSite=Strict` no viaje al dar clic desde el correo: el servidor manda al login con `?next=` y el login, que sí lleva la cookie, abre la pantalla. `next` solo acepta pantallas de la ruta secreta, nunca otro sitio.
+- Las pantallas del panel salen con `X-Robots-Tag: noindex` y `Referrer-Policy: same-origin` evita que la dirección secreta viaje a otros sitios.
 - Esconder la entrada no reemplaza a las demás defensas: el login del panel sigue con bloqueo por intentos, captcha y verificación en dos pasos.
 
 ## Dónde está cada cosa
@@ -258,7 +257,7 @@ curl -i http://localhost:3000/admin/<PANEL_RUTA>/        # 200: la entrada del e
 | Archivo | Qué contiene |
 |---|---|
 | `kozmok/seguridad.js` | Cabeceras/CSP, límites, bloqueos, sesiones, filtros SQL y XSS, política de contraseñas |
-| `kozmok/panel-oculto.js` | Entrada secreta del panel (`PANEL_RUTA`) y pantallas del panel solo con sesión y rol |
+| `kozmok/panel.js` | Panel en la dirección secreta (`PANEL_RUTA`), traducción de enlaces y pantallas solo con sesión y rol |
 | `kozmok/server.js` | Rutas `/api/auth/*`, uso de los middlewares, rutas del panel `/api/admin/seguridad/*` |
 | `kozmok/db/database.sql` | Tablas `sesiones`, `intentos_login`, `bloqueos`, `eventos_seguridad`, `recuperaciones`, `correos_salida` |
 | `kozmok/public/admin/seguridad.html` | Tablero (Panel → Cuenta → Seguridad, solo administrador): eventos, intentos, bloqueos, sesiones activas y correos enviados |

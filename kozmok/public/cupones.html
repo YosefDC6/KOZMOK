@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mis cupones · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<div class="cuenta-shell">
+    <nav class="cuenta-nav" id="cuenta-nav"></nav>
+    <main class="cuenta-panel" id="cuenta-panel"><div class="empty-state">Cargando…</div></main>
+</div>
+
+<div id="footer-placeholder"></div>
+
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/chatbot.js"></script>
+<script src="/js/cuenta.js"></script>
+<script>
+// Mis cupones: los cupones de descuento de la cuenta (el de bienvenida y los
+// que manda Soporte). Se eligen al pagar; si alguno da problemas, desde aquí
+// se abre un ticket ya ligado a ese cupón.
+const ESTADO_TXT = { disponible: 'Disponible', usado: 'Usado', vencido: 'Vencido', cancelado: 'Cancelado' };
+const ORIGEN_TXT = { bienvenida: 'Regalo de bienvenida', soporte: 'De Soporte' };
+const fecha = (f) => new Date(f).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' });
+
+function diasRestantes(f) {
+    const d = Math.ceil((new Date(f).getTime() - Date.now()) / 86400000);
+    return d <= 0 ? 'vence hoy' : d === 1 ? 'vence mañana' : `quedan ${d} días`;
+}
+
+function tarjetaCupon(c) {
+    const disp = c.estado === 'disponible';
+    const ayuda = `/soporte.html?nuevo=1&categoria=cupon&cupon=${c.id}&asunto=${encodeURIComponent('Problema con mi cupón ' + c.codigo)}`;
+    return `
+        <article class="cupon ${disp ? '' : 'apagado'}">
+            <div class="cupon-izq">
+                <span class="cupon-ico">${icon('tag', 22)}</span>
+                <span class="cupon-origen">${escHTML(c.descripcion || ORIGEN_TXT[c.origen] || 'Cupón')}</span>
+            </div>
+            <div class="cupon-cuerpo">
+                <div class="cupon-titulo">${escHTML(c.beneficio)}</div>
+                <div class="cupon-codigo">
+                    <code>${escHTML(c.codigo)}</code>
+                    ${disp ? `<button type="button" class="link-btn" onclick="copiar('${escHTML(c.codigo)}')">Copiar</button>` : ''}
+                </div>
+                <ul class="cupon-reglas">
+                    ${c.minimo > 0 ? `<li>En compras desde ${formatoMoneda(c.minimo)} (sin IVA ni envío)</li>` : '<li>Sin compra mínima</li>'}
+                    <li>Se usa una sola vez</li>
+                    ${c.vence ? `<li>${disp ? `Válido hasta el ${fecha(c.vence)} · ${diasRestantes(c.vence)}` : `Vigencia: hasta el ${fecha(c.vence)}`}</li>` : ''}
+                    ${c.estado === 'usado' ? `<li>Lo usaste${c.numero_orden ? ` en el pedido ${escHTML(c.numero_orden)}` : ''}${c.fecha_uso ? ` el ${fecha(c.fecha_uso)}` : ''}</li>` : ''}
+                </ul>
+                <div class="cupon-acciones">
+                    <span class="tag cupon-estado ${c.estado}">${ESTADO_TXT[c.estado] || c.estado}</span>
+                    ${disp ? `<a class="btn btn-primary btn-sm" href="/carrito.html?cupon=${encodeURIComponent(c.codigo)}">${icon('cart', 14)} Usar en mi carrito</a>` : ''}
+                    <a class="btn btn-ghost btn-sm" href="${ayuda}">${icon('help', 14)} ¿Problema con este cupón?</a>
+                </div>
+            </div>
+        </article>`;
+}
+
+async function copiar(txt) {
+    try { await navigator.clipboard.writeText(txt); toast('Código copiado', 'ok'); }
+    catch { toast(txt, 'info'); }
+}
+
+montarCuenta('cupones', async (panel, P) => {
+    const lista = await api(`/clientes/${P.id}/cupones`);
+    const disponibles = lista.filter((c) => c.estado === 'disponible');
+    const otros = lista.filter((c) => c.estado !== 'disponible');
+    panel.innerHTML = `
+        <div class="cuenta-head">
+            <h1>Mis cupones</h1>
+            <p>Tus cupones de descuento. Los eliges al pagar, en el paso "Pago" del carrito.</p>
+        </div>
+        ${!lista.length ? `<div class="empty-state">Todavía no tienes cupones.<br>Cuando confirmes tu correo te llega uno de bienvenida.</div>` : ''}
+        ${disponibles.length ? `<h3 class="cupon-seccion">Disponibles</h3><div class="cupon-lista">${disponibles.map(tarjetaCupon).join('')}</div>` : ''}
+        ${otros.length ? `<h3 class="cupon-seccion">Usados o vencidos</h3><div class="cupon-lista">${otros.map(tarjetaCupon).join('')}</div>` : ''}
+        <div class="card cupon-ayuda">
+            ${icon('help', 18)}
+            <div><strong>¿Tu cupón no se aplicó, venció antes de poder usarlo o tienes otra duda?</strong>
+                <span>Abre un ticket en Soporte desde el cupón ("¿Problema con este cupón?") y lo revisamos: podemos extender su vigencia o enviarte otro.</span></div>
+        </div>`;
+});
+</script>
+</body>
+</html>

@@ -19,6 +19,7 @@
 <script src="/js/icons.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/soporte-ti.js"></script>
+<script src="/js/fotos.js"></script>
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
@@ -152,14 +153,17 @@ async function vistaCaso(id) {
                 ${registroHTML()}
                 ${bitacoraHTML()}
                 <div class="card" id="tk-pedido"><p style="margin:0;color:var(--text-muted)">Cargando pedido…</p></div>
+                ${T.cliente_id && puedeVer((Sesion.usuario() || {}).rol, 'cupones') ? '<div class="card" id="tk-cupones"><p style="margin:0;color:var(--text-muted)">Cargando cupones…</p></div>' : ''}
             </aside>
         </div>`;
     document.getElementById('resp').addEventListener('input', revisarRespuesta);
+    SEL_RESP = FotosReclamo.selector(document.getElementById('resp-fotos'), document.getElementById('resp-prev'), { alError: (m) => toast(m, 'warn') });
     ['c-prioridad', 'c-clasificacion', 'c-alcance'].forEach((x) => document.getElementById(x).addEventListener('change', pintarSugerida));
     pintarSugerida();
     revisarRespuesta();
     if (DIAG) pintarDiagnostico();
     pintarPedido();
+    pintarCupones();
 }
 
 function avisosCaso() {
@@ -192,6 +196,7 @@ function datosReporteHTML() {
         ['Evidencias', nFotos ? `${nFotos} captura(s) en la conversación` : falta('evidencia')],
         ['Impacto (según quien reporta)', T.impacto ? escHTML(S.IMPACTOS[T.impacto]) : falta('impacto')],
         ['Pedido', T.numero_orden ? `<span class="mono">${escHTML(T.numero_orden)}</span>` : '<span class="st-sub">—</span>'],
+        ...(T.cupon_codigo ? [['Cupón', `<span class="mono">${escHTML(T.cupon_codigo)}</span>`]] : []),
     ];
     return `<div class="card"><div class="st-card-head"><h3>Datos del reporte</h3>
             ${(T.faltantes || []).length ? `<button class="btn btn-ghost btn-sm" onclick="pedirFaltantes()">Pedir lo que falta</button>` : ''}</div>
@@ -220,7 +225,7 @@ function hiloHTML() {
         <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
             <div class="hm-meta">${m.autor === 'equipo' ? `${escHTML(m.usuario_nombre || 'Soporte')} · Soporte` : escHTML(m.usuario_nombre || T.reportante_nombre)} · ${formatoFechaHora(m.fecha)}</div>
             <div class="hm-txt">${escHTML(m.mensaje)}</div>
-            ${(m.fotos || []).length ? `<div class="st-fotos">${m.fotos.map((f) => `<a href="/api/admin/tickets/${T.id}/adjuntos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/tickets/${T.id}/adjuntos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
+            ${(m.fotos || []).length ? `<div class="st-fotos">${m.fotos.map((f) => `<a href="/api/admin/tickets/${T.id}/fotos/${f.id}" target="_blank" rel="noopener"><img src="/api/admin/tickets/${T.id}/fotos/${f.id}" alt="${escHTML(f.nombre || 'captura')}" loading="lazy" /></a>`).join('')}</div>` : ''}
         </div>`).join('');
 }
 
@@ -232,6 +237,9 @@ function respuestaHTML(borrador) {
             <button class="btn btn-ghost btn-sm" onclick="usarFormato()">${icon('clipboard', 14)} Usar el formato de respuesta</button></div>
         ${cerrado ? '<p class="st-sub">El ticket está cerrado. Para responder, reábrelo cambiando su estado.</p>' : ''}
         <textarea id="resp" rows="8" ${cerrado ? 'disabled' : ''} placeholder="Escribe en un lenguaje claro y amable. Usa el formato de 6 partes si no sabes por dónde empezar.">${escHTML(borrador)}</textarea>
+        <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Adjuntar fotos<input type="file" id="resp-fotos" accept="image/*" multiple hidden ${cerrado ? 'disabled' : ''} /></label>
+            <small>Hasta 3, por ejemplo para mostrar cómo hacer algo.</small></div>
+        <div class="foto-lista" id="resp-prev"></div>
         <div id="resp-avisos"></div>
         <div class="st-resp-pie">
             <label>Después de enviar, el ticket queda
@@ -276,12 +284,14 @@ function revisarRespuesta() {
     const btn = document.getElementById('btn-responder');
     if (btn && T.estado !== 'cerrado') btn.disabled = bloquea;
 }
+let SEL_RESP = null;
 async function responder() {
     const mensaje = document.getElementById('resp').value.trim();
-    if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
+    const fotos = SEL_RESP ? SEL_RESP.fotos() : [];
+    if (!mensaje && !fotos.length) { toast('Escribe una respuesta o adjunta una foto', 'warn'); return; }
     const estado = document.getElementById('resp-estado').value || undefined;
     try {
-        const r = await api(`/admin/tickets/${T.id}/mensajes`, { method: 'POST', body: { mensaje, estado } });
+        const r = await api(`/admin/tickets/${T.id}/mensajes`, { method: 'POST', body: { mensaje, fotos, estado } });
         document.getElementById('resp').value = '';
         toast(r.message, 'ok');
         vistaCaso(T.id);
@@ -563,6 +573,79 @@ async function desligarPedido() {
     if (!(await confirmar('¿Quitar el pedido de este caso? El pedido no cambia.', { okText: 'Quitar' }))) return;
     try { const r = await api(`/admin/tickets/${T.id}`, { method: 'PUT', body: { pedido_id: 0 } }); toast(r.message, 'ok'); vistaCaso(T.id); }
     catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Cupones del cliente (herramienta autorizada con límites; ver cupones.js) ----
+// Soporte puede dar hasta el máximo de su rol y siempre con motivo; cada
+// cambio queda en la auditoría y en la bitácora del ticket.
+const EST_CUP = { disponible: 'Disponible', usado: 'Usado', vencido: 'Vencido', cancelado: 'Cancelado' };
+const COLOR_CUP = { disponible: 'var(--success)', usado: 'var(--text-muted)', vencido: 'var(--warning)', cancelado: 'var(--danger)' };
+async function pintarCupones() {
+    const caja = document.getElementById('tk-cupones');
+    if (!caja) return;
+    let lista = [];
+    try { lista = await api(`/admin/clientes/${T.cliente_id}/cupones`); } catch (e) { caja.innerHTML = `<p style="margin:0">${escHTML(e.message)}</p>`; return; }
+    lista.sort((a, b) => (b.id === T.cupon_id) - (a.id === T.cupon_id));   // el del caso primero
+    caja.innerHTML = `
+        <div class="st-card-head"><h3>Cupones del cliente</h3>
+            <button class="btn btn-outline btn-sm" onclick="darCupon()">${icon('plus', 14)} Dar cupón</button></div>
+        ${!lista.length ? '<p class="st-sub" style="margin:0">No tiene cupones.</p>' : lista.map((c) => `
+            <div class="tk-cupon ${c.id === T.cupon_id ? 'del-caso' : ''}">
+                <div class="tk-kv"><span class="mono">${escHTML(c.codigo)}</span><span style="color:${COLOR_CUP[c.estado]}">${EST_CUP[c.estado] || escHTML(c.estado)}</span></div>
+                <div style="font-size:.8rem">${escHTML(c.beneficio)}${c.minimo > 0 ? ` · desde ${formatoMoneda(c.minimo)}` : ''}</div>
+                <div class="st-sub">${c.id === T.cupon_id ? '<strong>Cupón de este caso</strong> · ' : ''}${c.vence ? `vence ${formatoFecha(c.vence)}` : 'sin vencimiento'}${c.numero_orden ? ` · usado en ${escHTML(c.numero_orden)}` : ''}</div>
+                ${c.motivo ? `<div class="st-sub">${escHTML(c.motivo)}</div>` : ''}
+                <div class="tk-cupon-acc">
+                    ${c.estado !== 'usado' && c.estado !== 'cancelado' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'extender', '${escHTML(c.codigo)}')">Extender</button>` : ''}
+                    ${['usado', 'vencido', 'cancelado'].includes(c.estado) ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'reactivar', '${escHTML(c.codigo)}')">Reactivar</button>` : ''}
+                    ${c.estado === 'disponible' ? `<button class="btn btn-ghost btn-sm" onclick="accionCupon(${c.id}, 'cancelar', '${escHTML(c.codigo)}')">Cancelar</button>` : ''}
+                </div>
+            </div>`).join('')}
+        <p class="st-sub" style="margin:8px 0 0">Cada cambio pide motivo y queda en la bitácora del ticket.</p>`;
+}
+// Guarda el cambio de cupón y lo deja en la bitácora técnica del ticket.
+async function guardarCupon(peticion, nota) {
+    try {
+        const r = await peticion();
+        await api(`/admin/tickets/${T.id}/notas`, { method: 'POST', body: { tipo: 'accion', texto: nota(r) } }).catch(() => {});
+        cerrarModal(); toast(r.message, 'ok'); vistaCaso(T.id);
+    } catch (e) { toast(e.message, 'error'); }
+}
+function darCupon() {
+    abrirModal(`<h3 style="margin-top:0">Dar un cupón a ${escHTML(T.reportante_nombre)}</h3>
+        <p class="st-sub" style="margin-top:0">Úsalo como compensación cuando el caso lo justifique. Tu rol tiene un máximo; para más, pídeselo a un administrador.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label for="cp-tipo">Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
+            <div class="field"><label for="cp-valor">Valor</label><input id="cp-valor" type="number" min="1" step="1" value="10" /></div>
+            <div class="field" id="cp-tope-w"><label for="cp-tope">Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" step="50" value="500" /></div>
+            <div class="field"><label for="cp-min">Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
+            <div class="field"><label for="cp-dias">Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="30" /></div>
+        </div>
+        <div class="field"><label for="cp-motivo">Motivo</label><input id="cp-motivo" maxlength="300" value="Compensación por ${escHTML(T.folio)}" /></div>
+        <p class="st-sub">El cliente lo recibe por correo y lo ve en Mis cupones.</p>
+        <button class="btn btn-primary" style="width:100%" onclick="enviarCupon()">Dar cupón</button>`, 520);
+    document.getElementById('cp-tipo').onchange = (e) => { document.getElementById('cp-tope-w').style.display = e.target.value === 'porcentaje' ? '' : 'none'; };
+}
+function enviarCupon() {
+    const v = (id) => document.getElementById(id).value;
+    const motivo = v('cp-motivo');
+    guardarCupon(() => api(`/admin/clientes/${T.cliente_id}/cupones`, { method: 'POST', body: {
+        tipo: v('cp-tipo'), valor: Number(v('cp-valor')), tope: Number(v('cp-tope')), minimo: Number(v('cp-min')), dias: Number(v('cp-dias')), motivo } }),
+        (r) => `Se dio el cupón ${r.cupon ? r.cupon.codigo : ''} (${r.cupon ? r.cupon.beneficio : ''}). Motivo: ${motivo}`);
+}
+function accionCupon(id, accion, codigo) {
+    const TXT = { extender: 'Extender la vigencia', reactivar: 'Reactivar el cupón', cancelar: 'Cancelar el cupón' };
+    abrirModal(`<h3 style="margin-top:0">${TXT[accion]} ${escHTML(codigo)}</h3>
+        ${accion === 'extender' ? '<div class="field"><label for="cp-dias">Días más</label><input id="cp-dias" type="number" min="1" max="90" value="15" /></div>' : ''}
+        ${accion === 'reactivar' ? '<p class="st-sub" style="margin-top:0">Vuelve a quedar disponible con al menos 7 días de vigencia. Si se usó en un pedido que sigue activo, no se puede: dale un cupón nuevo.</p>' : ''}
+        <div class="field"><label for="cp-motivo">Motivo</label><input id="cp-motivo" maxlength="300" value="${accion === 'cancelar' ? '' : `Atención del ticket ${escHTML(T.folio)}`}" /></div>
+        <button class="btn btn-primary" style="width:100%" onclick="enviarAccionCupon(${id}, '${accion}', '${escHTML(codigo)}')">Guardar</button>`, 480);
+}
+function enviarAccionCupon(id, accion, codigo) {
+    const motivo = document.getElementById('cp-motivo').value;
+    const dias = Number((document.getElementById('cp-dias') || {}).value) || undefined;
+    guardarCupon(() => api(`/admin/cupones/${id}`, { method: 'PUT', body: { accion, motivo, dias } }),
+        (r) => `Cupón ${codigo}: ${r.message}. Motivo: ${motivo}`);
 }
 </script>
 </body>

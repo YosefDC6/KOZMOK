@@ -25,10 +25,8 @@ const CATEGORIAS = [
     { clave: 'seguridad',    label: 'Alertas de seguridad',    desc: 'Eventos de severidad alta',                      permisos: ['seguridad'] },
 ];
 const POR_CLAVE = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, c]));
-// La entrada del panel es secreta: los enlaces del correo pasan por ella.
-const panelOculto = require('./panel-oculto.js');
 
-module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, urlBase }) {
+module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, urlBase, rutaPanel = (u) => u }) {
     const ve = (rol, cat) => { const c = POR_CLAVE[cat]; return !!c && (!!c.todos || c.permisos.some((k) => puedeVer(rol, k))); };
     const categoriasDe = (rol) => CATEGORIAS.filter((c) => ve(rol, c.clave));
     const prefsDe = (u) => {
@@ -86,8 +84,8 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
         const base = urlBase();
         for (const { u, lista } of correoDe.values()) {
             const asunto = lista.length === 1 ? `Kozmok · ${lista[0].titulo}` : `Kozmok · Tienes ${lista.length} avisos nuevos en el panel`;
-            const lineas = lista.map((e) => `- ${e.titulo}${e.cuerpo ? ` — ${e.cuerpo}` : ''}${e.url ? `\n  ${panelOculto.enlace(base, e.url)}` : ''}`).join('\n');
-            const destino = lista.length === 1 && lista[0].url ? panelOculto.enlace(base, lista[0].url) : panelOculto.url(base);
+            const lineas = lista.map((e) => `- ${e.titulo}${e.cuerpo ? ` — ${e.cuerpo}` : ''}${e.url ? `\n  ${base}${rutaPanel(e.url)}` : ''}`).join('\n');
+            const destino = base + rutaPanel(lista.length === 1 && lista[0].url ? lista[0].url : '/admin/login.html');
             await enviarCorreo(pool, {
                 para: u.email, tipo: 'panel', asunto,
                 cuerpo: `Hola ${u.nombre}:\n\n${lista.length === 1 ? 'Hay algo nuevo en el panel de Kozmok:' : 'Hay cosas nuevas en el panel de Kozmok:'}\n\n${lineas}\n\n`
@@ -134,7 +132,7 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
             const prio = { critica: ' (P1 crítica)', alta: ' (P2 alta)' }[m.prioridad] || '';
             ev.push({ categoria: 'tickets', dedupe: 'tk' + m.id, url: `/admin/soporte.html?ticket=${m.id}`,
                 titulo: m.primero ? `Ticket nuevo ${m.folio}${prio}` : `${m.nombre} respondió en ${m.folio}`,
-                cuerpo: `${m.primero ? `${m.nombre}: ${m.asunto}. ` : ''}${corto(m.mensaje)}` });
+                cuerpo: `${m.primero ? `${m.nombre}: ${m.asunto}. ` : ''}${corto(m.mensaje) || 'Mandó fotos'}` });
         }
         // Reclamos de garantía: nuevos y mensajes de clientes
         for (const r of await nuevas('reclamos', 'reclamos_garantia', `
@@ -278,7 +276,7 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
         }
         if (pr.correo && !pr.correo_off.has(categoria) && u.email) {
             const base = urlBase();
-            const destino = url ? panelOculto.enlace(base, url) : panelOculto.url(base);
+            const destino = base + rutaPanel(url || '/admin/login.html');
             await enviarCorreo(pool, {
                 para: u.email, tipo: 'panel', asunto: `Kozmok · ${titulo}`,
                 cuerpo: `Hola ${u.nombre}:\n\n${titulo}${cuerpo ? `\n${cuerpo}` : ''}\n\nAbrir el panel: ${destino}`,

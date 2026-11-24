@@ -14,7 +14,8 @@
 //                       'clientes' se consulta la ficha, se registran
 //                       interacciones y se confirma el correo)
 //
-// Etapa 4 (bloque TIENDA del menú): 'promociones', 'impuestos',
+// Etapa 4 (bloque TIENDA del menú): 'promociones', 'cupones' (todos los
+// cupones; también el cuadro de cupones en el ticket), 'impuestos',
 // 'monedero' (administración de monederos) y 'pagos'. Impuestos queda
 // solo para el administrador.
 //
@@ -33,7 +34,7 @@
         ventas: [
             'dashboard', 'clientes', 'clientes-editar', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
-            'promociones', 'monedero', 'pagos', 'facturas', 'devoluciones',
+            'promociones', 'cupones', 'monedero', 'pagos', 'facturas', 'devoluciones',
             'mi-actividad',
         ],
 
@@ -51,7 +52,7 @@
         // facturas cuando el caso lo pide.
         soporte: [
             'centro-soporte', 'soporte', 'garantias', 'devoluciones', 'evaluaciones',
-            'clientes', 'interacciones', 'pedidos', 'facturas',
+            'clientes', 'interacciones', 'pedidos', 'facturas', 'cupones',
         ],
     };
 
@@ -67,12 +68,7 @@
         return p === '*' || p.includes(key);
     }
 
-    // Sin un rol válido: a la entrada secreta del panel que recuerda este
-    // navegador (rutaLoginPanel, en api.js) o, si no hay, a la tienda.
-    function homeDe(rol) {
-        if (ROL_HOME[rol]) return ROL_HOME[rol];
-        return typeof raiz.rutaLoginPanel === 'function' ? raiz.rutaLoginPanel() : '/';
-    }
+    function homeDe(rol) { return ROL_HOME[rol] || '/admin/login.html'; }
 
     const api = { PERMISOS, ROL_LABEL, ROL_HOME, puedeVer, homeDe };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
