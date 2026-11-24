@@ -1927,6 +1927,36 @@ async function conciliarPayPalPendientes() {
     return n;
 }
 
+// Regresa al carrito del cliente los productos de un pedido que se va a
+// cancelar sin haberse pagado (con la misma garantía). Se suman a lo que ya
+// tenga en el carrito, sin pasar de las existencias (el stock del pedido ya
+// se liberó al cancelarlo). Devuelve cuántas líneas regresaron.
+async function regresarAlCarrito(client, pedido) {
+    if (!pedido.cliente_id) return 0;
+    const items = (await client.query(
+        `SELECT pi.producto_id, pi.cantidad, pi.garantia_meses, p.precio, p.stock, p.activo
+           FROM pedido_items pi JOIN productos p ON p.id = pi.producto_id WHERE pi.pedido_id = $1`, [pedido.id])).rows;
+    const carrito = await carritoDe(client, pedido.cliente_id);
+    let n = 0;
+    for (const it of items) {
+        if (!it.activo || Number(it.stock) <= 0) continue;
+        const plan = PLANES_GARANTIA.find((g) => g.meses === Number(it.garantia_meses)) || PLANES_GARANTIA[0];
+        const ya = (await client.query('SELECT id, cantidad FROM carrito_detalle WHERE carrito_id = $1 AND producto_id = $2', [carrito.id, it.producto_id])).rows[0];
+        const cant = Math.min(Number(it.stock), Number(it.cantidad) + (ya ? Number(ya.cantidad) : 0));
+        const costo = costoGarantia(it.precio, plan.clave) * cant;
+        if (ya) {
+            await client.query(`UPDATE carrito_detalle SET cantidad = $2, precio_unitario = $3, garantia_clave = $4, garantia_plan = $5, garantia_meses = $6, garantia_costo = $7 WHERE id = $1`,
+                [ya.id, cant, it.precio, plan.clave, plan.meses ? plan.label : null, plan.meses, costo]);
+        } else {
+            await client.query(`INSERT INTO carrito_detalle (carrito_id, producto_id, cantidad, precio_unitario, garantia_clave, garantia_plan, garantia_meses, garantia_costo)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [carrito.id, it.producto_id, cant, it.precio, plan.clave, plan.meses ? plan.label : null, plan.meses, costo]);
+        }
+        n++;
+    }
+    if (n) await client.query(`UPDATE carrito SET estado = 'activo' WHERE id = $1`, [carrito.id]);
+    return n;
+}
+
 // Pedidos con pago pendiente (SPEI, pago en tienda o transferencia del ERP)
 // cuyo plazo de pago ya venció: se cancelan solos para liberar el stock
 // apartado. Usa la misma rutina que una cancelación manual (stock,
@@ -1944,6 +1974,9 @@ async function cancelarPagosVencidos() {
                 `SELECT * FROM pedidos WHERE id = $1 AND estado = 'pendiente' AND pago_estado = 'pendiente' FOR UPDATE`, [id]);
             if (!r.rows.length) { await client.query('ROLLBACK'); continue; }
             await cancelarPedido(client, r.rows[0]);
+            // De la tienda en línea: los productos vuelven al carrito del cliente
+            // para que pueda pagarlos de otra forma sin buscarlos otra vez.
+            if (r.rows[0].origen !== 'erp') await regresarAlCarrito(client, r.rows[0]);
             await client.query(
                 `UPDATE pedidos SET notas = CONCAT_WS(' · ', NULLIF(notas, ''), 'Cancelado automáticamente: venció el plazo de pago') WHERE id = $1`, [id]);
             await registrarProceso(client, id, 'cancelacion', 'Cancelada automáticamente: venció el plazo de pago y se liberó el stock apartado');
@@ -3035,7 +3068,7 @@ app.post('/api/pagos/paypal/capturar', limiteDinero, requireCliente, asyncRoute(
         const pp = (await client.query('SELECT * FROM pagos_paypal WHERE orden_id = $1 FOR UPDATE', [ordenId])).rows[0];
         if (!p || !pp || Number(pp.pedido_id) !== Number(p.id)) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pago no encontrado' }); }
         if (p.pago_estado === 'pagado') { await client.query('ROLLBACK'); return res.json({ message: 'El pedido ya estaba pagado', pedido: p }); }
-        if (p.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido se canceló antes de pagarse (venció el tiempo). No se hizo ningún cargo.' }); }
+        if (p.estado === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ message: 'El pedido se canceló antes de pagarse. No se hizo ningún cargo.' }); }
 
         const cap = await paypal.capturarOrden(ordenId, { requestId: `kz-cap-${pp.id}` });
         const coincide = cap.referencia === `pedido-${p.id}` && cap.moneda === paypal.CFG.moneda
@@ -3081,7 +3114,7 @@ app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRo
                    FROM facturas f WHERE f.pedido_id = p.id ORDER BY f.id DESC LIMIT 1) AS factura
          FROM pedidos p LEFT JOIN pedido_items pi ON p.id = pi.pedido_id
          LEFT JOIN productos pr ON pi.producto_id = pr.id
-         WHERE p.cliente_id = $1 GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
+         WHERE p.cliente_id = $1 AND NOT COALESCE(p.regresado_carrito, FALSE) GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
         [req.cliente.id]
     );
     res.json(result.rows);
@@ -3935,6 +3968,41 @@ app.post('/api/clientes/:id/favoritos', asyncRoute(async (req, res) => {
 app.delete('/api/clientes/:id/favoritos/:productoId', asyncRoute(async (req, res) => {
     await pool.query('DELETE FROM favoritos WHERE cliente_id = $1 AND producto_id = $2', [req.params.id, req.params.productoId]);
     res.json({ message: 'Quitado de favoritos' });
+}));
+
+// "Regresar al carrito": el cliente creó un pedido sin pagar (PayPal, SPEI o
+// tienda) y quiere cambiar el método de pago, la dirección o los productos.
+// El pedido se cancela sin aviso por correo (no fue una compra), sus
+// productos vuelven al carrito y deja de mostrarse en Mis pedidos.
+app.post('/api/pedidos/:id/al-carrito', requireCliente, asyncRoute(async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('kz-compra'), $1)`, [req.cliente.id]);
+        const pedido = (await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [Number(req.params.id) || 0])).rows[0];
+        if (!pedido || Number(pedido.cliente_id) !== Number(req.cliente.id)) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Pedido no encontrado' }); }
+        if (pedido.estado !== 'pendiente' || pedido.pago_estado !== 'pendiente' || !['paypal', 'spei', 'tienda'].includes(pedido.metodo_tipo)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: pedido.pago_estado === 'pagado' ? 'Este pedido ya está pagado.' : 'Este pedido ya no se puede regresar al carrito.' });
+        }
+        if (pedido.pago_reportado) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Ya nos avisaste que pagaste este pedido; si fue un error, escríbenos desde Soporte.' });
+        }
+        const cup = pedido.cupon_id ? (await client.query('SELECT codigo FROM cupones WHERE id = $1', [pedido.cupon_id])).rows[0] : null;
+        await cancelarPedido(client, pedido);
+        const n = await regresarAlCarrito(client, pedido);
+        await client.query(`UPDATE pedidos SET regresado_carrito = TRUE, estado_notificado = 'cancelado',
+            notas = CONCAT_WS(' · ', NULLIF(notas, ''), 'El cliente lo regresó al carrito antes de pagar') WHERE id = $1`, [pedido.id]);
+        await registrarProceso(client, pedido.id, 'cancelacion', 'El cliente regresó los productos al carrito antes de pagar; se liberó el stock apartado');
+        await client.query('COMMIT');
+        res.json({ message: n ? 'Tus productos regresaron al carrito.' : 'El pedido se canceló, pero sus productos ya no están disponibles.', productos: n, cupon: cup ? cup.codigo : null });
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(400).json({ message: seg.mensajeSeguro(error) });
+    } finally {
+        client.release();
+    }
 }));
 
 // Cancelar un pedido propio (solo si aún no se procesó) y devolver stock
@@ -8789,6 +8857,8 @@ async function migrarEsquema() {
     await pool.query(`UPDATE clientes SET token_baja = md5(random()::text || clock_timestamp()::text || id) WHERE token_baja IS NULL`);
     const yaHabia = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'pedidos' AND column_name = 'estado_notificado'`);
     await pool.query('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS estado_notificado VARCHAR(20)');
+    // Pedido sin pagar que el cliente regresó al carrito (no se muestra en Mis pedidos)
+    await pool.query('ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS regresado_carrito BOOLEAN NOT NULL DEFAULT FALSE');
     if (!yaHabia.rows.length) await pool.query('UPDATE pedidos SET estado_notificado = estado');
     const yaHabiaPromo = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'promociones' AND column_name = 'boletin_enviado'`);
     await pool.query('ALTER TABLE promociones ADD COLUMN IF NOT EXISTS boletin_enviado TIMESTAMP');

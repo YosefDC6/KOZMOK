@@ -3159,3 +3159,12 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .cup-sug button span, .cup-sug-vacio { font-size: .76rem; color: var(--text-muted); }
 .cup-sug-vacio { padding: 8px 10px; }
 .cup-bitacora { margin: 0; padding-left: 18px; font-size: .82rem; color: var(--text-muted); display: grid; gap: 4px; }
+/* Carrito: pedido apartado sin pagar */
+.ck-pendiente { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; padding: 12px 16px;
+    border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warning) 9%, var(--bg-panel)); }
+.ckp-txt { display: flex; gap: 10px; align-items: flex-start; min-width: 0; flex: 1; }
+.ckp-txt > .ic { color: var(--warning); flex-shrink: 0; margin-top: 2px; }
+.ckp-txt strong { display: block; font-size: .92rem; }
+.ckp-txt span { font-size: .8rem; color: var(--text-muted); }
+.ckp-acc { display: flex; gap: 8px; flex-wrap: wrap; }
+.pagar-cambiar { text-align: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }

@@ -54,8 +54,8 @@ async function cargar() {
     if (P.pago_estado === 'pagado') { location.replace(`/gracias.html?id=${ID}`); return; }
     if (P.estado === 'cancelado') {
         caja.innerHTML = `<h1 class="pagar-tit">${icon('x', 22)} Pedido ${escHTML(P.numero_orden)} cancelado</h1>
-            <p>Se canceló porque terminó el tiempo para pagarlo. No se hizo ningún cargo y los productos regresaron al inventario.</p>
-            <a class="btn btn-primary" href="/index.html?ver=todo">Volver a la tienda</a>`;
+            <p>${P.regresado_carrito ? 'Sus productos regresaron a tu carrito.' : 'Se canceló porque terminó el tiempo para pagarlo. No se hizo ningún cargo y sus productos regresaron a tu carrito.'}</p>
+            <a class="btn btn-primary" href="/carrito.html">Ir a mi carrito</a>`;
         return;
     }
     if (P.metodo_tipo !== 'paypal') { location.replace(`/gracias.html?id=${ID}`); return; }
@@ -70,7 +70,8 @@ async function cargar() {
         <p class="pagar-reloj" id="pg-reloj"></p>
         <div id="paypal-botones" class="pagar-botones"><div class="empty-state" style="padding:20px">Cargando PayPal…</div></div>
         <p class="pagar-nota">Puedes pagar con tu cuenta PayPal o con tarjeta de débito o crédito sin crear cuenta. Los datos de tu tarjeta los captura PayPal; Kozmok nunca los ve ni los guarda.</p>
-        <p class="pagar-nota">Si cierras esta página, puedes terminar de pagar desde <a href="/pedidos.html">Mis pedidos</a> antes de las ${venceTxt(P.pago_vence)}</p>`;
+        <p class="pagar-nota">Si cierras esta página, puedes terminar de pagar desde <a href="/pedidos.html">Mis pedidos</a> antes de las ${venceTxt(P.pago_vence)}</p>
+        <div class="pagar-cambiar"><button type="button" class="btn btn-ghost btn-sm" onclick="regresarPedidoAlCarrito(${P.id}, { numero: '${escHTML(P.numero_orden)}' })">${icon('undo', 14)} Cambiar método de pago o regresar al carrito</button></div>`;
     restante(); clearInterval(reloj); reloj = setInterval(restante, 1000);
 
     PayPalKZ.botones('#paypal-botones', {

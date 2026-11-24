@@ -16,6 +16,7 @@
         <h1 style="margin:0;font-size:1.6rem">Finalizar compra</h1>
         <button class="btn btn-ghost btn-sm" id="btn-vaciar" hidden>Vaciar carrito</button>
     </div>
+    <div id="ck-pendientes"></div>
     <div id="carrito-contenido"><div class="empty-state">Cargando…</div></div>
 </div>
 
@@ -44,7 +45,37 @@ let ITEMS = [];          // líneas del carrito (para cotizar)
 let COT = null;          // última cotización del servidor (promociones + impuestos + envío + puntos)
 let MONEDERO = { saldo: 0, estado: 'activo' };
 
+// Pedidos que se crearon y siguen sin pagar (p. ej. se regresó desde la
+// página de PayPal): se avisan arriba con "Pagar ahora" o "Regresar al carrito".
+const NOMBRE_PAGO = { paypal: 'PayPal o tarjeta', spei: 'transferencia (SPEI)', tienda: 'pago en tienda' };
+async function pintarPendientes() {
+    const caja = document.getElementById('ck-pendientes');
+    if (!caja || !cliente) return;
+    const peds = await api(`/pedidos/cliente/${cliente.id}`).catch(() => []);
+    const lista = peds.filter((p) => p.estado === 'pendiente' && p.pago_estado === 'pendiente' && !p.pago_reportado
+        && NOMBRE_PAGO[p.metodo_tipo] && p.origen !== 'erp').slice(0, 3);
+    caja.innerHTML = lista.map((p) => `
+        <div class="ck-pendiente">
+            <div class="ckp-txt">${icon('clock', 18)}
+                <div><strong>Tu pedido <span class="mono">${escHTML(p.numero_orden)}</span> está apartado esperando tu pago</strong>
+                <span>${formatoMoneda2(p.total)} con ${NOMBRE_PAGO[p.metodo_tipo]}${p.pago_vence ? ` · hasta ${new Date(p.pago_vence).toLocaleString('es-MX', { dateStyle: p.metodo_tipo === 'paypal' ? undefined : 'medium', timeStyle: 'short' })}` : ''}${p.productos ? ` · ${escHTML(p.productos)}` : ''}</span></div>
+            </div>
+            <div class="ckp-acc">
+                <a class="btn btn-primary btn-sm" href="${p.metodo_tipo === 'paypal' ? `/pagar.html?id=${p.id}` : `/recibo.html?id=${p.id}`}">${p.metodo_tipo === 'paypal' ? 'Pagar ahora' : 'Ver ficha de pago'}</a>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="alCarrito(${p.id}, '${escHTML(p.numero_orden)}')">Regresar al carrito</button>
+            </div>
+        </div>`).join('');
+}
+async function alCarrito(id, numero) {
+    const r = await regresarPedidoAlCarrito(id, { numero });
+    if (!r) return;
+    try { CUPON_SEL = (sessionStorage.getItem('kz_cupon') || '').toUpperCase(); } catch { /* nada */ }
+    await cargarCarrito();
+    if (r.productos) irPaso(3, { sinValidar: true });
+}
+
 async function cargarCarrito() {
+    pintarPendientes();
     const y = window.scrollY, pasoPrev = PASO_PINTADO;   // al volver a pintar, la página no brinca
     let [items, dirs, rec, pp, mon, cups] = await Promise.all([
         api(`/carrito/${cliente.id}`),
@@ -224,10 +255,11 @@ async function cargarCarrito() {
                 <h2 class="ck-tit">${icon('card', 18)} ¿Cómo quieres pagar?</h2>
                 <div class="field"><label>Método de pago</label>
                     <select id="metodo-pago" onchange="cambioMetodo()">
-                        <option value="paypal" ${PAYPAL.activo ? 'selected' : 'disabled'}>PayPal o tarjeta de débito / crédito${PAYPAL.activo ? '' : ' (no disponible)'}</option>
-                        ${PAYPAL.spei ? `<option value="spei" ${PAYPAL.activo ? '' : 'selected'}>Transferencia bancaria (SPEI)</option>` : ''}
-                        <option value="tienda" ${!PAYPAL.activo && !PAYPAL.spei ? 'selected' : ''}>Pago en tienda</option>
-                        <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
+                        <option value="" disabled ${METODO_SEL ? '' : 'selected'}>Elige cómo quieres pagar</option>
+                        <option value="paypal" ${PAYPAL.activo ? (METODO_SEL === 'paypal' ? 'selected' : '') : 'disabled'}>PayPal o tarjeta de débito / crédito${PAYPAL.activo ? '' : ' (no disponible)'}</option>
+                        ${PAYPAL.spei ? `<option value="spei" ${METODO_SEL === 'spei' ? 'selected' : ''}>Transferencia bancaria (SPEI)</option>` : ''}
+                        <option value="tienda" ${METODO_SEL === 'tienda' ? 'selected' : ''}>Pago en tienda</option>
+                        <option value="monedero" ${MONEDERO.estado !== 'activo' ? 'disabled' : METODO_SEL === 'monedero' ? 'selected' : ''}>Monedero Kozmok (saldo: ${formatoMoneda2(MONEDERO.saldo)})</option>
                     </select>
                 </div>
                 <div id="box-monedero" class="pago-box" hidden></div>
@@ -303,6 +335,9 @@ function validarPaso(n) {
         return true;
     }
     if (n === 3) {
+        // Sin método preseleccionado: el pedido solo se crea con uno elegido a propósito.
+        const mp = document.getElementById('metodo-pago');
+        if (!mp.value) { toast('Elige cómo quieres pagar', 'warn'); mp.focus(); return false; }
         if (document.getElementById('metodo-pago').value === 'monedero' && COT && MONEDERO.saldo < COT.total) {
             toast(`Tu saldo (${formatoMoneda2(MONEDERO.saldo)}) no alcanza. Recarga tu monedero o elige otro método.`, 'warn'); return false;
         }
@@ -386,9 +421,11 @@ function textoBotonComprar() {
     const sel = document.getElementById('metodo-pago');
     return (sel && sel.value === 'paypal' ? 'Continuar al pago' : 'Confirmar pedido') + (COT ? ' · ' + formatoMoneda2(COT.total) : '');
 }
+let METODO_SEL = '';   // método elegido en el paso 3 (se conserva al volver a pintar)
 function cambioMetodo() {
     const sel = document.getElementById('metodo-pago');
     if (!sel) return;
+    METODO_SEL = sel.value;
     document.getElementById('box-paypal').hidden = sel.value !== 'paypal';
     document.getElementById('box-monedero').hidden = sel.value !== 'monedero';
     pintarBoxMonedero();

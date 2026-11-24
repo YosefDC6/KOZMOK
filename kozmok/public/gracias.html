@@ -79,6 +79,7 @@ async function cargar() {
                         <div class="mono" style="font-size:1.15rem;margin:2px 0 6px">${escHTML(d.pago_referencia)}</div>
                         <div style="font-size:.84rem;color:var(--text-muted)">Monto: <strong>${formatoMoneda(d.total)}</strong> · Vence: ${d.pago_vence ? new Date(d.pago_vence).toLocaleDateString('es-MX') : '—'}</div>
                         <a class="btn btn-primary btn-sm" style="margin-top:12px;width:100%" href="/recibo.html?id=${d.id}">Ver ficha de pago completa</a>
+                        ${d.estado === 'pendiente' && !d.pago_reportado ? `<button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="regresarPedidoAlCarrito(${d.id}, { numero: '${escHTML(d.numero_orden)}' })">${icon('undo', 14)} Pagar de otra forma</button>` : ''}
                     </section>` : `
                     <section class="card">
                         <div class="rastreo">

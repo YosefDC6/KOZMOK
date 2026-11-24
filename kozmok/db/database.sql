@@ -374,6 +374,7 @@ CREATE TABLE pedidos (
     fecha_pedido          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- último estado que ya se avisó por correo al cliente
     estado_notificado     VARCHAR(20),
+    regresado_carrito     BOOLEAN NOT NULL DEFAULT FALSE,
     fecha_confirmacion    TIMESTAMP,
     fecha_envio           TIMESTAMP,
     fecha_entrega         TIMESTAMP,

@@ -468,7 +468,8 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      monedero suficiente). El paso va en la direccion (?paso=2): "atras"
      del navegador regresa al paso anterior.
         2 Envio    : direccion guardada o nueva y notas para la entrega.
-        3 Pago     : metodo de pago, cupon y canje de puntos.
+        3 Pago     : metodo de pago (no viene ninguno marcado: hay que
+                     elegirlo para seguir), cupon y canje de puntos.
         4 Confirmar: revision de productos, envio y pago, cada uno con
                      "Cambiar", y "Confirmar pedido".
    - Sin sesion tambien se puede llenar el carrito (catalogo, ficha, Arma tu
@@ -532,6 +533,23 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      (desde la tienda o desde el panel) se devuelven el stock y los puntos
      canjeados, se retiran los puntos que se hubieran ganado con el y se
      resta de las compras del cliente.
+   - CAMBIAR DE OPINION ANTES DE PAGAR: el pedido se crea al pulsar
+     "Confirmar pedido" (y el carrito se vacia). Si todavia no se paga:
+        * En "Paga tu pedido" (PayPal) esta "Cambiar metodo de pago o
+          regresar al carrito"; en la pantalla de gracias de SPEI o pago en
+          tienda, "Pagar de otra forma".
+        * Si se regresa con la flecha del navegador o "Regresar", el carrito
+          muestra arriba "Tu pedido ... esta apartado esperando tu pago" con
+          "Pagar ahora" (o "Ver ficha de pago") y "Regresar al carrito".
+     "Regresar al carrito" cancela ese pedido sin ningun cargo y sin correo
+     de cancelacion, regresa sus productos al carrito (con su garantia y
+     sumados a lo que ya hubiera, sin pasar de las existencias), libera el
+     cupon (queda elegido otra vez) y los puntos canjeados, y abre el paso
+     Pago. Ese pedido ya no aparece en Mis pedidos (el equipo lo ve como
+     cancelado, con la nota "El cliente lo regreso al carrito"). No se puede
+     si ya se pago o si el cliente ya aviso "Ya realice el pago".
+   - Si el tiempo para pagar se termina, el pedido se cancela solo y sus
+     productos tambien regresan al carrito.
    - Boton "Ya realice el pago": el cliente avisa al equipo (no confirma el
      pago por si solo).
    - Plazo de pago: SPEI 3 dias, pago en tienda 5 dias (transferencia de una

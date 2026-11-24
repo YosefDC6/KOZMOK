@@ -471,6 +471,23 @@ function formatoFechaHora(fecha) {
     return new Date(fecha).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 // Escapa texto antes de meterlo en HTML (contra XSS al mostrar datos).
+// Pedido sin pagar -> sus productos regresan al carrito (para cambiar el
+// método de pago, la dirección o lo que se lleva). Pide confirmación.
+async function regresarPedidoAlCarrito(id, { numero = '', paso = 3 } = {}) {
+    const ok = await confirmar(`El pedido ${numero} se cancela sin ningún cargo y sus productos regresan a tu carrito para que elijas otro método de pago o hagas cambios.`,
+        { okText: 'Regresar al carrito' });
+    if (!ok) return false;
+    try {
+        const r = await api(`/pedidos/${id}/al-carrito`, { method: 'POST' });
+        try { if (r.cupon) sessionStorage.setItem('kz_cupon', r.cupon); } catch { /* nada */ }
+        if (typeof actualizarBadgeCarrito === 'function') actualizarBadgeCarrito();
+        toast(r.message, 'ok');
+        if (location.pathname === '/carrito.html') return r;
+        location.href = '/carrito.html' + (r.productos && paso > 1 ? '?paso=' + paso : '');
+        return r;
+    } catch (e) { toast(e.message, 'error'); return false; }
+}
+
 function escHTML(t) {
     return String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
