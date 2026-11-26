@@ -252,6 +252,27 @@ curl -i http://localhost:3000/<PANEL_RUTA>/dashboard.html      # 302 al login (s
 - Las pantallas del panel salen con `X-Robots-Tag: noindex` y `Referrer-Policy: same-origin` evita que la dirección secreta viaje a otros sitios.
 - Esconder la entrada no reemplaza a las demás defensas: el login del panel sigue con bloqueo por intentos, captcha y verificación en dos pasos.
 
+## 6. Iniciar sesión con QR (tienda) y "QR ajeno"
+
+**Cómo funciona.** En el login de la tienda, *Entrar con mi celular* muestra un QR y dos dígitos. Un celular con la sesión ya iniciada lo escanea (`qr.html`), ve desde qué navegador y conexión se pide, y elige entre tres números el que aparece en la computadora. La computadora pregunta cada 2 s y, aprobado, recibe su propia sesión (cookie `HttpOnly` como siempre).
+
+**Ataque.** El típico contra este tipo de login: alguien abre el login en *su* computadora y te manda (o te enseña) su QR con un pretexto ("escanéalo para tu cupón"). Si lo apruebas, entra con **tu** cuenta. Otro intento: adivinar o reutilizar un QR para robarse la sesión.
+
+**Defensas.**
+- El QR lleva un código; la sesión solo se entrega a quien también tiene el **secreto** que recibió la computadora al pedir el QR (nunca está en el QR). En la base solo quedan huellas SHA-256 de los dos.
+- **Coincidencia de números**: el celular no muestra el número correcto, ofrece tres. Si se elige uno que no es el de la pantalla, el QR se cancela y queda el evento `qr_numero_erroneo`. Quien te mandó su QR tendría que convencerte, además, de qué número elegir.
+- El celular muestra navegador, sistema y conexión de la computadora (y si es la misma red), con el aviso "si alguien te mandó este código, no lo apruebes", y el botón **No fui yo** (evento `qr_rechazado`).
+- Vence en **2 minutos**, se usa **una vez** (se marca `usado` antes de abrir la sesión, así dos consultas juntas no reciben dos sesiones) y el primer celular que lo abre se queda con él: otra cuenta ya no puede aprobarlo.
+- Solo para clientes de la tienda (el panel no lo tiene: ahí sigue la contraseña y los dos pasos). El acceso queda en *Inicios de sesión* del cliente como "Acceso con QR desde tu celular", la sesión nueva en sus dispositivos conectados (la puede cerrar) y los eventos en *Seguridad → Eventos*.
+- Límites: crear QR cuenta en el límite de login (15/min por IP) y la consulta de estado tiene el suyo (60/min).
+
+**A mano.**
+```bash
+curl -s -X POST localhost:3000/api/auth/qr -H 'Content-Type: application/json' -d '{}'
+# -> {codigo, secreto, digitos, url, expira_en}
+curl -s -X POST localhost:3000/api/auth/qr/estado -H 'Content-Type: application/json' -d '{"codigo":"…","secreto":"otro"}'   # 404
+```
+
 ## Dónde está cada cosa
 
 | Archivo | Qué contiene |
@@ -262,6 +283,7 @@ curl -i http://localhost:3000/<PANEL_RUTA>/dashboard.html      # 302 al login (s
 | `kozmok/db/database.sql` | Tablas `sesiones`, `intentos_login`, `bloqueos`, `eventos_seguridad`, `recuperaciones`, `correos_salida` |
 | `kozmok/public/admin/seguridad.html` | Tablero (Panel → Cuenta → Seguridad, solo administrador): eventos, intentos, bloqueos, sesiones activas y correos enviados |
 | `kozmok/public/seguridad.html` | Seguridad de la cuenta del cliente: contraseña, sesiones y actividad |
+| `kozmok/public/qr.html` | Aprobar desde el celular la entrada con QR de una computadora |
 | `kozmok/public/recuperar.html`, `restablecer.html` | Recuperar la contraseña con enlace de un solo uso |
 | `kozmok/pruebas-seguridad/` | Scripts de los ataques y `desbloquear.js` |
 | `kozmok/.env.example` | Contraseña de la base y parámetros de seguridad (el `.env` real no se sube) |

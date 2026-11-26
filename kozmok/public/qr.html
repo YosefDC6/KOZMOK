@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>Aprobar inicio de sesión · Kozmok</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/arcade.css" />
+</head>
+<body>
+<div id="navbar-placeholder"></div>
+
+<!-- Se abre al escanear el QR del login en una computadora. Solo funciona
+     con la sesión iniciada en este celular. -->
+<div class="auth-wrap">
+    <div class="page-hero">
+        <div class="hero-badge" data-ic="qr" data-ic-size="28"></div>
+        <h1>¿Entrar en otra computadora?</h1>
+        <p id="qr-sub">Revisa los datos antes de aprobar.</p>
+    </div>
+    <div class="card" id="qr-cuerpo"><p style="text-align:center;color:var(--text-muted)">Cargando…</p></div>
+</div>
+
+<div id="footer-placeholder"></div>
+<script src="/js/theme.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const CODIGO = new URLSearchParams(location.search).get('c') || '';
+const cuerpo = document.getElementById('qr-cuerpo');
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function final(titulo, texto, tipo) {
+    cuerpo.innerHTML = `<div class="qr-final ${tipo}">${icon(tipo === 'ok' ? 'check' : 'alert', 34)}<h3>${esc(titulo)}</h3><p>${esc(texto)}</p>
+        <a class="btn btn-outline" href="/perfil.html">Ir a mi cuenta</a></div>`;
+}
+
+async function cargar() {
+    if (!CODIGO) return final('Código no válido', 'Vuelve a escanear el código que aparece en la computadora.', 'error');
+    // Sin sesión en este celular: se inicia aquí y se regresa a esta página.
+    if (!Sesion.cliente()) {
+        const est = await api('/auth/estado').catch(() => ({}));
+        if (est.cliente) Sesion.guardarCliente(est.cliente);
+        else {
+            cuerpo.innerHTML = `<p style="text-align:center">Para aprobar la entrada, primero inicia sesión en <strong>este celular</strong>.</p>
+                <a class="btn btn-primary" style="width:100%" href="/login.html?next=${encodeURIComponent(location.pathname + location.search)}">Iniciar sesión</a>`;
+            return;
+        }
+    }
+    let d;
+    try { d = await api('/auth/qr/info?c=' + encodeURIComponent(CODIGO)); }
+    catch (e) { return final('No se puede usar este código', e.message, 'error'); }
+    const yo = Sesion.cliente();
+    cuerpo.innerHTML = `
+        <div class="qr-quien">
+            ${icon('laptop', 26)}
+            <div><strong>${esc(d.navegador)}</strong><span>${esc(d.dispositivo)}</span>
+                <span>Conexión ${esc(d.ip || 'desconocida')}${d.misma_red ? ' · la misma que este celular' : ''}</span></div>
+        </div>
+        <p class="qr-cuenta">Va a entrar a la cuenta de <strong>${esc(yo.nombre)}</strong>.</p>
+        <p class="qr-elige">Elige el número que ves en la pantalla de la computadora:</p>
+        <div class="qr-opciones">${d.opciones.map((n) => `<button class="btn btn-outline qr-num" data-n="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+        <div class="aviso-sensible" style="margin:14px 0">${icon('alert', 15)}<span>Si alguien te mandó este código o te pidió escanearlo, <strong>no lo apruebes</strong>: le darías acceso a tu cuenta.</span></div>
+        <button class="btn btn-ghost" style="width:100%" id="qr-no">No fui yo · Cancelar</button>
+        <p class="qr-vence" id="qr-vence"></p>`;
+    let quedan = d.expira_en;
+    const t = setInterval(() => {
+        quedan--;
+        const el = document.getElementById('qr-vence');
+        if (!el) return clearInterval(t);
+        if (quedan <= 0) { clearInterval(t); final('El código venció', 'Genera otro en la computadora y vuelve a escanearlo.', 'error'); }
+        else el.textContent = `Este código vence en ${quedan} s.`;
+    }, 1000);
+    cuerpo.querySelectorAll('.qr-num').forEach((b) => b.addEventListener('click', async () => {
+        cuerpo.querySelectorAll('button').forEach((x) => x.disabled = true);
+        try {
+            const r = await api('/auth/qr/aprobar', { method: 'POST', body: { c: CODIGO, digitos: b.dataset.n } });
+            clearInterval(t); final('Listo', r.message, 'ok');
+        } catch (e) { clearInterval(t); final('Código cancelado', e.message, 'error'); }
+    }));
+    document.getElementById('qr-no').addEventListener('click', async () => {
+        clearInterval(t);
+        const r = await api('/auth/qr/rechazar', { method: 'POST', body: { c: CODIGO } }).catch((e) => ({ message: e.message }));
+        final('Cancelado', r.message + ' Si no fuiste tú, revisa en Mi cuenta → Seguridad tus dispositivos conectados.', 'error');
+    });
+}
+cargar();
+</script>
+</body>
+</html>

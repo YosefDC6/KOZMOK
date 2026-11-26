@@ -891,6 +891,106 @@ app.post('/api/auth/2fa/correo', limiteAuth, asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/auth/login-cliente', limiteAuth, captchaMw, loginCliente);
+
+// =========================================================
+// INICIAR SESIÓN CON QR (solo tienda)
+// 1. La computadora pide un QR (POST /api/auth/qr): recibe el código que va
+//    en el QR, un secreto que solo ella conoce y dos dígitos para mostrar.
+// 2. Un celular con la sesión iniciada abre el QR (qr.html), ve desde qué
+//    navegador se pide y elige el número que aparece en la computadora.
+//    Si elige otro, el QR se cancela (así no sirve que alguien te mande su
+//    QR para que lo apruebes sin ver su pantalla).
+// 3. La computadora pregunta cada 2 s (POST /api/auth/qr/estado, con el
+//    secreto) y, aprobado, recibe su propia sesión. Un QR vence en 2 min y
+//    sirve una sola vez.
+// =========================================================
+const QR_SEGUNDOS = 120;
+const limiteQrEstado = seg.limitador({ nombre: 'qr-estado', ventanaMs: 60000, max: 60 });
+// Dirección que abre el celular: la de la tienda, salvo que la computadora
+// esté en localhost (el celular no llega ahí): entonces kozmok.local o la IP.
+function baseParaCelular(req) {
+    const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
+    if (/^https?:\/\/[^\s/]+/.test(base)) return base;
+    const host = String(req.hostname || '').toLowerCase();
+    if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+        const puerto = process.env.PORT || 3000;
+        if (MDNS_NOMBRE) return `http://${MDNS_NOMBRE}:${puerto}`;
+        const ip = ipsDeRed()[0];
+        if (ip) return `http://${ip.ip}:${puerto}`;
+    }
+    return urlPublica(req);
+}
+const qrPorCodigo = (codigo) => pool.query('SELECT *, expira < CURRENT_TIMESTAMP AS vencido FROM qr_login WHERE codigo_hash = $1',
+    [seg.sha256(String(codigo || '').slice(0, 100))]).then((r) => r.rows[0]);
+
+app.post('/api/auth/qr', limiteAuth, asyncRoute(async (req, res) => {
+    const codigo = crypto.randomBytes(24).toString('base64url');
+    const secreto = crypto.randomBytes(24).toString('base64url');
+    const digitos = String(crypto.randomInt(10, 100));
+    await pool.query(
+        `INSERT INTO qr_login (codigo_hash, secreto_hash, digitos, recordar, ip_pide, ua_pide, expira)
+         VALUES ($1,$2,$3,$4,$5,$6, CURRENT_TIMESTAMP + make_interval(secs => $7))`,
+        [seg.sha256(codigo), seg.sha256(secreto), digitos, quiereRecordar(req.body || {}, true), seg.ipDe(req), String(seg.uaDe(req) || '').slice(0, 300), QR_SEGUNDOS]);
+    res.json({ codigo, secreto, digitos, url: `${baseParaCelular(req)}/qr.html?c=${codigo}`, expira_en: QR_SEGUNDOS });
+}));
+
+app.post('/api/auth/qr/estado', limiteQrEstado, asyncRoute(async (req, res) => {
+    const q = await qrPorCodigo(req.body && req.body.codigo);
+    if (!q || q.secreto_hash !== seg.sha256(String(req.body.secreto || ''))) return res.status(404).json({ message: 'Este QR ya no existe. Genera otro.' });
+    if (q.estado === 'aprobado') {
+        // Se marca como usado antes de abrir la sesión: si llegan dos
+        // consultas juntas, solo una la recibe.
+        const u = await pool.query("UPDATE qr_login SET estado = 'usado' WHERE id = $1 AND estado = 'aprobado' RETURNING id", [q.id]);
+        if (!u.rows.length) return res.json({ estado: 'usado' });
+        const cliente = (await pool.query("SELECT * FROM clientes WHERE id = $1 AND estado_cliente = 'activo'", [q.cliente_id])).rows[0];
+        if (!cliente) return res.status(403).json({ message: 'La cuenta no está activa.' });
+        await seg.registrarIntento(req, { ambito: 'cliente', correo: seg.normalizarCorreo(cliente.correo), exito: true, motivo: 'qr' });
+        await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
+        const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: q.recordar });
+        const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
+        return res.json({ estado: 'aprobado', cliente: datos, expira: s.expira, recordar: q.recordar });
+    }
+    if (['pendiente', 'escaneado'].includes(q.estado) && q.vencido) return res.json({ estado: 'vencido' });
+    res.json({ estado: q.estado });
+}));
+
+// Celular: qué computadora pide entrar. El primer celular que lo abre se
+// queda con el QR; otro ya no puede aprobarlo.
+app.get('/api/auth/qr/info', requireCliente, asyncRoute(async (req, res) => {
+    const q = await qrPorCodigo(req.query.c);
+    if (!q || q.vencido || !['pendiente', 'escaneado'].includes(q.estado)) return res.status(410).json({ message: 'Este QR ya venció o ya se usó. Genera otro en la computadora.' });
+    if (q.cliente_id && q.cliente_id !== req.cliente.id) return res.status(409).json({ message: 'Este QR ya lo abrió otra cuenta. Genera otro en la computadora.' });
+    await pool.query("UPDATE qr_login SET estado = 'escaneado', cliente_id = $2 WHERE id = $1 AND estado = 'pendiente'", [q.id, req.cliente.id]);
+    // Tres números para elegir: el correcto y dos distintos, en orden al azar.
+    const opciones = new Set([q.digitos]);
+    while (opciones.size < 3) opciones.add(String(crypto.randomInt(10, 100)));
+    const lista = [...opciones];
+    for (let i = lista.length - 1; i > 0; i--) { const j = crypto.randomInt(0, i + 1); [lista[i], lista[j]] = [lista[j], lista[i]]; }
+    const nav = navegadorDeTicket(q.ua_pide);
+    res.json({ navegador: nav.navegador || 'Navegador desconocido', dispositivo: nav.dispositivo || '', ip: q.ip_pide,
+        misma_red: !!q.ip_pide && q.ip_pide === seg.ipDe(req), opciones: lista,
+        expira_en: Math.max(0, Math.round((new Date(q.expira) - Date.now()) / 1000)) });
+}));
+app.post('/api/auth/qr/aprobar', requireCliente, asyncRoute(async (req, res) => {
+    const q = await qrPorCodigo(req.body && req.body.c);
+    if (!q || q.vencido || q.estado !== 'escaneado' || q.cliente_id !== req.cliente.id) return res.status(410).json({ message: 'Este QR ya venció o ya se usó. Genera otro en la computadora.' });
+    if (String(req.body.digitos || '') !== q.digitos) {
+        await pool.query("UPDATE qr_login SET estado = 'rechazado', resuelto = CURRENT_TIMESTAMP WHERE id = $1", [q.id]);
+        await seg.registrarEvento(req, { tipo: 'qr_numero_erroneo', severidad: 'media', cliente_id: req.cliente.id, detalle: `QR para entrar desde ${q.ip_pide}: se eligió un número que no coincide` });
+        return res.status(400).json({ message: 'El número no coincide con el de la computadora. Por seguridad cancelamos este QR: genera otro y elige el número que ves en esa pantalla.' });
+    }
+    const u = await pool.query("UPDATE qr_login SET estado = 'aprobado', ip_aprueba = $2, resuelto = CURRENT_TIMESTAMP WHERE id = $1 AND estado = 'escaneado' RETURNING id", [q.id, seg.ipDe(req)]);
+    if (!u.rows.length) return res.status(410).json({ message: 'Este QR ya se usó.' });
+    await seg.registrarEvento(req, { tipo: 'qr_aprobado', severidad: 'info', cliente_id: req.cliente.id, detalle: `Inicio de sesión con QR aprobado desde el celular para ${q.ip_pide}` });
+    res.json({ message: 'Listo: la computadora ya entró a tu cuenta.' });
+}));
+app.post('/api/auth/qr/rechazar', requireCliente, asyncRoute(async (req, res) => {
+    const q = await qrPorCodigo(req.body && req.body.c);
+    if (!q || !['pendiente', 'escaneado'].includes(q.estado) || (q.cliente_id && q.cliente_id !== req.cliente.id)) return res.json({ message: 'Cancelado.' });
+    await pool.query("UPDATE qr_login SET estado = 'rechazado', cliente_id = $2, resuelto = CURRENT_TIMESTAMP WHERE id = $1", [q.id, req.cliente.id]);
+    await seg.registrarEvento(req, { tipo: 'qr_rechazado', severidad: 'media', cliente_id: req.cliente.id, detalle: `El cliente dijo "No fui yo" a un QR pedido desde ${q.ip_pide}` });
+    res.json({ message: 'Cancelado. Nadie entró a tu cuenta.' });
+}));
 app.post('/api/auth/registro-cliente', limiteAuth, captchaMw, registrarCliente);
 // Casilla "No soy un robot" (Google reCAPTCHA) en iniciar sesión, crear
 // cuenta y recuperar contraseña. Si no hay claves en el .env no se pide.
@@ -2254,6 +2354,7 @@ async function enviarAvisos() {
 const avisarPronto = () => setTimeout(() => enviarAvisos().catch(() => {}), 3000);
 
 async function tareasPeriodicas() {
+    await pool.query("DELETE FROM qr_login WHERE creado < CURRENT_TIMESTAMP - INTERVAL '1 day'").catch(() => null);
     // Recargas con PayPal que se iniciaron y no se pagaron en 3 horas
     await pool.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE tipo = 'recarga' AND estado = 'creada' AND fecha < CURRENT_TIMESTAMP - INTERVAL '3 hours'`)
         .catch((e) => console.error('PayPal vencidas:', e.message));
@@ -9179,6 +9280,20 @@ async function migrarEsquema() {
         usado BOOLEAN NOT NULL DEFAULT FALSE,
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_desafios_2fa_sujeto ON desafios_2fa(tipo, sujeto_id)');
+    // Iniciar sesión con QR (solo tienda): la computadora muestra el QR y un
+    // celular con sesión lo aprueba. Solo se guardan huellas de los tokens.
+    await pool.query(`CREATE TABLE IF NOT EXISTS qr_login (
+        id SERIAL PRIMARY KEY,
+        codigo_hash CHAR(64) UNIQUE NOT NULL,      -- va en el QR
+        secreto_hash CHAR(64) NOT NULL,            -- solo lo tiene la computadora
+        digitos CHAR(2) NOT NULL,                  -- número que se elige en el celular
+        estado VARCHAR(12) NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','escaneado','aprobado','rechazado','usado')),
+        cliente_id INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+        recordar BOOLEAN NOT NULL DEFAULT FALSE,
+        ip_pide VARCHAR(64), ua_pide VARCHAR(300), ip_aprueba VARCHAR(64),
+        expira TIMESTAMP NOT NULL,
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resuelto TIMESTAMP)`);
     // Enlaces de "Activa tu cuenta" del equipo (solo se guarda la huella del token).
     await pool.query(`CREATE TABLE IF NOT EXISTS activaciones_usuario (
         id SERIAL PRIMARY KEY,

@@ -75,7 +75,7 @@ montarCuenta('seguridad', async (panel, P) => {
             <h3 class="seg-tit">${icon('clock', 18)} Inicios de sesión recientes</h3>
             ${actividad.length === 0 ? '<p style="margin:0;color:var(--text-muted)">Sin registros todavía.</p>' : actividad.map((a) => `
                 <div class="sesion-fila">
-                    <div><strong>${a.exito ? (a.motivo === 'registro' ? 'Cuenta creada' : 'Acceso correcto') : 'Intento fallido'}</strong>${!a.exito && a.motivo ? ` · ${escHTML(MOTIVO[a.motivo] || a.motivo)}` : ''}
+                    <div><strong>${a.exito ? (a.motivo === 'registro' ? 'Cuenta creada' : a.motivo === 'qr' ? 'Acceso con QR desde tu celular' : 'Acceso correcto') : 'Intento fallido'}</strong>${!a.exito && a.motivo ? ` · ${escHTML(MOTIVO[a.motivo] || a.motivo)}` : ''}
                         <small>${formatoFechaHora(a.fecha)} · ${escHTML(navegadorDe(a.user_agent))}</small></div>
                 </div>`).join('')}
         </section>`;

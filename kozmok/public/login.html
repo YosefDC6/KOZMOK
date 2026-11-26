@@ -48,8 +48,30 @@
             <div id="login-error" class="auth-error" role="alert" hidden></div>
             <button class="btn btn-primary" style="width:100%" type="submit" id="btn-entrar">Entrar</button>
         </form>
+        <div class="auth-o"><span>o</span></div>
+        <button class="btn btn-outline" style="width:100%" type="button" id="btn-qr" data-ic="qr" data-ic-size="16"> Entrar con mi celular</button>
         <p style="margin-top:16px;text-align:center">¿No tienes cuenta? <a href="/registro.html">Crear cuenta</a></p>
         <p class="auth-nota">Si usas una computadora compartida, desmarca «Mantener sesión iniciada».</p>
+    </div>
+
+    <!-- Entrar con QR: se escanea con un celular donde ya hay sesión -->
+    <div class="card qr-login" id="qr-card" hidden>
+        <div class="qr-login-grid">
+            <div class="qr-caja" id="qr-caja"><div class="qr-cargando">Generando…</div></div>
+            <div>
+                <h3 style="margin-top:0">Entra con tu celular</h3>
+                <ol class="qr-pasos">
+                    <li>Abre la cámara de un celular donde <strong>ya tengas la sesión iniciada</strong> en Kozmok.</li>
+                    <li>Escanea el código.</li>
+                    <li>En el celular elige este número:</li>
+                </ol>
+                <div class="qr-digitos" id="qr-digitos">--</div>
+                <p class="qr-estado" id="qr-estado">Esperando a que escanees el código…</p>
+                <p class="qr-red" id="qr-red"></p>
+            </div>
+        </div>
+        <p class="auth-nota" style="margin-top:14px"><span>Escanea solo un código que aparezca en <strong>tu</strong> pantalla. Si alguien te pide escanear un código que te mandó, no lo apruebes.</span></p>
+        <button class="btn btn-ghost" style="width:100%" type="button" id="qr-volver">Entrar con correo y contraseña</button>
     </div>
 </div>
 
@@ -60,6 +82,7 @@
 <script src="/js/toast.js"></script>
 <script src="/js/layout.js"></script>
 <script src="/js/dos-pasos.js"></script>
+<script src="/js/vendor/qrcode-generator.js"></script>
 <script>
 const CAPTCHA = Captcha.montar(document.getElementById('captcha'));
 function destinoNext() {
@@ -144,16 +167,8 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
             data = await DosPasos.pedir(data);
             if (!data) { cap.reiniciar(); btn.disabled = false; btn.textContent = 'Entrar'; return; }
         }
-        Sesion.guardarCliente({ ...data.cliente, recordar });
-        if (recordar) { CuentasRecordadas.guardar('cliente', data.cliente); await guardarCredencial(correo, password, data.cliente.nombre); }
-        else CuentasRecordadas.olvidar('cliente', data.cliente.correo);
-        const r = await CarritoInvitado.fusionar();
-        toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
-        r.avisos.forEach((m) => toast(m, 'warn'));
-        const destino = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext();
-        // Contraseña de antes de la política actual: primero se le pide cambiarla.
-        const ir = data.cliente.password_debil ? `/seguridad.html?debil=1&next=${encodeURIComponent(destino)}` : destino;
-        setTimeout(() => location.href = ir, 500);
+        if (recordar) await guardarCredencial(correo, password, data.cliente.nombre);
+        await entrar(data, recordar);
     } catch (err) {
         errorBox.textContent = err.message;
         errorBox.classList.toggle('bloqueado', /bloquead/i.test(err.message));
@@ -163,6 +178,83 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
         btn.disabled = false; btn.textContent = 'Entrar';
     }
 });
+
+// Lo que pasa al entrar, con contraseña o con QR.
+async function entrar(data, recordar) {
+        Sesion.guardarCliente({ ...data.cliente, recordar });
+        if (recordar) CuentasRecordadas.guardar('cliente', data.cliente);
+        else CuentasRecordadas.olvidar('cliente', data.cliente.correo);
+        const r = await CarritoInvitado.fusionar();
+        toast(r.pasados ? `Bienvenido de vuelta. Pasamos ${r.pasados} producto(s) a tu carrito.` : 'Bienvenido de vuelta', 'ok');
+        r.avisos.forEach((m) => toast(m, 'warn'));
+        const destino = r.pasados && !new URLSearchParams(location.search).get('next') ? '/carrito.html' : destinoNext();
+        // Contraseña de antes de la política actual: primero se le pide cambiarla.
+        const ir = data.cliente.password_debil ? `/seguridad.html?debil=1&next=${encodeURIComponent(destino)}` : destino;
+        setTimeout(() => location.href = ir, 500);
+}
+
+// ---- Entrar con el celular (QR) ----
+// El QR vence en 2 minutos; se renueva solo hasta 5 veces y luego se pide
+// con un botón (para no dejar la pantalla generando códigos sin fin).
+const QR = { datos: null, timer: null, cuenta: null, renovaciones: 0, activo: false };
+const $q = (id) => document.getElementById(id);
+function qrPintarEstado(texto, tipo = '') { const e = $q('qr-estado'); e.textContent = texto; e.className = 'qr-estado ' + tipo; }
+function qrParar() { clearTimeout(QR.timer); clearInterval(QR.cuenta); }
+async function qrNuevo() {
+    qrParar();
+    $q('qr-caja').innerHTML = '<div class="qr-cargando">Generando…</div>'; $q('qr-digitos').textContent = '--';
+    try {
+        QR.datos = await api('/auth/qr', { method: 'POST', body: { recordar: $q('recordar').checked } });
+    } catch (e) { qrPintarEstado(e.message, 'error'); return; }
+    const q = qrcode(0, 'M'); q.addData(QR.datos.url); q.make();
+    $q('qr-caja').innerHTML = q.createSvgTag({ cellSize: 5, margin: 3, scalable: true });
+    $q('qr-digitos').textContent = QR.datos.digitos;
+    const host = new URL(QR.datos.url).host;
+    $q('qr-red').textContent = host !== location.host ? `El celular abrirá ${host}: debe estar en la misma red Wi-Fi.` : '';
+    let quedan = QR.datos.expira_en;
+    qrPintarEstado(`Esperando a que escanees el código… (${quedan}s)`);
+    QR.cuenta = setInterval(() => { quedan--; if (QR.fase !== 'escaneado' && quedan >= 0) qrPintarEstado(`Esperando a que escanees el código… (${quedan}s)`); }, 1000);
+    QR.fase = 'pendiente';
+    qrPreguntar();
+}
+async function qrPreguntar() {
+    if (!QR.activo || !QR.datos) return;
+    let r;
+    try { r = await api('/auth/qr/estado', { method: 'POST', body: { codigo: QR.datos.codigo, secreto: QR.datos.secreto } }); }
+    catch (e) { qrParar(); qrPintarEstado(e.message, 'error'); qrBotonOtro(); return; }
+    if (r.estado === 'aprobado') {
+        qrParar(); qrPintarEstado('¡Listo! Entrando…', 'ok');
+        return entrar(r, r.recordar);
+    }
+    if (r.estado === 'escaneado' && QR.fase !== 'escaneado') {
+        QR.fase = 'escaneado';
+        qrPintarEstado(`Código escaneado. En tu celular elige el número ${QR.datos.digitos}.`, 'ok');
+        $q('qr-caja').classList.add('qr-leido');
+    }
+    if (r.estado === 'rechazado') { qrParar(); qrPintarEstado('Se canceló desde el celular. Nadie entró a la cuenta.', 'error'); return qrBotonOtro(); }
+    if (r.estado === 'vencido' || r.estado === 'usado') {
+        $q('qr-caja').classList.remove('qr-leido');
+        if (++QR.renovaciones <= 5) return qrNuevo();
+        qrParar(); qrPintarEstado('El código venció.'); return qrBotonOtro();
+    }
+    QR.timer = setTimeout(qrPreguntar, 2000);
+}
+function qrBotonOtro() {
+    $q('qr-caja').classList.remove('qr-leido');
+    $q('qr-caja').innerHTML = '<button class="btn btn-primary btn-sm" type="button" id="qr-otro">Generar otro código</button>';
+    $q('qr-digitos').textContent = '--';
+    $q('qr-otro').addEventListener('click', () => { QR.renovaciones = 0; qrNuevo(); });
+}
+function qrMostrar(si) {
+    QR.activo = si;
+    $q('form-card').hidden = si; $q('qr-card').hidden = !si;
+    $q('auth-sub').textContent = si ? 'Escanea el código con tu celular y aprueba la entrada ahí.' : 'Accede a tu cuenta de Kozmok para ver pedidos, favoritos y recomendaciones.';
+    if (si) { QR.renovaciones = 0; qrNuevo(); } else { qrParar(); QR.datos = null; }
+}
+$q('btn-qr').addEventListener('click', () => qrMostrar(true));
+$q('qr-volver').addEventListener('click', () => qrMostrar(false));
+// Al volver a la pestaña después de un rato, se revisa enseguida.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && QR.activo && QR.datos) { clearTimeout(QR.timer); qrPreguntar(); } });
 
 // Conserva a dónde volver (p. ej. el carrito) al cambiar entre entrar y crear cuenta.
 (() => {

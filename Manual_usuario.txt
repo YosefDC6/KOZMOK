@@ -753,6 +753,25 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
    - El enlace abre restablecer.html: se escribe la nueva contrasena (mismas
      reglas), se cierran todas las sesiones abiertas y se levanta el bloqueo
      de la cuenta si lo tenia.
+   - ENTRAR CON MI CELULAR (QR, solo en la tienda): en el login, debajo de
+     "Entrar", el boton "Entrar con mi celular" muestra un codigo QR y un
+     numero de 2 cifras.
+        1. Con la camara de un celular donde YA tengas la sesion iniciada
+           en Kozmok, escanea el QR (se abre qr.html). Si en ese celular no
+           hay sesion, primero pide iniciarla y luego regresa solo.
+        2. El celular dice desde que navegador, sistema y conexion se pide
+           entrar, y a que cuenta. Elige de los 3 numeros el que ves en la
+           computadora. Si eliges otro, el QR se cancela por seguridad.
+        3. La computadora entra sola (con "Mantener sesion iniciada" como
+           este marcada en el login).
+     El QR vence en 2 minutos (se renueva solo unas veces; despues hay un
+     boton "Generar otro codigo") y sirve una sola vez. "No fui yo" en el
+     celular lo cancela. El celular debe llegar a la tienda: en pruebas,
+     la misma red Wi-Fi (si la computadora esta en localhost, el QR usa
+     kozmok.local o su IP). La entrada aparece en Mi cuenta -> Seguridad
+     como "Acceso con QR desde tu celular" y la nueva sesion en
+     Dispositivos conectados. NUNCA escanees un QR que alguien te mande:
+     le darias acceso a tu cuenta.
 
 3.7c MI CUENTA -> SEGURIDAD  (seguridad.html)
    - Cambiar contrasena: pide la actual y la nueva (con las 4 reglas). Al
