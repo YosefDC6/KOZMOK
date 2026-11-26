@@ -841,8 +841,18 @@ NAVEGACION RAPIDA EN EL PANEL
      pestana nueva) no muestra el boton.
    - CAMPANA de notificaciones junto al logo: avisos de lo que tu rol
      atiende, tambien por correo (ver 4.11b).
-   - "Ir a..." (arriba del menu, o Ctrl + K): escribe parte del nombre de
-     una seccion y entra con Enter, sin abrir los grupos del menu.
+   - "Ir a..." (arriba del menu, Ctrl + K o la tecla "/"): escribe parte
+     del nombre de una seccion y entra con Enter, sin abrir los grupos del
+     menu. Se pueden escribir varias palabras en cualquier orden ("dev
+     tienda"). Ctrl + Enter la abre en otra pestana. Sin escribir nada
+     muestra primero tus FIJADAS, luego tus RECIENTES (las ultimas
+     pantallas que abriste) y luego las demas, con las que tienen algo
+     por atender primero.
+   - SECCIONES FIJADAS: la estrella (al pasar el cursor sobre una seccion
+     del menu, o en "Ir a...") la fija hasta arriba del menu, en
+     "Fijadas", para llegar con un clic sin importar en que modulo estes.
+     Hasta 9; Alt + 1 ... Alt + 9 abre la fijada con ese numero. Otra vez
+     la estrella la quita. Se guardan por cuenta en ese navegador.
    - PUNTITOS DE AVISO: una seccion del menu (y su modulo) lleva un punto
      naranja cuando llego algo despues de la ultima vez que la abriste:
      tickets o mensajes nuevos, pedidos nuevos, pagos o recargas por

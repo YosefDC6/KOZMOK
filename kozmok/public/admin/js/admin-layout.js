@@ -143,6 +143,59 @@ function abrirMenuModulo(titulo) {
 }
 window.abrirMenuModulo = abrirMenuModulo;
 
+// ---- Accesos rápidos: secciones fijadas y recientes ----
+// Se guardan por usuario en este navegador. Fijadas: aparecen arriba del
+// menú (Alt + 1…9 las abre). Recientes: las últimas pantallas abiertas,
+// primero en "Ir a…".
+const Nav = {
+    clave() { return 'kz_nav_' + ((Sesion.usuario() || {}).id || 0); },
+    leer() { try { return JSON.parse(localStorage.getItem(this.clave())) || {}; } catch { return {}; } },
+    guardar(d) { try { localStorage.setItem(this.clave(), JSON.stringify(d)); } catch { /* sin almacenamiento */ } },
+    fijadas() { return this.leer().fijadas || []; },
+    recientes() { return this.leer().recientes || []; },
+    esFijada(k) { return this.fijadas().includes(k); },
+    alternar(k) {
+        const d = this.leer(); let f = d.fijadas || [];
+        if (f.includes(k)) f = f.filter((x) => x !== k);
+        else if (f.length >= 9) { if (window.toast) toast('Puedes fijar hasta 9 secciones', 'warn'); return false; }
+        else f = [...f, k];
+        d.fijadas = f; this.guardar(d);
+        pintarFijadas();
+        return true;
+    },
+    visitar(k) {
+        if (!k) return;
+        const d = this.leer();
+        d.recientes = [k, ...(d.recientes || []).filter((x) => x !== k)].slice(0, 6);
+        this.guardar(d);
+    },
+};
+window.Nav = Nav;
+// Secciones que este rol puede ver, con su módulo (para fijadas e "Ir a…").
+function seccionesVisibles() {
+    const rol = (Sesion.usuario() || {}).rol || '';
+    const lista = [];
+    (window.ADMIN_SECCIONES || []).forEach((sec) => sec.links.forEach((l) => { if (puedeVer(rol, l.key)) lista.push({ ...l, modulo: sec.titulo }); }));
+    return lista;
+}
+function pintarFijadas() {
+    const caja = document.getElementById('admin-fijadas');
+    if (!caja) return;
+    const ic = window.icon || (() => '');
+    const vis = seccionesVisibles();
+    const f = Nav.fijadas().map((k) => vis.find((l) => l.key === k)).filter(Boolean);
+    caja.hidden = !f.length;
+    document.querySelectorAll('.nav-fijar').forEach((b) => {
+        const on = Nav.esFijada(b.dataset.fijar);
+        b.classList.toggle('on', on);
+        b.title = on ? 'Quitar de fijadas' : 'Fijar arriba del menú';
+    });
+    caja.innerHTML = `<div class="fij-titulo">Fijadas</div>` + f.map((l, i) => `
+        <a href="${l.href}" class="fij ${l.key === window.ADMIN_ACTIVO ? 'active' : ''}" title="${l.label} · ${l.modulo} (Alt + ${i + 1})">
+            ${ic(l.ic, 16)}<span>${l.label}</span>${Avisos.nuevo && Avisos.nuevo(l.key) ? '<i class="fij-punto"></i>' : ''}<kbd>${i + 1}</kbd></a>`).join('');
+}
+window.pintarFijadas = pintarFijadas;
+
 function renderAdminSidebar(activo) {
     window.ADMIN_ACTIVO = activo;
     const el = document.getElementById('admin-sidebar-placeholder');
@@ -193,9 +246,10 @@ function renderAdminSidebar(activo) {
                 </button>`).join('')}
         </nav>
         <button type="button" class="admin-ir" onclick="abrirIrA()" title="Ir a una sección (Ctrl + K)">${ic('search', 15)} <span>Ir a…</span><kbd>Ctrl K</kbd></button>
+        <nav class="admin-fijadas" id="admin-fijadas" aria-label="Secciones fijadas" hidden></nav>
         <div class="admin-nav-links" id="admin-nav-links">
             ${secciones.map((s) => {
-                const enlaces = s.links.map((l) => `<a href="${l.href}" data-key="${l.key}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}</a>`).join('');
+                const enlaces = s.links.map((l) => `<a href="${l.href}" data-key="${l.key}" class="${l.key === activo ? 'active' : ''}">${ic(l.ic, 17)} ${l.label}<span class="nav-fijar" data-fijar="${l.key}" role="button" tabindex="-1" title="Fijar arriba del menú" aria-label="Fijar">${ic('star', 13)}</span></a>`).join('');
                 if (!s.home) {
                     // Grupo estático (Cuenta): sin desplegable, siempre visible.
                     return `<div class="admin-nav-sec">${s.titulo}</div>${enlaces}`;
@@ -239,6 +293,15 @@ function renderAdminSidebar(activo) {
             btn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
         });
     });
+    Nav.visitar(activo);
+    pintarFijadas();
+    // Estrella en cada sección del menú: fija / quita sin abrirla.
+    el.addEventListener('click', (e) => {
+        const b = e.target.closest('.nav-fijar');
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        Nav.alternar(b.dataset.fijar);
+    });
     Avisos.iniciar(activo);
 }
 
@@ -268,6 +331,7 @@ const Avisos = {
         this._guardar(v);
     },
     pintar() {
+        if (window.pintarFijadas) pintarFijadas();
         const nuevos = new Set(Object.keys(this.datos).filter((k) => this.nuevo(k)));
         document.querySelectorAll('[data-key]').forEach((el) => {
             const k = el.dataset.key;
@@ -310,10 +374,8 @@ window.Avisos = Avisos;
 // sin abrir los grupos del menú. Muestra los puntos de aviso.
 // ---------------------------------------------------------
 function abrirIrA() {
-    const rol = (Sesion.usuario() || {}).rol || '';
     const ic = window.icon || (() => '');
-    const lista = [];
-    (window.ADMIN_SECCIONES || []).forEach((sec) => sec.links.forEach((l) => { if (puedeVer(rol, l.key)) lista.push({ ...l, modulo: sec.titulo }); }));
+    const lista = seccionesVisibles();
     let ov = document.getElementById('modal-ir-a');
     if (!ov) {
         ov = document.createElement('div');
@@ -321,7 +383,8 @@ function abrirIrA() {
         ov.id = 'modal-ir-a';
         ov.innerHTML = `<div class="modal ir-a" role="dialog" aria-modal="true" aria-label="Ir a una sección">
             <div class="ir-a-buscar">${ic('search', 18)}<input id="ir-a-q" placeholder="¿A dónde vas? Pedidos, soporte, inventario…" autocomplete="off" /><kbd>Esc</kbd></div>
-            <div class="ir-a-lista" id="ir-a-lista" role="listbox"></div></div>`;
+            <div class="ir-a-lista" id="ir-a-lista" role="listbox"></div>
+            <div class="ir-a-pie"><span><kbd>↑</kbd><kbd>↓</kbd> moverse</span><span><kbd>Enter</kbd> abrir</span><span><kbd>Ctrl</kbd><kbd>Enter</kbd> en otra pestaña</span><span>${ic('star', 12)} fijar en el menú</span></div></div>`;
         ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.remove('open'); });
         document.body.appendChild(ov);
     }
@@ -329,25 +392,56 @@ function abrirIrA() {
     const cont = ov.querySelector('#ir-a-lista');
     const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     let sel = 0, vis = [];
-    const pintar = () => {
-        const t = sinAcentos(q.value.trim());
-        vis = lista.filter((l) => !t || sinAcentos(`${l.label} ${l.modulo} ${l.desc || ''}`).includes(t));
-        // Primero las que tienen algo nuevo; después en el orden del menú.
-        vis.sort((a, b) => Number(Avisos.nuevo(b.key)) - Number(Avisos.nuevo(a.key)));
-        sel = Math.min(sel, Math.max(0, vis.length - 1));
-        cont.innerHTML = vis.length ? vis.map((l, i) => `
+    const op = (l, i) => `
             <a class="ir-a-op ${i === sel ? 'sel' : ''}" href="${l.href}" role="option" data-i="${i}">
                 <span class="ir-a-ic">${ic(l.ic, 17)}</span>
                 <span class="ir-a-txt"><strong>${l.label}</strong><small>${l.modulo}${l.desc ? ' · ' + l.desc : ''}</small></span>
                 ${Avisos.nuevo(l.key) ? `<span class="ir-a-nuevo">${Avisos.datos[l.key].n} por atender</span>` : ''}
-            </a>`).join('') : '<p class="ir-a-vacio">Ninguna sección coincide.</p>';
+                <button type="button" class="ir-a-fijar ${Nav.esFijada(l.key) ? 'on' : ''}" data-fijar="${l.key}" title="${Nav.esFijada(l.key) ? 'Quitar de fijadas' : 'Fijar en el menú'}" aria-label="Fijar">${ic('star', 15)}</button>
+            </a>`;
+    const pintar = () => {
+        const t = sinAcentos(q.value.trim());
+        // Cada palabra debe aparecer (en cualquier orden): "ped pag" -> Pagos de pedidos.
+        const palabras = t.split(/\s+/).filter(Boolean);
+        let grupos;
+        if (palabras.length) {
+            vis = lista.filter((l) => { const txt = sinAcentos(`${l.label} ${l.modulo} ${l.desc || ''}`); return palabras.every((p) => txt.includes(p)); });
+            // Primero las que empiezan con lo escrito y las que tienen algo nuevo.
+            const pts = (l) => (sinAcentos(l.label).startsWith(palabras[0]) ? 2 : 0) + (Avisos.nuevo(l.key) ? 1 : 0);
+            vis.sort((a, b) => pts(b) - pts(a));
+            grupos = [['', vis]];
+        } else {
+            // Sin escribir: fijadas, recientes y luego lo que tiene algo nuevo y el resto.
+            const por = (keys) => keys.map((k) => lista.find((l) => l.key === k)).filter(Boolean);
+            const fij = por(Nav.fijadas());
+            const rec = por(Nav.recientes()).filter((l) => l.key !== window.ADMIN_ACTIVO && !fij.includes(l)).slice(0, 5);
+            const usados = new Set([...fij, ...rec]);
+            const resto = lista.filter((l) => !usados.has(l)).sort((a, b) => Number(Avisos.nuevo(b.key)) - Number(Avisos.nuevo(a.key)));
+            grupos = [['Fijadas', fij], ['Recientes', rec], ['Todas las secciones', resto]].filter((g) => g[1].length);
+            vis = grupos.flatMap((g) => g[1]);
+        }
+        sel = Math.min(sel, Math.max(0, vis.length - 1));
+        let i = 0;
+        cont.innerHTML = vis.length ? grupos.map(([tit, ls]) => (tit ? `<div class="ir-a-grupo">${tit}</div>` : '') + ls.map((l) => op(l, i++)).join('')).join('')
+            : '<p class="ir-a-vacio">Ninguna sección coincide.</p>';
         const actual = cont.querySelector('.sel'); if (actual) actual.scrollIntoView({ block: 'nearest' });
+    };
+    cont.onclick = (e) => {
+        const b = e.target.closest('[data-fijar]');
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (Nav.alternar(b.dataset.fijar)) pintar();
+        q.focus();
     };
     q.oninput = () => { sel = 0; pintar(); };
     q.onkeydown = (e) => {
         if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, vis.length - 1); pintar(); }
         else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); pintar(); }
-        else if (e.key === 'Enter' && vis[sel]) { e.preventDefault(); location.href = vis[sel].href; }
+        else if (e.key === 'Enter' && vis[sel]) {
+            e.preventDefault();
+            if (e.ctrlKey || e.metaKey) { window.open(vis[sel].href, '_blank'); ov.classList.remove('open'); }
+            else location.href = vis[sel].href;
+        }
         else if (e.key === 'Escape') ov.classList.remove('open');
     };
     q.value = ''; sel = 0; pintar();
@@ -356,8 +450,16 @@ function abrirIrA() {
 }
 window.abrirIrA = abrirIrA;
 document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && document.getElementById('admin-sidebar-placeholder')) {
-        e.preventDefault(); abrirIrA();
+    if (!document.getElementById('admin-sidebar-placeholder')) return;
+    const escribiendo = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '') || (e.target && e.target.isContentEditable);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); abrirIrA(); return; }
+    // "/" fuera de un campo también abre "Ir a…".
+    if (e.key === '/' && !escribiendo && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); abrirIrA(); return; }
+    // Alt + 1…9: la sección fijada con ese número.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {
+        const k = Nav.fijadas()[Number(e.code.slice(5)) - 1];
+        const l = k && seccionesVisibles().find((x) => x.key === k);
+        if (l) { e.preventDefault(); location.href = l.href; }
     }
 });
 

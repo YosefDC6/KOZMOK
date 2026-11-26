@@ -3188,3 +3188,36 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .cup-lista { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
 .cup-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 99px; background: var(--bg-panel-2); border: 1px solid var(--line); font-size: .78rem; }
 .cup-tag button { background: none; border: 0; color: var(--text-muted); cursor: pointer; display: flex; padding: 2px; }
+/* Panel: secciones fijadas (arriba del menú) */
+.admin-fijadas { display: grid; gap: 2px; margin: 0 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.admin-fijadas .fij-titulo { font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding: 0 10px 4px; }
+.admin-fijadas .fij { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--text-muted); text-decoration: none; font-size: .88rem; position: relative; }
+.admin-fijadas .fij:hover { color: var(--text); background: var(--bg-panel-2); }
+.admin-fijadas .fij.active { color: var(--accent-light); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.admin-fijadas .fij span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-fijadas .fij kbd { font-family: var(--font-mono); font-size: .64rem; padding: 1px 5px; border: 1px solid var(--line); border-radius: 5px; opacity: .7; }
+.admin-fijadas .fij-punto { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex-shrink: 0; }
+.admin-shell.menu-corto .admin-fijadas .fij { justify-content: center; }
+.admin-shell.menu-corto .admin-fijadas .fij span, .admin-shell.menu-corto .admin-fijadas .fij kbd, .admin-shell.menu-corto .admin-fijadas .fij-titulo { display: none; }
+.admin-shell.menu-corto .admin-fijadas .fij-punto { position: absolute; top: 5px; right: 8px; }
+/* Ir a…: grupos, estrella y ayuda de teclado */
+.ir-a-grupo { font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding: 10px 12px 4px; }
+.ir-a-fijar { margin-left: auto; background: none; border: 0; padding: 4px; border-radius: 6px; color: var(--text-muted); cursor: pointer; display: flex; opacity: .35; }
+.ir-a-op:hover .ir-a-fijar, .ir-a-op.sel .ir-a-fijar { opacity: .8; }
+.ir-a-fijar:hover { color: var(--warning); opacity: 1; }
+.ir-a-fijar.on { opacity: 1; color: var(--warning); }
+.ir-a-fijar.on svg { fill: currentColor; }
+.ir-a-pie { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--text-muted); }
+.ir-a-pie span { display: inline-flex; align-items: center; gap: 4px; }
+.ir-a-pie kbd { font-family: var(--font-mono); font-size: .64rem; padding: 1px 5px; border: 1px solid var(--line); border-radius: 5px; }
+.ir-a-nuevo + .ir-a-fijar { margin-left: 6px; }
+/* La estrella aparece al pasar el cursor, encima del puntito de aviso (no
+   ocupa lugar, así el texto no se parte). */
+.admin-nav-links a .nav-fijar { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; padding: 3px; border-radius: 6px; color: var(--text-muted); background: var(--bg-panel-2); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 1; }
+.admin-nav-links a:hover .nav-fijar { opacity: 1; pointer-events: auto; }
+.admin-nav-links a:hover .aviso-punto { opacity: 0; }
+.admin-nav-links a .nav-fijar:hover { color: var(--warning); }
+.admin-nav-links a .nav-fijar.on { color: var(--warning); }
+.admin-nav-links a .nav-fijar.on svg { fill: currentColor; }
+.admin-shell.menu-corto .admin-nav-links a .nav-fijar { display: none; }
+.admin-nav-links a:hover .aviso-punto { pointer-events: none; }
