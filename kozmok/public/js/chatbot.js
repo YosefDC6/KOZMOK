@@ -180,6 +180,22 @@
             panel.classList.remove('open');
             guardar();
         });
+        // Se cierra al tocar fuera del asesor o con Esc (la conversación se
+        // conserva). pointerdown: al momento del toque el elemento todavía
+        // está en la página aunque el chat lo vuelva a pintar después.
+        const cerrarChat = () => { if (panel.classList.contains('open')) { panel.classList.remove('open'); guardar(); } };
+        document.addEventListener('pointerdown', (e) => {
+            if (!panel.classList.contains('open')) return;
+            if (panel.contains(e.target) || toggle.contains(e.target)) return;
+            // Ventanas abiertas desde el chat (ficha, confirmaciones) no lo cierran.
+            if (e.target.closest && e.target.closest('.modal-overlay.open, .modal.open, [role="dialog"]')) return;
+            cerrarChat();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !panel.classList.contains('open')) return;
+            if (document.querySelector('.modal-overlay.open, .modal.open')) return; // Esc cierra primero la ventana
+            cerrarChat();
+        });
         panel.querySelector('#chatbot-send').addEventListener('click', enviarTexto);
         panel.querySelector('#chatbot-text').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') enviarTexto();
