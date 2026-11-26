@@ -3228,8 +3228,24 @@ app.get('/api/pedidos/cliente/:clienteId', requireCliente, mismoCliente, asyncRo
          WHERE p.cliente_id = $1 AND NOT COALESCE(p.regresado_carrito, FALSE) GROUP BY p.id ORDER BY p.fecha_pedido DESC`,
         [req.cliente.id]
     );
-    res.json(result.rows);
+    res.json(result.rows.map((p) => ({ ...p, ticket_categorias: categoriasTicketDePedido(p) })));
 }));
+
+// Para qué categorías de ticket se puede elegir un pedido: una garantía o
+// devolución solo de algo que ya se entregó (devolución dentro de su plazo),
+// facturación de lo pagado (o ya facturado). "Un pedido" acepta cualquiera,
+// también cancelados (p. ej. un reembolso que no llegó). La misma regla
+// filtra la lista del cliente y se valida al crear el ticket.
+function categoriasTicketDePedido(p) {
+    const cats = ['pedido', 'general'];
+    if (p.estado === 'entregado') {
+        cats.push('garantia');
+        const entrega = p.fecha_entrega || p.fecha_actualizacion;
+        if (entrega && Date.now() - new Date(entrega).getTime() <= DEV.dias * 86400000) cats.push('devolucion');
+    }
+    if ((p.pago_estado === 'pagado' && p.estado !== 'cancelado') || p.factura) cats.push('facturacion');
+    return cats;
+}
 
 // Detalle de un pedido: el cliente dueño o el equipo interno. A un cliente
 // que pide un pedido ajeno se le responde igual que si no existiera.
@@ -3695,6 +3711,17 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
         const base = String(origen.asunto).replace(/^Seguimiento a TK-\d+: /, '');
         Object.assign(req.body, { asunto: `Seguimiento a ${origen.folio}: ${base}`.slice(0, 160), categoria: origen.categoria,
             pedido_id: origen.pedido_id, cupon_id: origen.cupon_id });
+    }
+    // El pedido tiene que servir para la categoría (no una garantía de un
+    // pedido cancelado). En un seguimiento se hereda tal cual.
+    if (!origen && req.body.pedido_id) {
+        const p = (await pool.query(`SELECT p.*, (SELECT id FROM facturas f WHERE f.pedido_id = p.id LIMIT 1) AS factura
+                                     FROM pedidos p WHERE p.id = $1 AND p.cliente_id = $2`, [Number(req.body.pedido_id) || 0, req.params.id])).rows[0];
+        const cat = req.body.categoria;
+        if (p && !categoriasTicketDePedido(p).includes(cat)) {
+            const por = { garantia: 'ya entregado', devolucion: `entregado en los últimos ${DEV.dias} días`, facturacion: 'pagado' }[cat];
+            return res.status(400).json({ message: por ? `Para esta categoría elige un pedido ${por}.` : 'Ese pedido no aplica para esta categoría.' });
+        }
     }
     const ticket = await crearTicket(req.params.id, req.body, { fotos, ua: req.headers['user-agent'] });
     if (origen && !ticket.repetido) {

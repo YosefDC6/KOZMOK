@@ -222,23 +222,48 @@ async function cargarPedidosTicket(elegido) {
     try { if (!PEDIDOS_CLIENTE) PEDIDOS_CLIENTE = await api(`/pedidos/cliente/${CID}`); }
     catch { PEDIDOS_CLIENTE = []; }
     if (!document.body.contains(sel)) return;
-    const estado = (e) => String(e || '').replace(/_/g, ' ');
-    sel.innerHTML = '<option value="">Ninguno / no aplica</option>' + PEDIDOS_CLIENTE.map((p) =>
-        `<option value="${p.id}">${escHTML(p.numero_orden)} · ${escHTML(estado(p.estado))} · ${formatoMoneda(p.total)} · ${formatoFecha(p.fecha_pedido)}</option>`).join('');
-    if (elegido && PEDIDOS_CLIENTE.some((p) => Number(p.id) === Number(elegido))) sel.value = String(elegido);
-    document.getElementById('tk-ped-nota').textContent = PEDIDOS_CLIENTE.length ? '' : 'Aún no tienes pedidos.';
+    if (elegido) sel.dataset.elegido = String(elegido);
     mostrarPedidoTicket();
+}
+// Qué pedidos se pueden elegir según la categoría (la regla la manda el
+// servidor en ticket_categorias y la vuelve a revisar al crear el ticket):
+// garantía = entregados; devolución = entregados dentro del plazo;
+// facturación = pagados; "Un pedido" = todos, agrupados por estado.
+const SIN_PEDIDOS_PARA = {
+    garantia: 'No tienes pedidos entregados. La garantía empieza cuando recibes tu pedido.',
+    devolucion: 'No tienes pedidos entregados dentro del plazo para devolver.',
+    facturacion: 'No tienes pedidos pagados para facturar.',
+    pedido: 'Aún no tienes pedidos.',
+};
+function opcionesPedidoTicket(cat) {
+    const sel = document.getElementById('tk-pedido');
+    const previo = sel.value || sel.dataset.elegido || '';
+    delete sel.dataset.elegido;
+    const lista = (PEDIDOS_CLIENTE || []).filter((p) => (p.ticket_categorias || ['pedido']).includes(cat));
+    const estado = (e) => String(e || '').replace(/_/g, ' ');
+    const opt = (p) => `<option value="${p.id}">${escHTML(p.numero_orden)} · ${escHTML(estado(p.estado))} · ${formatoMoneda(p.total)} · ${formatoFecha(p.fecha_pedido)}</option>`;
+    let html = '<option value="">Ninguno / no aplica</option>';
+    if (cat === 'pedido') {
+        const grupos = [['En curso', (p) => !['entregado', 'cancelado'].includes(p.estado)], ['Entregados', (p) => p.estado === 'entregado'], ['Cancelados', (p) => p.estado === 'cancelado']];
+        for (const [nombre, f] of grupos) { const g = lista.filter(f); if (g.length) html += `<optgroup label="${nombre}">${g.map(opt).join('')}</optgroup>`; }
+    } else html += lista.map(opt).join('');
+    sel.innerHTML = html;
+    if (previo && lista.some((p) => String(p.id) === String(previo))) sel.value = String(previo);
+    document.getElementById('tk-ped-nota').textContent = lista.length ? '' : (SIN_PEDIDOS_PARA[cat] || '');
+    return lista;
 }
 function mostrarPedidoTicket() {
     const cat = document.getElementById('tk-cat').value;
     const wrap = document.getElementById('tk-ped-wrap');
     const ver = CAT_CON_PEDIDO.includes(cat);
     wrap.style.display = ver ? '' : 'none';
+    let lista = [];
     if (!ver) document.getElementById('tk-pedido').value = '';
+    else if (PEDIDOS_CLIENTE) lista = opcionesPedidoTicket(cat);
     const wc = document.getElementById('tk-cup-wrap');
     if (wc) { wc.style.display = cat === 'cupon' ? '' : 'none'; if (cat !== 'cupon') document.getElementById('tk-cupon').value = ''; }
     // En "Un pedido" se pide elegirlo si tiene pedidos.
-    wrap.querySelector('label span').textContent = cat === 'pedido' && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length ? '' : '(opcional)';
+    wrap.querySelector('label span').textContent = cat === 'pedido' && lista.length ? '' : '(opcional)';
 }
 
 async function crearTicket(btn) {

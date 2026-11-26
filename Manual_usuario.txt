@@ -1912,7 +1912,12 @@ Configuracion (.env)
 Lado cliente  (soporte.html, dentro de Mi cuenta)
    - "Nuevo ticket": asunto, categoria (pedido, cuenta, garantia,
      devolucion o cambio, facturacion, cupon de descuento, general), PEDIDO
-     RELACIONADO (opcional: se elige de sus propios pedidos), el CUPON si la
+     RELACIONADO (opcional: se elige de sus propios pedidos; la lista
+     depende de la categoria: Garantia = solo entregados; Devolucion =
+     entregados dentro del plazo para devolver (30 dias); Facturacion =
+     pagados o ya facturados; "Un pedido" = todos, agrupados en En curso,
+     Entregados y Cancelados. Si se cambia la categoria y el pedido elegido
+     ya no aplica, se quita; el servidor tambien lo revisa), el CUPON si la
      categoria es "Un cupon de descuento", descripcion y FOTOS (opcional,
      hasta 3: JPG, PNG o WebP; p. ej. un producto que llego danado, el
      empaque o una captura de pantalla).
