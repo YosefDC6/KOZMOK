@@ -767,8 +767,16 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      El QR vence en 2 minutos (se renueva solo unas veces; despues hay un
      boton "Generar otro codigo") y sirve una sola vez. "No fui yo" en el
      celular lo cancela. El celular debe llegar a la tienda: en pruebas,
-     la misma red Wi-Fi (si la computadora esta en localhost, el QR usa
-     kozmok.local o su IP). La entrada aparece en Mi cuenta -> Seguridad
+     la misma red Wi-Fi.
+     DIRECCION DEL QR: el navegador guarda la sesion por direccion (si en
+     el celular entraste por 192.168.1.70, para kozmok.local no tienes
+     sesion). Por eso el QR usa la direccion donde los celulares ya tienen
+     sesion: el servidor la anota cuando un celular con sesion de la tienda
+     le habla, y la guarda en kozmok/.host-celular (no se sube a GitHub;
+     si era una IP que la computadora ya no tiene, se ignora). Si no hay
+     ninguna, usa URL_PUBLICA, kozmok.local o la IP. Si el celular no tiene
+     sesion en esa direccion, inicia sesion ahi UNA vez con "Mantener
+     sesion iniciada" y las siguientes veces solo escaneas. La entrada aparece en Mi cuenta -> Seguridad
      como "Acceso con QR desde tu celular" y la nueva sesion en
      Dispositivos conectados. NUNCA escanees un QR que alguien te mande:
      le darias acceso a tu cuenta.

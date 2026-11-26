@@ -3,3 +3,4 @@ node_modules/
 *.log
 .pruebas-token
 .panel-ruta
+.host-celular

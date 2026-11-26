@@ -46,8 +46,11 @@ async function cargar() {
         const est = await api('/auth/estado').catch(() => ({}));
         if (est.cliente) Sesion.guardarCliente(est.cliente);
         else {
-            cuerpo.innerHTML = `<p style="text-align:center">Para aprobar la entrada, primero inicia sesión en <strong>este celular</strong>.</p>
-                <a class="btn btn-primary" style="width:100%" href="/login.html?next=${encodeURIComponent(location.pathname + location.search)}">Iniciar sesión</a>`;
+            // El navegador guarda la sesión por dirección: si en este celular
+            // entraste por otra (la IP o kozmok.local), aquí no aparece.
+            cuerpo.innerHTML = `<p style="text-align:center;margin-top:0">Este celular no tiene la sesión abierta en <strong>${esc(location.host)}</strong>.</p>
+                <p style="text-align:center;color:var(--text-muted);font-size:.86rem">Inicia sesión aquí <strong>una sola vez</strong> con «Mantener sesión iniciada» marcado. Las siguientes veces solo escaneas y eliges el número.</p>
+                <a class="btn btn-primary" style="width:100%" href="/login.html?next=${encodeURIComponent(location.pathname + location.search)}">Iniciar sesión y aprobar</a>`;
             return;
         }
     }

@@ -125,6 +125,24 @@ app.use((req, res, next) => (RUTAS_CON_FOTOS.test(req.path) ? jsonFotos : jsonCh
 // Capas de protección de la API, en orden:
 //   1) límite de peticiones por IP, 2) origen (CSRF),
 //   3) detector de inyección SQL, 4) limpieza de HTML (XSS).
+// Dirección con la que los celulares tienen sesión en la tienda. El QR de
+// "Entrar con mi celular" usa esa, porque el navegador guarda la sesión por
+// dirección: si el celular entró por 192.168.1.70, para kozmok.local no la
+// tiene. Se anota cuando llega una petición con la cookie de la tienda desde
+// otro dispositivo de la red, y se guarda en .host-celular (no se sube).
+const HOST_CELULAR = { host: '', archivo: path.join(__dirname, '.host-celular') };
+try { HOST_CELULAR.host = require('fs').readFileSync(HOST_CELULAR.archivo, 'utf8').trim(); } catch { /* aún no hay */ }
+const esLocal = (h) => /^(localhost|127\.|::1$|\[::1\]|::ffff:127\.)/i.test(String(h || ''));
+app.use('/api', (req, res, next) => {
+    const host = String(req.headers.host || '').toLowerCase();
+    const origen = `${req.protocol}://${host}`;
+    if (host && origen !== HOST_CELULAR.host && /^[a-z0-9.\-]+(:\d{1,5})?$/.test(host) && !esLocal(host) && !esLocal(seg.ipDe(req))
+        && /(?:^|;\s*)kz_sesion=/.test(String(req.headers.cookie || ''))) {
+        HOST_CELULAR.host = origen;
+        require('fs').writeFile(HOST_CELULAR.archivo, origen + '\n', () => {});
+    }
+    next();
+});
 app.use('/api', seg.limitador({ nombre: 'api', ventanaMs: 60000, max: 600 }));
 app.use('/api', seg.verificarOrigen);
 app.use('/api', seg.filtroInyeccionSQL);
@@ -911,6 +929,13 @@ const limiteQrEstado = seg.limitador({ nombre: 'qr-estado', ventanaMs: 60000, ma
 function baseParaCelular(req) {
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
+    // La dirección donde los celulares ya tienen sesión (ver HOST_CELULAR).
+    // Si era una IP que esta computadora ya no tiene (cambió de red), no sirve.
+    if (/^https?:\/\//.test(HOST_CELULAR.host)) {
+        const nombre = new URL(HOST_CELULAR.host).hostname;
+        const esIp = /^\d+\.\d+\.\d+\.\d+$/.test(nombre);
+        if (!esIp || ipsDeRed().some((i) => i.ip === nombre)) return HOST_CELULAR.host;
+    }
     const host = String(req.hostname || '').toLowerCase();
     if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
         const puerto = process.env.PORT || 3000;
