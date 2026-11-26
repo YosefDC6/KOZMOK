@@ -822,6 +822,23 @@ sus opciones sin salir de donde estas. El bloque del modulo en el que
 estas se abre solo; el otro queda cerrado, para que la lista no se sienta
 larga. El bloque CUENTA no es desplegable, siempre esta a la vista.
 
+El bloque ERP trae su menu completo para trabajar sin salirse de el:
+Dashboard, Clientes (CRM), Productos (SCM), Inventario (SCM), Ordenes de
+clientes, Reportes, Nivel ERP y Panel por rol (cada rol ve solo lo suyo:
+Ventas ve Clientes, Productos, Ordenes y Reportes; Logistica ve Productos,
+Inventario, Ordenes y Reportes). Clientes, Productos e Inventario son las
+mismas pantallas del CRM y del SCM (llevan una etiqueta "CRM" o "SCM"); si
+las abres desde el ERP, el menu se queda en el ERP con esa opcion marcada y
+arriba del titulo dice "ERP - datos del CRM". Lo mismo al abrir la ficha de
+un cliente o ir a Cuenta. El menu cambia de modulo solo cuando eliges una
+opcion de otro bloque o una pantalla que solo existe en otro modulo.
+
+En celular o ventana angosta la barra lateral se vuelve un menu
+hamburguesa: el boton "Menu - ERP" (dice en que modulo estas) despliega el
+menu completo con todos los modulos, Cuenta, tu nombre y rol, "Cambiar
+contrasena", "Verificacion en dos pasos" y "Cerrar sesion"; el mismo boton
+("Cerrar") lo cierra.
+
 Cada bloque empieza con su propio "Dashboard" (el de CRM en
 admin/dashboard.html, el de SCM en admin/scm.html y el de ERP en
 admin/erp.html).
