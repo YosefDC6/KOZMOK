@@ -1,5 +1,9 @@
 // public/admin/js/admin-layout.js
 
+// Al volver con "atrás", el navegador puede mostrar la copia guardada de la
+// pantalla (con estados viejos de tickets, pedidos…): en el panel se recarga.
+window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+
 function requireAuthAdmin() {
     // La sesión real es la cookie HttpOnly "kz_admin"; aquí solo se
     // guardan los datos para pintar el menú y se confirman con el servidor.

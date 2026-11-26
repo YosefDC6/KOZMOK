@@ -471,6 +471,16 @@ function formatoFechaHora(fecha) {
     return new Date(fecha).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 // Escapa texto antes de meterlo en HTML (contra XSS al mostrar datos).
+// Desactiva un botón mientras corre una acción (envíos con fotos tardan):
+// así un doble clic no manda lo mismo dos o tres veces.
+async function conBoton(btn, accion, textoEspera = 'Enviando…') {
+    if (btn && btn.disabled) return;
+    const antes = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = textoEspera; }
+    try { return await accion(); }
+    finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.innerHTML = antes; } }
+}
+
 // Pedido sin pagar -> sus productos regresan al carrito (para cambiar el
 // método de pago, la dirección o lo que se lleva). Pide confirmación.
 async function regresarPedidoAlCarrito(id, { numero = '', paso = 3 } = {}) {

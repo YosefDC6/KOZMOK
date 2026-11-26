@@ -22,6 +22,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
 DROP TABLE IF EXISTS cupones                 CASCADE;
+DROP TABLE IF EXISTS cupon_lotes             CASCADE;
+DROP TABLE IF EXISTS promocion_productos     CASCADE;
 DROP TABLE IF EXISTS notificaciones          CASCADE;
 DROP TABLE IF EXISTS notif_cursor            CASCADE;
 DROP TABLE IF EXISTS notif_stock             CASCADE;
@@ -722,6 +724,17 @@ CREATE INDEX idx_ticket_adjuntos ON ticket_adjuntos(ticket_id);
 -- en el checkout; el pedido guarda cuál y cuánto descontó (si se cancela,
 -- el cupón vuelve a quedar disponible). Ver cupones.js.
 -- ---------------------------------------------------------
+CREATE TABLE cupon_lotes (                  -- envíos a varios clientes a la vez
+    id          SERIAL PRIMARY KEY,
+    nombre      VARCHAR(160) NOT NULL,
+    modo        VARCHAR(12) NOT NULL,
+    criterios   JSONB,
+    resumen     VARCHAR(400),
+    total       INTEGER NOT NULL DEFAULT 0,
+    usuario_id  INTEGER REFERENCES usuarios(id),
+    motivo      VARCHAR(300),
+    fecha       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE cupones (
     id          SERIAL PRIMARY KEY,
     codigo      VARCHAR(20) UNIQUE NOT NULL,
@@ -738,9 +751,11 @@ CREATE TABLE cupones (
     fecha_uso   TIMESTAMP,
     usuario_id  INTEGER REFERENCES usuarios(id),
     motivo      VARCHAR(300),
+    lote_id     INTEGER REFERENCES cupon_lotes(id) ON DELETE SET NULL,
     fecha       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_cupones_cliente ON cupones(cliente_id);
+CREATE INDEX idx_cupones_lote ON cupones(lote_id);
 CREATE UNIQUE INDEX uq_cupon_bienvenida ON cupones(cliente_id) WHERE origen = 'bienvenida';
 ALTER TABLE pedidos ADD COLUMN cupon_id INTEGER REFERENCES cupones(id) ON DELETE SET NULL;
 ALTER TABLE pedidos ADD COLUMN descuento_cupon NUMERIC(10,2) NOT NULL DEFAULT 0;

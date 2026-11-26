@@ -25,7 +25,8 @@ kozmok/
 ├── notificaciones.js     # avisos del panel (campana) y por correo al equipo
 ├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
 ├── cupones.js            # cupones: bienvenida, compensaciones de Soporte y su uso en el checkout
-├── panel.js              # panel en dirección secreta (PANEL_RUTA): sirve public/admin y traduce enlaces
+├── panel.js              # panel en dirección secreta (PANEL_RUTA), pantallas solo con sesión y rol
+├── datos-sensibles.js    # oculta tarjetas, CVV, NIP y contraseñas en tickets
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
@@ -214,7 +215,10 @@ disponible. Rutas: `GET /api/clientes/:id/cupones`,
 Ventas y Soporte tienen tope en lo que regalan (`CUPON_SOPORTE_*`).
 La pantalla del panel es `admin/cupones.html` (`GET /api/admin/cupones` con
 filtros `q`, `estado`, `origen`; `GET /api/admin/cupones/clientes?q=` para
-elegir a quién darlo).
+elegir a quién darlo). Envíos a varios clientes (permiso `cupones-masivo`):
+`POST /api/admin/cupones/audiencia` (cuántos y quiénes), `POST /api/admin/cupones/masivo`
+(pide `confirmar_total` igual al de la vista previa; crea un `cupon_lotes` y un
+cupón `origen = 'campana'` por cliente) y `POST /api/admin/cupones/lotes/:id/cancelar`.
 
 ## Dirección secreta del panel
 

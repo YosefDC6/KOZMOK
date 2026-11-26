@@ -15,6 +15,7 @@
 
         <div class="stat-grid" id="kpis"></div>
         <div id="config"></div>
+        <div id="lotes"></div>
 
         <div class="filters-bar" style="margin-top:18px">
             <input type="search" id="f-buscar" placeholder="Buscar por código, cliente o correo…" />
@@ -29,7 +30,8 @@
             <select id="f-origen">
                 <option value="">Bienvenida y del equipo</option>
                 <option value="bienvenida">Solo bienvenida</option>
-                <option value="soporte">Solo del equipo</option>
+                <option value="soporte">Solo dados uno por uno</option>
+                <option value="campana">Solo de envíos a varios</option>
             </select>
         </div>
 
@@ -60,17 +62,20 @@ requireAuthAdmin();
 renderAdminSidebar('cupones');
 document.getElementById('topbar').innerHTML = adminHeader(
     'Cupones', 'Cupones de bienvenida y los que da el equipo: quién los tiene, cuáles se usan y cuánto descuentan.',
-    `<button class="btn btn-primary" onclick="darCupon()">${icon('plus', 15)} Dar cupón</button>`
+    `<button class="btn btn-outline" id="btn-masivo" hidden onclick="envioMasivo()">${icon('user', 15)} Enviar a varios clientes</button>
+     <button class="btn btn-primary" onclick="darCupon()">${icon('plus', 15)} Dar cupón</button>`
 );
 
 const EST = { disponible: ['Disponible', 'var(--success)'], usado: ['Usado', 'var(--text-muted)'], vencido: ['Vencido', 'var(--warning)'], cancelado: ['Cancelado', 'var(--danger)'] };
 let DATOS = null;
 const qs = new URLSearchParams(location.search);
+let LOTE = Number(qs.get('lote')) || 0;
 ['estado', 'origen'].forEach((k) => { if (qs.get(k)) document.getElementById('f-' + k).value = qs.get(k); });
 if (qs.get('q')) document.getElementById('f-buscar').value = qs.get('q');
 
 async function cargar() {
     const p = new URLSearchParams({ q: document.getElementById('f-buscar').value.trim(), estado: document.getElementById('f-estado').value, origen: document.getElementById('f-origen').value });
+    if (LOTE) p.set('lote', LOTE);
     try { DATOS = await api('/admin/cupones?' + p); }
     catch (e) { document.getElementById('tabla').innerHTML = `<tr><td colspan="8">${escHTML(e.message)}</td></tr>`; return; }
     const k = DATOS.resumen;
@@ -85,7 +90,38 @@ async function cargar() {
         <span>${c.bienvenida ? `<strong>Cupón de bienvenida:</strong> ${escHTML(c.bienvenida.beneficio)}${c.bienvenida.minimo > 0 ? ` en compras desde ${formatoMoneda(c.bienvenida.minimo)}` : ''}, válido ${c.bienvenida.dias} días. Se da al confirmar el correo.`
             : '<strong>Cupón de bienvenida apagado.</strong>'}
         ${c.limite_rol ? ` Tu rol puede dar hasta ${c.limite_rol.porcentaje}% (máximo ${formatoMoneda(c.limite_rol.monto)}) o ${formatoMoneda(c.limite_rol.monto)} fijos.` : ''}</span></div>`;
+    document.getElementById('btn-masivo').hidden = !DATOS.puede_masivo;
+    pintarLotes();
     pintar();
+}
+// Envíos a varios clientes: los últimos, con cuántos se usaron.
+function pintarLotes() {
+    const caja = document.getElementById('lotes');
+    const l = DATOS.lotes || [];
+    caja.innerHTML = !l.length ? '' : `<div class="card cup-lotes">
+        <h3>${icon('user', 16)} Envíos a varios clientes</h3>
+        ${LOTE ? `<p class="cup-filtro-lote">Mostrando solo los cupones del envío <strong>${escHTML((l.find((x) => x.id === LOTE) || {}).nombre || '#' + LOTE)}</strong> · <a href="#" onclick="LOTE = 0; cargar(); return false;">Ver todos</a></p>` : ''}
+        <div class="table-wrap"><table>
+            <thead><tr><th>Envío</th><th>A quién</th><th>Cupones</th><th>Usados</th><th>Descontado</th><th></th></tr></thead>
+            <tbody>${l.map((x) => `<tr>
+                <td><strong>${escHTML(x.nombre)}</strong><div class="cup-sub">${formatoFecha(x.fecha)}${x.usuario_nombre ? ' · ' + escHTML(x.usuario_nombre) : ''}</div></td>
+                <td class="cup-sub" style="max-width:320px">${escHTML(x.resumen || '')}</td>
+                <td>${x.total}<div class="cup-sub">${x.disponibles} disponibles</div></td>
+                <td>${x.usados}<div class="cup-sub">${x.total ? Math.round(x.usados * 100 / x.total) : 0}%</div></td>
+                <td>${formatoMoneda(x.descuento)}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-ghost btn-sm" onclick="LOTE = ${x.id}; cargar(); scrollTo({ top: document.querySelector('.table-wrap:last-of-type').offsetTop - 80, behavior: 'smooth' })">Ver cupones</button>
+                    ${x.disponibles && DATOS.puede_masivo ? `<button class="btn btn-ghost btn-sm" onclick="cancelarLote(${x.id}, ${x.disponibles})">Cancelar no usados</button>` : ''}
+                </td></tr>`).join('')}</tbody>
+        </table></div></div>`;
+}
+function cancelarLote(id, n) {
+    const x = DATOS.lotes.find((l) => l.id === id);
+    modal(`<h3 style="margin-top:0">Cancelar el envío "${escHTML(x.nombre)}"</h3>
+        <p style="font-size:.86rem">Se cancelan los <strong>${n}</strong> cupones que todavía no se usan. Los que ya se usaron no cambian.</p>
+        <div class="field"><label>Motivo</label><input id="cp-motivo" maxlength="200" placeholder="Ej. se envió con el porcentaje equivocado" /></div>`,
+        () => api(`/admin/cupones/lotes/${id}/cancelar`, { method: 'POST', body: { motivo: document.getElementById('cp-motivo').value } }),
+        'Cancelar cupones');
 }
 function pintar() {
     const lista = DATOS.cupones;
@@ -96,7 +132,7 @@ function pintar() {
                 <td><span class="mono">${escHTML(c.codigo)}</span></td>
                 <td><a href="/admin/cliente.html?id=${c.cliente_id}">${escHTML(c.cliente_nombre)}</a><div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.cliente_correo || '')}</div></td>
                 <td>${escHTML(c.beneficio)}${c.minimo > 0 ? `<div style="font-size:.74rem;color:var(--text-muted)">desde ${formatoMoneda(c.minimo)}</div>` : ''}</td>
-                <td>${c.origen === 'bienvenida' ? 'Bienvenida' : `Equipo${c.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.usuario_nombre)}</div>` : ''}`}</td>
+                <td>${c.origen === 'bienvenida' ? 'Bienvenida' : c.origen === 'campana' ? `Envío<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.descripcion || '')}</div>` : `Equipo${c.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(c.usuario_nombre)}</div>` : ''}`}</td>
                 <td style="white-space:nowrap">${c.vence ? formatoFecha(c.vence) : 'Sin vencimiento'}</td>
                 <td><span class="tag" style="color:${col};border-color:${col}">${txt}</span></td>
                 <td>${c.numero_orden ? `<span class="mono">${escHTML(c.numero_orden)}</span>${c.descuento_aplicado != null ? `<div style="font-size:.74rem;color:var(--text-muted)">−${formatoMoneda(c.descuento_aplicado)}</div>` : ''}` : '—'}</td>
@@ -204,6 +240,151 @@ function darCupon() {
         }, 250);
     });
     inp.focus();
+}
+
+// ---- Enviar a varios clientes: todos, por criterios o una lista ----
+const MASIVO = { modo: 'criterios', ids: new Map(), total: null };
+function envioMasivo() {
+    MASIVO.modo = 'criterios'; MASIVO.ids = new Map(); MASIVO.total = null;
+    const lim = DATOS.config.limite_rol;
+    const chk = (id, txt, on = false) => `<label class="cup-chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}/> ${txt}</label>`;
+    modal(`<h3 style="margin-top:0">Enviar cupón a varios clientes</h3>
+        <div class="cup-pasos">
+        <section>
+            <h4>1 · ¿A quién?</h4>
+            <div class="cup-modos" role="tablist">
+                <button type="button" data-modo="todos">Todos</button>
+                <button type="button" data-modo="criterios" class="on">Por criterios</button>
+                <button type="button" data-modo="clientes">Clientes específicos</button>
+            </div>
+            <div id="m-criterios">
+                <div class="cup-grid">
+                    <div class="field"><label>Nivel del Club</label><div class="cup-chips">
+                        ${['bronce', 'plata', 'oro', 'platino'].map((n) => chk('n-' + n, n[0].toUpperCase() + n.slice(1))).join('')}</div></div>
+                    <div class="field"><label>Etapa en el CRM</label><div class="cup-chips">
+                        ${['Prospecto', 'Activo', 'Frecuente', 'Inactivo'].map((e) => chk('e-' + e.toLowerCase(), e)).join('')}</div></div>
+                    <div class="field"><label>Compras</label><select id="k-compras">
+                        <option value="">Cualquiera</option><option value="ninguna">Aún no compran</option>
+                        <option value="1">1 o más</option><option value="2">2 o más</option><option value="5">5 o más</option><option value="10">10 o más</option></select></div>
+                    <div class="field"><label>Han gastado desde ($)</label><input id="k-gasto" type="number" min="0" step="500" placeholder="Sin mínimo" /></div>
+                    <div class="field"><label>Ya compraron, pero no en</label><select id="k-sin">
+                        <option value="">—</option><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option><option value="180">6 meses</option></select></div>
+                    <div class="field"><label>Se registraron en los últimos</label><select id="k-reg">
+                        <option value="">—</option><option value="7">7 días</option><option value="30">30 días</option><option value="90">90 días</option></select></div>
+                </div>
+                ${chk('k-cumple', 'Cumplen años este mes')}
+            </div>
+            <div id="m-clientes" hidden>
+                <div class="field" style="position:relative"><label>Agregar clientes</label>
+                    <input id="m-cli" placeholder="Nombre o correo" autocomplete="off" />
+                    <div id="m-cli-sug" class="cup-sug" hidden></div></div>
+                <div id="m-lista" class="cup-lista"></div>
+            </div>
+            <div id="m-extra">
+                ${chk('k-conf', 'Solo con el correo confirmado', true)}
+                ${chk('k-sincup', 'Que no tengan ya otro cupón disponible (sin contar el de bienvenida)')}
+            </div>
+            <div class="cup-prev" id="m-prev"><span>Elige a quién y pulsa “Ver a quiénes”.</span>
+                <button type="button" class="btn btn-outline btn-sm" onclick="verAudiencia()">${icon('search', 14)} Ver a quiénes</button></div>
+        </section>
+        <section>
+            <h4>2 · El cupón</h4>
+            <div class="cup-grid">
+                <div class="field" style="grid-column:1/-1"><label>Nombre del envío (lo ve el cliente)</label><input id="cp-nombre" maxlength="160" placeholder="Ej. Buen Fin para clientes Oro" /></div>
+                <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
+                <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" step="1" value="10" /></div>
+                <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" step="50" value="500" /></div>
+                <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
+                <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="15" /></div>
+                <div class="field"><label>Motivo (interno)</label><input id="cp-motivo" maxlength="300" placeholder="Ej. campaña de reactivación" /></div>
+            </div>
+            ${chk('cp-correo', 'Avisar a cada cliente por correo', true)}
+            ${lim ? `<p class="cup-sub">Tu rol puede dar hasta ${lim.porcentaje}% (máximo ${formatoMoneda(lim.monto)}) o ${formatoMoneda(lim.monto)} fijos.</p>` : ''}
+        </section></div>`,
+        () => {
+            if (MASIVO.total == null) return Promise.reject(new Error('Primero pulsa “Ver a quiénes” para revisar cuántos clientes lo recibirán'));
+            return api('/admin/cupones/masivo', { method: 'POST', body: { ...cuerpoAudiencia(), confirmar_total: MASIVO.total,
+                nombre: document.getElementById('cp-nombre').value, tipo: document.getElementById('cp-tipo').value,
+                valor: Number(document.getElementById('cp-valor').value), tope: Number(document.getElementById('cp-tope').value),
+                minimo: Number(document.getElementById('cp-min').value), dias: Number(document.getElementById('cp-dias').value),
+                motivo: document.getElementById('cp-motivo').value, notificar: document.getElementById('cp-correo').checked } })
+                .catch((e) => { if (e.status === 409) { MASIVO.total = null; verAudiencia(); } throw e; });
+        }, 'Enviar cupones');
+    document.getElementById('modal-generico-body').style.maxWidth = '760px';
+    document.getElementById('cp-tipo').onchange = (e) => { document.getElementById('cp-tope-w').style.display = e.target.value === 'porcentaje' ? '' : 'none'; };
+    document.querySelectorAll('.cup-modos button').forEach((b) => b.onclick = () => cambiarModo(b.dataset.modo));
+    // Cualquier cambio de criterios invalida la vista previa.
+    document.querySelector('.cup-pasos section').addEventListener('change', () => { if (MASIVO.total != null) { MASIVO.total = null; prevTexto('Cambiaste algo: pulsa “Ver a quiénes” otra vez.'); } });
+    buscadorClientes();
+    botonEnviar();
+}
+function cambiarModo(m) {
+    MASIVO.modo = m; MASIVO.total = null;
+    document.querySelectorAll('.cup-modos button').forEach((b) => b.classList.toggle('on', b.dataset.modo === m));
+    document.getElementById('m-criterios').hidden = m !== 'criterios';
+    document.getElementById('m-clientes').hidden = m !== 'clientes';
+    document.getElementById('k-conf').closest('label').hidden = m === 'clientes';
+    prevTexto(m === 'todos' ? 'Todos los clientes activos. Pulsa “Ver a quiénes”.' : 'Pulsa “Ver a quiénes”.');
+}
+function cuerpoAudiencia() {
+    const on = (id) => (document.getElementById(id) || {}).checked;
+    const val = (id) => (document.getElementById(id) || {}).value;
+    const crit = { solo_confirmados: on('k-conf'), sin_cupon_disponible: on('k-sincup') };
+    if (MASIVO.modo === 'criterios') {
+        crit.niveles = ['bronce', 'plata', 'oro', 'platino'].filter((n) => on('n-' + n));
+        crit.etapas = ['prospecto', 'activo', 'frecuente', 'inactivo'].filter((e) => on('e-' + e));
+        const c = val('k-compras');
+        if (c === 'ninguna') crit.compras = 'ninguna'; else if (c) crit.compras_min = Number(c);
+        if (Number(val('k-gasto')) > 0) crit.gasto_min = Number(val('k-gasto'));
+        if (val('k-sin')) crit.sin_comprar_dias = Number(val('k-sin'));
+        if (val('k-reg')) crit.registrados_dias = Number(val('k-reg'));
+        crit.cumple_mes = on('k-cumple');
+    }
+    return { modo: MASIVO.modo, criterios: crit, ids: [...MASIVO.ids.keys()] };
+}
+function prevTexto(t) { const s = document.querySelector('#m-prev span'); if (s) s.innerHTML = t; botonEnviar(); }
+function botonEnviar() {
+    const b = document.getElementById('cup-ok');
+    if (!b) return;
+    b.disabled = !MASIVO.total;
+    b.textContent = MASIVO.total ? `Enviar ${MASIVO.total} cupón${MASIVO.total === 1 ? '' : 'es'}` : 'Enviar cupones';
+}
+async function verAudiencia() {
+    prevTexto('Contando…');
+    try {
+        const r = await api('/admin/cupones/audiencia', { method: 'POST', body: cuerpoAudiencia() });
+        MASIVO.total = r.total > r.maximo ? null : r.total;
+        prevTexto(!r.total ? '<strong>Ningún cliente</strong> cumple esos criterios.'
+            : `<strong>${r.total} cliente${r.total === 1 ? '' : 's'}</strong> lo recibirían${r.total > r.maximo ? ` — <span style="color:var(--danger)">el máximo por envío es ${r.maximo}; ajusta los criterios</span>` : ''}.
+               <div class="cup-sub" style="margin-top:4px">${r.muestra.map((c) => escHTML(c.nombre)).join(', ')}${r.total > r.muestra.length ? ` y ${r.total - r.muestra.length} más` : ''}</div>`);
+    } catch (e) { MASIVO.total = null; prevTexto(escHTML(e.message)); }
+}
+function buscadorClientes() {
+    const inp = document.getElementById('m-cli'), sug = document.getElementById('m-cli-sug');
+    let t;
+    const pintarLista = () => {
+        document.getElementById('m-lista').innerHTML = !MASIVO.ids.size ? '<span class="cup-sub">Aún no agregas clientes.</span>'
+            : [...MASIVO.ids].map(([id, c]) => `<span class="cup-tag">${escHTML(c.nombre)}<button type="button" aria-label="Quitar" data-q="${id}">${icon('x', 12)}</button></span>`).join('');
+        document.querySelectorAll('#m-lista [data-q]').forEach((b) => b.onclick = () => { MASIVO.ids.delete(Number(b.dataset.q)); MASIVO.total = null; pintarLista(); prevTexto('Cambiaste la lista: pulsa “Ver a quiénes”.'); });
+    };
+    pintarLista();
+    inp.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+            const q = inp.value.trim();
+            if (q.length < 2) { sug.hidden = true; return; }
+            let l = []; try { l = await api('/admin/cupones/clientes?q=' + encodeURIComponent(q)); } catch { /* nada */ }
+            sug.innerHTML = l.length ? l.map((c) => `<button type="button" data-id="${c.id}"><strong>${escHTML(c.nombre)}</strong><span>${escHTML(c.correo || '')}${MASIVO.ids.has(c.id) ? ' · ya está en la lista' : ''}</span></button>`).join('')
+                : '<div class="cup-sug-vacio">Sin coincidencias</div>';
+            sug.hidden = false;
+            sug.querySelectorAll('button').forEach((b) => b.onclick = () => {
+                const c = l.find((x) => String(x.id) === b.dataset.id);
+                MASIVO.ids.set(c.id, c); MASIVO.total = null;
+                inp.value = ''; sug.hidden = true; inp.focus();
+                pintarLista(); prevTexto('Pulsa “Ver a quiénes”.');
+            });
+        }, 250);
+    });
 }
 
 cargar();

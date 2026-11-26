@@ -10,6 +10,15 @@
 // Esto se suma a las defensas reales (sesión, dos pasos, permisos por rol en
 // cada llamada a la API); no las reemplaza.
 //
+// Contra el robo de roles, dentro de la ruta secreta las pantallas del
+// panel (salvo las de acceso: login, recuperar, restablecer y activar) solo
+// se entregan con una sesión válida del equipo y si el rol de esa sesión
+// puede verlas (la misma clave que cada página le pasa a
+// renderAdminSidebar, validada con permisos.js). Sin sesión se va al login
+// con ?next= (así un enlace de un correo abre su pantalla después de
+// entrar); con un rol que no le toca, a su inicio, aunque haya cambiado su
+// rol en el navegador.
+//
 // El código del panel sigue escribiendo "/admin/..." en sus enlaces; al
 // servirlo se cambia por la ruta secreta, igual que en las respuestas de
 // /api/admin/... y en los correos al equipo.
@@ -18,8 +27,19 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-module.exports = function crearPanel({ dirPublico, dirProyecto }) {
+module.exports = function crearPanel({ dirPublico, dirProyecto, pool = null, seg = null }) {
     const dirAdmin = path.join(dirPublico, 'admin');
+    const { puedeVer, homeDe } = require(path.join(dirAdmin, 'js', 'permisos.js'));
+    // Pantallas de acceso: se abren sin sesión.
+    const ACCESO = new Set(['login.html', 'recuperar.html', 'restablecer.html', 'activar.html']);
+    // Pantalla -> clave de permiso que pide (null = basta con tener sesión).
+    // Se lee de los archivos al arrancar: una pantalla nueva queda protegida sola.
+    const CLAVES = Object.create(null);
+    for (const a of fs.readdirSync(dirAdmin)) {
+        if (!a.endsWith('.html') || ACCESO.has(a)) continue;
+        const m = fs.readFileSync(path.join(dirAdmin, a), 'utf8').match(/renderAdminSidebar\(\s*'([a-z0-9-]+)'\s*\)/);
+        CLAVES[a] = m ? m[1] : null;
+    }
     const ruta = leerRuta();
     const PREFIJO = '/' + ruta + '/';
     const oculto = ruta.toLowerCase() !== 'admin';
@@ -71,7 +91,19 @@ module.exports = function crearPanel({ dirPublico, dirProyecto }) {
         return path.posix.normalize(d.replace(/\\/g, '/')).toLowerCase();
     }
 
-    function middleware(req, res, next) {
+    // Sesión del equipo que trae la petición (o null) y su rol.
+    async function sesionDe(req) {
+        if (!pool || !seg) return { rol: '*' };   // sin base (pruebas): solo se oculta la ruta
+        const s = await seg.leerSesion(req, 'usuario');
+        if (!s) return null;
+        const u = (await pool.query('SELECT rol, activo FROM usuarios WHERE id = $1', [s.usuario_id])).rows[0];
+        return u && u.activo ? { rol: u.rol } : null;
+    }
+
+    async function middleware(req, res, next) {
+        try { return await atender(req, res, next); } catch (e) { console.error('Panel ->', e.message); return no(res); }
+    }
+    async function atender(req, res, next) {
         if (req.path.startsWith('/api/')) return next();
         const norm = normalizar(req.path);
         const pre = PREFIJO.toLowerCase();
@@ -84,6 +116,20 @@ module.exports = function crearPanel({ dirPublico, dirProyecto }) {
             if (!archivo.startsWith(dirAdmin + path.sep) || !fs.existsSync(archivo) || !fs.statSync(archivo).isFile()) return no(res);
             res.setHeader('X-Robots-Tag', 'noindex, nofollow');
             const ext = path.extname(archivo).toLowerCase();
+            // Pantallas (no las de acceso): sesión del equipo y rol que la pueda ver.
+            const nombre = path.basename(archivo);
+            if (ext === '.html' && !ACCESO.has(nombre)) {
+                const quien = await sesionDe(req);
+                if (!quien) {
+                    res.setHeader('Cache-Control', 'no-store');
+                    return res.redirect(302, `${PREFIJO}login.html?next=${encodeURIComponent(req.originalUrl)}`);
+                }
+                const clave = CLAVES[nombre];
+                if (quien.rol !== '*' && clave && !puedeVer(quien.rol, clave)) {
+                    res.setHeader('Cache-Control', 'no-store');
+                    return res.redirect(302, traducir(homeDe(quien.rol)));
+                }
+            }
             if (!TIPOS[ext]) return res.sendFile(archivo);
             const { txt, etag } = leerTraducido(archivo);
             res.setHeader('Content-Type', TIPOS[ext]);
@@ -92,8 +138,15 @@ module.exports = function crearPanel({ dirPublico, dirProyecto }) {
             if (ext !== '.html' && req.headers['if-none-match'] === etag) return res.status(304).end();
             return res.send(txt);
         }
-        // La carpeta real no se sirve directo cuando hay ruta secreta.
-        if (oculto && (norm === '/admin' || norm.startsWith('/admin/'))) return no(res);
+        // La carpeta real no se sirve directo cuando hay ruta secreta. Quien
+        // intenta abrir el login por su dirección conocida queda en Seguridad.
+        if (oculto && (norm === '/admin' || norm.startsWith('/admin/'))) {
+            if (seg && /^\/admin\/(login|recuperar|restablecer|activar)\.html/.test(norm)) {
+                seg.registrarEvento(req, { tipo: 'panel_oculto', severidad: 'baja',
+                    detalle: `Se intentó abrir ${String(req.path).slice(0, 120)}: el panel está en una dirección secreta` });
+            }
+            return no(res);
+        }
         next();
     }
     function no(res) {

@@ -72,6 +72,14 @@ Direccion secreta del panel
      ruta correcta.
    - En este manual, donde dice <ruta-del-panel> o /admin/... (por ejemplo
      /admin/pedidos.html?open=5) se refiere a esa ruta.
+   - Dentro de esa ruta, cada pantalla del panel (menos login, recuperar,
+     restablecer y activar) solo se entrega con una sesion del equipo y si
+     el rol de esa sesion la puede ver. Sin sesion manda al login y, al
+     entrar, abre la pantalla que se pidio (sirve para los enlaces de los
+     correos). Con un rol que no le toca, manda a su inicio aunque alguien
+     haya cambiado su rol en el navegador.
+   - Quien intenta abrir /admin/login.html queda registrado en Seguridad ->
+     Eventos ("Intento de abrir el panel por su direccion publica").
    - Es una capa extra: el panel sigue pidiendo contrasena, verificacion en
      dos pasos y permisos por rol en cada accion.
 
@@ -1654,6 +1662,32 @@ NAVEGACION RAPIDA EN EL PANEL
         vigencia, el nombre que vera el cliente y el motivo. Le llega por
         correo y aparece en Mis cupones. Ventas y Soporte tienen tope
         (CUPON_SOPORTE_*); el administrador no.
+      - "Enviar a varios clientes" (Administrador y Ventas): el mismo cupon
+        a muchos clientes a la vez. Cada cliente recibe su propio codigo.
+          1. ¿A quien?
+             * Todos: todos los clientes activos.
+             * Por criterios: nivel del Club, etapa del CRM, numero de
+               compras (o que aun no compran), gasto desde $X, "ya
+               compraron pero no en 30/60/90 dias / 6 meses", registrados en
+               los ultimos 7/30/90 dias y "cumplen anos este mes".
+             * Clientes especificos: se buscan por nombre o correo y se
+               arma una lista.
+             Ademas: "Solo con el correo confirmado" (marcado) y "Que no
+             tengan ya otro cupon disponible".
+             "Ver a quienes" dice cuantos clientes lo recibirian y algunos
+             nombres. Sin ese paso no se puede enviar; si cambias algo hay
+             que volver a verlo.
+          2. El cupon: nombre del envio (lo ve el cliente), tipo, valor,
+             descuento maximo, compra minima, vigencia, motivo y "Avisar a
+             cada cliente por correo".
+        "Enviar N cupones" los crea todos juntos. Si entre la vista previa y
+        el envio cambio el numero de clientes, avisa y no envia nada. Maximo
+        2,000 por envio (CUPON_MASIVO_MAX en el .env).
+      - ENVIOS A VARIOS CLIENTES (tabla arriba de la lista): cada envio con
+        a quien se mando, cuantos cupones, cuantos se usaron y cuanto
+        descontaron. "Ver cupones" filtra la lista por ese envio y
+        "Cancelar no usados" cancela los que siguen disponibles (con motivo;
+        los ya usados no cambian).
 
    PRODUCTOS DESACTIVADOS
       - Eliminar un producto con ventas o movimientos lo DESACTIVA. El panel
@@ -1855,6 +1889,9 @@ Lado cliente  (soporte.html, dentro de Mi cuenta)
      baja. Si el texto habla de doble cobro, cargo no reconocido, fraude o
      cuenta robada, sube a alta. El equipo puede cambiarla.
    - Cada ticket recibe un folio  TK-1001, TK-1002, ...
+   - Mientras se envia, el boton "Crear ticket" se desactiva (con fotos
+     puede tardar unos segundos). Si el mismo ticket llega dos veces en 10
+     minutos, no se duplica: se abre el que ya se habia creado.
    - Al abrir un ticket se ve el hilo de mensajes y un campo para responder.
    - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
      aparece "Este ticket esta cerrado..." con el boton "Abrir un ticket
@@ -1866,9 +1903,16 @@ Lado equipo  (admin/soporte.html)
    - Cola con contadores por estado y filtros por estado y prioridad.
    - Al abrir un ticket: hilo completo, y selectores para cambiar ESTADO
      (Abierto, En proceso, Resuelto, Cerrado) y PRIORIDAD (Baja, Media, Alta).
+   - El estado y la prioridad se ven junto al folio. "Actualizar ticket"
+     guarda el cambio y la pantalla se actualiza al momento.
    - "Enviar respuesta" agrega un mensaje del equipo; si el ticket estaba
      "Abierto" pasa a "En proceso". Las fotos del cliente se ven en el hilo
      y "Adjuntar fotos" permite mandarle hasta 3 al responder.
+   - PROTECCION DE DATOS: una respuesta que le pida al cliente su
+     contrasena, el numero completo de la tarjeta, el CVV, el NIP o un
+     codigo de verificacion no se envia (avisa que se reescriba). Si el
+     cliente escribe alguno de esos datos en un ticket, se guarda oculto
+     ([tarjeta ****1234], [oculto]).
    - CUPONES DEL CLIENTE (Administrador y Soporte): cuadro a la derecha con
      los cupones de la cuenta; el del caso va primero y resaltado.
         * "Dar cupon": porcentaje (con descuento maximo) o monto fijo,

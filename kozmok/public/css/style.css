@@ -3168,3 +3168,23 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .ckp-txt span { font-size: .8rem; color: var(--text-muted); }
 .ckp-acc { display: flex; gap: 8px; flex-wrap: wrap; }
 .pagar-cambiar { text-align: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+/* Panel > Cupones: envíos a varios clientes */
+.cup-lotes { margin-top: 16px; }
+.cup-lotes h3 { margin: 0 0 10px; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+.cup-sub { font-size: .76rem; color: var(--text-muted); }
+.cup-filtro-lote { font-size: .84rem; margin: 0 0 8px; }
+.cup-pasos { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; }
+.cup-pasos h4 { margin: 0 0 10px; font-size: .9rem; }
+.cup-pasos section + section { border-left: 1px solid var(--line); padding-left: 18px; }
+@media (max-width: 760px) { .cup-pasos { grid-template-columns: 1fr; } .cup-pasos section + section { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 14px; } }
+.cup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.cup-modos { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
+.cup-modos button { flex: 1; background: none; border: 0; color: var(--text-muted); padding: 7px 6px; border-radius: 7px; cursor: pointer; font: inherit; font-size: .82rem; }
+.cup-modos button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.cup-chips { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.cup-chk { display: flex; align-items: center; gap: 6px; font-size: .82rem; margin: 4px 0; cursor: pointer; }
+.cup-chk input { width: auto; margin: 0; }
+.cup-prev { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-sm); display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: .84rem; }
+.cup-lista { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
+.cup-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 99px; background: var(--bg-panel-2); border: 1px solid var(--line); font-size: .78rem; }
+.cup-tag button { background: none; border: 0; color: var(--text-muted); cursor: pointer; display: flex; padding: 2px; }

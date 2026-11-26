@@ -86,7 +86,7 @@ async function vistaHilo(id) {
     const borrador = (document.getElementById('resp') || {}).value || '';
     document.getElementById('main').innerHTML = `
         <a href="/admin/soporte.html" style="font-size:.85rem">← Cola de tickets</a>
-        ${adminHeader(escHTML(t.asunto), `<span class="mono">${t.folio}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${escHTML(t.cliente_nombre)}</a> · ${escHTML(t.cliente_correo)}`)}
+        ${adminHeader(escHTML(t.asunto), `<span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}" id="t-estado-tag">${EST[t.estado]}</span> · <span class="tag prio-${t.prioridad}">${PRIO[t.prioridad]}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${escHTML(t.cliente_nombre)}</a> · ${escHTML(t.cliente_correo)}`)}
         <div class="tk-layout">
             <section class="tk-hilo">
                 <div class="hilo">
@@ -101,7 +101,7 @@ async function vistaHilo(id) {
                 <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Adjuntar fotos<input type="file" id="resp-fotos" accept="image/*" multiple hidden /></label>
                     <small>Hasta 3, por ejemplo para mostrarle al cliente cómo hacer algo.</small></div>
                 <div class="foto-lista" id="resp-prev"></div>
-                <button class="btn btn-primary" onclick="responder(${t.id})">Enviar respuesta</button>
+                <button class="btn btn-primary" onclick="responder(${t.id}, this)">Enviar respuesta</button>
             </section>
             <aside class="tk-lado">
                 <div class="card">
@@ -112,7 +112,7 @@ async function vistaHilo(id) {
                     <div class="field"><label>Prioridad</label>
                         <select id="t-prio">${['baja', 'media', 'alta'].map((p) => `<option value="${p}" ${p === t.prioridad ? 'selected' : ''}>${PRIO[p]}</option>`).join('')}</select>
                     </div>
-                    <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id})">Actualizar ticket</button>
+                    <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id}, this)">Actualizar ticket</button>
                     <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}</p>
                 </div>
                 <div class="card" id="tk-pedido"><p style="margin:0;color:var(--text-muted)">Cargando pedido…</p></div>
@@ -273,23 +273,30 @@ async function desligarPedido() {
     try { const r = await api(`/admin/tickets/${TICKET.id}`, { method: 'PUT', body: { pedido_id: 0 } }); toast(r.message, 'ok'); vistaHilo(TICKET.id); }
     catch (e) { toast(e.message, 'error'); }
 }
-async function guardarEstado(id) {
-    try {
-        await api(`/admin/tickets/${id}`, { method: 'PUT', body: {
-            estado: document.getElementById('t-estado').value,
-            prioridad: document.getElementById('t-prio').value,
-        }});
-        toast('Ticket actualizado', 'ok');
-    } catch (e) { toast(e.message, 'error'); }
+async function guardarEstado(id, btn) {
+    await conBoton(btn, async () => {
+        try {
+            const r = await api(`/admin/tickets/${id}`, { method: 'PUT', body: {
+                estado: document.getElementById('t-estado').value,
+                prioridad: document.getElementById('t-prio').value,
+            }});
+            toast(`Ticket ${EST[r.ticket.estado].toLowerCase()} · prioridad ${PRIO[r.ticket.prioridad].toLowerCase()}`, 'ok');
+            await vistaHilo(id);   // encabezado, hilo y cuadros con el estado nuevo
+        } catch (e) { toast(e.message, 'error'); }
+    }, 'Guardando…');
 }
-async function responder(id) {
+async function responder(id, btn) {
     const mensaje = document.getElementById('resp').value.trim();
     const fotos = SEL_RESP ? SEL_RESP.fotos() : [];
     if (!mensaje && !fotos.length) { toast('Escribe una respuesta o adjunta una foto', 'warn'); return; }
-    try {
-        await api(`/admin/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
-        location.reload();
-    } catch (e) { toast(e.message, 'error'); }
+    await conBoton(btn, async () => {
+        try {
+            await api(`/admin/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
+            document.getElementById('resp').value = '';
+            toast('Respuesta enviada', 'ok');
+            await vistaHilo(id);
+        } catch (e) { toast(e.message, 'error'); }
+    });
 }
 </script>
 </body>

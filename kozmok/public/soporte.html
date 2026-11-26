@@ -99,20 +99,22 @@ async function vistaHilo(panel, id) {
                <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="hilo-fotos" accept="image/*" multiple hidden /></label>
                    <small>Hasta 3 (JPG, PNG o WebP). Útil como evidencia de un producto dañado.</small></div>
                <div class="foto-lista" id="hilo-prev"></div>
-               <button class="btn btn-primary" onclick="responder(${t.id})">Enviar mensaje</button>`}
+               <button class="btn btn-primary" onclick="responder(${t.id}, this)">Enviar mensaje</button>`}
     `;
     if (document.getElementById('hilo-fotos')) SEL_HILO = FotosReclamo.selector(document.getElementById('hilo-fotos'), document.getElementById('hilo-prev'), { alError: (m) => toast(m, 'warn') });
 }
 let SEL_HILO = null, SEL_NUEVO = null;
 
-async function responder(id) {
+async function responder(id, btn) {
     const mensaje = document.getElementById('hilo-txt').value.trim();
     const fotos = SEL_HILO ? SEL_HILO.fotos() : [];
     if (!mensaje && !fotos.length) { toast('Escribe un mensaje o agrega una foto', 'warn'); return; }
-    try {
-        await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
-        location.reload();
-    } catch (e) { toast(e.message, 'error'); }
+    await conBoton(btn, async () => {
+        try {
+            await api(`/clientes/${CID}/tickets/${id}/mensajes`, { method: 'POST', body: { mensaje, fotos } });
+            location.reload();
+        } catch (e) { toast(e.message, 'error'); }
+    });
 }
 
 function formTicket(previo = {}) {
@@ -144,7 +146,7 @@ function formTicket(previo = {}) {
                 <small>Evidencia de un producto dañado, el empaque o una captura de pantalla.</small></div>
             <div class="foto-lista" id="tk-prev"></div>
         </div>
-        <button class="btn btn-primary" style="width:100%" onclick="crearTicket()">Crear ticket</button>
+        <button class="btn btn-primary" style="width:100%" onclick="crearTicket(this)">Crear ticket</button>
     `;
     SEL_NUEVO = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
     if (previo.asunto) document.getElementById('tk-asunto').value = previo.asunto.slice(0, 160);
@@ -195,7 +197,7 @@ function mostrarPedidoTicket() {
     wrap.querySelector('label span').textContent = cat === 'pedido' && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length ? '' : '(opcional)';
 }
 
-async function crearTicket() {
+async function crearTicket(btn) {
     const body = {
         asunto: document.getElementById('tk-asunto').value.trim(),
         categoria: document.getElementById('tk-cat').value,
@@ -206,11 +208,14 @@ async function crearTicket() {
     };
     if (!body.asunto || !body.descripcion) { toast('Asunto y descripción son obligatorios', 'warn'); return; }
     if (body.categoria === 'pedido' && !body.pedido_id && PEDIDOS_CLIENTE && PEDIDOS_CLIENTE.length) { toast('Elige el pedido con el que necesitas ayuda', 'warn'); return; }
-    try {
-        const r = await api(`/clientes/${CID}/tickets`, { method: 'POST', body });
-        toast('Ticket ' + r.ticket.folio + ' creado', 'ok');
-        location.href = '/soporte.html?ticket=' + r.ticket.id;
-    } catch (e) { toast(e.message, 'error'); }
+    await conBoton(btn, async () => {
+        try {
+            const r = await api(`/clientes/${CID}/tickets`, { method: 'POST', body });
+            toast(r.ticket.repetido ? `Ya habías enviado este ticket (${r.ticket.folio})` : 'Ticket ' + r.ticket.folio + ' creado', 'ok');
+            // replace: "atrás" ya no regresa al formulario de nuevo ticket.
+            location.replace('/soporte.html?ticket=' + r.ticket.id);
+        } catch (e) { toast(e.message, 'error'); }
+    }, 'Creando…');
 }
 </script>
 </body>

@@ -15,7 +15,8 @@
 //                       interacciones y se confirma el correo)
 //
 // Etapa 4 (bloque TIENDA del menú): 'promociones', 'cupones' (todos los
-// cupones; también el cuadro de cupones en el ticket), 'impuestos',
+// cupones; también el cuadro de cupones en el ticket), 'cupones-masivo' (dar
+// cupones a todos, por criterios o a una lista de clientes), 'impuestos',
 // 'monedero' (administración de monederos) y 'pagos'. Impuestos queda
 // solo para el administrador.
 //
@@ -34,7 +35,7 @@
         ventas: [
             'dashboard', 'clientes', 'clientes-editar', 'productos',
             'ordenes-erp', 'orden-nueva', 'reportes-erp',
-            'promociones', 'cupones', 'monedero', 'pagos', 'facturas', 'devoluciones',
+            'promociones', 'cupones', 'cupones-masivo', 'monedero', 'pagos', 'facturas', 'devoluciones',
             'mi-actividad',
         ],
 

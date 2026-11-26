@@ -55,7 +55,7 @@ const pool = new Pool(configPg);
 // Notificaciones del equipo del panel (campana y correo).
 const notif = require('./notificaciones.js')({ pool, enviarCorreo, puedeVer, urlBase: () => urlBase(null), rutaPanel: (u) => panel.url(u) });
 // Cupones de descuento de los clientes (bienvenida y los que da Soporte).
-const cupones = require('./cupones.js')({ pool, enviarCorreo, urlBase: () => urlBase(null) });
+const cupones = require('./cupones.js')({ pool, enviarCorreo, urlBase: () => urlBase(null), niveles: () => NIVELES });
 
 // Cabeceras de seguridad en todas las respuestas (CSP, nosniff, DENY...).
 // Sin CORS: la tienda y el panel se sirven desde el mismo servidor, así
@@ -96,7 +96,9 @@ app.use((req, res, next) => {
     next();
 });
 // Panel interno en una dirección secreta (PANEL_RUTA); /admin/... da 404.
-const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public'), dirProyecto: __dirname });
+// Dentro de la ruta, cada pantalla pide sesión del equipo y un rol que la
+// pueda ver (contra el robo de roles; ver panel.js).
+const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public'), dirProyecto: __dirname, pool, seg });
 app.use(panel.middleware);
 app.use(panel.json);
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
@@ -3443,7 +3445,20 @@ function prioridadAutomatica(categoria, texto) {
     return PRIORIDAD_POR_CATEGORIA[categoria] || 'baja';
 }
 
+const Sensible = require('./datos-sensibles.js');
+const MSG_DATO_SENSIBLE = 'Por seguridad, nunca le pedimos al cliente contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. Reescribe la respuesta sin pedir esos datos.';
+
 async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id, cupon_id }, { autor = 'cliente', usuarioId = null, fotos = [] } = {}) {
+    // Tarjetas completas, CVV, NIP o contraseñas escritas no se guardan.
+    asunto = Sensible.enmascararSensible(asunto).texto;
+    descripcion = Sensible.enmascararSensible(descripcion).texto;
+    // El mismo ticket mandado dos veces (doble clic, la foto tardó en subir,
+    // la red reintentó): se regresa el que ya se había creado.
+    const repetido = (await pool.query(
+        `SELECT * FROM tickets WHERE cliente_id = $1 AND asunto = $2 AND mensaje = $3
+            AND fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '10 minutes' ORDER BY id DESC LIMIT 1`,
+        [clienteId, String(asunto).slice(0, 160), descripcion])).rows[0];
+    if (repetido) return { ...repetido, repetido: true };
     categoria = CATEGORIAS_TICKET.includes(categoria) ? categoria : 'general';
     // El cliente no decide la prioridad: se calcula según el caso.
     if (autor !== 'equipo') prioridad = prioridadAutomatica(categoria, `${asunto} ${descripcion}`);
@@ -3488,6 +3503,7 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
 async function responderTicket(ticketId, usuarioId, mensaje, estado, fotos = []) {
     const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [ticketId]);
     if (t.rows.length === 0) return false;
+    mensaje = Sensible.enmascararSensible(mensaje).texto;
     const m = await pool.query(
         `INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3) RETURNING id`,
         [ticketId, usuarioId, mensaje]
@@ -3508,7 +3524,7 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     let fotos;
     try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
     const ticket = await crearTicket(req.params.id, req.body, { fotos });
-    res.status(201).json({ message: 'Ticket creado', ticket });
+    res.status(ticket.repetido ? 200 : 201).json({ message: ticket.repetido ? 'Ya habías enviado este ticket' : 'Ticket creado', ticket });
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
@@ -3536,7 +3552,7 @@ app.post('/api/clientes/:id/tickets/:ticketId/mensajes', asyncRoute(async (req, 
     if (['resuelto', 'cerrado'].includes(t.rows[0].estado)) {
         return res.status(409).json({ message: `El ticket ${t.rows[0].folio} ya está ${t.rows[0].estado}. Si necesitas más ayuda, abre un ticket nuevo.`, cerrado: true });
     }
-    const texto = String(req.body.mensaje || '').trim().slice(0, 4000);
+    const texto = Sensible.enmascararSensible(String(req.body.mensaje || '').trim().slice(0, 4000)).texto;
     if (!texto && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
 
     const m = await pool.query(
@@ -4073,7 +4089,7 @@ const PERMISOS_API = [
     { ruta: /^\/interacciones(\/|$)/,                  metodos: TODO, permisos: ['interacciones', 'clientes'] },
     { ruta: /^\/resenas(\/\d+)?$/,                   metodos: TODO, permisos: ['evaluaciones'] },
     { ruta: /^\/tickets(\/|$)/,                        metodos: TODO, permisos: ['soporte'] },
-    { ruta: /^\/cupones(\/\d+|\/clientes)?$/,           metodos: TODO, permisos: ['cupones'] },
+    { ruta: /^\/cupones(\/\d+|\/clientes|\/audiencia|\/masivo|\/lotes\/\d+\/cancelar)?$/, metodos: TODO, permisos: ['cupones'] },
     { ruta: /^\/soporte\/(resumen|buscar)$/,            metodos: LEER, permisos: ['centro-soporte'] },
     { ruta: /^\/reportes$/,                            metodos: LEER, permisos: ['reportes'] },
     { ruta: /^\/dashboard$/,                           metodos: LEER, permisos: ['dashboard'] },
@@ -5028,6 +5044,7 @@ app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
     try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
     const mensaje = String(req.body.mensaje || '').trim().slice(0, 4000);
     if (!mensaje && !fotos.length) return res.status(400).json({ message: 'Escribe un mensaje o agrega una foto' });
+    if (Sensible.pideDatoSensible(mensaje)) return res.status(400).json({ message: MSG_DATO_SENSIBLE });
     const ok = await responderTicket(req.params.id, req.usuario.id, mensaje, null, fotos);
     if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.status(201).json({ message: 'Respuesta enviada' });
@@ -8484,6 +8501,7 @@ app.get('/api/atencion/ticket/:id', requireSesion, asyncRoute(async (req, res) =
 app.put('/api/atencion/ticket/:id/respuesta', requireInterno('soporte'), asyncRoute(async (req, res) => {
     const respuesta = String(req.body.respuesta || req.body.mensaje || '').trim();
     if (!respuesta) return res.status(400).json({ message: 'Escribe la respuesta' });
+    if (Sensible.pideDatoSensible(respuesta)) return res.status(400).json({ message: MSG_DATO_SENSIBLE });
     const ok = await responderTicket(req.params.id, req.usuario.id, respuesta, req.body.estado);
     if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
     const t = await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id]);

@@ -188,16 +188,18 @@ async function responderRapido(id) {
             <div style="display:flex;gap:8px;flex-wrap:wrap">
                 ${TK.pedido_id && puedeVer(ROL, 'pedidos') ? `<button class="btn btn-outline btn-sm" onclick="GestionPedido.abrir(${TK.pedido_id})">${icon('truck', 14)} Pedido ${escHTML(TK.numero_orden || '')}</button>` : ''}
                 <a class="btn btn-ghost btn-sm" href="/admin/soporte.html?ticket=${TK.id}">Ver caso completo</a>
-                <button class="btn btn-primary btn-sm" onclick="enviarRapido()">Enviar respuesta</button>
+                <button class="btn btn-primary btn-sm" onclick="enviarRapido(this)">Enviar respuesta</button>
             </div>
         </div>`;
     $('cs-modal').classList.add('open');
     setTimeout(() => $('cs-resp').focus(), 50);
 }
-async function enviarRapido() {
+async function enviarRapido(btn) {
     const mensaje = $('cs-resp').value.trim();
     if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
     const estado = $('cs-estado').value;
+    if (btn && btn.disabled) return;
+    if (btn) btn.disabled = true;
     try {
         await api(`/admin/tickets/${TK.id}/mensajes`, { method: 'POST', body: { mensaje } });
         if (estado) await api(`/admin/tickets/${TK.id}`, { method: 'PUT', body: { estado } });
@@ -205,6 +207,7 @@ async function enviarRapido() {
         cerrarModal();
         cargar();
     } catch (e) { toast(e.message, 'error'); }
+    finally { if (btn) btn.disabled = false; }
 }
 
 // ---- Buscador: cliente, folio o pedido ----
