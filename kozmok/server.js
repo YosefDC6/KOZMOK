@@ -9436,6 +9436,14 @@ app.use((req, res) => {
     res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
 });
 
+// Si el servidor se detiene, que la consola diga por qué (antes se cerraba
+// sin decir nada y no se sabía si fue Ctrl+C, un error o otra cosa).
+process.on('SIGINT', () => { console.log('\nServidor detenido con Ctrl+C.'); process.exit(0); });
+process.on('uncaughtException', (err, origen) => {
+    console.error(`\nEl servidor se cerró por un error (${origen}):\n`, err && err.stack || err);
+    process.exit(1);
+});
+process.on('exit', (codigo) => { if (codigo !== 0) console.error(`El servidor se detuvo (código ${codigo}).`); });
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
