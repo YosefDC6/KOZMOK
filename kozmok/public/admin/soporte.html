@@ -21,6 +21,7 @@
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
 <script src="/js/fotos.js"></script>
+<script src="/js/datos-sensibles.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('soporte');
@@ -98,6 +99,7 @@ async function vistaHilo(id) {
                         </div>`).join('')}
                 </div>
                 <div class="field" style="margin-top:16px"><textarea id="resp" rows="3" placeholder="Responder al cliente…">${escHTML(borrador)}</textarea></div>
+                <div id="resp-aviso"></div>
                 <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Adjuntar fotos<input type="file" id="resp-fotos" accept="image/*" multiple hidden /></label>
                     <small>Hasta 3, por ejemplo para mostrarle al cliente cómo hacer algo.</small></div>
                 <div class="foto-lista" id="resp-prev"></div>
@@ -113,7 +115,14 @@ async function vistaHilo(id) {
                         <select id="t-prio">${['baja', 'media', 'alta'].map((p) => `<option value="${p}" ${p === t.prioridad ? 'selected' : ''}>${PRIO[p]}</option>`).join('')}</select>
                     </div>
                     <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id}, this)">Actualizar ticket</button>
-                    <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}</p>
+                    <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}${t.navegador ? `<br>Desde ${escHTML(t.navegador)} · ${escHTML(t.dispositivo || '')}` : ''}</p>
+                </div>
+                <div class="card" id="tk-diag">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                        <h3 style="margin:0;font-size:1rem">Diagnóstico</h3>
+                        <button class="btn btn-outline btn-sm" onclick="diagnosticar(${t.id}, this)">${icon('search', 14)} Revisar la cuenta</button>
+                    </div>
+                    <p id="tk-diag-res" style="margin:8px 0 0;font-size:.8rem;color:var(--text-muted)">Revisa acceso, correos, carrito, pagos, seguridad y folios de error del cliente. Solo consulta: no cambia nada.</p>
                 </div>
                 <div class="card" id="tk-pedido"><p style="margin:0;color:var(--text-muted)">Cargando pedido…</p></div>
                 ${puedeVer((Sesion.usuario() || {}).rol, 'cupones') ? '<div class="card" id="tk-cupones"><p style="margin:0;color:var(--text-muted)">Cargando cupones…</p></div>' : ''}
@@ -121,10 +130,40 @@ async function vistaHilo(id) {
         </div>
     `;
     SEL_RESP = FotosReclamo.selector(document.getElementById('resp-fotos'), document.getElementById('resp-prev'), { alError: (m) => toast(m, 'warn') });
+    vigilarDatoSensible(document.getElementById('resp'), document.getElementById('resp-aviso'));
     pintarPedido();
     pintarCupones();
 }
 let SEL_RESP = null;
+
+// Aviso en vivo: la respuesta pide un dato que nunca se pide (el servidor
+// también la rechaza). Misma regla que el servidor: datos-sensibles.js.
+function vigilarDatoSensible(area, caja) {
+    if (!area || !caja || !window.Sensible) return;
+    const revisar = () => {
+        caja.innerHTML = Sensible.pideDatoSensible(area.value)
+            ? `<div class="aviso-sensible">${icon('lock', 14)}<span>Estás pidiendo un dato que nunca se pide: contraseña, tarjeta completa, CVV, NIP o código de verificación. Pide solo el correo de la cuenta, los últimos 4 dígitos de la tarjeta o la fecha y el monto del cargo.</span></div>` : '';
+    };
+    area.addEventListener('input', revisar);
+    revisar();
+}
+
+// Diagnóstico de solo lectura de la cuenta del cliente.
+async function diagnosticar(id, btn) {
+    const caja = document.getElementById('tk-diag-res');
+    await conBoton(btn, async () => {
+        try {
+            const r = await api(`/admin/tickets/${id}/diagnostico`);
+            const IC = { ok: ['check', 'var(--success)'], alerta: ['alert', 'var(--warning)'], info: ['info', 'var(--text-muted)'] };
+            const alertas = r.pruebas.filter((p) => p.resultado === 'alerta').length;
+            caja.outerHTML = `<div id="tk-diag-res" class="diag-lista">
+                <p class="diag-resumen">${alertas ? `<strong style="color:var(--warning)">${alertas} cosa${alertas === 1 ? '' : 's'} que revisar</strong>` : '<strong style="color:var(--success)">Todo en orden</strong>'} · ${formatoFechaHora(r.revisado)}</p>
+                ${r.pruebas.map((p) => `<div class="diag diag-${p.resultado}">
+                    <span class="diag-ic" style="color:${IC[p.resultado][1]}">${icon(IC[p.resultado][0], 14)}</span>
+                    <div><strong>${escHTML(p.nombre)}</strong> <span class="diag-area">${escHTML(p.area)}</span><div>${escHTML(p.detalle)}</div></div></div>`).join('')}</div>`;
+        } catch (e) { toast(e.message, 'error'); }
+    }, 'Revisando…');
+}
 
 // ---- Cupones del cliente: revisar el problema y resolverlo sin salir del caso ----
 const EST_CUP = { disponible: 'Disponible', usado: 'Usado', vencido: 'Vencido', cancelado: 'Cancelado' };

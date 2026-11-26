@@ -152,6 +152,14 @@ const limiteDinero = seg.limitador({ nombre: 'pagos', ventanaMs: 60000, max: 12 
 const asyncRoute = (fn) => (req, res, next) => fn(req, res, next).catch((err) => {
     const folio = crypto.randomBytes(3).toString('hex').toUpperCase();
     console.error(`[${folio}]`, req.method, req.originalUrl, '->', err.message);
+    // El folio que ve el usuario queda en la base para que Soporte lo busque
+    // (Centro de soporte y diagnóstico del ticket). Sin lo que va después
+    // del "?": ahí pueden ir tokens. (Tomado de la rama de Gael.)
+    if (!(err.code && String(err.code).startsWith('22')) && !(err.code === 'P0001' && err.hint === 'control_interno')) {
+        pool.query('INSERT INTO errores_servidor (folio, metodo, ruta, mensaje, usuario_id, cliente_id) VALUES ($1,$2,$3,$4,$5,$6)',
+            [folio, req.method, String(req.originalUrl || '').split('?')[0].slice(0, 200), String(err.message || '').slice(0, 300),
+                req.usuario ? req.usuario.id : null, req.cliente ? req.cliente.id : null]).catch(() => {});
+    }
     if (res.headersSent) return;
     if (err.code && String(err.code).startsWith('22')) return res.status(400).json({ message: seg.mensajeSeguro(err) });
     // La base rechazó un cambio prohibido (control interno): 409 con su motivo
@@ -3400,7 +3408,7 @@ app.put('/api/clientes/:id/preferencias', asyncRoute(async (req, res) => {
 // =========================================================
 app.get('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     const r = await pool.query(
-        `SELECT t.*, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes, p.numero_orden
+        `SELECT ${TICKET_PUBLICO}, (SELECT COUNT(*) FROM ticket_mensajes m WHERE m.ticket_id = t.id) AS mensajes, p.numero_orden
          FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id WHERE t.cliente_id = $1 ORDER BY t.fecha_actualizacion DESC`,
         [req.params.id]
     );
@@ -3445,10 +3453,38 @@ function prioridadAutomatica(categoria, texto) {
     return PRIORIDAD_POR_CATEGORIA[categoria] || 'baja';
 }
 
-const Sensible = require('./datos-sensibles.js');
+const Sensible = require('./public/js/datos-sensibles.js');
+
+// Navegador y dispositivo a partir del User-Agent (lo manda el navegador
+// solo; nadie lo escribe). De la rama de Gael (soporte-ti.js).
+function navegadorDeTicket(ua) {
+    const s = String(ua || '');
+    if (!s) return { navegador: null, dispositivo: null };
+    const v = (re) => { const m = s.match(re); return m ? m[1].split('.')[0] : ''; };
+    let navegador = 'Otro';
+    if (/Edg\//.test(s)) navegador = `Edge ${v(/Edg\/([\d.]+)/)}`;
+    else if (/OPR\//.test(s)) navegador = `Opera ${v(/OPR\/([\d.]+)/)}`;
+    else if (/SamsungBrowser\//.test(s)) navegador = `Samsung Internet ${v(/SamsungBrowser\/([\d.]+)/)}`;
+    else if (/Firefox\//.test(s)) navegador = `Firefox ${v(/Firefox\/([\d.]+)/)}`;
+    else if (/Chrome\//.test(s)) navegador = `Chrome ${v(/Chrome\/([\d.]+)/)}`;
+    else if (/Safari\//.test(s) && /Version\//.test(s)) navegador = `Safari ${v(/Version\/([\d.]+)/)}`;
+    let so = 'otro sistema';
+    if (/Windows NT/.test(s)) so = 'Windows';
+    else if (/Android/.test(s)) so = 'Android';
+    else if (/iPhone|iPad|iPod/.test(s)) so = 'iOS';
+    else if (/Mac OS X/.test(s)) so = 'macOS';
+    else if (/Linux/.test(s)) so = 'Linux';
+    const tipo = /iPad|Tablet/.test(s) ? 'Tableta' : /Mobi|Android|iPhone/.test(s) ? 'Celular' : 'Computadora';
+    return { navegador: navegador.trim().slice(0, 80), dispositivo: `${tipo} · ${so}`.slice(0, 60) };
+}
+
+// Lo que el cliente puede ver de su ticket: nunca la prioridad interna ni a
+// quién se asignó. (Rama de Gael, TICKET_PUBLICO.)
+const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.asunto, t.categoria, t.estado, t.pedido_id, t.cupon_id,
+    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion`;
 const MSG_DATO_SENSIBLE = 'Por seguridad, nunca le pedimos al cliente contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. Reescribe la respuesta sin pedir esos datos.';
 
-async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id, cupon_id }, { autor = 'cliente', usuarioId = null, fotos = [] } = {}) {
+async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id, cupon_id }, { autor = 'cliente', usuarioId = null, fotos = [], ua = '' } = {}) {
     // Tarjetas completas, CVV, NIP o contraseñas escritas no se guardan.
     asunto = Sensible.enmascararSensible(asunto).texto;
     descripcion = Sensible.enmascararSensible(descripcion).texto;
@@ -3473,10 +3509,11 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
         cupon_id = c.rows[0] ? c.rows[0].id : null;
     }
     const ins = await pool.query(
-        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje, cupon_id)
-         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        `INSERT INTO tickets (folio, cliente_id, asunto, categoria, prioridad, pedido_id, mensaje, cupon_id, navegador, dispositivo)
+         VALUES ('TMP-' || substr(gen_random_uuid()::text, 1, 12), $1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
         [clienteId, String(asunto).slice(0, 160), categoria,
-            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion, cupon_id || null]
+            ['baja', 'media', 'alta'].includes(prioridad) ? prioridad : 'media', pedido_id || null, descripcion, cupon_id || null,
+            ...(autor === 'equipo' ? [null, null] : Object.values(navegadorDeTicket(ua)))]
     );
     const t = await pool.query(
         "UPDATE tickets SET folio = 'TK-' || (1000 + id) WHERE id = $1 RETURNING *",
@@ -3500,6 +3537,24 @@ async function crearTicket(clienteId, { asunto, categoria, descripcion, priorida
 
 // Respuesta del equipo: va al hilo y queda como "respuesta" del ticket.
 // Si estaba abierto pasa a En proceso (o al estado que se indique).
+// Correo al cliente: Soporte le respondió o resolvió su ticket. (Rama de Gael.)
+async function avisarClienteTicket(ticketId, { texto = '', fotos = 0, resuelto = false } = {}) {
+    const t = (await pool.query(
+        `SELECT t.id, t.folio, t.asunto, t.estado, t.cliente_id, c.nombre, c.correo FROM tickets t JOIN clientes c ON c.id = t.cliente_id WHERE t.id = $1`,
+        [ticketId])).rows[0];
+    if (!t || !t.correo) return;
+    const EST = { abierto: 'Abierto', en_proceso: 'En proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
+    const cuerpo = resuelto
+        ? `Hola ${String(t.nombre).split(' ')[0]}:\n\nMarcamos como resuelto tu ticket ${t.folio} ("${t.asunto}").\n\nSi el problema sigue, abre un ticket nuevo desde tu cuenta y menciona este folio.`
+        : `Hola ${String(t.nombre).split(' ')[0]}:\n\n${texto || 'Te enviamos fotos en tu ticket.'}${fotos ? `\n\n(Incluye ${fotos} foto${fotos === 1 ? '' : 's'}: velas en tu cuenta.)` : ''}\n\nEstado de tu ticket: ${EST[t.estado] || t.estado}.`;
+    await enviarCorreo(pool, {
+        para: t.correo, tipo: 'soporte', cliente_id: t.cliente_id,
+        asunto: resuelto ? `Resolvimos tu ticket ${t.folio}` : `Soporte Kozmok respondió tu ticket ${t.folio}`,
+        cuerpo: cuerpo + '\n\nRecuerda: nunca te pediremos tu contraseña, el número completo de tu tarjeta ni códigos de verificación.',
+        boton: { texto: 'Ver mi ticket', url: `${urlBase(null)}/soporte.html?ticket=${t.id}` },
+    }).catch((e) => console.error('Correo de soporte:', e.message));
+}
+
 async function responderTicket(ticketId, usuarioId, mensaje, estado, fotos = []) {
     const t = await pool.query('SELECT id FROM tickets WHERE id = $1', [ticketId]);
     if (t.rows.length === 0) return false;
@@ -3515,6 +3570,7 @@ async function responderTicket(ticketId, usuarioId, mensaje, estado, fotos = [])
              estado = COALESCE($3, CASE WHEN estado = 'abierto' THEN 'en_proceso' ELSE estado END) WHERE id = $1`,
         [ticketId, mensaje, est]
     );
+    avisarClienteTicket(ticketId, { texto: mensaje, fotos: fotos.length });
     return true;
 }
 
@@ -3523,13 +3579,14 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
     let fotos;
     try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
-    const ticket = await crearTicket(req.params.id, req.body, { fotos });
-    res.status(ticket.repetido ? 200 : 201).json({ message: ticket.repetido ? 'Ya habías enviado este ticket' : 'Ticket creado', ticket });
+    const ticket = await crearTicket(req.params.id, req.body, { fotos, ua: req.headers['user-agent'] });
+    res.status(ticket.repetido ? 200 : 201).json({ message: ticket.repetido ? 'Ya habías enviado este ticket' : 'Ticket creado',
+        ticket: { id: ticket.id, folio: ticket.folio, estado: ticket.estado, repetido: !!ticket.repetido } });
 }));
 
 app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT t.*, p.numero_orden, p.estado AS pedido_estado, cu.codigo AS cupon_codigo FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
+        `SELECT ${TICKET_PUBLICO}, p.numero_orden, p.estado AS pedido_estado, cu.codigo AS cupon_codigo FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
          LEFT JOIN cupones cu ON cu.id = t.cupon_id WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id) });
@@ -5069,16 +5126,122 @@ app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
     const pri = ['baja', 'media', 'alta'];
     const r = await pool.query(
-        `UPDATE tickets SET
+        `UPDATE tickets t SET
             estado    = COALESCE($1, estado),
             prioridad = COALESCE($2, prioridad),
             asignado_a = COALESCE($3, asignado_a)
-         WHERE id = $4 RETURNING *`,
+         FROM (SELECT estado AS antes FROM tickets WHERE id = $4) a
+         WHERE t.id = $4 RETURNING t.*, a.antes`,
         [est.includes(estado) ? estado : null, pri.includes(prioridad) ? prioridad : null,
             asignado_a || null, req.params.id]
     );
     if (r.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
+    // Al marcarlo resuelto, el cliente se entera por correo.
+    if (r.rows[0].estado === 'resuelto' && r.rows[0].antes !== 'resuelto') avisarClienteTicket(r.rows[0].id, { resuelto: true });
     res.json({ message: 'Ticket actualizado', ticket: r.rows[0] });
+}));
+
+// ---------------------------------------------------------
+// DIAGNÓSTICO DE SOLO LECTURA (adaptado de la rama de Gael)
+// Revisa la cuenta del cliente del ticket: acceso (bloqueos, intentos,
+// sesiones), correos recientes, carrito contra el catálogo, pedidos y
+// pagos (posible cobro doble), eventos de seguridad, folios de error que
+// mencione y si otros clientes reportaron algo parecido. No cambia nada.
+// Datos mínimos: sin contraseñas, tokens ni IP completas.
+// ---------------------------------------------------------
+const ipParcial = (ip) => (ip ? String(ip).replace(/^::ffff:/, '').replace(/(\d+\.\d+)\.\d+\.\d+$/, '$1.x.x').replace(/([0-9a-f]+:[0-9a-f]+):.*$/i, '$1:…') : null);
+const pesosMX = (n) => `$${Number(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fechaMX = (f) => new Date(f).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+app.get('/api/admin/tickets/:id/diagnostico', asyncRoute(async (req, res) => {
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const pruebas = [];
+    const prueba = (area, nombre, resultado, detalle) => pruebas.push({ area, nombre, resultado, detalle });
+
+    // --- Cuenta y acceso ---
+    const c = (await pool.query(
+        'SELECT nombre, correo, estado_cliente, correo_verificado, password_debil, dosf_metodo FROM clientes WHERE id = $1', [t.cliente_id])).rows[0];
+    if (!c) return res.json({ pruebas: [{ area: 'Cuenta', nombre: 'Cliente', resultado: 'alerta', detalle: 'El cliente ya no existe' }] });
+    prueba('Acceso', 'Cuenta activa', c.estado_cliente === 'activo' ? 'ok' : 'alerta', c.estado_cliente === 'activo' ? 'Activa' : 'La cuenta está inactiva: no puede iniciar sesión');
+    prueba('Acceso', 'Correo confirmado', c.correo_verificado ? 'ok' : 'alerta', c.correo_verificado ? 'Confirmado' : 'Sin confirmar: no puede comprar hasta escribir el código (en su ficha se puede marcar como confirmado)');
+    if (c.password_debil) prueba('Acceso', 'Contraseña según las reglas', 'info', 'Su contraseña es de antes de las reglas actuales: se le pide cambiarla al entrar');
+    prueba('Acceso', 'Verificación en dos pasos', 'info', c.dosf_metodo ? `Activa (${c.dosf_metodo === 'app' ? 'app autenticadora' : 'código por correo'})` : 'No la usa');
+    const correoN = seg.normalizarCorreo(c.correo);
+    const [bloq, intentos, sesiones, cerradas] = await Promise.all([
+        pool.query(`SELECT motivo, hasta FROM bloqueos WHERE tipo = 'cuenta' AND valor = $1 AND levantado IS NULL AND hasta > CURRENT_TIMESTAMP ORDER BY hasta DESC LIMIT 1`, [`cliente:${correoN}`]),
+        pool.query(`SELECT COUNT(*) FILTER (WHERE NOT exito)::int AS fallidos, MAX(fecha) FILTER (WHERE exito) AS ultimo_ok
+                    FROM intentos_login WHERE tipo = 'cliente' AND correo = $1 AND fecha > CURRENT_TIMESTAMP - INTERVAL '24 hours'`, [correoN]),
+        pool.query(`SELECT COUNT(*)::int AS n FROM sesiones WHERE cliente_id = $1 AND revocada IS NULL AND expira > CURRENT_TIMESTAMP`, [t.cliente_id]),
+        pool.query(`SELECT motivo_revocacion AS motivo, revocada AS fecha FROM sesiones WHERE cliente_id = $1 AND revocada IS NOT NULL ORDER BY revocada DESC LIMIT 5`, [t.cliente_id]),
+    ]);
+    const b = bloq.rows[0];
+    prueba('Acceso', 'Sin bloqueo por intentos fallidos', b ? 'alerta' : 'ok',
+        b ? `Bloqueada hasta ${fechaMX(b.hasta)} (${b.motivo}). Se levanta en Seguridad → Bloqueos o con "¿Olvidaste tu contraseña?"` : 'Sin bloqueos activos');
+    const it = intentos.rows[0];
+    prueba('Acceso', 'Intentos fallidos en 24 h', it.fallidos >= 3 ? 'alerta' : 'ok',
+        `${it.fallidos} fallido(s)${it.ultimo_ok ? ` · último acceso correcto ${fechaMX(it.ultimo_ok)}` : ' · sin accesos correctos en 24 h'}`);
+    prueba('Acceso', 'Sesiones abiertas', 'info', `${sesiones.rows[0].n} sesión(es) activa(s)`);
+    const inesperadas = cerradas.rows.filter((x) => !/^(cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida)$/i.test(x.motivo || ''));
+    if (inesperadas.length) prueba('Acceso', 'Sesiones que se cerraron solas', 'info', inesperadas.map((x) => `${x.motivo || 'sin motivo'} (${fechaMX(x.fecha)})`).join('; '));
+
+    // --- Correos ---
+    const correos = (await pool.query(
+        `SELECT tipo, asunto, estado, error, fecha FROM correos_salida WHERE LOWER(para) = LOWER($1) ORDER BY id DESC LIMIT 8`, [c.correo])).rows;
+    const fallidos = correos.filter((x) => x.estado === 'error');
+    prueba('Correos', 'Correos recientes entregados', fallidos.length ? 'alerta' : correos.length ? 'ok' : 'info',
+        correos.length ? (fallidos.length ? `${fallidos.length} con error: ${fallidos[0].error || 'sin detalle'} (se reenvían desde Seguridad → Correos enviados)` : `${correos.length} correo(s) recientes sin error`) : 'No hay correos recientes para esta cuenta');
+    if (!correo.configurado()) prueba('Correos', 'Gmail configurado', 'alerta', 'El servidor no tiene Gmail configurado: los correos solo se guardan en el panel');
+
+    // --- Carrito contra el catálogo ---
+    const car = (await pool.query(
+        `SELECT d.cantidad, d.precio_unitario, p.nombre, p.precio, p.stock, p.activo
+           FROM carrito ca JOIN carrito_detalle d ON d.carrito_id = ca.id JOIN productos p ON p.id = d.producto_id
+          WHERE ca.cliente_id = $1 ORDER BY d.id`, [t.cliente_id])).rows;
+    const raros = car.filter((x) => !x.activo || Number(x.stock) < Number(x.cantidad));
+    prueba('Carrito', 'Productos con existencia', raros.length ? 'alerta' : car.length ? 'ok' : 'info',
+        car.length ? (raros.length ? raros.map((x) => `${x.nombre}: ${!x.activo ? 'ya no está a la venta' : `pide ${x.cantidad}, hay ${x.stock}`}`).join('; ') : `${car.length} producto(s) con existencia suficiente`) : 'El carrito está vacío');
+
+    // --- Pedidos y pagos ---
+    const ped = (await pool.query(
+        `SELECT p.numero_orden, p.estado, p.pago_estado, p.total, pg.estado AS pago, pg.fecha_pago
+           FROM pedidos p LEFT JOIN pagos pg ON pg.pedido_id = p.id WHERE p.cliente_id = $1 AND NOT COALESCE(p.regresado_carrito, FALSE)
+          ORDER BY p.id DESC LIMIT 8`, [t.cliente_id])).rows;
+    const pagados = ped.filter((p) => p.pago === 'pagado' && p.fecha_pago);
+    const dobles = pagados.filter((a, i) => pagados.some((x, j) => j !== i && Number(a.total) === Number(x.total)
+        && Math.abs(new Date(a.fecha_pago) - new Date(x.fecha_pago)) < 30 * 60000));
+    prueba('Pagos', 'Sin cobros duplicados', dobles.length ? 'alerta' : 'ok',
+        dobles.length ? `Posible cobro doble: ${dobles.map((p) => p.numero_orden).join(' y ')} (mismo monto en menos de 30 min). Revísalo en Pagos antes de reembolsar.` : 'No hay dos cobros iguales seguidos');
+    const pend = ped.filter((p) => p.pago_estado !== 'pagado' && p.estado !== 'cancelado');
+    if (pend.length) prueba('Pagos', 'Pedidos sin pagar', 'info', pend.map((p) => `${p.numero_orden} (${pesosMX(p.total)})`).join('; '));
+
+    // --- Seguridad ---
+    const ev = (await pool.query(
+        `SELECT tipo, severidad, fecha, ip FROM eventos_seguridad WHERE cliente_id = $1 AND severidad IN ('alta','media')
+          ORDER BY id DESC LIMIT 5`, [t.cliente_id])).rows;
+    prueba('Seguridad', 'Eventos de seguridad', ev.length ? 'alerta' : 'ok',
+        ev.length ? ev.map((e) => `${e.tipo.replace(/_/g, ' ')} (${e.severidad}, ${fechaMX(e.fecha)}${e.ip ? ', IP ' + ipParcial(e.ip) : ''})`).join('; ') + '. Si parece acceso de otra persona, no borres nada y avísale al administrador.'
+            : 'Sin eventos de severidad media o alta');
+
+    // --- Folios de error que mencione el cliente ---
+    const textos = (await pool.query(`SELECT string_agg(mensaje, ' ') AS t FROM ticket_mensajes WHERE ticket_id = $1 AND autor = 'cliente'`, [t.id])).rows[0].t || '';
+    const folios = [...new Set(`${t.asunto} ${textos}`.toUpperCase().match(/\b[0-9A-F]{6}\b/g) || [])].slice(0, 5);
+    if (folios.length) {
+        const er = (await pool.query('SELECT folio, metodo, ruta, mensaje, fecha FROM errores_servidor WHERE folio = ANY($1) ORDER BY id DESC LIMIT 5', [folios])).rows;
+        prueba('Errores', `Folio de error ${folios.join(', ')}`, er.length ? 'alerta' : 'info',
+            er.length ? er.map((e) => `${fechaMX(e.fecha)} · ${e.metodo} ${e.ruta}: ${e.mensaje}`).join('; ') : 'No hay errores del servidor con ese folio');
+    }
+
+    // --- ¿Le pasa a más clientes? ---
+    const sim = (await pool.query(
+        `SELECT COUNT(DISTINCT cliente_id)::int AS n FROM tickets WHERE categoria = $1 AND id <> $2 AND cliente_id <> $3
+            AND fecha_creacion > CURRENT_TIMESTAMP - INTERVAL '2 hours'`, [t.categoria, t.id, t.cliente_id])).rows[0].n;
+    prueba('Alcance', 'Tickets parecidos (2 h)', sim >= 3 ? 'alerta' : 'info',
+        sim ? `${sim} cliente(s) más abrieron un ticket del mismo tema${sim >= 3 ? ': puede ser una falla general' : ''}` : 'Nadie más lo ha reportado: parece un caso individual');
+    const errHora = (await pool.query(`SELECT COUNT(*)::int AS n FROM errores_servidor WHERE fecha > CURRENT_TIMESTAMP - INTERVAL '1 hour'`)).rows[0].n;
+    prueba('Errores', 'Errores del servidor en la última hora', errHora ? 'alerta' : 'ok', errHora ? `${errHora} error(es) en toda la tienda` : 'Ninguno');
+
+    res.set('Cache-Control', 'no-store');
+    res.json({ pruebas, revisado: new Date() });
 }));
 
 // =========================================================
@@ -5216,7 +5379,12 @@ app.get('/api/admin/soporte/buscar', asyncRoute(async (req, res) => {
         ...dv.rows.map((x) => ({ tipo: 'devolucion', folio: x.folio, titulo: 'Devolución', estado: x.estado, cliente_nombre: x.cliente_nombre, url: `/admin/devoluciones.html?dev=${x.id}` })),
     ];
     res.set('Cache-Control', 'no-store');
-    res.json({ clientes: cl.rows, casos, pedidos: pe.rows });
+    // Folio de error (6 letras y números) que el usuario vio en pantalla.
+    const folioErr = /^[0-9a-f]{6}$/i.test(q) ? (await pool.query(
+        `SELECT e.folio, e.metodo, e.ruta, e.mensaje, e.fecha, c.nombre AS cliente_nombre, u.nombre AS usuario_nombre
+           FROM errores_servidor e LEFT JOIN clientes c ON c.id = e.cliente_id LEFT JOIN usuarios u ON u.id = e.usuario_id
+          WHERE e.folio = $1 ORDER BY e.id DESC LIMIT 5`, [q.toUpperCase()])).rows : [];
+    res.json({ clientes: cl.rows, casos, pedidos: pe.rows, errores: folioErr });
 }));
 
 // =========================================================
@@ -8488,7 +8656,7 @@ app.get('/api/atencion/tickets', requireSesion, asyncRoute(async (req, res) => {
 }));
 app.get('/api/atencion/ticket/:id', requireSesion, asyncRoute(async (req, res) => {
     const t = await pool.query(
-        `SELECT t.*, t.fecha_creacion AS fecha, c.nombre AS cliente_nombre, c.correo AS cliente_correo
+        `SELECT ${req.quien.tipo === 'cliente' ? TICKET_PUBLICO : 't.*'}, t.fecha_creacion AS fecha, c.nombre AS cliente_nombre, c.correo AS cliente_correo
          FROM tickets t JOIN clientes c ON c.id = t.cliente_id WHERE t.id = $1`, [req.params.id]);
     if (!t.rows.length) return res.status(404).json({ message: 'Ticket no encontrado' });
     if (req.quien.tipo === 'cliente' && Number(t.rows[0].cliente_id) !== Number(req.quien.id)) return res.status(404).json({ message: 'Ticket no encontrado' });
@@ -9103,6 +9271,15 @@ async function migrarEsquema() {
         nombre VARCHAR(80), tipo VARCHAR(20) NOT NULL, datos TEXT NOT NULL, tamano INTEGER,
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_ticket_adjuntos ON ticket_adjuntos(ticket_id)');
+    // Navegador y dispositivo de quien abrió el ticket (del User-Agent).
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS navegador VARCHAR(80)');
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');
+    // Errores del servidor con el folio que vio el usuario.
+    await pool.query(`CREATE TABLE IF NOT EXISTS errores_servidor (
+        id SERIAL PRIMARY KEY, folio VARCHAR(12) NOT NULL, metodo VARCHAR(8), ruta VARCHAR(200), mensaje VARCHAR(300),
+        usuario_id INTEGER, cliente_id INTEGER, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_errores_folio ON errores_servidor(folio)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_errores_fecha ON errores_servidor(fecha DESC)');
     await notif.migrar();
     // Control interno: bitácora encadenada, fechas del servidor y registros
     // que no se pueden reescribir (va al final: necesita todas las tablas).

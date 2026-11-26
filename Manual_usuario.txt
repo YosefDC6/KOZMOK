@@ -958,6 +958,10 @@ NAVEGACION RAPIDA EN EL PANEL
      (TK-..., RG-..., GAR-..., DEV-...) o numero de pedido. El cliente abre
      su ficha; el caso abre su pantalla; el pedido se gestiona ahi mismo
      en una ventana (avanzar estado, registrar pago, cancelar).
+     Tambien busca FOLIOS DE ERROR: cuando algo falla, la tienda y el panel
+     muestran "comparte este folio con Soporte: A1B2C3". Al escribir esas 6
+     letras y numeros sale que fallo, cuando y a quien (cliente o cuenta
+     del equipo), para pasarselo a quien da mantenimiento al sistema.
    - INDICADORES: tickets sin respuesta (con abiertos, en proceso y de
      prioridad alta), reclamos de garantia que esperan respuesta,
      devoluciones por revisar / por reembolsar o cambiar / en camino,
@@ -1903,6 +1907,10 @@ Lado cliente  (soporte.html, dentro de Mi cuenta)
      puede tardar unos segundos). Si el mismo ticket llega dos veces en 10
      minutos, no se duplica: se abre el que ya se habia creado.
    - Al abrir un ticket se ve el hilo de mensajes y un campo para responder.
+   - Cuando el equipo responde (o marca el ticket como resuelto) llega un
+     correo con la respuesta y el boton "Ver mi ticket".
+   - El cliente ve su ticket, sus mensajes y el estado; la prioridad y a
+     quien del equipo se asigno son internos y no se le muestran.
    - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
      aparece "Este ticket esta cerrado..." con el boton "Abrir un ticket
      nuevo" (que ya trae el asunto, la categoria y el pedido del anterior).
@@ -1922,7 +1930,32 @@ Lado equipo  (admin/soporte.html)
      contrasena, el numero completo de la tarjeta, el CVV, el NIP o un
      codigo de verificacion no se envia (avisa que se reescriba). Si el
      cliente escribe alguno de esos datos en un ticket, se guarda oculto
-     ([tarjeta ****1234], [oculto]).
+     ([tarjeta ****1234], [oculto]). Mientras se escribe la respuesta (aqui
+     y en el Centro de soporte) sale un aviso rojo si pide uno de esos
+     datos.
+   - El cuadro "Caso" dice desde que navegador y dispositivo abrio el
+     ticket el cliente (lo detecta solo, p. ej. "Chrome 131 · Celular ·
+     Android").
+   - DIAGNOSTICO ("Revisar la cuenta"): revisa, sin cambiar nada, la
+     cuenta del cliente:
+        * Acceso: cuenta activa, correo confirmado, dos pasos, si esta
+          bloqueada por intentos fallidos (y como se levanta), intentos
+          fallidos en 24 h, sesiones abiertas y sesiones que se cerraron
+          solas.
+        * Correos: si los ultimos le llegaron o fallaron, y si Gmail esta
+          configurado.
+        * Carrito: productos que ya no estan a la venta o sin existencia.
+        * Pagos: posible cobro doble (mismo monto en menos de 30 min) y
+          pedidos sin pagar.
+        * Seguridad: eventos de severidad media o alta de esa cuenta.
+        * Errores: si el cliente menciona un folio de error, que fallo; y
+          cuantos errores hubo en la tienda en la ultima hora.
+        * Alcance: si otros clientes abrieron tickets del mismo tema en
+          las ultimas 2 horas (puede ser una falla general).
+     Arriba dice cuantas cosas hay que revisar.
+   - El cliente recibe un correo cada vez que el equipo le responde ("Soporte
+     Kozmok respondio tu ticket", con la respuesta y el estado) y cuando el
+     ticket se marca como resuelto.
    - CUPONES DEL CLIENTE (Administrador y Soporte): cuadro a la derecha con
      los cupones de la cuenta; el del caso va primero y resaltado.
         * "Dar cupon": porcentaje (con descuento maximo) o monto fijo,

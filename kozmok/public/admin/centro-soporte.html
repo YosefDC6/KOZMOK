@@ -15,7 +15,7 @@
 
         <div class="cs-buscar card">
             <span class="cs-buscar-ico" id="cs-buscar-ico"></span>
-            <input type="search" id="cs-q" placeholder="Busca un cliente (nombre, correo o teléfono) o un folio: TK-…, RG-…, GAR-…, DEV-…, número de pedido" autocomplete="off" />
+            <input type="search" id="cs-q" placeholder="Busca un cliente (nombre, correo o teléfono) o un folio: TK-…, RG-…, GAR-…, DEV-…, número de pedido o folio de error" autocomplete="off" />
         </div>
         <div id="cs-resultados" hidden></div>
 
@@ -48,6 +48,7 @@
 <script src="/admin/js/permisos.js"></script>
 <script src="/admin/js/admin-layout.js"></script>
 <script src="/admin/js/gestion-pedido.js"></script>
+<script src="/js/datos-sensibles.js"></script>
 <script>
 requireAuthAdmin();
 renderAdminSidebar('centro-soporte');
@@ -177,6 +178,7 @@ async function responderRapido(id) {
                 </div>`).join('')}
         </div>
         <div class="field" style="margin-top:12px"><textarea id="cs-resp" rows="4" placeholder="Escribe la respuesta al cliente…"></textarea></div>
+        <div id="cs-resp-aviso"></div>
         <div class="cs-resp-pie">
             <label>Después de enviar
                 <select id="cs-estado">
@@ -193,6 +195,7 @@ async function responderRapido(id) {
         </div>`;
     $('cs-modal').classList.add('open');
     setTimeout(() => $('cs-resp').focus(), 50);
+    vigilarDatoSensible($('cs-resp'), $('cs-resp-aviso'));
 }
 async function enviarRapido(btn) {
     const mensaje = $('cs-resp').value.trim();
@@ -214,6 +217,18 @@ async function enviarRapido(btn) {
 let RELOJ = null;
 $('cs-q').addEventListener('input', () => { clearTimeout(RELOJ); RELOJ = setTimeout(buscar, 300); });
 $('cs-q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('cs-q').value = ''; buscar(); } });
+// Aviso en vivo: la respuesta pide un dato que nunca se pide (el servidor
+// también la rechaza). Misma regla que el servidor: datos-sensibles.js.
+function vigilarDatoSensible(area, caja) {
+    if (!area || !caja || !window.Sensible) return;
+    const revisar = () => {
+        caja.innerHTML = Sensible.pideDatoSensible(area.value)
+            ? `<div class="aviso-sensible">${icon('lock', 14)}<span>Estás pidiendo un dato que nunca se pide: contraseña, tarjeta completa, CVV, NIP o código de verificación. Pide solo el correo de la cuenta, los últimos 4 dígitos de la tarjeta o la fecha y el monto del cargo.</span></div>` : '';
+    };
+    area.addEventListener('input', revisar);
+    revisar();
+}
+
 async function buscar() {
     const q = $('cs-q').value.trim();
     const caja = $('cs-resultados');
@@ -241,6 +256,13 @@ async function buscar() {
             <span class="cs-res-txt"><strong class="mono">${escHTML(p.numero_orden)}</strong><span>${escHTML(p.cliente_nombre || 'Cliente eliminado')} · ${formatoFecha(p.fecha_pedido)}</span></span>
             <span class="cs-res-meta">${EST_PED[p.estado] || p.estado} · ${formatoMoneda(p.total)}</span>
         </button>`).join('')}</div>`);
+    // Folio de error que el usuario vio en pantalla.
+    if ((r.errores || []).length) bloques.unshift(`<div class="cs-res-grupo"><h4>Error con folio ${escHTML(r.errores[0].folio)}</h4>${r.errores.map((e) => `
+        <div class="cs-res cs-res-error">
+            <span class="cs-tipo">${icon('alert', 14)} ${escHTML(e.metodo || '')}</span>
+            <span class="cs-res-txt"><strong class="mono">${escHTML(e.ruta || '')}</strong><span>${escHTML(e.mensaje || '')}</span></span>
+            <span class="cs-res-meta">${escHTML(e.cliente_nombre || e.usuario_nombre || 'Sin sesión')} · ${formatoFechaHora(e.fecha)}</span>
+        </div>`).join('')}<p class="cs-res-nota">Si es un error de la tienda, pásale este detalle al administrador o a quien da mantenimiento al sistema.</p></div>`);
     caja.innerHTML = bloques.length ? `<div class="card cs-res-card">${bloques.join('')}</div>`
         : `<div class="card cs-res-card"><p style="margin:0;color:var(--text-muted)">Sin resultados para “${escHTML(q)}”.</p></div>`;
     caja.hidden = false;

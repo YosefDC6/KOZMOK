@@ -3221,3 +3221,16 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .admin-nav-links a .nav-fijar.on svg { fill: currentColor; }
 .admin-shell.menu-corto .admin-nav-links a .nav-fijar { display: none; }
 .admin-nav-links a:hover .aviso-punto { pointer-events: none; }
+/* Soporte: aviso de dato sensible y diagnóstico */
+.aviso-sensible { display: flex; gap: 8px; align-items: flex-start; margin: -4px 0 10px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: .8rem;
+    border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--line)); background: color-mix(in srgb, var(--danger) 9%, transparent); color: var(--text); }
+.aviso-sensible .ic { color: var(--danger); flex-shrink: 0; margin-top: 2px; }
+.diag-lista { margin-top: 10px; display: grid; gap: 8px; }
+.diag-resumen { margin: 0; font-size: .8rem; color: var(--text-muted); }
+.diag { display: flex; gap: 8px; font-size: .78rem; color: var(--text-muted); line-height: 1.4; }
+.diag strong { color: var(--text); font-weight: 600; }
+.diag-ic { flex-shrink: 0; margin-top: 1px; }
+.diag-area { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; opacity: .7; margin-left: 4px; }
+.diag-alerta strong { color: var(--warning); }
+.cs-res-error { cursor: default; }
+.cs-res-nota { margin: 6px 4px 0; font-size: .76rem; color: var(--text-muted); }

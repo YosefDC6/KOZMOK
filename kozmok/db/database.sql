@@ -24,6 +24,7 @@ DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
 DROP TABLE IF EXISTS cupones                 CASCADE;
 DROP TABLE IF EXISTS cupon_lotes             CASCADE;
 DROP TABLE IF EXISTS promocion_productos     CASCADE;
+DROP TABLE IF EXISTS errores_servidor        CASCADE;
 DROP TABLE IF EXISTS notificaciones          CASCADE;
 DROP TABLE IF EXISTS notif_cursor            CASCADE;
 DROP TABLE IF EXISTS notif_stock             CASCADE;
@@ -690,6 +691,8 @@ CREATE TABLE tickets (
     mensaje             TEXT,
     respuesta           TEXT,
     fecha_respuesta     TIMESTAMP,
+    navegador           VARCHAR(80),     -- del User-Agent de quien lo abrió
+    dispositivo         VARCHAR(60),
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -706,6 +709,20 @@ CREATE TABLE ticket_mensajes (
 );
 CREATE INDEX idx_ticketmsg_ticket ON ticket_mensajes(ticket_id);
 -- Fotos de los mensajes de un ticket (evidencia de un producto dañado…)
+-- Errores del servidor con el folio que vio el usuario (Soporte lo busca).
+CREATE TABLE errores_servidor (
+    id          SERIAL PRIMARY KEY,
+    folio       VARCHAR(12) NOT NULL,
+    metodo      VARCHAR(8),
+    ruta        VARCHAR(200),          -- sin lo que va después del "?"
+    mensaje     VARCHAR(300),
+    usuario_id  INTEGER,
+    cliente_id  INTEGER,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_errores_folio ON errores_servidor(folio);
+CREATE INDEX idx_errores_fecha ON errores_servidor(fecha DESC);
+
 CREATE TABLE ticket_adjuntos (
     id          SERIAL PRIMARY KEY,
     ticket_id   INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,

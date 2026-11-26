@@ -29,7 +29,8 @@ async function api(path, options = {}) {
             localStorage.removeItem('kz_usuario');
             location.href = RUTA_PANEL + 'login.html';
         }
-        const err = new Error(data.message || data.error || 'Error en la solicitud');
+        // Error del servidor: se muestra su folio para dárselo a Soporte.
+        const err = new Error((data.message || data.error || 'Error en la solicitud') + (data.folio ? ` Si sigue pasando, comparte este folio con Soporte: ${data.folio}.` : ''));
         err.status = res.status;
         err.datos = data;   // p. ej. { codigo: 'correo_no_verificado' } o { sugerencia }
         throw err;

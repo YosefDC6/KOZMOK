@@ -26,7 +26,7 @@ kozmok/
 ├── mdns.js               # anuncia kozmok.local en la red (dirección fija aunque cambie la IP)
 ├── cupones.js            # cupones: bienvenida, compensaciones de Soporte y su uso en el checkout
 ├── panel.js              # panel en dirección secreta (PANEL_RUTA), pantallas solo con sesión y rol
-├── datos-sensibles.js    # oculta tarjetas, CVV, NIP y contraseñas en tickets
+├── public/js/datos-sensibles.js  # oculta tarjetas, CVV, NIP y contraseñas en tickets (servidor y panel)
 ├── dosfactores.js         # verificación en dos pasos (TOTP de app autenticadora y código por correo)
 ├── captcha.js             # Google reCAPTCHA v2 (verificación en el servidor)
 ├── correo.js              # cliente SMTP para Gmail, sin dependencias, y revisión MX de dominios
