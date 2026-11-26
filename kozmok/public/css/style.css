@@ -3234,3 +3234,10 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .diag-alerta strong { color: var(--warning); }
 .cs-res-error { cursor: default; }
 .cs-res-nota { margin: 6px 4px 0; font-size: .76rem; color: var(--text-muted); }
+/* Ticket de seguimiento: datos heredados, fijos */
+.tk-seg-resumen { display: grid; gap: 6px; margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-panel-2); }
+.tk-seg-fila { display: flex; gap: 12px; font-size: .86rem; }
+.tk-seg-fila span { color: var(--text-muted); min-width: 76px; }
+.tk-seg-resumen small { color: var(--text-muted); font-size: .76rem; }
+.tk-seg-otro { margin: 12px 0 0; text-align: center; font-size: .84rem; color: var(--text-muted); }
+.tk-ligado { margin: 8px 0 0; font-size: .8rem; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

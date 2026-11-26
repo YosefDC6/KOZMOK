@@ -983,6 +983,8 @@ NAVEGACION RAPIDA EN EL PANEL
      Cerrados) y filtros por estado y prioridad.
    - Al abrir un ticket: hilo de mensajes, selector de estado y prioridad,
      campo para responder al cliente y el PEDIDO RELACIONADO (ver 9).
+   - Si el ticket es seguimiento de otro, o tiene seguimientos, aparecen
+     sus folios con su estado y un enlace a cada uno.
 
 4.6b GARANTIAS  (admin/garantias.html)  [CRM]
    - "Reclamos en curso": los casos que abrieron los clientes (RG-1xxx) con
@@ -1912,8 +1914,17 @@ Lado cliente  (soporte.html, dentro de Mi cuenta)
    - El cliente ve su ticket, sus mensajes y el estado; la prioridad y a
      quien del equipo se asigno son internos y no se le muestran.
    - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
-     aparece "Este ticket esta cerrado..." con el boton "Abrir un ticket
-     nuevo" (que ya trae el asunto, la categoria y el pedido del anterior).
+     aparece "Este ticket esta cerrado..." con el boton "Abrir un
+     seguimiento".
+   - SEGUIMIENTO: hereda del ticket anterior el asunto ("Seguimiento a
+     TK-1009: ..."), la categoria, el pedido o cupon y la prioridad, y
+     esos datos no se pueden cambiar; el cliente solo escribe que sigue
+     pasando y puede agregar fotos. Queda ligado al anterior: el cliente
+     ve "Seguimiento de TK-1009" y Soporte ve en cada ticket de cual es
+     seguimiento y que seguimientos tiene. Solo puede haber un seguimiento
+     abierto por ticket (si ya hay uno, se abre ese). Si en realidad es
+     otro tema, el enlace "Es otro problema? Abre un ticket nuevo" abre el
+     formulario normal en blanco.
    - Desde el Centro de ayuda (ayuda.html) el boton de contacto lleva aqui
      (o al login si no hay sesion).
 

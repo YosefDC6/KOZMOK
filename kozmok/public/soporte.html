@@ -72,14 +72,16 @@ async function vistaHilo(panel, id) {
     let t;
     try { t = await api(`/clientes/${CID}/tickets/${id}`); }
     catch (e) { panel.innerHTML = `<div class="empty-state">${escHTML(e.message)}<br><a href="/soporte.html">Volver a soporte</a></div>`; return; }
-    TICKET_PREVIO = { asunto: 'Seguimiento a ' + t.folio + ': ' + t.asunto, categoria: t.categoria, pedido_id: t.pedido_id };
+    // Para "Abrir un seguimiento": hereda todo de este ticket (ver formSeguimiento).
+    TICKET_PREVIO = t;
     panel.innerHTML = `
         <div class="cuenta-head">
             <a href="/soporte.html" style="font-size:.85rem">← Todos mis tickets</a>
             <h1 style="margin-top:6px">${escHTML(t.asunto)}</h1>
             <p><span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}">${EST_LABEL[t.estado]}</span>
                ${t.numero_orden ? ` · Pedido <a class="mono" href="/pedidos.html">${escHTML(t.numero_orden)}</a>` : ''}
-               ${t.cupon_codigo ? ` · Cupón <a class="mono" href="/cupones.html">${escHTML(t.cupon_codigo)}</a>` : ''}</p>
+               ${t.cupon_codigo ? ` · Cupón <a class="mono" href="/cupones.html">${escHTML(t.cupon_codigo)}</a>` : ''}
+               ${t.origen_folio ? ` · Seguimiento de <a class="mono" href="/soporte.html?ticket=${t.ticket_origen_id}">${escHTML(t.origen_folio)}</a>` : ''}</p>
         </div>
         <div class="hilo">
             ${t.mensajes.map((m) => `
@@ -92,8 +94,8 @@ async function vistaHilo(panel, id) {
         </div>
         ${['resuelto', 'cerrado'].includes(t.estado)
             ? `<div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes. Si necesitas más ayuda, abre uno nuevo.</p>
-                   <button class="btn btn-primary btn-sm" onclick="formTicket(TICKET_PREVIO)">Abrir un ticket nuevo</button>
+                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes. ¿El problema sigue? Abre un seguimiento: queda ligado a este ticket.</p>
+                   <button class="btn btn-primary btn-sm" onclick="formSeguimiento(TICKET_PREVIO)">Abrir un seguimiento</button>
                </div>`
             : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="Escribe tu mensaje…"></textarea></div>
                <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="hilo-fotos" accept="image/*" multiple hidden /></label>
@@ -115,6 +117,48 @@ async function responder(id, btn) {
             location.reload();
         } catch (e) { toast(e.message, 'error'); }
     });
+}
+
+// Seguimiento de un ticket resuelto o cerrado: asunto, categoría, pedido y
+// cupón vienen del original y no se cambian (el servidor también los toma
+// de ahí). Solo se escribe qué pasa ahora y se agregan fotos. Si es otro
+// tema, "¿Es otro problema?" abre el formulario normal.
+const CAT_LABEL = { pedido: 'Un pedido', garantia: 'Garantía', devolucion: 'Devolución o cambio', facturacion: 'Facturación', cupon: 'Un cupón de descuento', cuenta: 'Mi cuenta', general: 'Otro' };
+function formSeguimiento(t) {
+    document.getElementById('modal-generico-body').innerHTML = `
+        <button class="modal-close" onclick="document.getElementById('modal-generico').classList.remove('open')">${icon('x', 20)}</button>
+        <h3>Seguimiento de ${escHTML(t.folio)}</h3>
+        <div class="tk-seg-resumen">
+            <div class="tk-seg-fila"><span>Asunto</span><strong>${escHTML(String(t.asunto).replace(/^Seguimiento a TK-\d+: /, ''))}</strong></div>
+            <div class="tk-seg-fila"><span>Categoría</span><strong>${escHTML(CAT_LABEL[t.categoria] || t.categoria)}</strong></div>
+            ${t.numero_orden ? `<div class="tk-seg-fila"><span>Pedido</span><strong class="mono">${escHTML(t.numero_orden)}</strong></div>` : ''}
+            ${t.cupon_codigo ? `<div class="tk-seg-fila"><span>Cupón</span><strong class="mono">${escHTML(t.cupon_codigo)}</strong></div>` : ''}
+            <small>Soporte verá la conversación de ${escHTML(t.folio)}.</small>
+        </div>
+        <div class="field"><label>¿Qué sigue pasando?</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó desde la última respuesta."></textarea></div>
+        <div class="field"><label>Fotos <span style="color:var(--text-muted);font-weight:400">(opcional, hasta 3)</span></label>
+            <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="tk-fotos" accept="image/*" multiple hidden /></label>
+                <small>Evidencia de un producto dañado, el empaque o una captura de pantalla.</small></div>
+            <div class="foto-lista" id="tk-prev"></div>
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="crearSeguimiento(${t.id}, this)">Enviar seguimiento</button>
+        <p class="tk-seg-otro">¿Es otro problema? <a href="#" onclick="formTicket(); return false;">Abre un ticket nuevo</a></p>
+    `;
+    SEL_NUEVO = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
+    document.getElementById('modal-generico').classList.add('open');
+    setTimeout(() => document.getElementById('tk-desc').focus(), 50);
+}
+async function crearSeguimiento(origenId, btn) {
+    const descripcion = document.getElementById('tk-desc').value.trim();
+    if (descripcion.length < 10) { toast('Cuéntanos qué sigue pasando (al menos unas palabras)', 'warn'); return; }
+    await conBoton(btn, async () => {
+        try {
+            const r = await api(`/clientes/${CID}/tickets`, { method: 'POST',
+                body: { seguimiento_de: origenId, asunto: 'Seguimiento', descripcion, fotos: SEL_NUEVO ? SEL_NUEVO.fotos() : [] } });
+            toast(r.ticket.repetido ? r.message : `Seguimiento ${r.ticket.folio} creado`, 'ok');
+            location.replace('/soporte.html?ticket=' + r.ticket.id);
+        } catch (e) { toast(e.message, 'error'); }
+    }, 'Enviando…');
 }
 
 function formTicket(previo = {}) {

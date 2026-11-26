@@ -116,6 +116,8 @@ async function vistaHilo(id) {
                     </div>
                     <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id}, this)">Actualizar ticket</button>
                     <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}${t.navegador ? `<br>Desde ${escHTML(t.navegador)} · ${escHTML(t.dispositivo || '')}` : ''}</p>
+                    ${t.origen ? `<p class="tk-ligado">${icon('undo', 13)} Seguimiento de <a class="mono" href="/admin/soporte.html?ticket=${t.origen.id}">${escHTML(t.origen.folio)}</a> (${EST[t.origen.estado] || t.origen.estado})</p>` : ''}
+                    ${(t.seguimientos || []).length ? `<p class="tk-ligado">${icon('chat', 13)} Seguimientos: ${t.seguimientos.map((x) => `<a class="mono" href="/admin/soporte.html?ticket=${x.id}">${escHTML(x.folio)}</a> (${EST[x.estado] || x.estado})`).join(', ')}</p>` : ''}
                 </div>
                 <div class="card" id="tk-diag">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">

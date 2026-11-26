@@ -3481,7 +3481,8 @@ function navegadorDeTicket(ua) {
 // Lo que el cliente puede ver de su ticket: nunca la prioridad interna ni a
 // quién se asignó. (Rama de Gael, TICKET_PUBLICO.)
 const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.asunto, t.categoria, t.estado, t.pedido_id, t.cupon_id,
-    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion`;
+    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion, t.ticket_origen_id,
+    (SELECT o.folio FROM tickets o WHERE o.id = t.ticket_origen_id) AS origen_folio`;
 const MSG_DATO_SENSIBLE = 'Por seguridad, nunca le pedimos al cliente contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. Reescribe la respuesta sin pedir esos datos.';
 
 async function crearTicket(clienteId, { asunto, categoria, descripcion, prioridad, pedido_id, cupon_id }, { autor = 'cliente', usuarioId = null, fotos = [], ua = '' } = {}) {
@@ -3579,7 +3580,28 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
     let fotos;
     try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    // Seguimiento de un ticket resuelto o cerrado: hereda asunto, categoría,
+    // pedido y cupón del original (no se eligen otra vez) y queda ligado.
+    // Uno abierto a la vez por ticket: si ya hay, se regresa ese.
+    let origen = null;
+    if (req.body.seguimiento_de) {
+        origen = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [Number(req.body.seguimiento_de) || 0, req.params.id])).rows[0];
+        if (!origen) return res.status(404).json({ message: 'Ticket no encontrado' });
+        if (!['resuelto', 'cerrado'].includes(origen.estado)) return res.status(409).json({ message: `El ticket ${origen.folio} sigue abierto: escribe ahí tu mensaje.` });
+        const abierto = (await pool.query(
+            `SELECT id, folio, estado FROM tickets WHERE ticket_origen_id = $1 AND estado IN ('abierto','en_proceso') ORDER BY id DESC LIMIT 1`, [origen.id])).rows[0];
+        if (abierto) return res.json({ message: `Ya tienes un seguimiento abierto de ${origen.folio}: ${abierto.folio}`, ticket: { ...abierto, repetido: true } });
+        const base = String(origen.asunto).replace(/^Seguimiento a TK-\d+: /, '');
+        Object.assign(req.body, { asunto: `Seguimiento a ${origen.folio}: ${base}`.slice(0, 160), categoria: origen.categoria,
+            pedido_id: origen.pedido_id, cupon_id: origen.cupon_id });
+    }
     const ticket = await crearTicket(req.params.id, req.body, { fotos, ua: req.headers['user-agent'] });
+    if (origen && !ticket.repetido) {
+        await pool.query('UPDATE tickets SET ticket_origen_id = $2 WHERE id = $1', [ticket.id, origen.id]);
+        // La prioridad no baja de la del ticket original.
+        const ORD = { baja: 0, media: 1, alta: 2 };
+        if (ORD[origen.prioridad] > ORD[ticket.prioridad]) await pool.query('UPDATE tickets SET prioridad = $2 WHERE id = $1', [ticket.id, origen.prioridad]);
+    }
     res.status(ticket.repetido ? 200 : 201).json({ message: ticket.repetido ? 'Ya habías enviado este ticket' : 'Ticket creado',
         ticket: { id: ticket.id, folio: ticket.folio, estado: ticket.estado, repetido: !!ticket.repetido } });
 }));
@@ -5089,7 +5111,12 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
         [req.params.id]
     );
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id) });
+    // Historial: de qué ticket es seguimiento y qué seguimientos tiene.
+    const [origen, seguimientos] = await Promise.all([
+        t.rows[0].ticket_origen_id ? pool.query('SELECT id, folio, estado FROM tickets WHERE id = $1', [t.rows[0].ticket_origen_id]) : { rows: [] },
+        pool.query('SELECT id, folio, estado, fecha_creacion FROM tickets WHERE ticket_origen_id = $1 ORDER BY id', [t.rows[0].id]),
+    ]);
+    res.json({ ...t.rows[0], origen: origen.rows[0] || null, seguimientos: seguimientos.rows, mensajes: await hiloTicket(t.rows[0].id) });
 }));
 app.get('/api/admin/tickets/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
     enviarFoto(res, (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2',
@@ -9273,6 +9300,8 @@ async function migrarEsquema() {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_ticket_adjuntos ON ticket_adjuntos(ticket_id)');
     // Navegador y dispositivo de quien abrió el ticket (del User-Agent).
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS navegador VARCHAR(80)');
+    // Seguimiento: ticket nuevo ligado a uno resuelto o cerrado.
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_origen_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL');
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');
     // Errores del servidor con el folio que vio el usuario.
     await pool.query(`CREATE TABLE IF NOT EXISTS errores_servidor (

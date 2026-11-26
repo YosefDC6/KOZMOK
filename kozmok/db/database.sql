@@ -693,6 +693,7 @@ CREATE TABLE tickets (
     fecha_respuesta     TIMESTAMP,
     navegador           VARCHAR(80),     -- del User-Agent de quien lo abrió
     dispositivo         VARCHAR(60),
+    ticket_origen_id    INTEGER REFERENCES tickets(id) ON DELETE SET NULL,  -- seguimiento de otro ticket
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
