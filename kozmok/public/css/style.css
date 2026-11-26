@@ -3271,3 +3271,7 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .qr-final.ok svg { color: var(--success, #22c55e); }
 .qr-final.error svg { color: var(--danger, #ef4444); }
 .auth-wrap .card.qr-login { max-width: 580px; }
+/* Tibu en el centro del QR (corrección H): recuadro blanco que tapa ~6% */
+.qr-tibu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 25%; aspect-ratio: 1; border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 3px #fff; }
+.qr-tibu svg { width: 82%; height: auto; }
+.qr-caja.qr-leido .qr-tibu { opacity: .25; }

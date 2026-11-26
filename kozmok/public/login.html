@@ -206,8 +206,10 @@ async function qrNuevo() {
     try {
         QR.datos = await api('/auth/qr', { method: 'POST', body: { recordar: $q('recordar').checked } });
     } catch (e) { qrPintarEstado(e.message, 'error'); return; }
-    const q = qrcode(0, 'M'); q.addData(QR.datos.url); q.make();
-    $q('qr-caja').innerHTML = q.createSvgTag({ cellSize: 5, margin: 3, scalable: true });
+    // Corrección H (aguanta ~30% tapado): Tibu en el centro tapa menos de 8%.
+    const q = qrcode(0, 'H'); q.addData(QR.datos.url); q.make();
+    $q('qr-caja').innerHTML = q.createSvgTag({ cellSize: 5, margin: 3, scalable: true })
+        + `<span class="qr-tibu" aria-hidden="true">${mascotaKZK(34, { saluda: false })}</span>`;
     $q('qr-digitos').textContent = QR.datos.digitos;
     const host = new URL(QR.datos.url).host;
     $q('qr-red').textContent = host !== location.host ? `El celular abrirá ${host}: debe estar en la misma red Wi-Fi.` : '';
