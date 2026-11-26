@@ -749,7 +749,7 @@ body.mp-lock { overflow: hidden; }
     flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px;
     background: #fff; border-radius: 14px; padding: 12px; align-self: center;
 }
-.socio-qr .sq-code { width: 108px; height: 108px; }
+.socio-qr .sq-code { width: 120px; height: 120px; }
 .socio-qr .sq-code svg { display: block; width: 100%; height: 100%; }
 .socio-qr .sq-label { font-size: .64rem; text-transform: uppercase; letter-spacing: .07em; color: #4a5568; }
 .socio-qr .sq-id { font-size: .68rem; color: #1a2233; letter-spacing: .04em; }

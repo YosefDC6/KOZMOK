@@ -1869,6 +1869,9 @@ Cada cliente tiene una tarjeta virtual en su Resumen (perfil.html) con:
    - su nivel del Club con insignia,
    - titular, socio desde, puntos y total de compras,
    - un CODIGO QR y su codigo de socio en texto (formato  KZMX-XXXXXX ).
+     El QR lleva a Tibu en pixel art en el centro (igual que el de "Entrar
+     con mi celular"): se usa la correccion de errores mas alta y solo se
+     quitan los cuadritos que tocan su silueta, asi que se lee normal.
 
 Codigo de socio
    - Se genera automaticamente al registrarse. Cuentas antiguas reciben uno

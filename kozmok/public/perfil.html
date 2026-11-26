@@ -27,12 +27,13 @@
 <script src="/js/cuenta.js"></script>
 <script src="/js/qrcode.min.js"></script>
 <script>
+// QR de la tarjeta de socio con Tibu (8-bit) en el centro; corrección H.
 function qrSVG(texto) {
     try {
-        const q = qrcode(0, 'M');
+        const q = qrcode(0, 'H');
         q.addData(texto);
         q.make();
-        return q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+        return qrConTibu(q, { margen: 0, titulo: 'Código QR de socio' });
     } catch (e) { return ''; }
 }
 

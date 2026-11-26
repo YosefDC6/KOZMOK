@@ -181,6 +181,35 @@
         </svg>`;
     }
 
+    // Úsalo con un QR de corrección H:  qrConTibu(qrcode(0, 'H') + addData + make)
+    // (login "Entrar con mi celular" y tarjeta de socio).
+    // QR con Tibu (8-bit) en el centro, sin recuadro: se quitan solo los
+    // cuadritos que tocan su silueta (más uno de margen) y el QR lo rodea.
+    // Corrección H aguanta ~30% tapado; aquí se quita alrededor de 5%.
+    window.qrConTibu = function (q, { margen = 3, titulo = 'Código QR' } = {}) {
+        const n = q.getModuleCount();
+        const ancho = Math.round(n * 0.27);                      // Tibu mide ~27% del QR
+        const k = ancho / 57;                                    // unidades de Tibu -> cuadritos
+        const x0 = (n - ancho) / 2, y0 = (n - 56 * k) / 2;
+        const ctx = document.createElement('canvas').getContext('2d');
+        const sil = new Path2D(window.mascotaKZK.siluetaPixel);
+        ctx.lineWidth = 1 / k; ctx.lineJoin = 'round';          // medio cuadrito de aire alrededor
+        const tapa = (r, c) => {
+            const tx = (c + 0.5 - x0) / k - 1, ty = (r + 0.5 - y0) / k + 2;
+            // La silueta y su sombra (desplazada 3,3).
+            return [[tx, ty], [tx - 3, ty - 3]].some(([x, y]) => ctx.isPointInPath(sil, x, y) || ctx.isPointInStroke(sil, x, y));
+        };
+        let celdas = '';
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+            if (q.isDark(r, c) && !tapa(r, c)) celdas += `M${c + margen} ${r + margen}h1v1h-1z`;
+        }
+        const lado = n + margen * 2;
+        const tibu = window.mascotaKZK(10, { variante: 'pixel', titulo: '' })
+            .replace(/ width="[\d.]+" height="[\d.]+"/, ` x="${x0 + margen}" y="${y0 + margen}" width="${57 * k}" height="${56 * k}"`);
+        return `<svg viewBox="0 0 ${lado} ${lado}" role="img" aria-label="${titulo}">
+            <rect width="${lado}" height="${lado}" fill="#fff"/><path d="${celdas}" fill="#000"/>${tibu}</svg>`;
+    };
+
     // Rellena íconos en HTML estático: <span data-ic="cart" data-ic-size="18"></span>
     // El ícono se antepone al contenido existente del elemento.
     document.addEventListener('DOMContentLoaded', () => {
