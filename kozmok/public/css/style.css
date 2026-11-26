@@ -760,22 +760,40 @@ body.mp-lock { overflow: hidden; }
 }
 
 /* Verificación de socio (socio.html — pantalla para tienda física) */
-.socio-verify-wrap { max-width: 420px; margin: 0 auto; padding: 40px 20px 60px; text-align: center; }
-.socio-verify-brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-head); font-weight: 700; font-size: 1.1rem; color: var(--text); margin-bottom: 24px; }
+/* Verificación de socio (socio.html, se abre al escanear la tarjeta) */
+.sv-body { background: radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 60%), var(--bg); min-height: 100vh; }
+.socio-verify-wrap { max-width: 460px; margin: 0 auto; padding: 28px 18px 48px; }
+.socio-verify-brand { display: flex; justify-content: center; align-items: center; gap: 8px; font-family: var(--font-head); font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.05rem; color: var(--text); margin-bottom: 22px; }
+.socio-verify-brand em { font-weight: 400; font-style: normal; text-transform: none; color: var(--text-muted); }
 .socio-verify-brand .brand-mark { color: var(--accent); }
-.socio-verify-card {
-    background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 28px 24px; box-shadow: var(--shadow-sm); text-align: center;
-}
-.socio-verify-card.err { color: var(--danger); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
-.sv-badge { margin-bottom: 8px; }
-.sv-nivel { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; color: var(--text-muted); font-weight: 700; }
-.sv-nombre { font-size: 1.4rem; font-weight: 700; margin: 4px 0 18px; }
-.sv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; text-align: left; margin-bottom: 18px; }
-.sv-grid span { display: block; font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
-.sv-grid strong { font-size: 1rem; }
-.sv-ok { display: inline-flex; align-items: center; gap: 6px; color: var(--success); font-weight: 600; font-size: .9rem; }
-.socio-verify-foot { font-size: .76rem; color: var(--text-muted); margin-top: 18px; }
+.sv-cargando { text-align: center; color: var(--text-muted); padding: 40px 0; }
+.sv-sello { display: flex; align-items: center; gap: 16px; padding: 16px 18px; margin-bottom: 18px; border: 2px solid var(--success, #22c55e); border-radius: var(--radius); background: color-mix(in srgb, var(--success, #22c55e) 10%, var(--bg-panel)); box-shadow: 5px 5px 0 color-mix(in srgb, var(--success, #22c55e) 55%, transparent); animation: sv-entra .45s cubic-bezier(.2, 1.4, .4, 1); }
+.sv-sello h1 { margin: 2px 0 2px; font-size: 1.45rem; font-style: italic; text-transform: uppercase; line-height: 1.05; }
+.sv-check { display: inline-flex; width: 30px; height: 30px; border-radius: 50%; align-items: center; justify-content: center; background: var(--success, #22c55e); color: #08130c; }
+.sv-hora { margin: 2px 0 0; font-size: .8rem; color: var(--text-muted); display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.sv-tibu { flex: 0 0 auto; line-height: 0; }
+.sv-sello.sv-error { flex-direction: column; text-align: center; border-color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 9%, var(--bg-panel)); box-shadow: 5px 5px 0 color-mix(in srgb, var(--danger, #ef4444) 50%, transparent); }
+.sv-sello.sv-error p { margin: 0; color: var(--text-muted); font-size: .9rem; }
+@keyframes sv-entra { from { transform: scale(.9) rotate(-2deg); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sv-sello { animation: none; } }
+.sv-tarjeta { margin-bottom: 16px; }
+.sv-tarjeta .socio-num { letter-spacing: .14em; }
+.sv-datos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.sv-dato { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-panel); display: grid; gap: 3px; align-content: start; }
+.sv-dato span { font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 700; }
+.sv-dato strong { font-size: .95rem; display: flex; align-items: center; gap: 6px; }
+.sv-dato em { font-style: normal; font-size: .76rem; color: var(--text-muted); }
+.sv-dato.sv-grande { grid-column: 1 / -1; border-left: 4px solid var(--accent); }
+.sv-dato.sv-grande strong { font-size: 2rem; font-family: var(--font-mono, monospace); color: var(--accent); line-height: 1.1; }
+.sv-avance { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-panel); margin-bottom: 12px; font-size: .84rem; }
+.sv-avance-txt { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--text-muted); }
+.sv-avance-txt span:first-child { display: inline-flex; align-items: center; gap: 5px; }
+.sv-barra { height: 8px; border-radius: 99px; background: var(--bg-panel-2); overflow: hidden; }
+.sv-barra i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.sv-tope { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.sv-canje { display: flex; gap: 8px; align-items: flex-start; padding: 11px 14px; border: 1px dashed var(--line); border-radius: var(--radius-sm); font-size: .82rem; color: var(--text-muted); }
+.sv-canje svg { flex: 0 0 auto; color: var(--accent); margin-top: 1px; }
+.socio-verify-foot { font-size: .74rem; color: var(--text-muted); margin-top: 18px; text-align: center; }
 
 /* Medidor de seguridad de contraseña (registro) */
 .pass-meter { display: flex; align-items: center; gap: 10px; margin-top: 8px; }

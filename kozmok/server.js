@@ -324,14 +324,54 @@ function htmlCorreo({ asunto, cuerpo, boton, bajaUrl = null, extraHtml = '' }) {
         tablaPuesta = true;
     }
     const enlace = (t) => t.replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" style="color:${KZ.acentoClaro};word-break:break-all">$1</a>`);
+    // Folios y códigos (KZ-93FW884D, TK-1009, DEV-00012, ORD-…) -> etiqueta mono.
+    const CODIGO = /^[A-Z]{2,5}-[A-Z0-9-]{3,}$/;
+    const chip = (t) => `<span style="display:inline-block;padding:3px 9px;background:${KZ.fondo};border:1px solid ${KZ.acento};border-radius:6px;font-family:${KZ.mono};font-size:14px;font-weight:bold;letter-spacing:.5px;color:#ffffff">${esc(t)}</span>`;
+    // Un bloque con renglones "- …" se muestra como tarjeta de datos: el
+    // renglón de arriba (si no empieza con "- ") es su título; "Clave: valor"
+    // va en dos columnas y lo demás con una viñeta del color de la tienda.
+    const tarjeta = (p) => {
+        const lineas = p.split('\n');
+        const titulo = lineas[0].startsWith('- ') ? '' : lineas.shift();
+        const filas = lineas.map((l) => {
+            const t = l.replace(/^- /, '').trim();
+            const kv = /^([^:]{2,30}):\s+(.+)$/.exec(t);
+            if (kv) return `<tr>
+                <td style="padding:7px 0;border-top:1px solid ${KZ.linea};font-size:13px;color:${KZ.suave};vertical-align:top;white-space:nowrap;padding-right:14px">${esc(kv[1])}</td>
+                <td align="right" style="padding:7px 0;border-top:1px solid ${KZ.linea};font-size:14px;font-weight:bold;color:#ffffff">${CODIGO.test(kv[2]) ? chip(kv[2]) : enlace(esc(kv[2]))}</td></tr>`;
+            return `<tr><td colspan="2" style="padding:7px 0;border-top:1px solid ${KZ.linea};font-size:14px;color:${KZ.texto}">
+                <span style="display:inline-block;width:7px;height:7px;margin:0 9px 2px 0;background:${KZ.acento};vertical-align:middle"></span>${enlace(esc(t))}</td></tr>`;
+        }).join('');
+        return `
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 18px;background:${KZ.panel2};border:1px solid ${KZ.linea};border-left:4px solid ${KZ.acento};border-radius:10px">
+            <tr><td style="padding:14px 18px 8px">
+              ${titulo ? `<div style="margin:0 0 8px;font-family:${KZ.titulo};font-size:16px;font-style:italic;font-weight:900;text-transform:uppercase;color:#ffffff">${esc(titulo)}</div>` : ''}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">${filas}</table>
+            </td></tr>
+          </table>`;
+    };
+    let primero = true;
     const parrafos = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => {
         if (p === MARCA) return extraHtml;
         // Un código de 6 dígitos solo en su párrafo -> caja grande
         if (/^\d{6}$/.test(p)) return `
           <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 20px"><tr>
-            <td style="background:${KZ.fondo};border:2px solid ${KZ.acento};border-radius:10px;padding:14px 26px;font-family:${KZ.mono};font-size:32px;font-weight:bold;letter-spacing:10px;color:#ffffff;text-align:center">${p}</td>
+            <td style="background:${KZ.fondo};border:2px solid ${KZ.acento};border-right:6px solid ${KZ.acento};border-bottom:6px solid ${KZ.acento};border-radius:10px;padding:14px 26px;font-family:${KZ.mono};font-size:32px;font-weight:bold;letter-spacing:10px;color:#ffffff;text-align:center">${p}</td>
           </tr></table>`;
-        return `<p style="margin:0 0 14px;line-height:1.6;color:${KZ.texto}">${enlace(esc(p).replace(/\n/g, '<br>'))}</p>`;
+        // Un folio o código solo en su párrafo -> etiqueta centrada
+        if (CODIGO.test(p)) return `<p style="margin:0 0 16px;text-align:center">${chip(p)}</p>`;
+        const lineas = p.split('\n');
+        if (lineas.some((l) => l.startsWith('- ')) && lineas.slice(1).every((l) => l.startsWith('- '))) return tarjeta(p);
+        // Avisos ("Recuerda: nunca te pediremos tu contraseña…") en una nota aparte
+        const nota = /^(Recuerda|Importante|Nota|Aviso):\s*([\s\S]+)$/.exec(p);
+        if (nota) return `
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 16px;background:${KZ.fondo};border:1px dashed ${KZ.linea};border-radius:10px"><tr>
+            <td style="padding:11px 14px;font-size:13px;line-height:1.5;color:${KZ.suave}"><strong style="color:${KZ.acentoClaro}">${esc(nota[1])}:</strong> ${enlace(esc(nota[2]).replace(/\n/g, '<br>'))}</td>
+          </tr></table>`;
+        // El saludo ("Hola Ana:") un poco más grande
+        const saludo = primero && /^(Hola|Buen[ao]s?)\b[^\n]{0,40}[:,!]$/.test(p);
+        primero = false;
+        return `<p style="margin:0 0 14px;line-height:1.6;color:${saludo ? '#ffffff' : KZ.texto};${saludo ? 'font-size:17px;font-weight:bold' : ''}">${enlace(esc(p).replace(/\n/g, '<br>'))}</p>`;
     }).join('');
     // El botón va donde estaba el enlace en el texto (o al final).
     const i = boton && boton.url ? texto.indexOf(boton.url) : -1;
@@ -342,35 +382,47 @@ function htmlCorreo({ asunto, cuerpo, boton, bajaUrl = null, extraHtml = '' }) {
     const btn = boton && boton.url ? `
           <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:24px auto 18px"><tr>
             <td style="background:#ffffff;border:2px solid ${KZ.fondo};border-right:6px solid ${KZ.acento};border-bottom:6px solid ${KZ.acento};border-radius:8px">
-              <a href="${esc(boton.url)}" style="display:inline-block;padding:13px 28px;font-family:${KZ.titulo};font-size:15px;font-style:italic;font-weight:900;text-transform:uppercase;letter-spacing:.3px;color:${KZ.fondo};text-decoration:none">${esc(boton.texto || 'Abrir')}</a>
+              <a href="${esc(boton.url)}" style="display:inline-block;padding:14px 32px;font-family:${KZ.titulo};font-size:15px;font-style:italic;font-weight:900;text-transform:uppercase;letter-spacing:.3px;color:${KZ.fondo};text-decoration:none">${esc(boton.texto || 'Abrir')}</a>
             </td>
           </tr></table>
           <p style="margin:0 0 16px;font-size:12px;line-height:1.5;color:${KZ.suave};text-align:center">¿No funciona el botón? Copia este enlace:<br><span style="word-break:break-all;color:${KZ.acentoClaro}">${esc(boton.url)}</span></p>` : '';
     const pie = bajaUrl
         ? `Recibes este correo porque lo activaste en tus preferencias de Kozmok. <a href="${esc(bajaUrl)}" style="color:${KZ.suave};text-decoration:underline">Dejar de recibir estos correos</a>.`
         : 'Recibiste este correo porque tienes una cuenta en Kozmok. Si no reconoces esta actividad, ignóralo o contáctanos.';
+    const cuerpoHtml = `${parrafos(antes)}${tablaPuesta ? '' : extraHtml}${btn}${parrafos(despues)}`;
     return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light"><meta name="supported-color-schemes" content="dark light"><title>${esc(asunto)}</title></head>
 <body style="margin:0;padding:0;background:${KZ.fondo};font-family:${KZ.cuerpo};color:${KZ.texto}">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${KZ.fondo}" style="background:${KZ.fondo};padding:28px 12px">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${KZ.panel}" style="max-width:580px;background:${KZ.panel};border:2px solid ${KZ.linea};border-radius:14px;overflow:hidden">
-        <tr><td style="padding:20px 28px;border-bottom:2px solid ${KZ.linea}">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="vertical-align:middle"><img src="cid:kzk-logo" width="44" height="44" alt="KZK" style="display:block;border:0;border-radius:10px"></td>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${KZ.panel}" style="max-width:580px;background:${KZ.panel};border:2px solid ${KZ.linea};border-right:6px solid ${KZ.acento};border-bottom:6px solid ${KZ.acento};border-radius:14px;overflow:hidden">
+        <tr><td style="padding:18px 28px;border-bottom:2px solid ${KZ.linea}">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="vertical-align:middle;width:44px"><img src="cid:kzk-logo" width="40" height="40" alt="KZK" style="display:block;border:0;border-radius:10px"></td>
             <td style="vertical-align:middle;padding-left:12px;font-family:${KZ.titulo};font-size:22px;font-style:italic;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#ffffff">Kozmok</td>
           </tr></table>
         </td></tr>
         <tr><td height="4" style="height:4px;line-height:4px;font-size:0;background:${KZ.acento}">&nbsp;</td></tr>
-        <tr><td style="padding:28px 28px 12px;font-size:15px">
-          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px"><tr>
-            <td style="width:8px;background:${KZ.acento};border:2px solid ${KZ.fondo}">&nbsp;</td>
-            <td style="padding-left:12px;font-family:${KZ.titulo};font-size:22px;line-height:1.15;font-style:italic;font-weight:900;text-transform:uppercase;color:#ffffff">${esc(asunto)}</td>
+        <!-- Encabezado con Tibu saludando -->
+        <tr><td style="padding:22px 28px 6px;background:${KZ.panel2}">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="vertical-align:middle">
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                <td style="width:8px;background:${KZ.acento};border:2px solid ${KZ.fondo}">&nbsp;</td>
+                <td style="padding-left:12px;font-family:${KZ.titulo};font-size:21px;line-height:1.15;font-style:italic;font-weight:900;text-transform:uppercase;color:#ffffff">${esc(asunto).replace(/\b([A-Z]{2,5})-(\d)/g, '$1&#8209;$2')}</td>
+              </tr></table>
+            </td>
+            <td align="right" style="vertical-align:bottom;width:96px;padding-left:12px"><img src="cid:kzk-tibu" width="88" height="96" alt="Tibu, la mascota de Kozmok" style="display:block;border:0"></td>
           </tr></table>
-          ${parrafos(antes)}${tablaPuesta ? '' : extraHtml}${btn}${parrafos(despues)}
         </td></tr>
-        <tr><td style="padding:16px 28px 20px;background:${KZ.panel2};border-top:2px solid ${KZ.linea};font-size:12px;line-height:1.55;color:${KZ.suave}">
-          ${pie}<br><span style="font-family:${KZ.titulo};font-style:italic;font-weight:900;text-transform:uppercase;color:${KZ.acento}">Kozmok</span> · Cómputo y electrónica
+        <tr><td style="padding:24px 28px 12px;font-size:15px">
+          ${cuerpoHtml}
+        </td></tr>
+        <tr><td style="padding:16px 28px 20px;background:${KZ.panel2};border-top:2px solid ${KZ.linea}">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="vertical-align:top;width:40px;padding-right:12px"><img src="cid:kzk-tibu-pixel" width="32" height="35" alt="" style="display:block;border:0"></td>
+            <td style="font-size:12px;line-height:1.55;color:${KZ.suave}">${pie}<br><span style="font-family:${KZ.titulo};font-style:italic;font-weight:900;text-transform:uppercase;color:${KZ.acento}">Kozmok</span> · Cómputo y electrónica con garantía directa</td>
+          </tr></table>
         </td></tr>
       </table>
     </td></tr>
@@ -4167,19 +4219,28 @@ app.delete('/api/clientes/:id/metodos-pago/:mpId', asyncRoute(async (req, res) =
 // =========================================================
 app.get('/api/socio/:codigo', asyncRoute(async (req, res) => {
     const c = await pool.query(
-        `SELECT id, nombre, etapa_crm, fecha_registro FROM clientes
+        `SELECT id, nombre, etapa_crm, fecha_registro, preferencias->>'tarjeta' AS tarjeta FROM clientes
          WHERE codigo_socio = $1 AND estado_cliente = 'activo'`,
         [req.params.codigo]
     );
     if (c.rows.length === 0) return res.status(404).json({ message: 'Socio no encontrado' });
     const rec = await estadoRecompensas(c.rows[0].id);
+    // Pantalla pública (la ve el personal en tienda): nada de correo,
+    // teléfono, pedidos ni cuánto ha gastado. Sí el nivel, sus beneficios,
+    // los puntos y el diseño de tarjeta que eligió el cliente.
     res.json({
         codigo: req.params.codigo,
         nombre: c.rows[0].nombre,
         miembro_desde: c.rows[0].fecha_registro,
-        nivel: rec.nivel,
+        nivel: { clave: rec.nivel.clave, nombre: rec.nivel.nombre, multiplicador: rec.nivel.multiplicador },
+        siguiente_nivel: rec.siguiente_nivel ? { clave: rec.siguiente_nivel.clave, nombre: rec.siguiente_nivel.nombre } : null,
+        progreso: rec.progreso,
         puntos: rec.puntos,
         valor_en_dinero: rec.valor_en_dinero,
+        valor_punto: rec.valor_punto,
+        terminacion: String(c.rows[0].id).padStart(4, '0').slice(-4),
+        tarjeta: ['kzk', 'clasica', 'tiburon'].includes(c.rows[0].tarjeta) ? c.rows[0].tarjeta : 'kzk',
+        verificado_en: new Date().toISOString(),
     });
 }));
 

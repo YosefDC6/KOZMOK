@@ -44,22 +44,23 @@ const encabezado = (t) => (/^[\x20-\x7e]*$/.test(t) ? t : `=?UTF-8?B?${b64(t)}?=
 const lineas76 = (t) => b64(t).replace(/.{1,76}/g, '$&\r\n');
 const limpiarCabecera = (t) => String(t || '').replace(/[\r\n]+/g, ' ').trim();
 
-// Logo KZK incrustado en el correo (Gmail no muestra SVG ni puede abrir
-// imágenes de "localhost"): el HTML lo usa como <img src="cid:kzk-logo">.
-const LOGO_CID = 'kzk-logo';
-let logoPng = null;
-function logo() {
-    if (logoPng === null) {
-        try { logoPng = require('fs').readFileSync(require('path').join(__dirname, 'public', 'img', 'kzk-correo.png')); }
-        catch { logoPng = false; }
+// Imágenes incrustadas en el correo (Gmail no muestra SVG ni puede abrir
+// imágenes de "localhost" ni de la red local): el HTML las usa como
+// <img src="cid:kzk-logo"> y solo se adjuntan las que el HTML cita.
+const IMAGENES = { 'kzk-logo': 'kzk-correo.png', 'kzk-tibu': 'tibu-correo.png', 'kzk-tibu-pixel': 'tibu-pixel-correo.png' };
+const cacheImg = {};
+function imagen(cid) {
+    if (!(cid in cacheImg)) {
+        try { cacheImg[cid] = require('fs').readFileSync(require('path').join(__dirname, 'public', 'img', IMAGENES[cid])); }
+        catch { cacheImg[cid] = false; }
     }
-    return logoPng;
+    return cacheImg[cid];
 }
 
 function armarMensaje({ para, asunto, texto, html }) {
     const frontera = 'kz_' + crypto.randomBytes(12).toString('hex');
     const fronteraRel = 'kzr_' + crypto.randomBytes(12).toString('hex');
-    const conLogo = html && html.includes(`cid:${LOGO_CID}`) && logo();
+    const adjuntas = html ? Object.keys(IMAGENES).filter((cid) => html.includes(`cid:${cid}"`) && imagen(cid)) : [];
     const dominio = CFG.usuario.split('@')[1] || 'kozmok.local';
     const cab = [
         `From: ${encabezado(limpiarCabecera(CFG.remitente))} <${CFG.usuario}>`,
@@ -78,16 +79,18 @@ function armarMensaje({ para, asunto, texto, html }) {
             'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', lineas76(html),
             `--${frontera}--`, '',
         ].join('\r\n');
-        if (conLogo) {
-            // multipart/related = texto/HTML + la imagen que el HTML cita
+        if (adjuntas.length) {
+            // multipart/related = texto/HTML + las imágenes que el HTML cita
             cab.push(`Content-Type: multipart/related; boundary="${fronteraRel}"; type="multipart/alternative"`);
             cuerpo = [
                 `--${fronteraRel}`,
                 `Content-Type: multipart/alternative; boundary="${frontera}"`, '', alternativa,
-                `--${fronteraRel}`,
-                'Content-Type: image/png; name="kozmok.png"', 'Content-Transfer-Encoding: base64',
-                `Content-ID: <${LOGO_CID}>`, 'Content-Disposition: inline; filename="kozmok.png"', '',
-                logo().toString('base64').replace(/.{1,76}/g, '$&\r\n'),
+                ...adjuntas.flatMap((cid) => [
+                    `--${fronteraRel}`,
+                    `Content-Type: image/png; name="${cid}.png"`, 'Content-Transfer-Encoding: base64',
+                    `Content-ID: <${cid}>`, `Content-Disposition: inline; filename="${cid}.png"`, '',
+                    imagen(cid).toString('base64').replace(/.{1,76}/g, '$&\r\n'),
+                ]),
                 `--${fronteraRel}--`, '',
             ].join('\r\n');
         } else {

@@ -4,54 +4,92 @@
 <meta charset="UTF-8" />
 <link rel="icon" type="image/svg+xml" href="/img/kzk.svg" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
 <title>Verificación de socio · Kozmok</title>
 <link rel="stylesheet" href="/css/style.css" />
 <link rel="stylesheet" href="/css/arcade.css" />
 </head>
-<body>
+<body class="sv-body">
+<!-- Se abre al escanear el QR de la tarjeta de socio. Es para el personal
+     en tienda: muestra nivel, beneficios y puntos, nunca datos de contacto
+     ni compras. La hora corre en vivo para que no sirva una captura vieja. -->
 <div class="socio-verify-wrap">
-    <a href="/index.html" class="socio-verify-brand">
-        <span class="brand-mark" data-logo="26"></span> Kozmok
-    </a>
-    <div id="contenido"><div class="empty-state">Verificando…</div></div>
-    <p class="socio-verify-foot">Pantalla para uso del personal en tienda. Datos de socio del Club Kozmok.</p>
+    <a href="/index.html" class="socio-verify-brand"><span class="brand-mark" data-logo="22"></span> Kozmok <em>Club</em></a>
+    <div id="contenido"><div class="sv-cargando">Verificando…</div></div>
+    <p class="socio-verify-foot">Pantalla para el personal en tienda. Por privacidad no muestra correo, teléfono ni compras del socio.</p>
 </div>
 
 <script src="/js/theme.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/icons.js"></script>
+<script src="/js/cuenta.js"></script>
 <script>
 const codigo = new URLSearchParams(location.search).get('c');
 const cont = document.getElementById('contenido');
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const mesAnio = (d) => d ? new Date(d).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }) : '—';
+const BENEFICIO = { bronce: 'Gana puntos en cada compra', plata: 'Gana 15 % más puntos', oro: 'Gana 30 % más puntos', platino: 'Gana 60 % más puntos' };
 
-function fecha(d) {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+function noEncontrado(texto) {
+    cont.innerHTML = `
+        <div class="sv-sello sv-error">
+            <span class="sv-tibu">${mascotaKZK(72, { variante: 'pixel', titulo: 'Tibu' })}</span>
+            <h1>No verificado</h1>
+            <p>${esc(texto)}</p>
+        </div>`;
 }
 
 (async () => {
-    if (!codigo) {
-        cont.innerHTML = '<div class="socio-verify-card err">Falta el código de socio en el enlace.</div>';
-        return;
-    }
-    try {
-        const s = await api('/socio/' + encodeURIComponent(codigo));
-        cont.innerHTML = `
-            <div class="socio-verify-card">
-                <div class="sv-badge">${nivelBadge(s.nivel.clave, 44)}</div>
-                <div class="sv-nivel">Nivel ${s.nivel.nombre}</div>
-                <div class="sv-nombre">${s.nombre}</div>
-                <div class="sv-grid">
-                    <div><span>Puntos disponibles</span><strong>${Number(s.puntos).toLocaleString('es-MX')}</strong></div>
-                    <div><span>Valen en tienda</span><strong>${formatoMoneda(s.valor_en_dinero)}</strong></div>
-                    <div><span>Socio desde</span><strong>${fecha(s.miembro_desde)}</strong></div>
-                    <div><span>Código</span><strong class="mono">${s.codigo}</strong></div>
+    if (!codigo) return noEncontrado('Falta el código de socio en el enlace. Vuelve a escanear la tarjeta.');
+    let s;
+    try { s = await api('/socio/' + encodeURIComponent(codigo)); }
+    catch { return noEncontrado('No hay un socio activo con ese código. Pide al cliente que abra su tarjeta en Mi cuenta.'); }
+    const pts = Number(s.puntos);
+    cont.innerHTML = `
+        <div class="sv-sello">
+            <span class="sv-tibu">${mascotaKZK(76, { titulo: 'Tibu' })}</span>
+            <div>
+                <div class="sv-check">${icon('check', 22)}</div>
+                <h1>Socio verificado</h1>
+                <p class="sv-hora" id="sv-hora"></p>
+            </div>
+        </div>
+
+        <div class="socio-card tj-card diseno-${esc(s.tarjeta)} lv-${esc(s.nivel.clave)} sv-tarjeta">
+            ${DisenoTarjeta.adornos(170)}
+            <div class="socio-main">
+                <div class="socio-top">
+                    <span class="socio-brand"><span class="socio-logo">${DisenoTarjeta.logo()}</span> Kozmok <em>Club</em></span>
+                    <span class="socio-tier">${nivelBadge(s.nivel.clave, 18)} Nivel ${esc(s.nivel.nombre)}</span>
                 </div>
-                <div class="sv-ok">${icon('check', 16)} Socio verificado</div>
-            </div>`;
-    } catch (e) {
-        cont.innerHTML = `<div class="socio-verify-card err">${icon('alert', 18)} No se encontró un socio con ese código.</div>`;
-    }
+                <div class="socio-chip" aria-hidden="true"></div>
+                <div class="socio-num">•••• •••• •••• ${esc(s.terminacion)}</div>
+                <div class="socio-grid">
+                    <div><span>Titular</span><strong>${esc(s.nombre)}</strong></div>
+                    <div><span>Socio desde</span><strong>${esc(mesAnio(s.miembro_desde))}</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sv-datos">
+            <div class="sv-dato sv-grande"><span>Puntos disponibles</span><strong>${pts.toLocaleString('es-MX')}</strong><em>valen ${formatoMoneda(s.valor_en_dinero)} de descuento</em></div>
+            <div class="sv-dato"><span>Beneficio del nivel</span><strong>${nivelBadge(s.nivel.clave, 16)} ${esc(BENEFICIO[s.nivel.clave] || '')}</strong><em>multiplicador x${Number(s.nivel.multiplicador)}</em></div>
+            <div class="sv-dato"><span>Código de socio</span><strong class="mono">${esc(s.codigo)}</strong><em>Revisa que coincida con la tarjeta</em></div>
+        </div>
+        ${s.siguiente_nivel ? `
+        <div class="sv-avance">
+            <div class="sv-avance-txt"><span>Rumbo a ${nivelBadge(s.siguiente_nivel.clave, 14)} <strong>${esc(s.siguiente_nivel.nombre)}</strong></span><span>${Number(s.progreso)} %</span></div>
+            <div class="sv-barra"><i style="width:${Math.min(100, Number(s.progreso))}%"></i></div>
+        </div>` : `<div class="sv-avance sv-tope">${nivelBadge('platino', 14)} Nivel más alto del Club</div>`}
+
+        <div class="sv-canje">${icon('star', 16)}<span><strong>Canje en caja:</strong> se usan de 100 en 100 · 100 puntos = ${formatoMoneda(100 * Number(s.valor_punto || 0.1))}.</span></div>`;
+    // Hora en vivo: una captura de pantalla vieja se nota.
+    const hora = document.getElementById('sv-hora');
+    const pintar = () => {
+        const t = new Date().toLocaleString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        hora.innerHTML = `${icon('clock', 13)} ${t.charAt(0).toUpperCase() + t.slice(1)}`;
+    };
+    pintar(); setInterval(pintar, 1000);
 })();
 </script>
 </body>

@@ -825,6 +825,14 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      su estado: Enviado, En cola, No se envio (tras 3 intentos; al pasar el
      cursor se ve el motivo) o Solo guardado (sin Gmail). "Reenviar" lo
      vuelve a mandar.
+   - DISENO: todos los correos usan la misma plantilla oscura de la tienda:
+     logo KZK, Tibu saludando junto al titulo y Tibu en pixel art en el pie.
+     Las listas ("- Codigo: KZ-...") se ven como una tarjeta de datos, los
+     folios y codigos (KZ-..., TK-..., DEV-...) resaltados, los codigos de
+     6 digitos en una caja grande y los avisos que empiezan con "Recuerda:"
+     en una nota aparte. Las imagenes van dentro del correo (Gmail no puede
+     abrir imagenes de la red local); son public/img/kzk-correo.png,
+     tibu-correo.png y tibu-pixel-correo.png (unos 20 KB en total).
 
 3.8  MENSAJES EN PANTALLA
    - La tienda no usa ventanas del navegador. Todo aviso sale como un "toast"
@@ -1879,12 +1887,21 @@ Codigo de socio
 
 Uso en tienda fisica
    - El QR apunta a:   http://<servidor>/socio.html?c=<codigo>
-   - Al escanearlo se abre "Verificacion de socio": una pantalla limpia para
-     el personal de tienda que muestra nombre, nivel, puntos disponibles,
-     su valor en dinero, socio desde y el codigo. Termina con "Socio
-     verificado".
+   - Al escanearlo se abre "Verificacion de socio", pensada para el
+     personal de tienda (se ve bien en el celular):
+        * Sello verde "Socio verificado" con Tibu y la FECHA Y HORA EN VIVO
+          (los segundos corren): una captura de pantalla vieja se nota.
+        * La tarjeta del cliente con el diseno que eligio (KZK, Clasica o
+          Tibu), su nivel, nombre, socio desde y solo los ultimos 4 digitos.
+        * Puntos disponibles en grande y cuanto valen de descuento.
+        * Beneficio del nivel (p. ej. "Gana 60 % mas puntos", x1.6) y el
+          codigo de socio para compararlo con la tarjeta.
+        * Avance al siguiente nivel (o "Nivel mas alto del Club").
+        * Recordatorio del canje: de 100 en 100, 100 puntos = $10.
+     Si el codigo no existe o la cuenta no esta activa sale "No
+     verificado" en rojo.
    - Esa pantalla es publica pero NO expone datos sensibles (ni correo, ni
-     telefono, ni pedidos).
+     telefono, ni pedidos, ni cuanto ha gastado).
    - Endpoint que la alimenta:  GET /api/socio/:codigo
 
 
