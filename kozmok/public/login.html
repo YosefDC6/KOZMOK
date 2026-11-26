@@ -206,10 +206,8 @@ async function qrNuevo() {
     try {
         QR.datos = await api('/auth/qr', { method: 'POST', body: { recordar: $q('recordar').checked } });
     } catch (e) { qrPintarEstado(e.message, 'error'); return; }
-    // Corrección H (aguanta ~30% tapado): Tibu en el centro tapa menos de 8%.
     const q = qrcode(0, 'H'); q.addData(QR.datos.url); q.make();
-    $q('qr-caja').innerHTML = q.createSvgTag({ cellSize: 5, margin: 3, scalable: true })
-        + `<span class="qr-tibu" aria-hidden="true">${mascotaKZK(34, { variante: 'pixel' })}</span>`;
+    $q('qr-caja').innerHTML = qrConTibu(q);
     $q('qr-digitos').textContent = QR.datos.digitos;
     const host = new URL(QR.datos.url).host;
     $q('qr-red').textContent = host !== location.host ? `El celular abrirá ${host}: debe estar en la misma red Wi-Fi.` : '';
@@ -240,6 +238,32 @@ async function qrPreguntar() {
         qrParar(); qrPintarEstado('El código venció.'); return qrBotonOtro();
     }
     QR.timer = setTimeout(qrPreguntar, 2000);
+}
+// QR con Tibu (8-bit) en el centro, sin recuadro: se quitan solo los
+// cuadritos que tocan su silueta (más uno de margen) y el QR lo rodea.
+// Corrección H aguanta ~30% tapado; aquí se quita alrededor de 5%.
+function qrConTibu(q) {
+    const n = q.getModuleCount(), margen = 3;
+    const ancho = Math.round(n * 0.27);                      // Tibu mide ~27% del QR
+    const k = ancho / 57;                                    // unidades de Tibu -> cuadritos
+    const x0 = (n - ancho) / 2, y0 = (n - 56 * k) / 2;
+    const ctx = document.createElement('canvas').getContext('2d');
+    const sil = new Path2D(mascotaKZK.siluetaPixel);
+    ctx.lineWidth = 1 / k; ctx.lineJoin = 'round';          // medio cuadrito de aire alrededor
+    const tapa = (r, c) => {
+        const tx = (c + 0.5 - x0) / k - 1, ty = (r + 0.5 - y0) / k + 2;
+        // La silueta y su sombra (desplazada 3,3).
+        return [[tx, ty], [tx - 3, ty - 3]].some(([x, y]) => ctx.isPointInPath(sil, x, y) || ctx.isPointInStroke(sil, x, y));
+    };
+    let celdas = '';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+        if (q.isDark(r, c) && !tapa(r, c)) celdas += `M${c + margen} ${r + margen}h1v1h-1z`;
+    }
+    const lado = n + margen * 2;
+    const tibu = mascotaKZK(10, { variante: 'pixel', titulo: '' })
+        .replace(/ width="[\d.]+" height="[\d.]+"/, ` x="${x0 + margen}" y="${y0 + margen}" width="${57 * k}" height="${56 * k}"`);
+    return `<svg viewBox="0 0 ${lado} ${lado}" shape-rendering="crispEdges" role="img" aria-label="Código QR para entrar con tu celular">
+        <rect width="${lado}" height="${lado}" fill="#fff"/><path d="${celdas}" fill="#000"/>${tibu}</svg>`;
 }
 function qrBotonOtro() {
     $q('qr-caja').classList.remove('qr-leido');

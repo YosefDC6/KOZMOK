@@ -163,8 +163,12 @@
         </svg>`;
     };
     // Versión 8-bit: silueta escalonada con sombra sólida del tema.
+    // Silueta de la versión 8-bit (viewBox -1 2 57 56). La usa también el QR
+    // del login para dejar libre justo el contorno de Tibu.
+    const SILUETA_PIXEL = 'M20.5 4h4v4h4v4h8v4h4v4h4v12h4v-4h4v20h-4v-4h-4v4h-4v4h-8v-4h-12v4h-8v-4h-4V20h4v-4h4v-4h4z';
+    window.mascotaKZK.siluetaPixel = SILUETA_PIXEL;
     function mascotaPixel(alto, titulo) {
-        const silueta = 'M20.5 4h4v4h4v4h8v4h4v4h4v12h4v-4h4v20h-4v-4h-4v4h-4v4h-8v-4h-12v4h-8v-4h-4V20h4v-4h4v-4h4z';
+        const silueta = SILUETA_PIXEL;
         return `<svg class="kzk-mascota kzk-mascota-pixel" viewBox="-1 2 57 56" width="${Math.round(alto * 57 / 56)}" height="${alto}" role="img" aria-label="${titulo}" shape-rendering="crispEdges"><title>${titulo}</title>
             <path transform="translate(3 3)" d="${silueta}" style="fill:var(--kzk-sombra,#6E8BF0)"/>
             <path d="${silueta}" style="fill:var(--kzk-tiburon,#7DA6E0);stroke:var(--kzk-contorno,#0B0E14)" stroke-width="2" paint-order="stroke"/>
