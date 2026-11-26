@@ -64,7 +64,6 @@ Proyecto escolar construido con **Node.js + Express**, **PostgreSQL** y un front
 
 ### Panel interno – ERP (Etapa 3)
 Integra el CRM y el SCM para gestionar las operaciones del negocio desde un solo lugar.
-- **Menú completo del ERP**: Dashboard, Clientes (CRM), Productos (SCM), Inventario (SCM), Órdenes de clientes, Reportes, Nivel ERP y Panel por rol. Clientes, Productos e Inventario abren las pantallas del CRM y del SCM **sin salirse del menú del ERP** (la opción queda marcada en el ERP y el encabezado dice *ERP · datos del CRM*). En celular, el menú hamburguesa trae todo, incluida la cuenta y *Cerrar sesión*.
 - **Dashboard ERP**: clientes activos, órdenes de clientes, ventas totales, ventas de los últimos 6 meses por canal, productos más vendidos, últimas órdenes y el bloque de **integración entre módulos** (CRM ⇄ ERP ⇄ SCM).
 - **Órdenes de clientes**: listado de las órdenes de los dos canales (capturadas en el ERP o hechas en la tienda en línea) con búsqueda, filtros y exportación a CSV. Cada orden se gestiona completa sin salir del ERP: cliente e historial, estado del envío, registro del pago, cancelación (regresa stock, garantías y puntos) y movimientos de inventario.
 - **Clientes** y **Productos** (botones en Dashboard ERP y Órdenes de clientes): consulta de los clientes del CRM y del inventario del SCM sin salir del ERP, con su ficha, lo comprado o vendido y sus órdenes. Las órdenes se filtran eligiendo cliente o producto de una lista.

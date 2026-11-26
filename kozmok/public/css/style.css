@@ -249,11 +249,6 @@ tr:hover td { background: var(--bg-panel-2); }
 .admin-nav-grupo-links { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s ease; }
 .admin-nav-grupo.abierto .admin-nav-grupo-links { grid-template-rows: 1fr; }
 .admin-nav-grupo-links-inner { overflow: hidden; }
-/* Pantalla de otro módulo dentro del menú ERP: etiqueta "CRM" / "SCM". */
-.nav-mod { margin-left: auto; font-size: .6rem; font-weight: 700; letter-spacing: .05em; line-height: 1; padding: 3px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-muted); }
-.nav-mod ~ .aviso-punto { margin-left: 6px; }
-.admin-sidebar a.active .nav-mod { border-color: currentColor; color: var(--accent); }
-.modulo-tile .mt-title .nav-mod { margin-left: 6px; vertical-align: 2px; }
 
 /* ---------- Menú de módulo con iconos grandes (dashboard.html / scm.html) ---------- */
 .modulo-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 24px; }
@@ -295,9 +290,6 @@ tr:hover td { background: var(--bg-panel-2); }
     .admin-nav-links { display: none; }
     .admin-nav-links.open { display: block; }
     .admin-user { display: none; }
-    /* Menú hamburguesa abierto: también la cuenta (contraseña, dos pasos, salir). */
-    .admin-nav-links.open + .admin-user { display: block; }
-    .admin-nav-toggle { font: inherit; font-size: .85rem; font-weight: 600; }
     .admin-main { padding: 20px 16px; }
 }
 
