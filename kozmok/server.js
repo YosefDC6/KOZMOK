@@ -9580,7 +9580,14 @@ process.on('uncaughtException', (err, origen) => {
     console.error(`\nEl servidor se cerró por un error (${origen}):\n`, err && err.stack || err);
     process.exit(1);
 });
-process.on('exit', (codigo) => { if (codigo !== 0) console.error(`El servidor se detuvo (código ${codigo}).`); });
+const INICIO_SERVIDOR = Date.now();
+// Si se queda sin nada que hacer (algo cerró la conexión de escucha), Node
+// termina con código 0 sin avisar: esto lo dice.
+process.on('beforeExit', () => console.error('\nEl servidor se quedó sin tareas y se cerró solo (se cerró la conexión de escucha).'));
+process.on('exit', (codigo) => {
+    const min = Math.round((Date.now() - INICIO_SERVIDOR) / 60000);
+    console.error(`El servidor se detuvo (código ${codigo}) a las ${new Date().toLocaleTimeString('es-MX')}, después de ${min} min encendido.`);
+});
 app.listen(PORT, HOST, async () => {
     console.log(`Kozmok escuchando en el puerto ${PORT}:`);
     console.log(`   Tienda:          http://localhost:${PORT}`);
