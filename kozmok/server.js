@@ -29,6 +29,13 @@ const app = express();
 // Un cliente externo no puede falsificar su IP: solo se cree a loopback.
 app.set('trust proxy', process.env.TRUST_PROXY || 'loopback');
 const PORT = process.env.PORT || 3000;
+// Puerto 80 además del 3000: con el 80 la dirección queda sin puerto
+// (http://kozmok.local/). PUERTO_WEB=no lo apaga; si está ocupado sigue
+// funcionando en PORT. ESTADO_80.activo dice si se logró abrir.
+const PUERTO_WEB = /^(no|0|off|false)$/i.test(String(process.env.PUERTO_WEB || '').trim()) ? null : Number(process.env.PUERTO_WEB) || 80;
+const ESTADO_80 = { activo: false };
+// ":3000" o nada (si el 80 está abierto) para armar direcciones.
+const sufijoPuerto = () => (ESTADO_80.activo && PUERTO_WEB === 80 ? '' : ESTADO_80.activo ? `:${PUERTO_WEB}` : `:${PORT}`);
 // 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
 // prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
 const HOST = process.env.HOST || '0.0.0.0';
@@ -99,6 +106,19 @@ app.use((req, res, next) => {
 // Dentro de la ruta, cada pantalla pide sesión del equipo y un rol que la
 // pueda ver (contra el robo de roles; ver panel.js).
 const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public'), dirProyecto: __dirname, pool, seg });
+// Con el 80 abierto, una página pedida por :3000 (favorito o correo viejo)
+// se manda a la misma dirección sin puerto. Solo páginas (GET que piden
+// HTML), nunca la API: así no se rompe nada que esté a medio hacer. Sirve
+// para que todo quede en una sola dirección: el navegador guarda carrito
+// sin sesión, cuenta recordada y tema por dirección (con todo y puerto).
+app.use((req, res, next) => {
+    if (!ESTADO_80.activo || /^(no|0|off|false)$/i.test(String(process.env.REDIRIGIR_PUERTO || ''))) return next();
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || !/text\/html/.test(String(req.headers.accept || ''))) return next();
+    if (Number(req.socket.localPort) !== Number(PORT)) return next();
+    const m = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+):(\d+)$/i.exec(String(req.headers.host || ''));
+    if (!m || !hostDeConfianza(req.headers.host)) return next();
+    res.redirect(302, `http://${m[1]}${sufijoPuerto()}${req.originalUrl}`);
+});
 app.use(panel.middleware);
 app.use(panel.json);
 // Imágenes y librerías casi no cambian: el navegador las guarda un día.
@@ -601,7 +621,7 @@ function urlPublica(req) {
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
     if (hostDeConfianza(req.headers.host)) return `${req.protocol || 'http'}://${req.headers.host}`;
-    return `http://localhost:${process.env.PORT || 3000}`;
+    return `http://localhost${sufijoPuerto()}`;
 }
 
 // =========================================================
@@ -1071,10 +1091,9 @@ function baseParaCelular(req) {
     }
     const host = String(req.hostname || '').toLowerCase();
     if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
-        const puerto = process.env.PORT || 3000;
-        if (MDNS_NOMBRE) return `http://${MDNS_NOMBRE}:${puerto}`;
+        if (MDNS_NOMBRE) return `http://${MDNS_NOMBRE}${sufijoPuerto()}`;
         const ip = ipsDeRed()[0];
-        if (ip) return `http://${ip.ip}:${puerto}`;
+        if (ip) return `http://${ip.ip}${sufijoPuerto()}`;
     }
     return urlPublica(req);
 }
@@ -2299,7 +2318,7 @@ function urlBase(req0) {
     if (req0) return urlPublica(req0);
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
-    return `http://${MDNS_NOMBRE || 'localhost'}:${process.env.PORT || 3000}`;
+    return `http://${MDNS_NOMBRE || 'localhost'}${sufijoPuerto()}`;
 }
 const precioTxt = (n) => { const v = Number(n); return '$' + v.toLocaleString('es-MX', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
 const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -9857,10 +9876,28 @@ process.on('exit', (codigo) => {
     const min = Math.round((Date.now() - INICIO_SERVIDOR) / 60000);
     console.error(`El servidor se detuvo (código ${codigo}) a las ${new Date().toLocaleTimeString('es-MX')}, después de ${min} min encendido.`);
 });
+// Intenta abrir también el puerto web (80). En Windows suele funcionar sin
+// permisos especiales; falla si otro programa lo usa (IIS, Skype, otro
+// servidor) y en Linux/Mac sin permisos de administrador.
+function abrirPuertoWeb() {
+    return new Promise((resolve) => {
+        if (!PUERTO_WEB || Number(PUERTO_WEB) === Number(PORT)) return resolve(null);
+        const srv = require('http').createServer(app);
+        srv.once('error', (e) => resolve(e.code === 'EADDRINUSE'
+            ? `el puerto ${PUERTO_WEB} lo está usando otro programa (IIS, Skype u otro servidor)`
+            : e.code === 'EACCES' ? `el sistema no deja usar el puerto ${PUERTO_WEB} sin permisos de administrador` : e.message));
+        srv.listen(PUERTO_WEB, HOST, () => { ESTADO_80.activo = true; resolve(null); });
+    });
+}
+
 app.listen(PORT, HOST, async () => {
-    console.log(`Kozmok escuchando en el puerto ${PORT}:`);
-    console.log(`   Tienda:          http://localhost:${PORT}`);
-    console.log(`   Panel de admin:  http://localhost:${PORT}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
+    const fallo80 = await abrirPuertoWeb();
+    const P = sufijoPuerto();
+    console.log(ESTADO_80.activo
+        ? `Kozmok escuchando en los puertos ${PUERTO_WEB} y ${PORT} (las direcciones van sin puerto):`
+        : `Kozmok escuchando en el puerto ${PORT}:`);
+    console.log(`   Tienda:          http://localhost${P}`);
+    console.log(`   Panel de admin:  http://localhost${P}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
     if (HOST === '0.0.0.0' || HOST === '::') {
         const mostrarRed = (titulo) => {
             const ips = ipsDeRed();
@@ -9868,13 +9905,13 @@ app.listen(PORT, HOST, async () => {
             console.log(titulo);
             if (MDNS_NOMBRE) {
                 console.log(`   Con nombre fijo (no cambia aunque cambie la IP):`);
-                console.log(`   Tienda:          http://${MDNS_NOMBRE}:${PORT}`);
-                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}:${PORT}${panel.prefijo}login.html`);
+                console.log(`   Tienda:          http://${MDNS_NOMBRE}${sufijoPuerto()}`);
+                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}${sufijoPuerto()}${panel.prefijo}login.html`);
                 console.log('   Por IP (si algún celular no abre el nombre):');
             }
             ips.forEach((x) => {
-                console.log(`   Tienda:          http://${x.ip}:${PORT}   (${x.nombre})`);
-                console.log(`   Panel de admin:  http://${x.ip}:${PORT}${panel.prefijo}login.html`);
+                console.log(`   Tienda:          http://${x.ip}${sufijoPuerto()}   (${x.nombre})`);
+                console.log(`   Panel de admin:  http://${x.ip}${sufijoPuerto()}${panel.prefijo}login.html`);
             });
         };
         mostrarRed('Desde un celular en la misma red Wi-Fi abre:');
@@ -9890,6 +9927,7 @@ app.listen(PORT, HOST, async () => {
             mostrarRed('Direcciones nuevas:');
         }, 10000).unref();
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
+    if (fallo80) console.log(`Puerto ${PUERTO_WEB}: no se abrió porque ${fallo80}. La tienda sigue en el puerto ${PORT}. (PUERTO_WEB=no en el .env quita este intento.)`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {
         const r = await pool.query('SELECT COUNT(*)::int AS n FROM productos');

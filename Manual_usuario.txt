@@ -54,8 +54,25 @@ Levantar el servidor
      cargar db/database.sql.
 
 Direcciones
-   - Tienda (clientes):     http://localhost:3000/
-   - Panel interno:         http://localhost:3000/<ruta-del-panel>/login.html
+   - Tienda (clientes):     http://localhost/   (tambien http://localhost:3000/)
+   - Panel interno:         http://localhost/<ruta-del-panel>/login.html
+
+Direccion sin puerto (puerto 80)
+   - Ademas del 3000, el servidor escucha en el puerto 80, el normal de las
+     paginas web: el navegador no lo muestra, asi que la direccion queda
+     http://kozmok.local/ en vez de http://kozmok.local:3000. La consola,
+     los correos y el QR ya usan la direccion sin puerto.
+   - Si alguien abre una pagina con :3000 (un favorito o un correo viejo)
+     se le manda a la misma direccion sin puerto. Asi todo queda en una
+     sola direccion: el navegador guarda el carrito sin sesion, la cuenta
+     recordada y el tema POR DIRECCION, y :3000 cuenta como otra.
+     (REDIRIGIR_PUERTO=no en el .env lo apaga; la API no se redirige.)
+   - Si el 80 esta ocupado (IIS, Skype u otro servidor web) o el sistema
+     no lo deja usar, la consola dice "Puerto 80: no se abrio porque..." y
+     todo sigue funcionando en el 3000 como antes. PUERTO_WEB=no en el
+     .env quita el intento.
+   - En Windows el permiso del Firewall es por programa (Node.js), asi que
+     el que ya diste sirve tambien para el puerto 80.
 
 Direccion secreta del panel
    - El panel ya NO se abre en /admin/ : esa direccion muestra "pagina no

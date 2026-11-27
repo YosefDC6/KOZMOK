@@ -2,7 +2,7 @@
 // Nombre fijo en la red local: anuncia "kozmok.local" (mDNS, el mismo
 // mecanismo que usan las impresoras y Bonjour) apuntando a la IP que tenga
 // la computadora en ese momento. Así la tienda y el panel se abren siempre
-// en http://kozmok.local:3000 aunque cambie la red o la IP, y el navegador
+// en http://kozmok.local (o :3000) aunque cambie la red o la IP, y el navegador
 // conserva lo que guarda por dirección: contraseñas guardadas, cuentas
 // recordadas, tema, carrito sin sesión…
 //
