@@ -54,7 +54,17 @@ function destino() {
     return /^\/(?!\/)[\w\-./?=&%#]*$/.test(n) && !n.startsWith('/admin') ? n : '/perfil.html';
 }
 const sesion = Sesion.cliente();
-if (!sesion) location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
+// Registro por confirmar (la cuenta se crea al escribir el código): lo deja
+// registro.html en esta pestaña. Sin él, es la cuenta con sesión.
+let REG = null;
+try { REG = JSON.parse(sessionStorage.getItem('kz_registro') || 'null'); } catch { REG = null; }
+if (REG && !sesion) {
+    document.querySelector('.page-hero h1').textContent = 'Confirma tu correo';
+    document.getElementById('ver-intro').innerHTML =
+        `Te enviamos un código de 6 dígitos a <strong>${escHTML(REG.correo)}</strong>. Escríbelo para terminar de crear tu cuenta.`;
+    document.getElementById('btn-verificar').textContent = 'Crear mi cuenta';
+    document.querySelector('#form-card .auth-nota').textContent = 'El código vence en 30 minutos. Tu cuenta se crea al escribirlo.';
+} else if (!sesion) location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
 else if (sesion.correo_verificado !== false) mostrarListo();
 else document.getElementById('ver-intro').innerHTML =
     `Te enviamos un código de 6 dígitos a <strong>${escHTML(sesion.correo)}</strong>. Escríbelo aquí para poder comprar.`;
@@ -88,14 +98,26 @@ document.getElementById('form-verificar').addEventListener('submit', async (e) =
     err.hidden = true;
     btn.disabled = true; btn.textContent = 'Comprobando…';
     try {
+        if (REG && !sesion) {
+            const r = await api('/auth/registro/confirmar', { method: 'POST', body: { registro: REG.registro, codigo: inCodigo.value } });
+            sessionStorage.removeItem('kz_registro');
+            Sesion.guardarCliente({ ...r.cliente, recordar: r.recordar });
+            if (r.recordar && window.CuentasRecordadas) CuentasRecordadas.guardar('cliente', r.cliente);
+            const f = window.CarritoInvitado ? await CarritoInvitado.fusionar() : { pasados: 0, avisos: [] };
+            toast(f.pasados ? `¡Cuenta creada! Tu carrito (${f.pasados} producto(s)) ya está en tu cuenta.` : '¡Cuenta creada!', 'ok');
+            (f.avisos || []).forEach((m) => toast(m, 'warn'));
+            mostrarListo(r.cupon_bienvenida);
+            return;
+        }
         const r = await api('/auth/verificar-correo', { method: 'POST', body: { codigo: inCodigo.value } });
         Sesion.guardarCliente({ ...Sesion.cliente(), ...r.cliente });
         toast('Correo confirmado', 'ok');
         mostrarListo(r.cupon_bienvenida);
     } catch (ex) {
         err.textContent = ex.message; err.hidden = false;
+        if (REG && ex.datos && ex.datos.vencido && /registro/i.test(ex.message)) sessionStorage.removeItem('kz_registro');
         inCodigo.value = ''; inCodigo.focus();
-        btn.disabled = false; btn.textContent = 'Confirmar correo';
+        btn.disabled = false; btn.textContent = REG && !sesion ? 'Crear mi cuenta' : 'Confirmar correo';
     }
 });
 
@@ -110,7 +132,9 @@ function esperar(seg) {
 }
 btnReenviar.addEventListener('click', async () => {
     try {
-        const r = await api('/auth/reenviar-verificacion', { method: 'POST' });
+        const r = REG && !sesion
+            ? await api('/auth/registro/reenviar', { method: 'POST', body: { registro: REG.registro } })
+            : await api('/auth/reenviar-verificacion', { method: 'POST' });
         if (r.ya_verificado) { Sesion.guardarCliente({ ...Sesion.cliente(), correo_verificado: true }); return mostrarListo(); }
         toast(r.message, 'ok');
         esperar(r.espera || 60);

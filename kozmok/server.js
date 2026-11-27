@@ -919,6 +919,142 @@ async function abrirSesionCliente(req, res, cliente, { recordar, metodo = 'contr
 }
 
 // Registro de cliente: correo único y contraseña fuerte cifrada con bcrypt.
+// ---------------------------------------------------------
+// REGISTRO CON CORREO CONFIRMADO PRIMERO (sin revelar si ya hay cuenta)
+// ---------------------------------------------------------
+const hashRegistro = (token, codigo) => crypto.createHash('sha256').update(`reg:${token}:${codigo}`).digest('hex');
+async function registroPendiente(req, res, { b, nombre, correo, password }) {
+    // bcrypt en los dos casos: que no se note por el tiempo de respuesta.
+    const hash = await seg.hashPassword(password);
+    const existe = (await pool.query('SELECT id, nombre FROM clientes WHERE LOWER(correo) = $1', [correo])).rows[0];
+    const token = crypto.randomBytes(24).toString('base64url');
+    const codigo = nuevoCodigoVerificacion();
+    const txt = (v, n) => (v ? String(v).trim().slice(0, n) || null : null);
+    const datos = existe ? {} : { nombre: nombre.slice(0, 150), hash, telefono: txt(b.telefono, 30), empresa: txt(b.empresa, 150), ciudad: txt(b.ciudad, 100),
+        estado: txt(b.estado, 100), direccion: txt(b.direccion, 200), codigo_postal: txt(b.codigo_postal, 15),
+        boletin: b.boletin === true || b.boletin === 'true' || b.boletin === 1, recordar: quiereRecordar(b, true) };
+    // Un registro pendiente por correo (el nuevo reemplaza al anterior).
+    const previo = (await pool.query(`SELECT existe, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - enviado))::int AS hace FROM registros_pendientes
+                                       WHERE correo = $1 ORDER BY id DESC LIMIT 1`, [correo])).rows[0];
+    await pool.query('DELETE FROM registros_pendientes WHERE correo = $1 OR expira < CURRENT_TIMESTAMP', [correo]);
+    await pool.query(`INSERT INTO registros_pendientes (token_hash, correo, datos, codigo_hash, existe, expira)
+                      VALUES ($1,$2,$3,$4,$5, CURRENT_TIMESTAMP + ($6 || ' minutes')::interval)`,
+        [seg.sha256(token), correo, JSON.stringify(datos), existe ? crypto.randomBytes(32).toString('hex') : hashRegistro(token, codigo), !!existe, String(VERIF_MINUTOS)]);
+    if (existe) {
+        // Al dueño, como mucho un aviso cada 30 min (que no lo llenen de correos).
+        if (!previo || !previo.existe || previo.hace > 1800) {
+            await enviarCorreo(pool, { para: correo, tipo: 'seguridad', cliente_id: existe.id,
+                asunto: 'Alguien intentó crear una cuenta con tu correo',
+                cuerpo: `Hola ${existe.nombre}:
+
+Alguien intentó crear una cuenta nueva en Kozmok con este correo, pero ya tienes una. No se creó nada y tu cuenta sigue igual.
+
+Si fuiste tú, inicia sesión; si no recuerdas tu contraseña, usa "¿Olvidaste tu contraseña?".
+
+${urlPublica(req)}/login.html
+
+Si no fuiste tú, no tienes que hacer nada.`,
+                boton: { texto: 'Iniciar sesión', url: `${urlPublica(req)}/login.html` } });
+        }
+        await seg.registrarEvento(req, { tipo: 'registro_correo_existente', severidad: 'baja', cliente_id: existe.id,
+            detalle: `Intento de crear una cuenta con un correo que ya tiene cuenta (${correo}); se respondió igual que a uno nuevo`,
+            datos: { veredicto: { normal: true, explicacion: 'Puede ser el dueño que olvidó que ya tenía cuenta, o alguien probando qué correos están registrados. La respuesta fue la misma que para un correo nuevo, así que no pudo averiguarlo; al dueño le llegó un aviso.' } } });
+    } else {
+        await enviarCorreo(pool, { para: correo, tipo: 'registro',
+            asunto: `Tu código para crear tu cuenta en Kozmok es ${codigo}`,
+            cuerpo: `Hola ${nombre}:
+
+Para terminar de crear tu cuenta en Kozmok, escribe este código en la tienda:
+
+${codigo}
+
+Vence en ${VERIF_MINUTOS} minutos. Si no fuiste tú, ignora este mensaje: no se creará ninguna cuenta.` });
+    }
+    res.status(202).json({ success: true, pendiente: true, registro: token, correo,
+        message: `Te enviamos un código de 6 dígitos a ${correo}. Escríbelo para terminar de crear tu cuenta.` });
+}
+
+app.post('/api/auth/registro/confirmar', limiteAuth, asyncRoute(async (req, res) => {
+    const token = String((req.body || {}).registro || '').slice(0, 100);
+    const codigo = String((req.body || {}).codigo || '').replace(/\D/g, '');
+    const p = (await pool.query('SELECT *, expira < CURRENT_TIMESTAMP AS vencido FROM registros_pendientes WHERE token_hash = $1', [seg.sha256(token)])).rows[0];
+    if (!p || p.vencido) return res.status(400).json({ message: 'El código ya venció. Vuelve a llenar el registro.', vencido: true });
+    if (codigo.length !== 6) return res.status(400).json({ message: 'Escribe los 6 dígitos del código' });
+    if (p.intentos >= VERIF_MAX_INTENTOS) return res.status(429).json({ message: 'Demasiados intentos. Pide un código nuevo.', vencido: true });
+    const ok = !p.existe && crypto.timingSafeEqual(Buffer.from(hashRegistro(token, codigo)), Buffer.from(p.codigo_hash));
+    if (!ok) {
+        const n = p.intentos + 1;
+        await pool.query('UPDATE registros_pendientes SET intentos = $2 WHERE id = $1', [p.id, n]);
+        const quedan = VERIF_MAX_INTENTOS - n;
+        return res.status(400).json({ message: quedan > 0 ? `El código no coincide. Te quedan ${quedan} intento(s).` : 'El código no coincide. Pide uno nuevo.', vencido: quedan <= 0 });
+    }
+    // Se borra antes de crear (si llegan dos confirmaciones juntas, una sola crea).
+    const borrado = await pool.query('DELETE FROM registros_pendientes WHERE id = $1 RETURNING id', [p.id]);
+    if (!borrado.rows.length) return res.status(409).json({ message: 'Este registro ya se confirmó. Inicia sesión.' });
+    const ya = await pool.query('SELECT 1 FROM clientes WHERE LOWER(correo) = $1', [p.correo]);
+    if (ya.rows.length) return res.status(409).json({ message: 'Ese correo ya tiene cuenta. Inicia sesión o recupera tu contraseña.' });
+    const d = p.datos;
+    const cliente = await crearCuentaCliente(req, { ...d, correo: p.correo, verificado: true });
+    await seg.registrarIntento(req, { ambito: 'cliente', correo: p.correo, exito: true, motivo: 'registro' });
+    const cupon = await cupones.darBienvenida(pool, cliente.id, { base: urlPublica(req) }).catch(() => null);
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: !!d.recordar, metodo: 'registro de cuenta (correo confirmado)' });
+    res.status(201).json({ success: true, cliente, expira: s.expira, recordar: !!d.recordar,
+        cupon_bienvenida: cupon ? { codigo: cupon.codigo, beneficio: cupones.beneficio(cupon) } : null });
+}));
+
+app.post('/api/auth/registro/reenviar', limiteAuth, asyncRoute(async (req, res) => {
+    const token = String((req.body || {}).registro || '').slice(0, 100);
+    const p = (await pool.query(`SELECT *, expira < CURRENT_TIMESTAMP AS vencido, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - enviado))::int AS hace
+                                 FROM registros_pendientes WHERE token_hash = $1`, [seg.sha256(token)])).rows[0];
+    if (!p || p.vencido) return res.status(400).json({ message: 'El registro ya venció. Vuelve a llenarlo.', vencido: true });
+    if (p.hace < VERIF_ESPERA_REENVIO_S) return res.status(429).json({ message: `Espera ${VERIF_ESPERA_REENVIO_S - p.hace} segundos para pedir otro código.`, espera: VERIF_ESPERA_REENVIO_S - p.hace });
+    const codigo = nuevoCodigoVerificacion();
+    // Con un correo que ya tenía cuenta no se manda nada (pero se responde igual).
+    await pool.query(`UPDATE registros_pendientes SET enviado = CURRENT_TIMESTAMP, intentos = 0, expira = CURRENT_TIMESTAMP + ($3 || ' minutes')::interval,
+                      codigo_hash = CASE WHEN existe THEN codigo_hash ELSE $2 END WHERE id = $1`, [p.id, hashRegistro(token, codigo), String(VERIF_MINUTOS)]);
+    if (!p.existe) await enviarCorreo(pool, { para: p.correo, tipo: 'registro', asunto: `Tu código para crear tu cuenta en Kozmok es ${codigo}`,
+        cuerpo: `Hola ${p.datos.nombre || ''}:
+
+Este es tu nuevo código para terminar de crear tu cuenta:
+
+${codigo}
+
+Vence en ${VERIF_MINUTOS} minutos.` });
+    res.json({ success: true, message: `Te enviamos un código nuevo a ${p.correo}.`, espera: VERIF_ESPERA_REENVIO_S });
+}));
+
+// Crea la cuenta (con o sin el correo confirmado) y manda la bienvenida.
+async function crearCuentaCliente(req, d) {
+    let codigoSocio;
+    for (let intento = 0; intento < 5; intento++) {
+        codigoSocio = generarCodigoSocio();
+        const dup = await pool.query('SELECT 1 FROM clientes WHERE codigo_socio = $1', [codigoSocio]);
+        if (dup.rows.length === 0) break;
+    }
+    const db = await pool.connect();
+    let cliente;
+    try {
+        await db.query('BEGIN');
+        cliente = (await db.query(
+            `INSERT INTO clientes (nombre, correo, password, telefono, empresa, ciudad, estado, direccion, codigo_postal, codigo_socio, estado_cliente, etapa_crm, correo_verificado)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'activo','Prospecto',$11) RETURNING ${CAMPOS_CLIENTE}`,
+            [d.nombre, d.correo, d.hash, d.telefono || null, d.empresa || null, d.ciudad || null, d.estado || null, d.direccion || null, d.codigo_postal || null, codigoSocio, !!d.verificado])).rows[0];
+        await db.query('INSERT INTO metricas_clientes (cliente_id) VALUES ($1) ON CONFLICT (cliente_id) DO NOTHING', [cliente.id]);
+        if (d.boletin) await db.query(`UPDATE clientes SET preferencias = COALESCE(preferencias, '{}'::jsonb) || '{"boletin":true,"ofertas":true,"stock_favoritos":true}'::jsonb WHERE id = $1`, [cliente.id]);
+        await enviarCorreo(db, { para: d.correo, tipo: 'registro', cliente_id: cliente.id, asunto: '¡Bienvenido a Kozmok!',
+            cuerpo: `Hola ${d.nombre}:
+
+Tu cuenta en Kozmok quedó creada con este correo. Ya puedes comprar, guardar tus favoritos, seguir tus pedidos y juntar puntos del Club Kozmok.
+
+Tu código de socio es ${codigoSocio}. Lo encuentras también en tu tarjeta virtual dentro de tu cuenta.
+
+Si no creaste esta cuenta, escríbenos.`,
+            boton: { texto: 'Ir a mi cuenta', url: `${urlPublica(req)}/perfil.html` } });
+        await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK'); throw e; } finally { db.release(); }
+    return cliente;
+}
+
 const registrarCliente = asyncRoute(async (req, res) => {
     const b = req.body || {};
     const nombre = String(b.nombre || '').trim();
@@ -934,6 +1070,12 @@ const registrarCliente = asyncRoute(async (req, res) => {
     const errPass = seg.validarPassword(password, { correo, nombre });
     if (errPass) return res.status(400).json({ message: errPass });
 
+    // Con Gmail: la cuenta se crea hasta confirmar el código. La respuesta es
+    // la MISMA exista o no una cuenta con ese correo (no se puede averiguar
+    // qué correos son clientes); al dueño le llega un aviso.
+    if (correo_.configurado()) return registroPendiente(req, res, { b, nombre, correo, password });
+
+    // Sin Gmail no hay forma de comprobar el correo: se crea de una vez.
     const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [correo]);
     if (existe.rows.length > 0) return res.status(409).json({ message: 'Este correo ya está registrado. Inicia sesión o recupera tu contraseña.' });
 
@@ -2579,6 +2721,7 @@ const avisarPronto = () => setTimeout(() => enviarAvisos().catch(() => {}), 3000
 async function tareasPeriodicas() {
     await pool.query("DELETE FROM qr_login WHERE creado < CURRENT_TIMESTAMP - INTERVAL '1 day'").catch(() => null);
     await pool.query("DELETE FROM notificaciones_cliente WHERE fecha < CURRENT_TIMESTAMP - INTERVAL '90 days'").catch(() => null);
+    await pool.query("DELETE FROM registros_pendientes WHERE expira < CURRENT_TIMESTAMP - INTERVAL '1 day'").catch(() => null);
     // Recargas con PayPal que se iniciaron y no se pagaron en 3 horas
     await pool.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE tipo = 'recarga' AND estado = 'creada' AND fecha < CURRENT_TIMESTAMP - INTERVAL '3 hours'`)
         .catch((e) => console.error('PayPal vencidas:', e.message));
@@ -9868,6 +10011,19 @@ async function migrarEsquema() {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         fecha_resuelta TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_seg_sol_ticket ON seguimiento_solicitudes(ticket_id)');
+    // Registros por confirmar: la cuenta se crea hasta escribir el código.
+    await pool.query(`CREATE TABLE IF NOT EXISTS registros_pendientes (
+        id SERIAL PRIMARY KEY,
+        token_hash CHAR(64) UNIQUE NOT NULL,
+        correo VARCHAR(150) NOT NULL,
+        datos JSONB NOT NULL DEFAULT '{}'::jsonb,
+        codigo_hash CHAR(64) NOT NULL,
+        existe BOOLEAN NOT NULL DEFAULT FALSE,     -- el correo ya tenía cuenta: ningún código sirve
+        intentos INTEGER NOT NULL DEFAULT 0,
+        enviado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expira TIMESTAMP NOT NULL,
+        creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_reg_pend_correo ON registros_pendientes(correo)');
     // Avisos del cliente (campana de la tienda) y trigger de estado de pedidos.
     await pool.query(SQL_NOTIFICACIONES_CLIENTE);
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');

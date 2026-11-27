@@ -747,18 +747,16 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      escuela o empresa), pero debe EXISTIR: se revisa que el dominio reciba
      correo. Si esta mal escrito (p. ej. @gmial.com) sale "¿Quisiste decir
      ...@gmail.com?" y con un clic se corrige.
-   - Con Gmail configurado (ver 3.7d) llega un correo de bienvenida con un
-     CODIGO DE 6 DIGITOS y la tienda abre "Confirma tu correo"
-     (verificar.html). Mientras no se escriba:
-        - se puede navegar, guardar favoritos y llenar el carrito, pero NO
-          comprar; arriba de cada pagina aparece "Confirma tu correo ...
-          Escribir codigo";
-        - el codigo vence en 30 minutos y admite 5 intentos; "envíame otro
-          codigo" manda uno nuevo (uno por minuto).
-     Al escribirlo bien la cuenta queda confirmada y llega un segundo correo
-     de bienvenida con el CUPON DE DESCUENTO para la primera compra (la
-     pantalla tambien lo muestra; queda en Mi cuenta -> Mis cupones).
-     Restablecer la contrasena con el enlace del correo tambien la confirma.
+   - Con Gmail configurado (ver 3.7d) la cuenta se crea HASTA CONFIRMAR EL
+     CORREO: llega un CODIGO DE 6 DIGITOS y la tienda abre "Confirma tu
+     correo" (verificar.html). Al escribirlo se crea la cuenta (ya
+     confirmada), entra sola, el carrito sin sesion pasa a la cuenta y
+     llega el CUPON DE BIENVENIDA. El codigo vence en 30 minutos, admite 5
+     intentos y "envíame otro codigo" manda uno nuevo (uno por minuto).
+   - Si el correo YA TIENE CUENTA, la pantalla es exactamente la misma (no
+     se dice "ya esta registrado"), pero ningun codigo sirve y al dueno le
+     llega "Alguien intento crear una cuenta con tu correo". Asi nadie
+     puede averiguar que correos son clientes (ver SEGURIDAD.md seccion 8).
    - En el panel, la ficha del cliente (CRM) muestra "Correo: Confirmado /
      Sin confirmar" y el boton "Marcar como confirmado" por si al cliente no
      le llega el codigo.

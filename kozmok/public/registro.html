@@ -160,6 +160,16 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     };
     try {
         const data = await api('/auth/registro-cliente', { method: 'POST', body });
+        // Con correo por confirmar, la cuenta se crea al escribir el código.
+        // (La respuesta es la misma aunque el correo ya tenga cuenta.)
+        if (data.pendiente) {
+            sessionStorage.setItem('kz_registro', JSON.stringify({ registro: data.registro, correo: data.correo }));
+            const next = new URLSearchParams(location.search).get('next');
+            const destino = next && next.startsWith('/') && !next.startsWith('//') ? next : '/perfil.html';
+            toast(data.message, 'ok');
+            setTimeout(() => location.href = `/verificar.html?next=${encodeURIComponent(destino)}`, 500);
+            return;
+        }
         Sesion.guardarCliente({ ...data.cliente, recordar: body.recordar });
         if (body.recordar) { CuentasRecordadas.guardar('cliente', data.cliente); await guardarCredencial(body.correo, password, data.cliente.nombre); }
         const r = await CarritoInvitado.fusionar();

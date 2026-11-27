@@ -298,6 +298,19 @@ curl -s -X POST localhost:3000/api/auth/qr/estado -H 'Content-Type: application/
 
 > En la computadora misma se puede capturar la interfaz *Loopback* (Npcap) entrando por `http://localhost`, pero desde el celular es más claro: es lo que vería alguien en la red.
 
+## 8. Averiguar qué correos tienen cuenta (enumeración)
+
+**Ataque.** Probar correos en el registro para saber cuáles son clientes (y luego atacarlos con phishing o contraseñas filtradas). Antes, el registro respondía "Este correo ya está registrado".
+
+**Defensa** (con Gmail configurado). La cuenta se crea **hasta confirmar el correo**:
+- `POST /api/auth/registro-cliente` responde **siempre igual** (202, "Te enviamos un código…"), exista o no una cuenta con ese correo, y tarda lo mismo (bcrypt en los dos casos).
+- Correo nuevo: le llega el código; al escribirlo (`POST /api/auth/registro/confirmar`) se crea la cuenta ya confirmada y entra.
+- Correo que ya tiene cuenta: al dueño le llega "Alguien intentó crear una cuenta con tu correo" (máximo uno cada 30 min) y **ningún código sirve**: el atacante ve exactamente lo mismo que con un correo nuevo.
+- Queda el evento `registro_correo_existente` (baja). El login y "¿Olvidaste tu contraseña?" ya respondían igual exista o no el correo.
+- Sin Gmail configurado no hay forma de comprobar el correo y el registro funciona como antes (crea la cuenta y dice si el correo ya existe).
+
+**A mano.** Registra un correo que ya tiene cuenta y otro nuevo: las dos pantallas son idénticas; solo el dueño real recibe el aviso.
+
 ## Dónde está cada cosa
 
 | Archivo | Qué contiene |
