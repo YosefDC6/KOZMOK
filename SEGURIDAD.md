@@ -151,7 +151,12 @@ Los límites se ajustan en `.env`: `MAX_FALLOS_CUENTA`, `MAX_FALLOS_IP`, `BLOQUE
 **Defensas.**
 - La sesión es un token aleatorio de 256 bits en una cookie `HttpOnly; SameSite=Strict` (y `Secure` con `COOKIE_SEGURA=1` en HTTPS). En `localStorage` ya no hay tokens.
 - En la tabla `sesiones` solo está el **hash SHA-256** del token; con una copia de la base no se pueden usar.
-- Cada sesión guarda la huella del navegador que la abrió; si llega desde otro, se rechaza y se revoca.
+- Cada sesión guarda el navegador que la abrió y **cómo** se abrió (contraseña, contraseña + dos pasos, QR, registro). Si a media sesión llega con otro navegador, se compara (`compararNavegador` en `seguridad.js`):
+  - **Actualización** (mismo navegador, sistema y dispositivo, versión más nueva): normal; la sesión sigue y se guarda el navegador nuevo (evento `navegador_actualizado`, normal).
+  - **Modo de dispositivo de las herramientas de desarrollador** (misma IP, una computadora con Chrome/Edge/Opera que de pronto dice ser celular; al emular un iPhone se presenta como Safari): la sesión sigue y se anota una vez cada 30 min (`sesion_emulacion`, baja). Antes esto se tomaba como robo y cerraba la sesión.
+  - **Cualquier otra cosa** (otro navegador, una versión anterior, otra IP, `curl`…): se trata como robo, se cierra y queda `sesion_robada` (alta).
+- Una pestaña vieja que sigue mandando una sesión ya cerrada se anota **una vez cada 15 min** por sesión (antes, una por petición).
+- Cada evento guarda **detalles** (`eventos_seguridad.datos`): la petición (IP, red —esta computadora, red local o internet—, navegador legible, ruta, página de origen), la sesión (cuándo y cómo se abrió, última IP, navegador al abrir, motivo del cierre), qué cambió y un **veredicto** (dentro o fuera de lo normal, con la explicación). En el inicio con QR: qué computadora lo pidió y qué celular lo aprobó. En el panel, clic en el evento para verlos.
 - Vencen (7 días la tienda, 8 h el panel), se cierran por inactividad (2 días / 2 horas), se revocan al cerrar sesión, al cambiar o restablecer la contraseña. El cliente ve y cierra sus sesiones en **Mi cuenta → Seguridad**.
 - Recuperación de contraseña con enlace de un solo uso que vence en 30 min, sin revelar si el correo existe.
 - Contra XSS: `sanitizarEntrada` quita etiquetas y caracteres peligrosos de todo lo que entra (menos contraseñas), las pantallas escapan con `escHTML()` lo que muestran, y la cabecera **CSP** con `connect-src 'self'` impide que un script mande datos a otro servidor. También `X-Frame-Options: DENY`, `nosniff` y `Referrer-Policy`.

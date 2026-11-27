@@ -837,6 +837,7 @@ CREATE TABLE sesiones (
     revocada          TIMESTAMP,
     motivo_revocacion VARCHAR(80),
     recordar          BOOLEAN NOT NULL DEFAULT FALSE,  -- "Mantener sesión iniciada"
+    metodo            VARCHAR(40),                     -- cómo se abrió: contraseña, dos pasos, QR…
     CONSTRAINT sesiones_dueno_check CHECK (
         (tipo = 'cliente' AND cliente_id IS NOT NULL AND usuario_id IS NULL) OR
         (tipo = 'usuario' AND usuario_id IS NOT NULL AND cliente_id IS NULL))
@@ -885,6 +886,7 @@ CREATE TABLE eventos_seguridad (
     detalle     VARCHAR(500),
     cliente_id  INTEGER REFERENCES clientes(id) ON DELETE SET NULL,
     usuario_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    datos       JSONB,                          -- detalles: petición, sesión, navegador, veredicto
     fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_eventos_fecha ON eventos_seguridad(fecha DESC);

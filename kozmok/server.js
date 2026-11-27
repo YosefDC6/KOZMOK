@@ -778,12 +778,12 @@ const loginCliente = asyncRoute(async (req, res) => {
     const recordar = quiereRecordar(req.body, true);
     const m2 = metodo2fa(req, 'cliente', cliente);
     if (m2) return iniciarDesafio2fa(req, res, 'cliente', cliente, m2, { recordar });
-    return abrirSesionCliente(req, res, cliente, { recordar });
+    return abrirSesionCliente(req, res, cliente, { recordar, metodo: 'contraseña' });
 });
-async function abrirSesionCliente(req, res, cliente, { recordar }) {
+async function abrirSesionCliente(req, res, cliente, { recordar, metodo = 'contraseña' }) {
     await seg.registrarIntento(req, { ambito: 'cliente', correo: seg.normalizarCorreo(cliente.correo), exito: true });
     await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
-    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar });
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar, metodo });
     const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
     // El token va en la cookie HttpOnly. Solo se devuelve en el cuerpo si
     // lo pide un cliente de API (Postman, pruebas): { "modo": "token" }.
@@ -852,7 +852,7 @@ const registrarCliente = asyncRoute(async (req, res) => {
     await seg.registrarIntento(req, { ambito: 'cliente', correo, exito: true, motivo: 'registro' });
     // Sin Gmail la cuenta queda confirmada desde ya: el cupón de bienvenida se da ahora.
     if (cliente.correo_verificado !== false) await cupones.darBienvenida(pool, cliente.id, { base: urlPublica(req) }).catch(() => null);
-    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(b, true) });
+    const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: quiereRecordar(b, true), metodo: 'registro de cuenta' });
     res.status(201).json({ success: true, cliente, expira: s.expira, ...(b.modo === 'token' ? { token: s.token } : {}) });
 });
 
@@ -890,12 +890,12 @@ const loginUsuario = asyncRoute(async (req, res) => {
     if (m2) return iniciarDesafio2fa(req, res, 'usuario', usuario, m2);
     return abrirSesionUsuario(req, res, { ...usuario, password_debil: debil });
 });
-async function abrirSesionUsuario(req, res, usuario) {
+async function abrirSesionUsuario(req, res, usuario, metodo = 'contraseña') {
     await seg.registrarIntento(req, { ambito: 'usuario', correo: seg.normalizarCorreo(usuario.email), exito: true });
     await pool.query('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [usuario.id]);
     // El panel nunca recuerda la sesión: se cierra al cerrar el navegador
     // (y a las 8 h o tras 2 h sin uso).
-    const s = await seg.crearSesion(req, res, 'usuario', usuario.id, { recordar: false });
+    const s = await seg.crearSesion(req, res, 'usuario', usuario.id, { recordar: false, metodo });
     const datos = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, telefono: usuario.telefono, rol: usuario.rol, activo: usuario.activo, password_debil: !!usuario.password_debil };
     res.json({ success: true, usuario: datos, permisos: PERMISOS[usuario.rol] || [], expira: s.expira, ...(req.body.modo === 'token' ? { token: s.token } : {}) });
 }
@@ -937,10 +937,11 @@ app.post('/api/auth/2fa/verificar', limiteAuth, asyncRoute(async (req, res) => {
             return res.status(401).json({ message: `Código incorrecto o vencido. Te quedan ${DOSF.maxIntentos - intentos} intento(s).`, intentos_restantes: DOSF.maxIntentos - intentos });
         }
         await db.query('UPDATE desafios_2fa SET usado = TRUE WHERE id = $1', [d.id]);
+        var via2fa = `contraseña + dos pasos (${pasoApp !== null ? 'app' : 'código por correo'})`;
         if (pasoApp !== null) await db.query(`UPDATE ${d.tipo === 'cliente' ? 'clientes' : 'usuarios'} SET totp_ultimo_paso = $2 WHERE id = $1`, [cuenta.id, pasoApp]);
         await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
-    return d.tipo === 'cliente' ? abrirSesionCliente(req, res, cuenta, { recordar: d.recordar }) : abrirSesionUsuario(req, res, cuenta);
+    return d.tipo === 'cliente' ? abrirSesionCliente(req, res, cuenta, { recordar: d.recordar, metodo: via2fa }) : abrirSesionUsuario(req, res, cuenta, via2fa);
 }));
 
 // Manda (o vuelve a mandar) el código al correo. También sirve cuando la
@@ -1023,7 +1024,19 @@ app.post('/api/auth/qr/estado', limiteQrEstado, asyncRoute(async (req, res) => {
         if (!cliente) return res.status(403).json({ message: 'La cuenta no está activa.' });
         await seg.registrarIntento(req, { ambito: 'cliente', correo: seg.normalizarCorreo(cliente.correo), exito: true, motivo: 'qr' });
         await pool.query('UPDATE clientes SET ultimo_login = CURRENT_TIMESTAMP WHERE id = $1', [cliente.id]);
-        const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: q.recordar });
+        const s = await seg.crearSesion(req, res, 'cliente', cliente.id, { recordar: q.recordar, metodo: 'QR aprobado desde el celular' });
+        // Detalle completo del inicio con QR: qué computadora lo pidió y qué
+        // celular lo aprobó. Es normal si la computadora que recibe la sesión
+        // es la misma que pidió el QR.
+        const misma = q.ip_pide === seg.ipDe(req);
+        await seg.registrarEvento(req, { tipo: 'sesion_qr', severidad: misma ? 'info' : 'media', cliente_id: cliente.id,
+            detalle: `Inicio de sesión con QR: pedido desde ${q.ip_pide}, aprobado desde el celular ${q.ip_aprueba || '?'}`,
+            datos: { veredicto: { normal: misma, explicacion: misma
+                ? 'La sesión la recibió la misma computadora que mostró el QR, después de que el celular con sesión eligió el número correcto.'
+                : 'La sesión la recibió una conexión distinta a la que pidió el QR. Puede ser un cambio de red a media espera; si no, revísalo.' },
+                qr: { pedido_desde_ip: q.ip_pide, pedido_desde_red: seg.redDe(q.ip_pide), pedido_con: seg.describirUA(q.ua_pide).texto,
+                    aprobado_desde_ip: q.ip_aprueba, aprobado_desde_red: seg.redDe(q.ip_aprueba), aprobado_con: seg.describirUA(q.ua_aprueba).texto,
+                    pedido: q.creado, aprobado: q.resuelto, mantener_sesion: q.recordar, sesion_nueva: s.id } } });
         const datos = (await pool.query(`SELECT ${CAMPOS_CLIENTE} FROM clientes WHERE id = $1`, [cliente.id])).rows[0];
         return res.json({ estado: 'aprobado', cliente: datos, expira: s.expira, recordar: q.recordar });
     }
@@ -1053,19 +1066,25 @@ app.post('/api/auth/qr/aprobar', requireCliente, asyncRoute(async (req, res) => 
     if (!q || q.vencido || q.estado !== 'escaneado' || q.cliente_id !== req.cliente.id) return res.status(410).json({ message: 'Este QR ya venció o ya se usó. Genera otro en la computadora.' });
     if (String(req.body.digitos || '') !== q.digitos) {
         await pool.query("UPDATE qr_login SET estado = 'rechazado', resuelto = CURRENT_TIMESTAMP WHERE id = $1", [q.id]);
-        await seg.registrarEvento(req, { tipo: 'qr_numero_erroneo', severidad: 'media', cliente_id: req.cliente.id, detalle: `QR para entrar desde ${q.ip_pide}: se eligió un número que no coincide` });
+        await seg.registrarEvento(req, { tipo: 'qr_numero_erroneo', severidad: 'media', cliente_id: req.cliente.id, detalle: `QR para entrar desde ${q.ip_pide}: se eligió un número que no coincide`,
+            datos: { veredicto: { normal: false, explicacion: 'El celular eligió un número distinto al de la pantalla que pidió el QR: puede ser un error al tocar o que alguien le pasó su QR. Se canceló y nadie entró.' },
+                qr: { pedido_desde_ip: q.ip_pide, pedido_desde_red: seg.redDe(q.ip_pide), pedido_con: seg.describirUA(q.ua_pide).texto, pedido: q.creado } } });
         return res.status(400).json({ message: 'El número no coincide con el de la computadora. Por seguridad cancelamos este QR: genera otro y elige el número que ves en esa pantalla.' });
     }
-    const u = await pool.query("UPDATE qr_login SET estado = 'aprobado', ip_aprueba = $2, resuelto = CURRENT_TIMESTAMP WHERE id = $1 AND estado = 'escaneado' RETURNING id", [q.id, seg.ipDe(req)]);
+    const u = await pool.query("UPDATE qr_login SET estado = 'aprobado', ip_aprueba = $2, ua_aprueba = $3, resuelto = CURRENT_TIMESTAMP WHERE id = $1 AND estado = 'escaneado' RETURNING id", [q.id, seg.ipDe(req), seg.uaDe(req)]);
     if (!u.rows.length) return res.status(410).json({ message: 'Este QR ya se usó.' });
-    await seg.registrarEvento(req, { tipo: 'qr_aprobado', severidad: 'info', cliente_id: req.cliente.id, detalle: `Inicio de sesión con QR aprobado desde el celular para ${q.ip_pide}` });
+    await seg.registrarEvento(req, { tipo: 'qr_aprobado', severidad: 'info', cliente_id: req.cliente.id, detalle: `Inicio de sesión con QR aprobado desde el celular para ${q.ip_pide}`,
+        datos: { veredicto: { normal: true, explicacion: 'Un celular con la sesión abierta escaneó el QR y eligió el número correcto.' },
+            qr: { pedido_desde_ip: q.ip_pide, pedido_desde_red: seg.redDe(q.ip_pide), pedido_con: seg.describirUA(q.ua_pide).texto, pedido: q.creado } } });
     res.json({ message: 'Listo: la computadora ya entró a tu cuenta.' });
 }));
 app.post('/api/auth/qr/rechazar', requireCliente, asyncRoute(async (req, res) => {
     const q = await qrPorCodigo(req.body && req.body.c);
     if (!q || !['pendiente', 'escaneado'].includes(q.estado) || (q.cliente_id && q.cliente_id !== req.cliente.id)) return res.json({ message: 'Cancelado.' });
     await pool.query("UPDATE qr_login SET estado = 'rechazado', cliente_id = $2, resuelto = CURRENT_TIMESTAMP WHERE id = $1", [q.id, req.cliente.id]);
-    await seg.registrarEvento(req, { tipo: 'qr_rechazado', severidad: 'media', cliente_id: req.cliente.id, detalle: `El cliente dijo "No fui yo" a un QR pedido desde ${q.ip_pide}` });
+    await seg.registrarEvento(req, { tipo: 'qr_rechazado', severidad: 'media', cliente_id: req.cliente.id, detalle: `El cliente dijo "No fui yo" a un QR pedido desde ${q.ip_pide}`,
+        datos: { veredicto: { normal: false, explicacion: 'El dueño de la cuenta dijo que no fue él quien pidió entrar. Nadie entró; revisa desde dónde se pidió.' },
+            qr: { pedido_desde_ip: q.ip_pide, pedido_desde_red: seg.redDe(q.ip_pide), pedido_con: seg.describirUA(q.ua_pide).texto, pedido: q.creado } } });
     res.json({ message: 'Cancelado. Nadie entró a tu cuenta.' });
 }));
 app.post('/api/auth/registro-cliente', limiteAuth, captchaMw, registrarCliente);
@@ -9294,6 +9313,11 @@ async function migrarEsquema() {
     await pool.query('ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS agotado_aviso BOOLEAN NOT NULL DEFAULT FALSE');
     // "Mantener sesión iniciada" y envío real de correos (Gmail).
     await pool.query('ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS recordar BOOLEAN NOT NULL DEFAULT FALSE');
+    // Cómo se abrió cada sesión (contraseña, dos pasos, QR…) y detalles de
+    // cada evento de seguridad (de dónde, qué navegador, veredicto).
+    await pool.query('ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS metodo VARCHAR(40)');
+    await pool.query('ALTER TABLE eventos_seguridad ADD COLUMN IF NOT EXISTS datos JSONB');
+    await pool.query('ALTER TABLE qr_login ADD COLUMN IF NOT EXISTS ua_aprueba VARCHAR(300)').catch(() => null);
     await pool.query('ALTER TABLE correos_salida ADD COLUMN IF NOT EXISTS html TEXT');
     // Los correos que ya existían quedan como "sin_smtp" para no mandarlos
     // de golpe al configurar Gmail; los nuevos nacen "pendiente".

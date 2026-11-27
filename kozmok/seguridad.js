@@ -74,16 +74,109 @@ const uaDe = (req) => recortar(req.headers['user-agent'] || '', 300);
 const huellaDe = (req) => sha256(req.headers['user-agent'] || '');
 
 // ---------------------------------------------------------
+// Qué navegador es (para comparar sesiones y dar detalles legibles)
+// ---------------------------------------------------------
+function describirUA(ua) {
+    ua = String(ua || '');
+    const v = (re) => { const m = re.exec(ua); return m ? m[1] : ''; };
+    let navegador = 'Desconocido', version = '';
+    if (/Edg\//.test(ua)) { navegador = 'Edge'; version = v(/Edg\/(\d+)/); }
+    else if (/OPR\//.test(ua)) { navegador = 'Opera'; version = v(/OPR\/(\d+)/); }
+    else if (/SamsungBrowser\//.test(ua)) { navegador = 'Samsung Internet'; version = v(/SamsungBrowser\/(\d+)/); }
+    else if (/Firefox\//.test(ua)) { navegador = 'Firefox'; version = v(/Firefox\/(\d+)/); }
+    else if (/CriOS\//.test(ua)) { navegador = 'Chrome'; version = v(/CriOS\/(\d+)/); }
+    else if (/Chrome\//.test(ua)) { navegador = 'Chrome'; version = v(/Chrome\/(\d+)/); }
+    else if (/Safari\//.test(ua) && /Version\//.test(ua)) { navegador = 'Safari'; version = v(/Version\/(\d+)/); }
+    else if (/curl|wget|python|node|axios|postman|insomnia/i.test(ua)) { navegador = 'Programa (no es navegador)'; version = v(/\/([\d.]+)/); }
+    let so = 'Desconocido';
+    if (/Windows/.test(ua)) so = 'Windows';
+    else if (/Android/.test(ua)) so = 'Android';
+    else if (/iPhone|iPad|iPod/.test(ua)) so = 'iOS';
+    else if (/Mac OS X|Macintosh/.test(ua)) so = 'macOS';
+    else if (/CrOS/.test(ua)) so = 'ChromeOS';
+    else if (/Linux/.test(ua)) so = 'Linux';
+    const dispositivo = /iPad|Tablet/.test(ua) ? 'Tableta' : /Mobi|iPhone|Android/.test(ua) ? 'Celular' : 'Computadora';
+    return { navegador, version, so, dispositivo, texto: `${navegador}${version ? ' ' + version : ''} · ${so} · ${dispositivo}` };
+}
+
+// De qué red viene una IP.
+function redDe(ip) {
+    ip = String(ip || '');
+    if (/^(127\.|::1$)/.test(ip)) return 'esta misma computadora';
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|fe80:|fc|fd)/i.test(ip)) return 'red local';
+    return 'internet (red externa)';
+}
+
+// Lo que se sabe de la petición: va en los detalles de cada evento.
+function contextoPeticion(req) {
+    if (!req) return {};
+    const ua = describirUA(req.headers['user-agent']);
+    let desde = '';
+    try { const r = req.headers.referer || req.headers.origin; if (r) { const u = new URL(r); desde = u.host + u.pathname; } } catch { /* sin página de origen */ }
+    return { ip: ipDe(req), red: redDe(ipDe(req)), navegador: ua.texto, metodo: req.method, ruta: recortar(req.originalUrl || req.url, 200),
+        pagina: desde || null, host: req.headers.host || null };
+}
+
+// Cuando el navegador de una sesión ya no es el mismo con el que se abrió.
+//   actualizacion: mismo navegador, sistema y dispositivo, otra versión
+//                  (Chrome se actualizó): normal, se acepta.
+//   emulacion:     misma IP y misma versión del navegador, pero dice ser
+//                  otro dispositivo: es el modo celular de las herramientas
+//                  de desarrollador (F12). Se acepta y se anota.
+//   distinto:      otro navegador, otra versión desde otra IP, etc.: la
+//                  cookie se usa en otro lado, se trata como robo.
+function compararNavegador(sesion, req) {
+    const antes = describirUA(sesion.user_agent), ahora = describirUA(req.headers['user-agent']);
+    const mismaIp = !!sesion.ip && sesion.ip === ipDe(req);
+    const diferencias = [];
+    if (antes.navegador !== ahora.navegador) diferencias.push(`navegador ${antes.navegador} → ${ahora.navegador}`);
+    if (antes.version !== ahora.version) diferencias.push(`versión ${antes.version || '?'} → ${ahora.version || '?'}`);
+    if (antes.so !== ahora.so) diferencias.push(`sistema ${antes.so} → ${ahora.so}`);
+    if (antes.dispositivo !== ahora.dispositivo) diferencias.push(`dispositivo ${antes.dispositivo} → ${ahora.dispositivo}`);
+    if (!mismaIp) diferencias.push(`IP ${sesion.ip || '?'} → ${ipDe(req)}`);
+    let resultado = 'distinto';
+    const real = (n) => n !== 'Desconocido' && !n.startsWith('Programa');
+    if (antes.navegador === ahora.navegador && real(antes.navegador) && antes.so === ahora.so && antes.dispositivo === ahora.dispositivo
+        && Number(ahora.version) > Number(antes.version)) resultado = 'actualizacion';
+    // Modo de dispositivo de Chrome/Edge (F12): misma conexión, la computadora
+    // de pronto dice ser un celular. Si emula un iPhone se presenta como
+    // Safari, por eso no se exige el mismo navegador (pero sí la misma versión
+    // si dice ser el mismo).
+    else if (mismaIp && antes.dispositivo === 'Computadora' && ahora.dispositivo !== 'Computadora'
+        && ['Chrome', 'Edge', 'Opera'].includes(antes.navegador) && real(ahora.navegador)
+        && (ahora.navegador !== antes.navegador || ahora.version === antes.version)) resultado = 'emulacion';
+    return { resultado, antes, ahora, mismaIp, diferencias };
+}
+
+// Para no llenar la bitácora: el mismo aviso de la misma sesión se anota
+// una vez cada 15 minutos (p. ej. una pestaña vieja que sigue preguntando).
+const yaAvisado = new Map();
+function avisarUnaVez(clave, minutos = 15) {
+    const ahora = Date.now(), antes = yaAvisado.get(clave);
+    if (antes && ahora - antes < minutos * 60000) return false;
+    yaAvisado.set(clave, ahora);
+    if (yaAvisado.size > 5000) for (const [k, t] of yaAvisado) if (ahora - t > 3600000) yaAvisado.delete(k);
+    return true;
+}
+// Datos de la sesión para los detalles del evento.
+const datosSesion = (s) => ({ id: s.id, tipo: s.tipo === 'usuario' ? 'panel' : 'tienda', abierta: s.creada, como: s.metodo || 'no registrado',
+    ultima_ip: s.ip, ultima_red: redDe(s.ip), navegador_al_abrir: describirUA(s.user_agent).texto, ultimo_uso: s.ultimo_uso,
+    mantener_sesion: !!s.recordar, cerrada: s.revocada || null, motivo_cierre: s.motivo_revocacion || null });
+
+// ---------------------------------------------------------
 // Bitácora de seguridad (nunca rompe la petición si falla)
 // ---------------------------------------------------------
 let POOL = null;
-async function registrarEvento(req, { tipo, severidad = 'media', detalle = '', cliente_id = null, usuario_id = null }) {
+// datos: detalles para el panel (qué pasó, de dónde, veredicto). Siempre
+// se agregan los de la petición (IP, red, navegador, página de origen).
+async function registrarEvento(req, { tipo, severidad = 'media', detalle = '', cliente_id = null, usuario_id = null, datos = null }) {
     try {
+        const todo = { peticion: contextoPeticion(req), ...(datos || {}) };
         await POOL.query(
-            `INSERT INTO eventos_seguridad (tipo, severidad, ip, user_agent, metodo, ruta, detalle, cliente_id, usuario_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            `INSERT INTO eventos_seguridad (tipo, severidad, ip, user_agent, metodo, ruta, detalle, cliente_id, usuario_id, datos)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
             [tipo, severidad, req ? ipDe(req) : null, req ? uaDe(req) : null, req ? req.method : null,
-                req ? recortar(req.originalUrl, 200) : null, recortar(detalle, 500), cliente_id, usuario_id]);
+                req ? recortar(req.originalUrl, 200) : null, recortar(detalle, 500), cliente_id, usuario_id, JSON.stringify(todo).slice(0, 8000)]);
     } catch (e) { console.error('Bitácora de seguridad ->', e.message); }
 }
 
@@ -387,16 +480,16 @@ const borrarCookie = (req, res, nombre) => ponerCookie(req, res, nombre, '', 0);
 //                    en .env). Solo la tienda: el panel nunca recuerda.
 // recordar = false -> cookie de sesión: al cerrar el navegador se pierde y
 //                    hay que volver a entrar (como en una computadora pública).
-async function crearSesion(req, res, tipo, id, { recordar = false } = {}) {
+async function crearSesion(req, res, tipo, id, { recordar = false, metodo = 'contraseña' } = {}) {
     const token = crypto.randomBytes(32).toString('base64url');
     const horas = recordar
         ? 24 * CONFIG.diasRecordarCliente
         : (tipo === 'cliente' ? CONFIG.horasSesionCliente : CONFIG.horasSesionEquipo);
     const r = await POOL.query(
-        `INSERT INTO sesiones (token_hash, tipo, cliente_id, usuario_id, ip, user_agent, huella, expira, recordar)
-         VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_TIMESTAMP + ($8 || ' hours')::interval, $9) RETURNING id, expira`,
+        `INSERT INTO sesiones (token_hash, tipo, cliente_id, usuario_id, ip, user_agent, huella, expira, recordar, metodo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_TIMESTAMP + ($8 || ' hours')::interval, $9, $10) RETURNING id, expira`,
         [sha256(token), tipo, tipo === 'cliente' ? id : null, tipo === 'usuario' ? id : null,
-            ipDe(req), uaDe(req), huellaDe(req), String(horas), !!recordar]);
+            ipDe(req), uaDe(req), huellaDe(req), String(horas), !!recordar, recortar(metodo, 40)]);
     ponerCookie(req, res, COOKIE[tipo], token, recordar ? Math.round(horas * 3600) : null);
     return { token, id: r.rows[0].id, expira: r.rows[0].expira, recordar: !!recordar };
 }
@@ -430,10 +523,22 @@ async function leerSesion(req, tipo) {
         // persona cerró sesión o cambió su contraseña: eso es 'info'. Si la
         // sesión se cerró por sospecha (otro navegador, desde el panel…) o
         // llega desde otro navegador, sí es alerta.
-        const normal = /^(cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida|cuenta activada con contraseña nueva|inactividad)$/.test(s.motivo_revocacion || '');
-        const mismoNavegador = !s.huella || s.huella === huellaDe(req);
-        registrarEvento(req, { tipo: 'sesion_revocada', severidad: normal && mismoNavegador ? 'info' : 'media',
-            detalle: `Se intentó reusar una sesión cerrada (${s.motivo_revocacion || 'revocada'})${mismoNavegador ? '' : ' desde otro navegador'}`, cliente_id: s.cliente_id, usuario_id: s.usuario_id });
+        const normal = /^(cerró sesión|cerrada por el cliente|cambio de contraseña|contraseña restablecida|cuenta activada con contraseña nueva|inactividad|navegador cambió)/.test(s.motivo_revocacion || '');
+        const comp = !s.huella || s.huella === huellaDe(req) ? { resultado: 'igual', diferencias: [] } : compararNavegador(s, req);
+        const mismoNavegador = comp.resultado !== 'distinto';
+        // Una pestaña vieja pregunta en cada petición: se anota una vez cada 15 min.
+        if (avisarUnaVez(`reuso:${s.id}:${ipDe(req)}`)) {
+            const dentro = normal && mismoNavegador;
+            registrarEvento(req, { tipo: 'sesion_revocada', severidad: dentro ? 'info' : (mismoNavegador ? 'baja' : 'media'),
+                detalle: `Se intentó reusar la sesión #${s.id}, ya cerrada (${s.motivo_revocacion || 'revocada'})${mismoNavegador ? ' desde el mismo navegador' : ' desde otro navegador'}`,
+                cliente_id: s.cliente_id, usuario_id: s.usuario_id,
+                datos: { veredicto: { normal: dentro, explicacion: dentro
+                    ? 'Una pestaña que quedó abierta en el mismo navegador siguió preguntando después de cerrar la sesión. No pasa nada: el servidor la rechaza.'
+                    : mismoNavegador
+                        ? 'Es el mismo navegador, pero la sesión se había cerrado por sospecha o desde el panel. Revisa el motivo del cierre.'
+                        : 'Alguien usó la cookie de una sesión cerrada desde un navegador o una conexión distintos. El servidor la rechazó; si no lo reconoces, cambia la contraseña de la cuenta.' },
+                    sesion: datosSesion(s), diferencias: comp.diferencias || [], repeticiones: 'Se anota una vez cada 15 minutos por sesión.' } });
+        }
         return null;
     }
     if (new Date(s.expira) < new Date()) return null;
@@ -444,13 +549,36 @@ async function leerSesion(req, tipo) {
         return null;
     }
     if (s.huella && s.huella !== huellaDe(req)) {
-        // La cookie se está usando desde otro navegador: se asume robada.
-        await revocarSesion(s.id, 'usada desde otro navegador (posible robo)');
-        await registrarEvento(req, {
-            tipo: 'sesion_robada', severidad: 'alta', cliente_id: s.cliente_id, usuario_id: s.usuario_id,
-            detalle: `Sesión #${s.id} usada con otro navegador (abierta en ${recortar(s.user_agent, 80)}); se revocó`,
-        });
-        return null;
+        const comp = compararNavegador(s, req);
+        if (comp.resultado === 'actualizacion') {
+            // Chrome (u otro) se actualizó a media sesión: se acepta y se
+            // guarda el navegador nuevo para las siguientes comparaciones.
+            await POOL.query('UPDATE sesiones SET huella = $2, user_agent = $3 WHERE id = $1', [s.id, huellaDe(req), uaDe(req)]);
+            await registrarEvento(req, { tipo: 'navegador_actualizado', severidad: 'info', cliente_id: s.cliente_id, usuario_id: s.usuario_id,
+                detalle: `Sesión #${s.id}: ${comp.antes.navegador} se actualizó (${comp.diferencias.join(', ')}); la sesión sigue`,
+                datos: { veredicto: { normal: true, explicacion: 'Es el mismo navegador, sistema y dispositivo; solo cambió la versión (el navegador se actualizó). La sesión sigue abierta.' },
+                    sesion: datosSesion(s), antes: comp.antes.texto, ahora: comp.ahora.texto, diferencias: comp.diferencias } });
+        } else if (comp.resultado === 'emulacion') {
+            // Modo celular de las herramientas de desarrollador: misma
+            // computadora y mismo Chrome. No se cambia la huella (al salir de
+            // ese modo vuelve a coincidir) y se anota una vez cada 30 min.
+            if (avisarUnaVez(`emulacion:${s.id}`, 30)) {
+                await registrarEvento(req, { tipo: 'sesion_emulacion', severidad: 'baja', cliente_id: s.cliente_id, usuario_id: s.usuario_id,
+                    detalle: `Sesión #${s.id}: la misma computadora dice ser ${comp.ahora.dispositivo.toLowerCase()} (${comp.ahora.so}); parece el modo de dispositivo de las herramientas de desarrollador`,
+                    datos: { veredicto: { normal: true, explicacion: 'Misma IP y misma versión del navegador con la que se abrió la sesión, pero ahora dice ser un celular. Es lo que pasa al activar el modo de dispositivo de las herramientas de desarrollador (F12). Si nadie estaba probando así la tienda, revísalo.' },
+                        sesion: datosSesion(s), antes: comp.antes.texto, ahora: comp.ahora.texto, diferencias: comp.diferencias } });
+            }
+        } else {
+            // La cookie se está usando desde otro navegador: se asume robada.
+            await revocarSesion(s.id, 'usada desde otro navegador (posible robo)');
+            await registrarEvento(req, {
+                tipo: 'sesion_robada', severidad: 'alta', cliente_id: s.cliente_id, usuario_id: s.usuario_id,
+                detalle: `Sesión #${s.id} usada con otro navegador (${comp.diferencias.join(', ')}); se cerró`,
+                datos: { veredicto: { normal: false, explicacion: 'La cookie de la sesión llegó desde un navegador o dispositivo distinto al que la abrió y no es una actualización ni el modo de dispositivo de la misma computadora. Se cerró la sesión. Si la persona no lo reconoce, que cambie su contraseña.' },
+                    sesion: datosSesion(s), antes: comp.antes.texto, ahora: comp.ahora.texto, diferencias: comp.diferencias },
+            });
+            return null;
+        }
     }
     if (Date.now() - new Date(s.ultimo_uso).getTime() > 60000) {
         POOL.query('UPDATE sesiones SET ultimo_uso = CURRENT_TIMESTAMP, ip = $2 WHERE id = $1', [s.id, ipDe(req)]).catch(() => {});
@@ -507,6 +635,6 @@ module.exports = {
     registrarEvento, validarPassword, hashPassword, compararPassword,
     bloqueoActivo, registrarIntento, registrarFallo, minutosRestantes,
     crearSesion, leerSesion, revocarSesion, revocarSesionesDe, borrarCookie, tokenDe, sha256,
-    ipDe, uaDe, normalizarCorreo, correoValido, telefonoValido, nombreValido, esId, mensajeSeguro,
+    ipDe, uaDe, describirUA, redDe, contextoPeticion, normalizarCorreo, correoValido, telefonoValido, nombreValido, esId, mensajeSeguro,
     detectarSQL, limpiarTexto,
 };

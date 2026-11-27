@@ -2299,6 +2299,23 @@ Reglas de negocio embebidas
      no cuenta en los indicadores y por defecto no se muestra. El selector
      de arriba cambia entre "Alertas (baja, media y alta)", "Solo media y
      alta", "Solo alta" y "Todo, con actividad normal".
+     VEREDICTO Y DETALLES: cada evento dice si es "Normal" o "Fuera de lo
+     normal". Clic en el evento abre sus detalles: la explicacion del
+     veredicto, que cambio (p. ej. "navegador Chrome -> Firefox"), la
+     peticion (IP, si es esta computadora, la red local o internet,
+     navegador, ruta y pagina de donde venia), la sesion (cuando y como se
+     abrio: contrasena, dos pasos o QR; ultima IP; navegador con el que se
+     abrio; motivo del cierre) y, en el inicio con QR, que computadora lo
+     pidio y que celular lo aprobo. Los eventos anteriores a este cambio
+     solo tienen IP, navegador y ruta.
+     CAMBIO DE NAVEGADOR A MEDIA SESION: si el navegador solo se actualizo
+     (Chrome 131 -> 132) la sesion sigue (evento normal). Si la misma
+     computadora activa el modo de dispositivo de las herramientas de
+     desarrollador (F12, el icono del celular) la sesion tambien sigue y
+     queda un aviso de severidad baja. Otro navegador, otra IP o un
+     programa con la cookie se trata como robo: la sesion se cierra.
+     Una pestana vieja con una sesion cerrada se anota una vez cada 15
+     minutos, no en cada peticion.
    - Intentos de inicio de sesion: cada intento (tienda o panel) con correo,
      IP, navegador y resultado; arriba, las IPs con mas fallos en 24 h.
    - Bloqueos: cuentas e IPs bloqueadas. "Desbloquear" lo levanta antes de

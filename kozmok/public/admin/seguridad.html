@@ -57,7 +57,57 @@ const TIPO = {
     qr_aprobado: 'Inicio de sesión con QR aprobado desde el celular',
     qr_rechazado: 'Inicio de sesión con QR rechazado ("No fui yo")',
     qr_numero_erroneo: 'QR cancelado: se eligió un número que no coincide',
+    sesion_qr: 'Inicio de sesión con QR',
+    navegador_actualizado: 'El navegador se actualizó (sesión sigue)',
+    sesion_emulacion: 'Modo de dispositivo (herramientas de desarrollador)',
 };
+// Detalles de un evento (columna datos): veredicto, petición, sesión,
+// cambios de navegador y QR. Los eventos de antes de guardar detalles solo
+// muestran lo que hay en sus columnas.
+const ETIQUETA = {
+    ip: 'IP', red: 'Red', navegador: 'Navegador', metodo: 'Método', ruta: 'Ruta', pagina: 'Página de origen', host: 'Dirección usada',
+    id: 'Sesión #', tipo: 'De', abierta: 'Abierta', como: 'Cómo se abrió', ultima_ip: 'Última IP', ultima_red: 'Red',
+    navegador_al_abrir: 'Navegador al abrir', ultimo_uso: 'Último uso', mantener_sesion: 'Mantener sesión', cerrada: 'Cerrada', motivo_cierre: 'Motivo del cierre',
+    pedido_desde_ip: 'QR pedido desde', pedido_desde_red: 'Red de la computadora', pedido_con: 'Computadora', aprobado_desde_ip: 'Aprobado desde', aprobado_desde_red: 'Red del celular',
+    aprobado_con: 'Celular', pedido: 'Pedido', aprobado: 'Aprobado', sesion_nueva: 'Sesión nueva #', antes: 'Antes', ahora: 'Ahora',
+};
+const valorDet = (k, v) => v === true ? 'Sí' : v === false ? 'No' : v == null || v === '' ? '—'
+    : /^\d{4}-\d\d-\d\dT/.test(String(v)) ? formatoFechaHora(v) : escHTML(String(v));
+function bloqueDet(titulo, obj) {
+    const filas = Object.entries(obj || {}).filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object');
+    if (!filas.length) return '';
+    return `<div class="ev-bloque"><h5>${titulo}</h5>${filas.map(([k, v]) => `<div class="ev-fila"><span>${escHTML(ETIQUETA[k] || k.replace(/_/g, ' '))}</span><strong>${valorDet(k, v)}</strong></div>`).join('')}</div>`;
+}
+function veredictoDe(e) {
+    const d = e.datos || {};
+    if (d.veredicto) return d.veredicto;
+    if (e.severidad === 'info') return { normal: true, explicacion: 'Actividad normal de la cuenta.' };
+    return null;
+}
+function detalleEvento(e) {
+    const d = e.datos || {};
+    const v = veredictoDe(e);
+    const pet = d.peticion && Object.keys(d.peticion).length ? d.peticion : { ip: e.ip, navegador: navegadorDe(e.user_agent), metodo: e.metodo, ruta: e.ruta };
+    const extra = Object.fromEntries(Object.entries(d).filter(([k, x]) => !['veredicto', 'peticion', 'sesion', 'qr', 'diferencias', 'antes', 'ahora'].includes(k) && typeof x !== 'object'));
+    return `<div class="ev-det">
+        ${v ? `<div class="ev-veredicto ${v.normal ? 'ok' : 'mal'}">${icon(v.normal ? 'check' : 'alert', 16)}<div><strong>${v.normal ? 'Dentro de lo normal' : 'Fuera de lo normal'}</strong><p>${escHTML(v.explicacion)}</p></div></div>`
+            : '<div class="ev-veredicto"><div><strong>Sin veredicto</strong><p>Este evento es de antes de que se guardaran los detalles: solo hay IP, navegador y ruta.</p></div></div>'}
+        ${d.diferencias && d.diferencias.length ? `<div class="ev-bloque"><h5>Qué cambió</h5><ul class="ev-lista">${d.diferencias.map((x) => `<li>${escHTML(x)}</li>`).join('')}</ul>${d.antes ? `<div class="ev-fila"><span>Antes</span><strong>${escHTML(d.antes)}</strong></div><div class="ev-fila"><span>Ahora</span><strong>${escHTML(d.ahora)}</strong></div>` : ''}</div>` : ''}
+        <div class="ev-bloques">
+            ${bloqueDet('Petición', pet)}
+            ${bloqueDet('Sesión', d.sesion)}
+            ${bloqueDet('Inicio con QR', d.qr)}
+            ${bloqueDet('Más datos', extra)}
+        </div>
+        ${e.user_agent ? `<div class="ev-ua"><span>Navegador completo (lo que envió):</span> <code>${escHTML(e.user_agent)}</code></div>` : ''}
+    </div>`;
+}
+function abrirEvento(id) {
+    const fila = document.getElementById('evd-' + id);
+    if (!fila) return;
+    fila.hidden = !fila.hidden;
+    document.getElementById('ev-' + id).classList.toggle('abierta', !fila.hidden);
+}
 let D = null, CORREOS = [], TAB = 'eventos';
 
 async function cargar() {
@@ -111,13 +161,15 @@ function pintar() {
             <span style="font-size:.8rem;color:var(--text-muted)">La actividad normal (activar dos pasos, cambiar contraseña, una pestaña vieja tras cerrar sesión) se guarda, pero no es alerta.</span>
         </div>
         <div class="table-wrap"><table>
-            <thead><tr><th>Fecha</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle</th></tr></thead>
-            <tbody>${evs.map((e) => `<tr>
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Severidad</th><th>Veredicto</th><th>Origen</th><th>Detalle</th></tr></thead>
+            <tbody>${evs.map((e) => { const v = veredictoDe(e); return `<tr id="ev-${e.id}" class="ev-fila-clic" onclick="abrirEvento(${e.id})" title="Ver detalles">
                 <td style="white-space:nowrap">${formatoFechaHora(e.fecha)}</td>
                 <td><strong>${escHTML(TIPO[e.tipo] || e.tipo)}</strong>${e.cliente_nombre || e.usuario_nombre ? `<div style="font-size:.74rem;color:var(--text-muted)">${escHTML(e.cliente_nombre || e.usuario_nombre)}</div>` : ''}</td>
                 <td><span class="tag sev-${escHTML(e.severidad)}">${e.severidad === 'info' ? 'normal' : escHTML(e.severidad)}</span></td>
-                <td class="mono" style="font-size:.78rem">${escHTML(e.ip || '—')}<div style="color:var(--text-muted)">${escHTML(e.metodo || '')} ${escHTML(e.ruta || '')}</div><div style="color:var(--text-muted)">${escHTML(navegadorDe(e.user_agent))}</div></td>
-                <td class="det">${escHTML(e.detalle)}</td></tr>`).join('') || '<tr><td colspan="5">Sin alertas con este filtro.</td></tr>'}</tbody></table></div>`;
+                <td>${v ? `<span class="ev-v ${v.normal ? 'ok' : 'mal'}">${v.normal ? 'Normal' : 'Fuera de lo normal'}</span>` : '<span class="ev-v">—</span>'}</td>
+                <td class="mono" style="font-size:.78rem">${escHTML(e.ip || '—')}${e.datos && e.datos.peticion && e.datos.peticion.red ? `<div style="color:var(--text-muted)">${escHTML(e.datos.peticion.red)}</div>` : ''}<div style="color:var(--text-muted)">${escHTML(e.metodo || '')} ${escHTML(e.ruta || '')}</div><div style="color:var(--text-muted)">${escHTML(navegadorDe(e.user_agent))}</div></td>
+                <td class="det">${escHTML(e.detalle)}<div class="ev-ver">${icon('chevron', 13)} Ver detalles</div></td></tr>
+                <tr id="evd-${e.id}" class="ev-det-fila" hidden><td colspan="6">${detalleEvento(e)}</td></tr>`; }).join('') || '<tr><td colspan="6">Sin alertas con este filtro.</td></tr>'}</tbody></table></div>`;
     } else if (TAB === 'intentos') {
         el.innerHTML = `${D.top_ips.length ? `<div class="card" style="margin-bottom:12px"><strong>IPs con más fallos (24 h)</strong>${D.top_ips.map((x) => `<div class="resumen-linea" style="margin-top:6px"><span class="mono">${escHTML(x.ip)}</span><span>${x.fallos} fallos · ${x.cuentas} cuenta(s)</span></div>`).join('')}</div>` : ''}
             <div class="table-wrap"><table>
