@@ -156,7 +156,9 @@ async function vistaHilo(id) {
                     <div class="field"><label>Prioridad</label>
                         <select id="t-prio">${['baja', 'media', 'alta'].map((p) => `<option value="${p}" ${p === t.prioridad ? 'selected' : ''}>${PRIO[p]}</option>`).join('')}</select>
                     </div>
+                    ${CierreTicket.campos(t.motivos_cierre)}
                     <button class="btn btn-outline btn-sm" style="width:100%" onclick="guardarEstado(${t.id}, this)">Actualizar ticket</button>
+                    ${t.estado === 'cerrado' && t.motivo_cierre ? `<div class="cierre-actual"><span>Motivo del cierre${t.cerrado_por_nombre ? ` · ${escHTML(t.cerrado_por_nombre)}` : ''}${t.fecha_cierre ? ` · ${formatoFecha(t.fecha_cierre)}` : ''}</span>${escHTML(t.motivo_cierre)}</div>` : ''}
                     <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}${t.navegador ? `<br>Desde ${escHTML(t.navegador)} · ${escHTML(t.dispositivo || '')}` : ''}</p>
                     ${t.origen ? `<p class="tk-ligado">${icon('undo', 13)} Seguimiento de <a class="mono" href="/admin/soporte.html?ticket=${t.origen.id}">${escHTML(t.origen.folio)}</a> (${EST[t.origen.estado] || t.origen.estado})</p>` : ''}
                     ${(t.seguimientos || []).length ? `<p class="tk-ligado">${icon('chat', 13)} Seguimientos: ${t.seguimientos.map((x) => `<a class="mono" href="/admin/soporte.html?ticket=${x.id}">${escHTML(x.folio)}</a> (${EST[x.estado] || x.estado})`).join(', ')}</p>` : ''}
@@ -177,6 +179,7 @@ async function vistaHilo(id) {
     `;
     SEL_RESP = FotosReclamo.selector(document.getElementById('resp-fotos'), document.getElementById('resp-prev'), { alError: (m) => toast(m, 'warn') });
     vigilarDatoSensible(document.getElementById('resp'), document.getElementById('resp-aviso'));
+    CierreTicket.vincular(document.getElementById('t-estado'), 'cierre', t.estado === 'cerrado');
     pintarPedido();
     pintarCupones();
 }
@@ -359,11 +362,15 @@ async function desligarPedido() {
     catch (e) { toast(e.message, 'error'); }
 }
 async function guardarEstado(id, btn) {
+    const estado = document.getElementById('t-estado').value;
+    let cierre = {};
+    if (estado === 'cerrado' && TICKET.estado !== 'cerrado') { cierre = CierreTicket.leer(); if (!cierre) return; }
     await conBoton(btn, async () => {
         try {
             const r = await api(`/admin/tickets/${id}`, { method: 'PUT', body: {
-                estado: document.getElementById('t-estado').value,
+                estado,
                 prioridad: document.getElementById('t-prio').value,
+                ...cierre,
             }});
             toast(`Ticket ${EST[r.ticket.estado].toLowerCase()} · prioridad ${PRIO[r.ticket.prioridad].toLowerCase()}`, 'ok');
             await vistaHilo(id);   // encabezado, hilo y cuadros con el estado nuevo

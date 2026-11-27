@@ -3694,7 +3694,7 @@ function navegadorDeTicket(ua) {
 // Lo que el cliente puede ver de su ticket: nunca la prioridad interna ni a
 // quién se asignó. (Rama de Gael, TICKET_PUBLICO.)
 const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.asunto, t.categoria, t.estado, t.pedido_id, t.cupon_id,
-    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion, t.ticket_origen_id, t.confirmacion, t.fecha_confirmacion,
+    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion, t.ticket_origen_id, t.confirmacion, t.fecha_confirmacion, t.motivo_cierre, t.fecha_cierre,
     (SELECT o.folio FROM tickets o WHERE o.id = t.ticket_origen_id) AS origen_folio`;
 const MSG_DATO_SENSIBLE = 'Por seguridad, nunca le pedimos al cliente contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. Reescribe la respuesta sin pedir esos datos.';
 
@@ -3779,10 +3779,14 @@ async function responderTicket(ticketId, usuarioId, mensaje, estado, fotos = [])
     );
     await guardarFotosTicket(pool, ticketId, m.rows[0].id, fotos);
     const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'].includes(estado) ? estado : null;
+    // Si se cierra al responder, la respuesta misma es el motivo del cierre.
     await pool.query(
         `UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP, respuesta = $2, fecha_respuesta = CURRENT_TIMESTAMP,
+             motivo_cierre = CASE WHEN $3 = 'cerrado' AND estado <> 'cerrado' THEN LEFT($2, 1000) ELSE motivo_cierre END,
+             fecha_cierre  = CASE WHEN $3 = 'cerrado' AND estado <> 'cerrado' THEN CURRENT_TIMESTAMP ELSE fecha_cierre END,
+             cerrado_por   = CASE WHEN $3 = 'cerrado' AND estado <> 'cerrado' THEN $4 ELSE cerrado_por END,
              estado = COALESCE($3, CASE WHEN estado = 'abierto' THEN 'en_proceso' ELSE estado END) WHERE id = $1`,
-        [ticketId, mensaje, est]
+        [ticketId, mensaje, est, usuarioId]
     );
     avisarClienteTicket(ticketId, { texto: mensaje, fotos: fotos.length });
     return true;
@@ -3829,6 +3833,15 @@ app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
 // SEG_MAX_RECHAZOS rechazos, ya no se puede pedir más en ese ticket.
 // ---------------------------------------------------------
 const SEG_MAX_RECHAZOS = 2;
+// Motivos para cerrar un ticket (el panel los muestra en este orden).
+const MOTIVOS_CIERRE = {
+    resuelto: 'Se resolvió el problema',
+    sin_respuesta: 'No tuvimos respuesta tuya en varios días',
+    duplicado: 'Es el mismo caso que otro de tus tickets',
+    no_corresponde: 'No es un tema que atienda Soporte',
+    cliente: 'Nos avisaste que ya no necesitas ayuda',
+    otro: 'Otro motivo',
+};
 async function estadoSeguimiento(t) {
     const [sol, abierto] = await Promise.all([
         pool.query(`SELECT s.id, s.estado, s.motivo, s.fecha, s.fecha_resuelta, s.ticket_nuevo_id, n.folio AS ticket_nuevo_folio
@@ -3853,7 +3866,8 @@ app.post('/api/clientes/:id/tickets/:ticketId/confirmar', asyncRoute(async (req,
     if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
     if (t.estado !== 'resuelto') return res.status(409).json({ message: 'Solo se confirma un ticket marcado como resuelto.' });
     // "Sí, quedó resuelto": se cierra. ("No" se contesta pidiendo el seguimiento.)
-    await pool.query("UPDATE tickets SET estado = 'cerrado', confirmacion = 'resuelto', fecha_confirmacion = CURRENT_TIMESTAMP, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [t.id]);
+    await pool.query(`UPDATE tickets SET estado = 'cerrado', confirmacion = 'resuelto', fecha_confirmacion = CURRENT_TIMESTAMP, fecha_actualizacion = CURRENT_TIMESTAMP,
+                      motivo_cierre = 'Confirmaste que tu problema quedó resuelto.', fecha_cierre = CURRENT_TIMESTAMP, cerrado_por = NULL WHERE id = $1`, [t.id]);
     await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', 'Confirmé que mi problema quedó resuelto.')`, [t.id]);
     res.json({ message: '¡Gracias! Cerramos tu ticket.' });
 }));
@@ -5392,6 +5406,7 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     const sol = await pool.query(`SELECT s.*, u.nombre AS usuario_nombre, n.folio AS ticket_nuevo_folio FROM seguimiento_solicitudes s
         LEFT JOIN usuarios u ON u.id = s.usuario_id LEFT JOIN tickets n ON n.id = s.ticket_nuevo_id WHERE s.ticket_id = $1 ORDER BY s.id`, [t.rows[0].id]);
     res.json({ ...t.rows[0], origen: origen.rows[0] || null, seguimientos: seguimientos.rows, solicitudes: sol.rows, max_rechazos: SEG_MAX_RECHAZOS,
+        motivos_cierre: MOTIVOS_CIERRE, cerrado_por_nombre: t.rows[0].cerrado_por ? ((await pool.query('SELECT nombre FROM usuarios WHERE id = $1', [t.rows[0].cerrado_por])).rows[0] || {}).nombre : null,
         mensajes: await hiloTicket(t.rows[0].id) });
 }));
 app.get('/api/admin/tickets/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
@@ -5470,21 +5485,44 @@ app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
     }
     const est = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
     const pri = ['baja', 'media', 'alta'];
+    // Cerrar pide el motivo: el cliente lo ve en su ticket y por correo.
+    const previo = (await pool.query('SELECT estado FROM tickets WHERE id = $1', [req.params.id])).rows[0];
+    if (!previo) return res.status(404).json({ message: 'Ticket no encontrado' });
+    let motivoCierre = null;
+    if (estado === 'cerrado' && previo.estado !== 'cerrado') {
+        const clave = String(req.body.motivo_cierre || '');
+        const nota = Sensible.enmascararSensible(String(req.body.nota_cierre || '').trim().slice(0, 800)).texto;
+        if (!MOTIVOS_CIERRE[clave]) return res.status(400).json({ message: 'Elige el motivo del cierre: el cliente lo verá.', falta_motivo: true });
+        if (clave === 'otro' && nota.length < 10) return res.status(400).json({ message: 'Con "Otro motivo", escribe la explicación para el cliente.', falta_motivo: true });
+        motivoCierre = MOTIVOS_CIERRE[clave] + (nota ? `. ${nota}` : '.');
+        if (clave === 'otro') motivoCierre = nota;
+    }
     const r = await pool.query(
         `UPDATE tickets t SET
             estado    = COALESCE($1, estado),
             prioridad = COALESCE($2, prioridad),
             asignado_a = COALESCE($3, asignado_a),
             -- Si se reabre, la pregunta "¿Quedó resuelto?" vuelve a salir.
-            confirmacion = CASE WHEN COALESCE($1, t.estado) IN ('abierto','en_proceso') THEN NULL ELSE t.confirmacion END
+            confirmacion = CASE WHEN COALESCE($1, t.estado) IN ('abierto','en_proceso') THEN NULL ELSE t.confirmacion END,
+            -- Al cerrar se guarda el motivo; al reabrir se borra.
+            motivo_cierre = CASE WHEN $5::text IS NOT NULL THEN $5 WHEN COALESCE($1, t.estado) <> 'cerrado' THEN NULL ELSE t.motivo_cierre END,
+            fecha_cierre  = CASE WHEN $5::text IS NOT NULL THEN CURRENT_TIMESTAMP WHEN COALESCE($1, t.estado) <> 'cerrado' THEN NULL ELSE t.fecha_cierre END,
+            cerrado_por   = CASE WHEN $5::text IS NOT NULL THEN $6 WHEN COALESCE($1, t.estado) <> 'cerrado' THEN NULL ELSE t.cerrado_por END,
+            fecha_actualizacion = CURRENT_TIMESTAMP
          FROM (SELECT estado AS antes FROM tickets WHERE id = $4) a
          WHERE t.id = $4 RETURNING t.*, a.antes`,
         [est.includes(estado) ? estado : null, pri.includes(prioridad) ? prioridad : null,
-            asignado_a || null, req.params.id]
+            asignado_a || null, req.params.id, motivoCierre, req.usuario.id]
     );
     if (r.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
     // Al marcarlo resuelto, el cliente se entera por correo.
     if (r.rows[0].estado === 'resuelto' && r.rows[0].antes !== 'resuelto') avisarClienteTicket(r.rows[0].id, { resuelto: true });
+    // Al cerrarlo: el motivo queda en el hilo y le llega por correo.
+    if (motivoCierre) {
+        const texto = `Cerramos tu ticket. Motivo: ${motivoCierre}`;
+        await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`, [r.rows[0].id, req.usuario.id, texto]);
+        avisarClienteTicket(r.rows[0].id, { texto }).catch(() => null);
+    }
     res.json({ message: 'Ticket actualizado', ticket: r.rows[0] });
 }));
 
@@ -9656,6 +9694,10 @@ async function migrarEsquema() {
     // "¿Quedó resuelto?": lo que contestó el cliente sobre un ticket resuelto.
     await pool.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS confirmacion VARCHAR(12) CHECK (confirmacion IN ('resuelto','no_resuelto'))");
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS fecha_confirmacion TIMESTAMP');
+    // Por qué se cerró (lo ve el cliente) y quién lo cerró.
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS motivo_cierre TEXT');
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS fecha_cierre TIMESTAMP');
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS cerrado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL');
     // Solicitudes de seguimiento: el cliente ya no abre un seguimiento por su
     // cuenta; lo pide y Soporte lo aprueba (se crea el ticket ligado) o lo
     // rechaza con un motivo que el cliente ve.

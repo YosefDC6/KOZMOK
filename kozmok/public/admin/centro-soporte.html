@@ -189,6 +189,7 @@ async function responderRapido(id) {
                     <option value="cerrado">Cerrar el ticket</option>
                 </select>
             </label>
+            ${CierreTicket.campos(TK.motivos_cierre, 'cs-cierre')}
             <div style="display:flex;gap:8px;flex-wrap:wrap">
                 ${TK.pedido_id && puedeVer(ROL, 'pedidos') ? `<button class="btn btn-outline btn-sm" onclick="GestionPedido.abrir(${TK.pedido_id})">${icon('truck', 14)} Pedido ${escHTML(TK.numero_orden || '')}</button>` : ''}
                 <a class="btn btn-ghost btn-sm" href="/admin/soporte.html?ticket=${TK.id}">Ver caso completo</a>
@@ -198,16 +199,20 @@ async function responderRapido(id) {
     $('cs-modal').classList.add('open');
     setTimeout(() => $('cs-resp').focus(), 50);
     vigilarDatoSensible($('cs-resp'), $('cs-resp-aviso'));
+    CierreTicket.vincular($('cs-estado'), 'cs-cierre', TK.estado === 'cerrado');
 }
 async function enviarRapido(btn) {
     const mensaje = $('cs-resp').value.trim();
     if (!mensaje) { toast('Escribe una respuesta', 'warn'); return; }
     const estado = $('cs-estado').value;
+    // Cerrar pide el motivo antes de mandar nada.
+    let cierre = {};
+    if (estado === 'cerrado' && TK.estado !== 'cerrado') { cierre = CierreTicket.leer('cs-cierre'); if (!cierre) return; }
     if (btn && btn.disabled) return;
     if (btn) btn.disabled = true;
     try {
         await api(`/admin/tickets/${TK.id}/mensajes`, { method: 'POST', body: { mensaje } });
-        if (estado) await api(`/admin/tickets/${TK.id}`, { method: 'PUT', body: { estado } });
+        if (estado) await api(`/admin/tickets/${TK.id}`, { method: 'PUT', body: { estado, ...cierre } });
         toast(estado ? `Respuesta enviada; ticket ${EST_TK[estado].toLowerCase()}` : 'Respuesta enviada', 'ok');
         cerrarModal();
         cargar();

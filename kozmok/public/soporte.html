@@ -147,7 +147,8 @@ function tarjetaCierre(t) {
     const pedir = !pregunta && s.puede_solicitar ? `<button class="btn btn-outline btn-sm" onclick="formSeguimiento(TICKET_PREVIO)">${ultima && ultima.estado === 'rechazada' ? 'Enviar otra solicitud' : '¿Sigue o volvió a pasar? Solicitar seguimiento'}</button>` : '';
     const limite = !s.puede_solicitar && !s.pendiente && s.rechazos >= s.max_rechazos ? `<p class="tk-cierre-nota">${escHTML(s.razon)}</p>` : '';
     return `<div class="card tk-cierre">
-        <p class="tk-cierre-estado">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong>${t.confirmacion === 'resuelto' ? ' (confirmaste que quedó resuelto)' : ''} y ya no recibe mensajes.</p>
+        <p class="tk-cierre-estado">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes.</p>
+        ${t.estado === 'cerrado' && t.motivo_cierre ? `<div class="tk-cierre-motivo">${icon('info', 16)}<div><strong>¿Por qué se cerró?</strong><p>${escHTML(t.motivo_cierre)}</p>${t.fecha_cierre ? `<span>Cerrado el ${escHTML(formatoFechaHora(t.fecha_cierre))}</span>` : ''}</div></div>` : ''}
         ${pregunta}${estadoSol}
         ${pedir || limite ? `<div class="tk-cierre-acciones">${pedir}${limite}<a href="#" onclick="formTicket(); return false;" class="tk-cierre-otro">¿Es otro problema? Abre un ticket nuevo</a></div>`
             : (pregunta ? '' : `<div class="tk-cierre-acciones"><a href="#" onclick="formTicket(); return false;" class="tk-cierre-otro">¿Es otro problema? Abre un ticket nuevo</a></div>`)}

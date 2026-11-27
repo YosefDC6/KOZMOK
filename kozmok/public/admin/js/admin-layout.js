@@ -826,3 +826,38 @@ const Notifs = {
     },
 };
 window.Notifs = Notifs;
+
+// ---------------------------------------------------------
+// Motivo de cierre de un ticket (Soporte y Centro de soporte).
+// Al elegir "Cerrado" aparecen la lista de motivos y una nota; el cliente
+// los ve en su ticket y por correo. CierreTicket.leer() regresa
+// { motivo_cierre, nota_cierre } o null (y avisa) si falta algo.
+// ---------------------------------------------------------
+window.CierreTicket = {
+    campos(motivos, pref = 'cierre') {
+        return `<div class="cierre-campos" id="${pref}-campos" hidden>
+            <div class="field"><label>Motivo del cierre <span class="cierre-ayuda">(el cliente lo verá)</span></label>
+                <select id="${pref}-motivo"><option value="">Elige el motivo…</option>${Object.entries(motivos || {}).map(([k, v]) => `<option value="${k}">${escHTML(v)}</option>`).join('')}</select></div>
+            <div class="field"><label>Nota para el cliente <span class="cierre-ayuda" id="${pref}-nota-ayuda">(opcional)</span></label>
+                <textarea id="${pref}-nota" rows="2" maxlength="800" placeholder="Ej.: Te escribimos el 20 y el 22 sin respuesta. Si sigue pasando, abre un ticket nuevo."></textarea></div>
+        </div>`;
+    },
+    // Muestra u oculta los campos según el estado elegido.
+    vincular(select, pref = 'cierre', yaCerrado = false) {
+        const caja = document.getElementById(`${pref}-campos`);
+        const motivo = document.getElementById(`${pref}-motivo`);
+        const pintar = () => { if (caja) caja.hidden = !(select.value === 'cerrado' && !yaCerrado); };
+        select.addEventListener('change', pintar);
+        if (motivo) motivo.addEventListener('change', () => {
+            document.getElementById(`${pref}-nota-ayuda`).textContent = motivo.value === 'otro' ? '(obligatoria: explica el motivo)' : '(opcional)';
+        });
+        pintar();
+    },
+    leer(pref = 'cierre') {
+        const motivo = (document.getElementById(`${pref}-motivo`) || {}).value || '';
+        const nota = ((document.getElementById(`${pref}-nota`) || {}).value || '').trim();
+        if (!motivo) { toast('Elige el motivo del cierre: el cliente lo verá.', 'warn'); document.getElementById(`${pref}-motivo`).focus(); return null; }
+        if (motivo === 'otro' && nota.length < 10) { toast('Con "Otro motivo", escribe la explicación para el cliente.', 'warn'); document.getElementById(`${pref}-nota`).focus(); return null; }
+        return { motivo_cierre: motivo, nota_cierre: nota };
+    },
+};

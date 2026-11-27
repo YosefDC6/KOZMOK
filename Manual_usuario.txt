@@ -1020,6 +1020,19 @@ NAVEGACION RAPIDA EN EL PANEL
      campo para responder al cliente y el PEDIDO RELACIONADO (ver 9).
    - Si el ticket es seguimiento de otro, o tiene seguimientos, aparecen
      sus folios con su estado y un enlace a cada uno.
+   - CERRAR UN TICKET PIDE EL MOTIVO (el cliente lo ve en su ticket y por
+     correo): al elegir "Cerrado" (en el cuadro Caso, o "Cerrar el ticket"
+     en la respuesta rapida del Centro de soporte) aparecen:
+        * Motivo: Se resolvio el problema / No tuvimos respuesta tuya en
+          varios dias / Es el mismo caso que otro de tus tickets / No es un
+          tema que atienda Soporte / Nos avisaste que ya no necesitas
+          ayuda / Otro motivo.
+        * Nota para el cliente: opcional; obligatoria con "Otro motivo".
+     Sin motivo no se cierra (el servidor tambien lo revisa). Ya cerrado,
+     el cuadro Caso muestra el motivo, quien lo cerro y cuando. Si se
+     reabre, el motivo se borra. Cerrar al responder por la ruta de la
+     Etapa 4 (PUT /api/atencion/ticket/:id/respuesta) usa la respuesta
+     como motivo.
    - SOLICITUD DE SEGUIMIENTO: si el cliente la pidio, arriba del hilo
      sale el recuadro naranja "El cliente pide un seguimiento" con lo que
      escribio (sus fotos estan en el hilo) y cuantas veces se le ha
@@ -1978,6 +1991,11 @@ Lado cliente  (soporte.html, dentro de Mi cuenta)
    - El cliente ve su ticket, sus mensajes y el estado; la prioridad y a
      quien del equipo se asigno son internos y no se le muestran.
    - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente.
+   - ¿POR QUE SE CERRO?: en un ticket cerrado el cliente ve el motivo
+     que eligio Soporte (y su nota), con la fecha. Tambien queda en el
+     hilo ("Cerramos tu ticket. Motivo: ...") y le llega por correo. Si
+     el mismo cliente contesto "Si, quedo resuelto", el motivo dice
+     "Confirmaste que tu problema quedo resuelto".
    - "¿QUEDO RESUELTO TU PROBLEMA?": cuando Soporte marca el ticket como
      resuelto, el cliente ve la pregunta con dos botones:
         * "Si, quedo resuelto": el ticket se cierra (queda escrito en el
