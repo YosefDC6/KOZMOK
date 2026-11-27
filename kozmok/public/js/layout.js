@@ -86,6 +86,10 @@ async function renderNavbar() {
                 <div class="nav-actions">
                     ${categoriasMenu}
                     <a href="/favoritos.html" class="icon-btn hide-sm" id="nav-fav" title="Favoritos" data-panel="favoritos">${icon('heart', 20)}<span class="badge-count" id="fav-badge" style="display:none">0</span></a>
+                    ${cliente ? `<div class="notif-dd" id="notif-dd">
+                        <button class="icon-btn" id="nav-notif" title="Notificaciones" aria-haspopup="true" aria-expanded="false">${icon('bell', 20)}<span class="badge-count" id="notif-badge" style="display:none">0</span></button>
+                        <div class="notif-panel" id="notif-panel" role="menu" aria-label="Notificaciones"></div>
+                    </div>` : ''}
                     <a href="/carrito.html" class="icon-btn" id="nav-cart" title="Carrito" data-panel="carrito">${icon('cart', 20)}<span class="badge-count" id="cart-badge" style="display:none">0</span></a>
                     ${cuentaMenu}
                 </div>
@@ -165,7 +169,7 @@ async function renderNavbar() {
     if (catDD) catDD.querySelector('[aria-haspopup]').addEventListener('click', () => armarMenuCategorias(catDD, categorias), { once: true });
 
     // ---- Dropdowns (cuenta + categorías): un solo manejador ----
-    const dropdowns = ['cuenta-dd', 'cat-dd'].map((id) => document.getElementById(id)).filter(Boolean);
+    const dropdowns = ['cuenta-dd', 'cat-dd', 'notif-dd'].map((id) => document.getElementById(id)).filter(Boolean);
     dropdowns.forEach((dd) => {
         const trigger = dd.querySelector('[aria-haspopup]');
         trigger.addEventListener('click', (e) => {
@@ -219,6 +223,7 @@ async function renderNavbar() {
     renderBotonRegresar();
     montarVolverArriba();
     if (cliente) avisarPedidosEnCamino(cliente);
+    if (cliente) Novedades.iniciar(cliente);
     sincronizarSesion(cliente);
     // los contadores de la barra inferior copian a los de arriba
     ['cart-badge', 'fav-badge'].forEach((id) => {
@@ -874,3 +879,104 @@ document.addEventListener('DOMContentLoaded', () => {
     // Regla de puntos del Club (nivel del cliente) para "+N pts" en el catálogo.
     if (window.Club && !document.querySelector('meta[name="kz-panel"]')) Club.cargar();
 });
+
+
+// =========================================================
+// NOVEDADES: campana de la tienda y páginas que se actualizan solas.
+// Pregunta al servidor cada 20 s (y al volver a la pestaña) si hay avisos
+// nuevos: respuestas de Soporte, cambios de un pedido, cupones, recargas…
+// Al llegar algo: sube el contador, sale un aviso y se avisa a la página
+// abierta (Novedades.alCambiar) para que se vuelva a pintar sin recargar.
+// Con la pestaña en segundo plano no pregunta.
+// =========================================================
+const Novedades = (() => {
+    const CADA_MS = 20000;
+    const IC = { pedido: 'truck', soporte: 'chat', garantia: 'shield', cupon: 'tag', resena: 'star', mensaje: 'mail', favoritos: 'heart', promo: 'tag', seguridad: 'lock', monedero: 'wallet', general: 'bell' };
+    let cliente = null, ultimo = 0, items = [], noLeidas = 0, timer = null, iniciado = false, revisando = false;
+    const oyentes = [];
+    const hace = (f) => {
+        const m = Math.max(0, Math.round((Date.now() - new Date(f)) / 60000));
+        return m < 1 ? 'ahora' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : new Date(f).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    };
+    const ico = (c) => (window.icon ? icon(IC[c] || 'bell', 16) : '');
+    function pintarContador() {
+        const b = document.getElementById('notif-badge');
+        if (b) { b.textContent = noLeidas > 9 ? '9+' : String(noLeidas); b.style.display = noLeidas ? '' : 'none'; }
+        const t = document.getElementById('nav-notif');
+        if (t) t.title = noLeidas ? `Notificaciones (${noLeidas} sin leer)` : 'Notificaciones';
+    }
+    function pintarPanel() {
+        const p = document.getElementById('notif-panel');
+        if (!p) return;
+        p.innerHTML = `<div class="notif-head"><strong>Notificaciones</strong>${noLeidas ? '<button type="button" id="notif-todas">Marcar todas como leídas</button>' : ''}</div>
+            <div class="notif-lista">${items.length ? items.map((n) => `
+                <a href="${escHTML(n.url || '#')}" class="notif-item${n.leida ? '' : ' nueva'}" data-id="${n.id}" role="menuitem">
+                    <span class="notif-ico c-${escHTML(n.categoria)}">${ico(n.categoria)}</span>
+                    <span class="notif-txt"><strong>${escHTML(n.titulo)}</strong>${n.cuerpo ? `<span>${escHTML(n.cuerpo)}</span>` : ''}<em>${hace(n.fecha)}</em></span>
+                </a>`).join('') : '<div class="notif-vacio">No tienes avisos todavía. Aquí verás las respuestas de Soporte, los cambios de tus pedidos y más.</div>'}</div>`;
+        const todas = document.getElementById('notif-todas');
+        if (todas) todas.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            items.forEach((n) => { n.leida = true; }); noLeidas = 0; pintarContador(); pintarPanel();
+            api('/notificaciones/leer', { method: 'POST', body: { todas: true } }).catch(() => null);
+        });
+        p.querySelectorAll('.notif-item').forEach((a) => a.addEventListener('click', () => marcar([Number(a.dataset.id)])));
+    }
+    function marcar(ids) {
+        const pend = items.filter((n) => ids.includes(n.id) && !n.leida);
+        if (!pend.length) return;
+        pend.forEach((n) => { n.leida = true; }); noLeidas = Math.max(0, noLeidas - pend.length);
+        pintarContador(); pintarPanel();
+        api('/notificaciones/leer', { method: 'POST', body: { ids: pend.map((n) => n.id) } }).catch(() => null);
+    }
+    // Lo que ya estás viendo (la misma dirección) se marca como leído.
+    function marcarLoDeEstaPagina() {
+        const aqui = location.pathname + location.search;
+        marcar(items.filter((n) => !n.leida && n.url && n.url === aqui).map((n) => n.id));
+    }
+    async function revisar() {
+        if (!cliente || revisando || document.hidden) return;
+        revisando = true;
+        try {
+            const r = await api('/notificaciones' + (iniciado ? `?desde=${ultimo}` : ''));
+            if (!iniciado) {
+                items = r.items; iniciado = true;
+            } else if (r.items.length) {
+                const nuevas = r.items.filter((n) => !items.some((x) => x.id === n.id));
+                items = [...nuevas, ...items].slice(0, 30);
+                // Aviso emergente (hasta 2 para no tapar la pantalla)
+                if (window.toast) {
+                    nuevas.slice(0, 2).forEach((n) => toast(`${n.titulo}${n.cuerpo ? ' · ' + n.cuerpo : ''}`, 'info'));
+                    if (nuevas.length > 2) toast(`Y ${nuevas.length - 2} aviso(s) más en la campana`, 'info');
+                }
+                document.dispatchEvent(new CustomEvent('kz:novedades', { detail: { items: nuevas } }));
+                for (const o of oyentes) {
+                    const toca = nuevas.filter((n) => !o.categorias || o.categorias.includes(n.categoria));
+                    if (toca.length) { try { await o.fn(toca); } catch { /* la página decide */ } }
+                }
+            }
+            ultimo = Math.max(ultimo, r.ultimo_id || 0);
+            noLeidas = r.no_leidas;
+            marcarLoDeEstaPagina();
+            pintarContador();
+            if (!document.getElementById('notif-dd') || !document.getElementById('notif-dd').classList.contains('open')) pintarPanel();
+        } catch { /* sin conexión o sesión vencida: se intenta en la siguiente vuelta */ }
+        finally { revisando = false; }
+    }
+    function programar() { clearTimeout(timer); timer = setTimeout(async () => { await revisar(); programar(); }, CADA_MS); }
+    return {
+        iniciar(c) {
+            cliente = c;
+            const dd = document.getElementById('notif-dd');
+            if (dd) dd.querySelector('#nav-notif').addEventListener('click', () => { if (!dd.classList.contains('open')) pintarPanel(); });
+            const p = document.getElementById('notif-panel');
+            if (p) p.addEventListener('click', (e) => e.stopPropagation());
+            revisar().then(programar);
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) { revisar(); programar(); } });
+        },
+        // La página se suscribe: fn(items) cuando llegan avisos de esas categorías.
+        alCambiar(categorias, fn) { oyentes.push({ categorias, fn }); },
+        revisar,
+    };
+})();
+window.Novedades = Novedades;

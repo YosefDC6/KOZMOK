@@ -363,7 +363,7 @@ const Avisos = {
         this.activo = activo;
         this.actualizar();
         if (this._reloj) return;
-        this._reloj = setInterval(() => { if (!document.hidden) this.actualizar(); }, 60000);
+        this._reloj = setInterval(() => { if (!document.hidden) this.actualizar(); }, 20000);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) this.actualizar(); });
     },
 };
@@ -672,6 +672,8 @@ const Notifs = {
         this.ultimo = Math.max(this.ultimo || 0, d.ultimo_id || 0, ...d.items.map((n) => Number(n.id)));
         this.pintarContador();
         if (nuevas.length) this.avisar(nuevas);
+        // La pantalla abierta decide si se actualiza (p. ej. el ticket que estás viendo).
+        if (nuevas.length) document.dispatchEvent(new CustomEvent('kz:panel-novedades', { detail: { items: nuevas } }));
         const p = document.getElementById('notif-panel');
         if (p && p.classList.contains('open')) this.pintarPanel();
     },

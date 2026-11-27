@@ -277,7 +277,9 @@ async function buscar() {
 
 cargar();
 // Se actualiza sola cada minuto mientras la pestaña está a la vista.
-setInterval(() => { if (!document.hidden && !$('cs-modal').classList.contains('open')) cargar(); }, 60000);
+setInterval(() => { if (!document.hidden && !$('cs-modal').classList.contains('open')) cargar(); }, 30000);
+// Llegó algo nuevo (ticket, mensaje, reclamo…): la bandeja se actualiza al momento.
+document.addEventListener('kz:panel-novedades', () => { if (!$('cs-modal').classList.contains('open')) cargar(); });
 </script>
 </body>
 </html>

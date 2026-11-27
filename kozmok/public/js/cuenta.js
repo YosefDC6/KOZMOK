@@ -75,8 +75,42 @@ async function montarCuenta(key, render) {
             : e.message;
         panel.innerHTML = `<div class="empty-state">${escHTML(msg)}<br><button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="location.reload()">Reintentar</button></div>`;
     }
+    // Se vuelve a pintar sola cuando llega un aviso que le toca (Soporte
+    // respondió, cambió un pedido…). Si estás escribiendo o tienes una
+    // ventana abierta no se interrumpe: sale una barra para actualizar.
+    const cats = CATS_SECCION[key];
+    if (cats && window.Novedades) Novedades.alCambiar(cats, () => repintarSeccion(panel, render, PERFIL));
 }
 window.montarCuenta = montarCuenta;
+
+const CATS_SECCION = {
+    perfil: ['pedido', 'monedero', 'cupon'], pedidos: ['pedido'], devoluciones: ['pedido'], recompensas: ['pedido'],
+    monedero: ['monedero', 'pedido'], cupones: ['cupon'], favoritos: ['favoritos'], resenas: ['resena'],
+    garantias: ['garantia', 'pedido'], soporte: ['soporte'], seguridad: ['seguridad'],
+};
+function ocupado(panel) {
+    const a = document.activeElement;
+    if (a && panel.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+    if ([...panel.querySelectorAll('textarea')].some((t) => t.value.trim())) return true;   // un mensaje a medio escribir
+    // Fotos elegidas sin enviar (las del hilo ya enviadas no cuentan).
+    if ([...panel.querySelectorAll('.foto-lista')].some((l) => !l.closest('.hilo') && l.children.length)) return true;
+    return !!document.querySelector('.modal.open, .modal-overlay.open, #modal-generico.open');
+}
+async function repintarSeccion(panel, render, perfil, forzar = false) {
+    if (!forzar && ocupado(panel)) {
+        if (!document.getElementById('novedades-barra')) {
+            const b = document.createElement('div');
+            b.id = 'novedades-barra'; b.className = 'novedades-barra';
+            b.innerHTML = `<span>${icon('bell', 15)} Hay novedades en esta sección.</span><button class="btn btn-primary btn-sm">Actualizar</button>`;
+            b.querySelector('button').addEventListener('click', () => { b.remove(); repintarSeccion(panel, render, perfil, true); });
+            panel.prepend(b);
+        }
+        return;
+    }
+    const y = window.scrollY;
+    try { await render(panel, perfil); } catch { return; }
+    window.scrollTo(0, y);
+}
 
 // Helpers de dominio compartidos entre páginas de cuenta
 window.ESTADO_LABEL = { pendiente: 'Pendiente', confirmado: 'Confirmado', procesando: 'En preparación', enviado: 'Enviado', entregado: 'Entregado', cancelado: 'Cancelado' };

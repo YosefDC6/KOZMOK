@@ -361,6 +361,28 @@ async function desligarPedido() {
     try { const r = await api(`/admin/tickets/${TICKET.id}`, { method: 'PUT', body: { pedido_id: 0 } }); toast(r.message, 'ok'); vistaHilo(TICKET.id); }
     catch (e) { toast(e.message, 'error'); }
 }
+// El ticket abierto se actualiza solo cuando el cliente escribe (llega el
+// aviso). Si hay fotos elegidas o estás escribiendo en otro campo, sale una
+// barra para actualizar cuando quieras; la respuesta a medio escribir se
+// conserva (vistaHilo la guarda).
+document.addEventListener('kz:panel-novedades', (e) => {
+    if (!TICKET) { vistaLista(); return; }   // la cola de tickets
+    const mio = e.detail.items.some((n) => new RegExp(`[?&]ticket=${TICKET.id}(\\D|$)`).test(n.url || ''));
+    if (!mio) return;
+    const ocupado = (SEL_RESP && SEL_RESP.fotos().length) || ['sol-texto', 'cierre-nota'].some((id) => { const el = document.getElementById(id); return el && el.value.trim(); })
+        || document.querySelector('.modal.open, .modal-overlay.open');
+    if (ocupado) {
+        if (!document.getElementById('novedades-barra')) {
+            const b = document.createElement('div');
+            b.id = 'novedades-barra'; b.className = 'novedades-barra';
+            b.innerHTML = `<span>${icon('bell', 15)} El cliente escribió algo nuevo en este ticket.</span><button class="btn btn-primary btn-sm">Ver</button>`;
+            b.querySelector('button').addEventListener('click', () => { b.remove(); vistaHilo(TICKET.id); });
+            document.querySelector('.tk-hilo').prepend(b);
+        }
+        return;
+    }
+    vistaHilo(TICKET.id);
+});
 async function guardarEstado(id, btn) {
     const estado = document.getElementById('t-estado').value;
     let cierre = {};

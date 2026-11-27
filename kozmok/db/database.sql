@@ -21,6 +21,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
 DROP TABLE IF EXISTS seguimiento_solicitudes CASCADE;
+DROP TABLE IF EXISTS notificaciones_cliente  CASCADE;
 DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
 DROP TABLE IF EXISTS cupones                 CASCADE;
 DROP TABLE IF EXISTS cupon_lotes             CASCADE;
@@ -1048,6 +1049,50 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_pedido_pago
     AFTER INSERT OR UPDATE OF estado, pago_estado, total, metodo_pago, metodo_tipo, pago_referencia ON pedidos
     FOR EACH ROW EXECUTE FUNCTION sincronizar_pago();
+
+-- Avisos para el cliente dentro de su cuenta (campana de la tienda).
+CREATE TABLE IF NOT EXISTS notificaciones_cliente (
+    id          SERIAL PRIMARY KEY,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    categoria   VARCHAR(20) NOT NULL DEFAULT 'general',
+    titulo      VARCHAR(200) NOT NULL,
+    cuerpo      VARCHAR(400),
+    url         VARCHAR(300),
+    leida       BOOLEAN NOT NULL DEFAULT FALSE,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_notif_cliente ON notificaciones_cliente(cliente_id, id DESC);
+
+-- Cada cambio de estado de un pedido le avisa al cliente al momento, venga
+-- de donde venga (panel, ERP, PayPal, vencimiento), haya o no Gmail.
+CREATE OR REPLACE FUNCTION fn_notificar_pedido() RETURNS TRIGGER AS $f$
+DECLARE titulo TEXT; cuerpo TEXT; url TEXT;
+BEGIN
+    IF NEW.cliente_id IS NULL THEN RETURN NEW; END IF;
+    IF TG_OP = 'UPDATE' AND OLD.estado IS NOT DISTINCT FROM NEW.estado THEN RETURN NEW; END IF;
+    -- PayPal pendiente: el cliente está pagando en ese momento.
+    IF NEW.estado = 'pendiente' AND NEW.metodo_tipo = 'paypal' THEN RETURN NEW; END IF;
+    -- Lo regresó él mismo al carrito: no hace falta avisarle.
+    IF NEW.estado = 'cancelado' AND COALESCE(NEW.notas, '') ILIKE '%regresó al carrito%' THEN RETURN NEW; END IF;
+    titulo := CASE NEW.estado
+        WHEN 'pendiente'  THEN 'Tu pedido está apartado: falta el pago'
+        WHEN 'confirmado' THEN CASE WHEN TG_OP = 'UPDATE' AND OLD.estado = 'pendiente' THEN 'Recibimos tu pago' ELSE 'Recibimos tu pedido' END
+        WHEN 'procesando' THEN 'Estamos preparando tu pedido'
+        WHEN 'enviado'    THEN 'Tu pedido va en camino'
+        WHEN 'entregado'  THEN '¡Tu pedido fue entregado!'
+        WHEN 'cancelado'  THEN 'Tu pedido se canceló'
+        ELSE NULL END;
+    IF titulo IS NULL THEN RETURN NEW; END IF;
+    cuerpo := NEW.numero_orden || ' por $' || to_char(NEW.total, 'FM999,999,990.00');
+    url := CASE WHEN NEW.estado = 'pendiente' THEN '/recibo.html?id=' || NEW.id ELSE '/pedidos.html?pedido=' || NEW.id END;
+    INSERT INTO notificaciones_cliente (cliente_id, categoria, titulo, cuerpo, url) VALUES (NEW.cliente_id, 'pedido', titulo, cuerpo, url);
+    RETURN NEW;
+END;
+$f$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_notificar_pedido ON pedidos;
+CREATE TRIGGER trg_notificar_pedido AFTER INSERT OR UPDATE OF estado ON pedidos
+    FOR EACH ROW EXECUTE FUNCTION fn_notificar_pedido();
+
 
 -- =========================================================
 -- TRIGGER: mantener metricas_clientes al registrar interacción

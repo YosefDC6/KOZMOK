@@ -834,6 +834,35 @@ Seguridad de sesion  (Etapa 5, detalle en 4.16 y en SEGURIDAD.md)
      abrir imagenes de la red local); son public/img/kzk-correo.png,
      tibu-correo.png y tibu-pixel-correo.png (unos 20 KB en total).
 
+3.7e AVISOS EN TU CUENTA (campana de la tienda)
+   - Con sesion iniciada, junto al carrito hay una CAMPANA con el numero
+     de avisos sin leer. Al abrirla se ve la lista (los nuevos con punto):
+        * Pedidos: apartado esperando pago, pago recibido, en preparacion,
+          en camino, entregado y cancelado (llega al momento, venga el
+          cambio del panel, del ERP, de PayPal o del vencimiento, y aunque
+          no haya Gmail ni el cliente quiera correos).
+        * Soporte: respuestas, ticket resuelto o cerrado (con el motivo),
+          seguimiento aprobado o rechazado.
+        * Garantias, devoluciones, cupones nuevos, respuestas a resenas,
+          favoritos que bajaron de precio o volvieron, promociones y
+          avisos de seguridad (p. ej. contrasena cambiada).
+        * Monedero: recarga por transferencia acreditada o rechazada.
+     Clic en un aviso lo marca como leido y abre su pantalla. "Marcar
+     todas como leidas" limpia el contador. Lo que ya estas viendo (p. ej.
+     el ticket abierto) se marca como leido solo.
+   - Los avisos de codigos y enlaces de un solo uso (registro,
+     verificacion, recuperar contrasena) NO se guardan en la campana:
+     solo van por correo.
+   - EN TIEMPO REAL: la tienda pregunta cada 20 segundos (y al volver a la
+     pestana) si hay algo nuevo; con la pestana en segundo plano no
+     pregunta. Cuando llega algo sale un aviso emergente y, si estas en la
+     seccion de Mi cuenta a la que le toca (Soporte, Mis pedidos,
+     Devoluciones, Garantias, Cupones, Monedero...), la pagina se vuelve a
+     pintar sola, sin recargar. Si estas escribiendo un mensaje, tienes
+     fotos elegidas o una ventana abierta, no se interrumpe: sale la barra
+     "Hay novedades en esta seccion" con el boton "Actualizar".
+   - Los avisos se guardan 90 dias.
+
 3.8  MENSAJES EN PANTALLA
    - La tienda no usa ventanas del navegador. Todo aviso sale como un "toast"
      discreto (arriba) o como una ventana propia de confirmacion.
@@ -1341,7 +1370,13 @@ NAVEGACION RAPIDA EN EL PANEL
      tickets, reclamos, devoluciones, resenas y pagos; Ventas pedidos,
      pagos, recargas y devoluciones; Logistica pedidos, stock critico y
      devoluciones; el administrador todas.
-   - El servidor revisa cada minuto. Lo que ya existia antes de esta
+   - El servidor revisa cada 15 segundos y el panel pregunta cada 20 (y al
+     volver a la pestana), asi lo nuevo llega casi al momento. El ticket
+     que tienes abierto en Soporte se actualiza solo cuando el cliente
+     escribe (tu respuesta a medio escribir se conserva; si tienes fotos
+     elegidas sale "El cliente escribio algo nuevo" con el boton "Ver").
+     El Centro de soporte tambien actualiza su bandeja al llegar algo.
+   - Lo que ya existia antes de esta
      version no se avisa.
    - CAMPANA: lista de las ultimas 30 (las nuevas con punto). Clic en una
      la marca como leida y abre su pantalla (el ticket, el reclamo, la

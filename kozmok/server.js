@@ -289,7 +289,87 @@ async function clienteDeSesion(req) {
 // la envía en cuanto se confirma la transacción (si la transacción se
 // deshace, el correo nunca sale). Si falla, se reintenta hasta 3 veces.
 //   boton: { texto, url } -> botón grande en la versión HTML del correo.
-async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null, boton = null, bajaUrl = null, extraHtml = '' }) {
+// Avisos dentro de la cuenta del cliente (campana de la tienda).
+const SQL_NOTIFICACIONES_CLIENTE = `-- Avisos para el cliente dentro de su cuenta (campana de la tienda).
+CREATE TABLE IF NOT EXISTS notificaciones_cliente (
+    id          SERIAL PRIMARY KEY,
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    categoria   VARCHAR(20) NOT NULL DEFAULT 'general',
+    titulo      VARCHAR(200) NOT NULL,
+    cuerpo      VARCHAR(400),
+    url         VARCHAR(300),
+    leida       BOOLEAN NOT NULL DEFAULT FALSE,
+    fecha       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_notif_cliente ON notificaciones_cliente(cliente_id, id DESC);
+
+-- Cada cambio de estado de un pedido le avisa al cliente al momento, venga
+-- de donde venga (panel, ERP, PayPal, vencimiento), haya o no Gmail.
+CREATE OR REPLACE FUNCTION fn_notificar_pedido() RETURNS TRIGGER AS $f$
+DECLARE titulo TEXT; cuerpo TEXT; url TEXT;
+BEGIN
+    IF NEW.cliente_id IS NULL THEN RETURN NEW; END IF;
+    IF TG_OP = 'UPDATE' AND OLD.estado IS NOT DISTINCT FROM NEW.estado THEN RETURN NEW; END IF;
+    -- PayPal pendiente: el cliente está pagando en ese momento.
+    IF NEW.estado = 'pendiente' AND NEW.metodo_tipo = 'paypal' THEN RETURN NEW; END IF;
+    -- Lo regresó él mismo al carrito: no hace falta avisarle.
+    IF NEW.estado = 'cancelado' AND COALESCE(NEW.notas, '') ILIKE '%regresó al carrito%' THEN RETURN NEW; END IF;
+    titulo := CASE NEW.estado
+        WHEN 'pendiente'  THEN 'Tu pedido está apartado: falta el pago'
+        WHEN 'confirmado' THEN CASE WHEN TG_OP = 'UPDATE' AND OLD.estado = 'pendiente' THEN 'Recibimos tu pago' ELSE 'Recibimos tu pedido' END
+        WHEN 'procesando' THEN 'Estamos preparando tu pedido'
+        WHEN 'enviado'    THEN 'Tu pedido va en camino'
+        WHEN 'entregado'  THEN '¡Tu pedido fue entregado!'
+        WHEN 'cancelado'  THEN 'Tu pedido se canceló'
+        ELSE NULL END;
+    IF titulo IS NULL THEN RETURN NEW; END IF;
+    cuerpo := NEW.numero_orden || ' por $' || to_char(NEW.total, 'FM999,999,990.00');
+    url := CASE WHEN NEW.estado = 'pendiente' THEN '/recibo.html?id=' || NEW.id ELSE '/pedidos.html?pedido=' || NEW.id END;
+    INSERT INTO notificaciones_cliente (cliente_id, categoria, titulo, cuerpo, url) VALUES (NEW.cliente_id, 'pedido', titulo, cuerpo, url);
+    RETURN NEW;
+END;
+$f$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_notificar_pedido ON pedidos;
+CREATE TRIGGER trg_notificar_pedido AFTER INSERT OR UPDATE OF estado ON pedidos
+    FOR EACH ROW EXECUTE FUNCTION fn_notificar_pedido();
+`;
+async function notificarCliente(db, clienteId, { categoria = 'general', titulo, cuerpo = '', url = null }) {
+    if (!clienteId || !titulo) return;
+    await db.query('INSERT INTO notificaciones_cliente (cliente_id, categoria, titulo, cuerpo, url) VALUES ($1,$2,$3,$4,$5)',
+        [clienteId, String(categoria).slice(0, 20), String(titulo).slice(0, 200), String(cuerpo || '').slice(0, 400) || null, url ? String(url).slice(0, 300) : null]);
+}
+// Qué correos al cliente también son aviso en su cuenta. Los de códigos y
+// enlaces de un solo uso (registro, verificación, recuperar contraseña)
+// no: un aviso no debe guardar ni repetir un enlace con token.
+const AVISO_DE_CORREO = { soporte: 'soporte', garantia: 'garantia', cupon: 'cupon', resena: 'resena', crm: 'mensaje',
+    pedido: 'pedido', favoritos: 'favoritos', boletin: 'promo', seguridad: 'seguridad' };
+const PAGINA_DE_AVISO = { soporte: '/soporte.html', garantia: '/garantias.html', cupon: '/cupones.html', resena: '/resenas.html', mensaje: '/perfil.html',
+    pedido: '/pedidos.html', favoritos: '/favoritos.html', promo: '/index.html?promocion=1', seguridad: '/seguridad.html' };
+function avisoDeCorreo({ asunto, cuerpo, tipo, boton }) {
+    const categoria = AVISO_DE_CORREO[tipo];
+    if (!categoria) return null;
+    // Primer párrafo después del saludo, sin enlaces.
+    const parrafos = String(cuerpo || '').split(/\n{2,}/).map((x) => x.trim()).filter((x) => x && !/^(Hola|Buen[ao]s?)\b[^\n]{0,40}[:,!]$/.test(x));
+    let resumen = (parrafos[0] || '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+    if (resumen.endsWith(':') && parrafos[1]) resumen += ' ' + parrafos[1].split('\n')[0].replace(/^- /, '');
+    resumen = resumen.slice(0, 240);
+    // Solo un enlace interno y sin tokens (nada de /baja, restablecer, t=…).
+    let url = null;
+    try {
+        if (boton && boton.url) {
+            const u = new URL(boton.url, 'http://x');
+            const ruta = u.pathname + u.search;
+            if (!/token|[?&]t=|\/baja|restablecer|activar|recuperar|verificar|\/kz-|\/admin/i.test(ruta) && ruta.startsWith('/')) url = ruta;
+        }
+    } catch { /* sin enlace */ }
+    return { categoria, titulo: asunto, cuerpo: resumen, url: url || PAGINA_DE_AVISO[categoria] };
+}
+async function enviarCorreo(db, { para, asunto, cuerpo, tipo = 'general', cliente_id = null, pedido_id = null, boton = null, bajaUrl = null, extraHtml = '', notificar = true }) {
+    // El aviso en la cuenta va aunque no haya correo o Gmail (misma transacción).
+    if (cliente_id && notificar) {
+        const aviso = avisoDeCorreo({ asunto, cuerpo, tipo, boton });
+        if (aviso) await notificarCliente(db, cliente_id, aviso);
+    }
     if (!para) return;
     if (bajaUrl) cuerpo += `\n\n---\nRecibes este correo porque lo activaste en tus preferencias de Kozmok. Para dejar de recibirlo: ${bajaUrl}`;
     const html = htmlCorreo({ asunto, cuerpo: bajaUrl ? cuerpo.split('\n\n---\n')[0] : cuerpo, boton, bajaUrl, extraHtml });
@@ -2426,7 +2506,7 @@ async function avisarEstadoPedidos() {
         }
         const det = await detallePedidoCorreo(p.id);
         await enviarCorreo(pool, {
-            para: p.correo, tipo: 'pedido', cliente_id: p.cliente_id, pedido_id: p.id,
+            para: p.correo, tipo: 'pedido', cliente_id: p.cliente_id, pedido_id: p.id, notificar: false,   // el trigger ya avisó en la cuenta
             asunto: `${titulo} · ${p.numero_orden}`,
             cuerpo: `Hola ${p.nombre.split(' ')[0]}:\n\n${titulo}: ${p.numero_orden} por ${precioTxt(p.total)}.\n${extra}\n\n${det.texto}\n\n¿Algo no cuadra? Responde este correo o escríbenos desde Soporte en tu cuenta.`,
             extraHtml: det.html,
@@ -2451,6 +2531,7 @@ const avisarPronto = () => setTimeout(() => enviarAvisos().catch(() => {}), 3000
 
 async function tareasPeriodicas() {
     await pool.query("DELETE FROM qr_login WHERE creado < CURRENT_TIMESTAMP - INTERVAL '1 day'").catch(() => null);
+    await pool.query("DELETE FROM notificaciones_cliente WHERE fecha < CURRENT_TIMESTAMP - INTERVAL '90 days'").catch(() => null);
     // Recargas con PayPal que se iniciaron y no se pagaron en 3 horas
     await pool.query(`UPDATE pagos_paypal SET estado = 'vencida' WHERE tipo = 'recarga' AND estado = 'creada' AND fecha < CURRENT_TIMESTAMP - INTERVAL '3 hours'`)
         .catch((e) => console.error('PayPal vencidas:', e.message));
@@ -3429,6 +3510,29 @@ app.get('/api/pedidos/:id/recibo', asyncRoute(async (req, res) => {
 // PERFIL DE CLIENTE (tienda) — cada quien solo ve/edita lo suyo
 // =========================================================
 app.use('/api/clientes/:id', requireCliente, mismoCliente);
+
+// ---------------------------------------------------------
+// Avisos de la cuenta (campana de la tienda). La tienda pregunta cada
+// ~20 s con ?desde=<último id>; si hay algo nuevo, avisa y actualiza la
+// página que está abierta.
+// ---------------------------------------------------------
+app.get('/api/notificaciones', requireCliente, asyncRoute(async (req, res) => {
+    const desde = Number(req.query.desde) || 0;
+    const [items, nl] = await Promise.all([
+        pool.query(`SELECT id, categoria, titulo, cuerpo, url, leida, fecha FROM notificaciones_cliente
+                    WHERE cliente_id = $1 ${desde ? 'AND id > $2' : ''} ORDER BY id DESC LIMIT 30`, desde ? [req.cliente.id, desde] : [req.cliente.id]),
+        pool.query('SELECT COUNT(*)::int AS n, COALESCE(MAX(id), 0)::int AS ultimo FROM notificaciones_cliente WHERE cliente_id = $1 AND NOT leida', [req.cliente.id]),
+    ]);
+    const ultimo = (await pool.query('SELECT COALESCE(MAX(id), 0)::int AS u FROM notificaciones_cliente WHERE cliente_id = $1', [req.cliente.id])).rows[0].u;
+    res.set('Cache-Control', 'no-store');
+    res.json({ no_leidas: nl.rows[0].n, ultimo_id: ultimo, items: items.rows });
+}));
+app.post('/api/notificaciones/leer', requireCliente, asyncRoute(async (req, res) => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter((x) => Number.isInteger(x) && x > 0).slice(0, 100) : [];
+    if (req.body.todas) await pool.query('UPDATE notificaciones_cliente SET leida = TRUE WHERE cliente_id = $1 AND NOT leida', [req.cliente.id]);
+    else if (ids.length) await pool.query(`UPDATE notificaciones_cliente SET leida = TRUE WHERE cliente_id = $1 AND id = ANY($2::int[])`, [req.cliente.id, ids]);
+    res.json({ ok: true });
+}));
 
 // ---------------------------------------------------------
 // Configurar la verificación en dos pasos (la propia cuenta).
@@ -9015,6 +9119,9 @@ app.put('/api/admin/monederos/movimientos/:id', asyncRoute(async (req, res) => {
             entidad: 'monedero', entidad_id: m.cliente_id, antes: { saldo: Number(m.saldo), movimiento: mov.id, solicitado_por: mov.usuario_id },
             despues: { monto: Number(mov.monto), ...(accion === 'confirmar' ? { saldo: redondear(Number(m.saldo) + Number(mov.monto)) } : {}), ...(comprobante ? { comprobante } : {}) },
             motivo: mov.concepto });
+        if (!esAjuste) await notificarCliente(client, m.cliente_id, accion === 'rechazar'
+            ? { categoria: 'monedero', titulo: 'No pudimos acreditar tu recarga', cuerpo: `No encontramos la transferencia de ${precioTxt(mov.monto)}. Si ya la hiciste, escríbenos desde Soporte.`, url: '/monedero.html' }
+            : { categoria: 'monedero', titulo: 'Tu recarga ya está en tu monedero', cuerpo: `Acreditamos ${precioTxt(mov.monto)}. Tu saldo es ${precioTxt(Number(m.saldo) + Number(mov.monto))}.`, url: '/monedero.html' });
         await client.query('COMMIT');
         res.json({ message: esAjuste
             ? (accion === 'rechazar' ? 'Ajuste rechazado' : 'Ajuste aprobado y aplicado')
@@ -9714,6 +9821,8 @@ async function migrarEsquema() {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         fecha_resuelta TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_seg_sol_ticket ON seguimiento_solicitudes(ticket_id)');
+    // Avisos del cliente (campana de la tienda) y trigger de estado de pedidos.
+    await pool.query(SQL_NOTIFICACIONES_CLIENTE);
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');
     // Errores del servidor con el folio que vio el usuario.
     await pool.query(`CREATE TABLE IF NOT EXISTS errores_servidor (
@@ -9802,6 +9911,14 @@ app.listen(PORT, HOST, async () => {
         }
         await tareasPeriodicas();
         setInterval(tareasPeriodicas, 60 * 1000);
+        // Avisos del panel más seguido (cada 15 s): solo busca registros
+        // nuevos, así un mensaje de un cliente llega casi al momento.
+        let revisandoNotif = false;
+        setInterval(async () => {
+            if (revisandoNotif) return;
+            revisandoNotif = true;
+            try { await notif.revisar(); } catch { /* se reintenta */ } finally { revisandoNotif = false; }
+        }, 15 * 1000);
     } catch (err) {
         if (/relation .* does not exist/i.test(err.message)) {
             console.error(`Base de datos: conectada a ${dbConfig.database}, pero SIN TABLAS. Carga db/database.sql.`);
