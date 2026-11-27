@@ -12,7 +12,8 @@
     "prueba:seguridad": "node pruebas-seguridad/todas.js",
     "desbloquear": "node pruebas-seguridad/desbloquear.js",
     "prueba:correo": "node prueba-correo.js",
-    "limpiar:ejemplo": "node limpiar-ejemplo.js"
+    "limpiar:ejemplo": "node limpiar-ejemplo.js",
+    "certificado": "node certificado.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

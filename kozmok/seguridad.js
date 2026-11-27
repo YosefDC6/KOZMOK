@@ -211,7 +211,10 @@ function cabeceras(req, res, next) {
     // allow-popups: la ventana de pago de PayPal necesita avisarle a la tienda
     // cuando el cliente aprueba (con 'same-origin' se rompe esa comunicación).
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    if (req.secure || CONFIG.cookieSegura) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // HSTS obliga al navegador a usar https en ese nombre por un año: solo en
+    // producción (COOKIE_SEGURA=1 o HSTS=1). En la red local no, para poder
+    // repetir la demostración http/https y no amarrar "localhost".
+    if (CONFIG.cookieSegura || process.env.HSTS === '1') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
     next();
 }

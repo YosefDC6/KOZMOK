@@ -57,6 +57,26 @@ Direcciones
    - Tienda (clientes):     http://localhost/   (tambien http://localhost:3000/)
    - Panel interno:         http://localhost/<ruta-del-panel>/login.html
 
+Conexion cifrada (HTTPS)
+   - Sin HTTPS todo viaja en texto plano por la red (contrasenas y cookies
+     se pueden leer con Wireshark). Para cifrarlo:
+        1. Instala mkcert (una vez):  winget install FiloSottile.mkcert
+           y abre otra ventana de PowerShell.
+        2. En kozmok/:  npm run certificado   (si Windows pregunta si
+           confias en la autoridad, di que si).
+        3. Reinicia (npm start): la consola dice "HTTPS: activo" y las
+           direcciones empiezan con https://. Las paginas pedidas por http
+           se mandan solas a https.
+   - Celulares de prueba: abre una vez http://kozmok.local/kozmok-ca.crt e
+     instala el certificado (Android: Ajustes > Seguridad > Instalar un
+     certificado > Certificado de CA; iPhone: instalar el perfil y activarlo
+     en Informacion > Confianza de certificados). Sin eso abren con aviso
+     de "no seguro".
+   - Si cambias de red, vuelve a correr npm run certificado (kozmok.local
+     sigue funcionando sin hacerlo).
+   - HTTPS=no en el .env lo apaga (para la demostracion de "antes", ver
+     SEGURIDAD.md seccion 7). Los archivos de certs/ no se suben a GitHub.
+
 Direccion sin puerto (puerto 80)
    - Ademas del 3000, el servidor escucha en el puerto 80, el normal de las
      paginas web: el navegador no lo muestra, asi que la direccion queda

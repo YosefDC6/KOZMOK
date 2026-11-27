@@ -34,8 +34,25 @@ const PORT = process.env.PORT || 3000;
 // funcionando en PORT. ESTADO_80.activo dice si se logró abrir.
 const PUERTO_WEB = /^(no|0|off|false)$/i.test(String(process.env.PUERTO_WEB || '').trim()) ? null : Number(process.env.PUERTO_WEB) || 80;
 const ESTADO_80 = { activo: false };
+// HTTPS (opcional): si existen certs/kozmok.pem y certs/kozmok-key.pem
+// (los crea `npm run certificado` con mkcert) se abre también el 443 y las
+// páginas pedidas por http se mandan a https. HTTPS=no lo apaga (sirve
+// para la demostración "antes": ver la contraseña viajar en texto plano).
+const HTTPS_CFG = {
+    apagado: /^(no|0|off|false)$/i.test(String(process.env.HTTPS || '').trim()),
+    puerto: Number(process.env.PUERTO_HTTPS) || 443,
+    cert: process.env.HTTPS_CERT || path.join(__dirname, 'certs', 'kozmok.pem'),
+    key: process.env.HTTPS_KEY || path.join(__dirname, 'certs', 'kozmok-key.pem'),
+};
+const ESTADO_HTTPS = { activo: false, puerto: null };
 // ":3000" o nada (si el 80 está abierto) para armar direcciones.
-const sufijoPuerto = () => (ESTADO_80.activo && PUERTO_WEB === 80 ? '' : ESTADO_80.activo ? `:${PUERTO_WEB}` : `:${PORT}`);
+const sufijoPuerto = () => {
+    if (ESTADO_HTTPS.activo) return ESTADO_HTTPS.puerto === 443 ? '' : `:${ESTADO_HTTPS.puerto}`;
+    return ESTADO_80.activo && PUERTO_WEB === 80 ? '' : ESTADO_80.activo ? `:${PUERTO_WEB}` : `:${PORT}`;
+};
+// Esquema y puerto de las direcciones que se muestran (consola, correos, QR).
+const protocolo = () => (ESTADO_HTTPS.activo ? 'https' : 'http');
+const origenDe = (host) => `${protocolo()}://${host}${sufijoPuerto()}`;
 // 0.0.0.0 = acepta conexiones de otros equipos de la misma red (celulares de
 // prueba). Con HOST=127.0.0.1 en el .env solo se abre desde esta computadora.
 const HOST = process.env.HOST || '0.0.0.0';
@@ -111,13 +128,24 @@ const panel = require('./panel.js')({ dirPublico: path.join(__dirname, 'public')
 // HTML), nunca la API: así no se rompe nada que esté a medio hacer. Sirve
 // para que todo quede en una sola dirección: el navegador guarda carrito
 // sin sesión, cuenta recordada y tema por dirección (con todo y puerto).
+// Con HTTPS activo, cualquier página pedida por http se manda a https.
 app.use((req, res, next) => {
-    if (!ESTADO_80.activo || /^(no|0|off|false)$/i.test(String(process.env.REDIRIGIR_PUERTO || ''))) return next();
-    if (req.method !== 'GET' || req.path.startsWith('/api/') || !/text\/html/.test(String(req.headers.accept || ''))) return next();
-    if (Number(req.socket.localPort) !== Number(PORT)) return next();
-    const m = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+):(\d+)$/i.exec(String(req.headers.host || ''));
-    if (!m || !hostDeConfianza(req.headers.host)) return next();
-    res.redirect(302, `http://${m[1]}${sufijoPuerto()}${req.originalUrl}`);
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path === '/kozmok-ca.crt' || !/text\/html/.test(String(req.headers.accept || ''))) return next();
+    if (!hostDeConfianza(req.headers.host)) return next();
+    const nombre = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)/i.exec(String(req.headers.host))[1];
+    if (ESTADO_HTTPS.activo && !req.secure) return res.redirect(302, `${origenDe(nombre)}${req.originalUrl}`);
+    if (!ESTADO_HTTPS.activo && ESTADO_80.activo && !/^(no|0|off|false)$/i.test(String(process.env.REDIRIGIR_PUERTO || ''))
+        && Number(req.socket.localPort) === Number(PORT) && /:\d+$/.test(req.headers.host)) {
+        return res.redirect(302, `${origenDe(nombre)}${req.originalUrl}`);
+    }
+    next();
+});
+// El certificado raíz de la tienda (solo la parte pública, nunca la llave)
+// para instalarlo en los celulares de prueba. Lo deja `npm run certificado`.
+app.get('/kozmok-ca.crt', (req, res) => {
+    const f = path.join(__dirname, 'certs', 'kozmok-ca.crt');
+    if (!require('fs').existsSync(f)) return res.status(404).send('No hay certificado: corre npm run certificado');
+    res.type('application/x-x509-ca-cert').sendFile(f);
 });
 app.use(panel.middleware);
 app.use(panel.json);
@@ -621,7 +649,7 @@ function urlPublica(req) {
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
     if (hostDeConfianza(req.headers.host)) return `${req.protocol || 'http'}://${req.headers.host}`;
-    return `http://localhost${sufijoPuerto()}`;
+    return origenDe('localhost');
 }
 
 // =========================================================
@@ -1091,9 +1119,9 @@ function baseParaCelular(req) {
     }
     const host = String(req.hostname || '').toLowerCase();
     if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
-        if (MDNS_NOMBRE) return `http://${MDNS_NOMBRE}${sufijoPuerto()}`;
+        if (MDNS_NOMBRE) return origenDe(MDNS_NOMBRE);
         const ip = ipsDeRed()[0];
-        if (ip) return `http://${ip.ip}${sufijoPuerto()}`;
+        if (ip) return origenDe(ip.ip);
     }
     return urlPublica(req);
 }
@@ -2318,7 +2346,7 @@ function urlBase(req0) {
     if (req0) return urlPublica(req0);
     const base = (process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s/]+/.test(base)) return base;
-    return `http://${MDNS_NOMBRE || 'localhost'}${sufijoPuerto()}`;
+    return origenDe(MDNS_NOMBRE || 'localhost');
 }
 const precioTxt = (n) => { const v = Number(n); return '$' + v.toLocaleString('es-MX', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
 const escH = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -9890,14 +9918,36 @@ function abrirPuertoWeb() {
     });
 }
 
+// HTTPS con el certificado de certs/ (si existe). Si el 443 está ocupado
+// (VMware, Skype, IIS…) prueba el 3443.
+function abrirHttps() {
+    return new Promise((resolve) => {
+        if (HTTPS_CFG.apagado) return resolve('HTTPS=no en el .env');
+        const fs = require('fs');
+        if (!fs.existsSync(HTTPS_CFG.cert) || !fs.existsSync(HTTPS_CFG.key)) return resolve(null);   // sin certificado: solo http, sin aviso
+        let opciones;
+        try { opciones = { cert: fs.readFileSync(HTTPS_CFG.cert), key: fs.readFileSync(HTTPS_CFG.key) }; }
+        catch (e) { return resolve(`no se pudo leer el certificado (${e.message})`); }
+        const intentar = (puerto, alterno) => {
+            const srv = require('https').createServer(opciones, app);
+            srv.once('error', (e) => {
+                if (alterno && (e.code === 'EADDRINUSE' || e.code === 'EACCES')) return intentar(alterno, null);
+                resolve(e.code === 'EADDRINUSE' ? `el puerto ${puerto} está ocupado` : e.message);
+            });
+            srv.listen(puerto, HOST, () => { ESTADO_HTTPS.activo = true; ESTADO_HTTPS.puerto = puerto; resolve(null); });
+        };
+        intentar(HTTPS_CFG.puerto, HTTPS_CFG.puerto === 443 ? 3443 : null);
+    });
+}
+
 app.listen(PORT, HOST, async () => {
     const fallo80 = await abrirPuertoWeb();
+    const falloHttps = await abrirHttps();
     const P = sufijoPuerto();
-    console.log(ESTADO_80.activo
-        ? `Kozmok escuchando en los puertos ${PUERTO_WEB} y ${PORT} (las direcciones van sin puerto):`
-        : `Kozmok escuchando en el puerto ${PORT}:`);
-    console.log(`   Tienda:          http://localhost${P}`);
-    console.log(`   Panel de admin:  http://localhost${P}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
+    const puertos = [ESTADO_HTTPS.activo ? `${ESTADO_HTTPS.puerto} (HTTPS)` : null, ESTADO_80.activo ? PUERTO_WEB : null, PORT].filter(Boolean);
+    console.log(`Kozmok escuchando en ${puertos.length > 1 ? 'los puertos ' + puertos.join(', ') : 'el puerto ' + PORT}${ESTADO_HTTPS.activo ? ' — conexión cifrada: las páginas por http se mandan a https' : ''}:`);
+    console.log(`   Tienda:          ${origenDe('localhost')}`);
+    console.log(`   Panel de admin:  ${origenDe('localhost')}${panel.prefijo}login.html${panel.oculto ? '   (dirección secreta: no la compartas)' : ''}`);
     if (HOST === '0.0.0.0' || HOST === '::') {
         const mostrarRed = (titulo) => {
             const ips = ipsDeRed();
@@ -9905,13 +9955,13 @@ app.listen(PORT, HOST, async () => {
             console.log(titulo);
             if (MDNS_NOMBRE) {
                 console.log(`   Con nombre fijo (no cambia aunque cambie la IP):`);
-                console.log(`   Tienda:          http://${MDNS_NOMBRE}${sufijoPuerto()}`);
-                console.log(`   Panel de admin:  http://${MDNS_NOMBRE}${sufijoPuerto()}${panel.prefijo}login.html`);
+                console.log(`   Tienda:          ${origenDe(MDNS_NOMBRE)}`);
+                console.log(`   Panel de admin:  ${origenDe(MDNS_NOMBRE)}${panel.prefijo}login.html`);
                 console.log('   Por IP (si algún celular no abre el nombre):');
             }
             ips.forEach((x) => {
-                console.log(`   Tienda:          http://${x.ip}${sufijoPuerto()}   (${x.nombre})`);
-                console.log(`   Panel de admin:  http://${x.ip}${sufijoPuerto()}${panel.prefijo}login.html`);
+                console.log(`   Tienda:          ${origenDe(x.ip)}   (${x.nombre})`);
+                console.log(`   Panel de admin:  ${origenDe(x.ip)}${panel.prefijo}login.html`);
             });
         };
         mostrarRed('Desde un celular en la misma red Wi-Fi abre:');
@@ -9927,6 +9977,9 @@ app.listen(PORT, HOST, async () => {
             mostrarRed('Direcciones nuevas:');
         }, 10000).unref();
     } else console.log(`Solo disponible en ${HOST} (HOST en .env).`);
+    if (falloHttps) console.log(`HTTPS: no se abrió porque ${falloHttps}. La tienda sigue por http.`);
+    else if (!ESTADO_HTTPS.activo) console.log('HTTPS: apagado (no hay certificado). Para cifrar la conexión: npm run certificado y reinicia.');
+    else console.log(`HTTPS: activo. Celulares: instala una vez el certificado desde http://${MDNS_NOMBRE || (ipsDeRed()[0] || {}).ip || 'localhost'}${ESTADO_80.activo && PUERTO_WEB === 80 ? '' : ':' + PORT}/kozmok-ca.crt (ver SEGURIDAD.md).`);
     if (fallo80) console.log(`Puerto ${PUERTO_WEB}: no se abrió porque ${fallo80}. La tienda sigue en el puerto ${PORT}. (PUERTO_WEB=no en el .env quita este intento.)`);
     // Ping a la base para dejar claro en el arranque si conectó o no.
     try {

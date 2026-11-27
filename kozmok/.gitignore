@@ -4,3 +4,4 @@ node_modules/
 .pruebas-token
 .panel-ruta
 .host-celular
+certs/

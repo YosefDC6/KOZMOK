@@ -278,6 +278,26 @@ curl -s -X POST localhost:3000/api/auth/qr -H 'Content-Type: application/json' -
 curl -s -X POST localhost:3000/api/auth/qr/estado -H 'Content-Type: application/json' -d '{"codigo":"…","secreto":"otro"}'   # 404
 ```
 
+## 7. Espiar la red (sniffing) y HTTPS
+
+**Ataque.** Con HTTP todo viaja en texto plano: cualquiera en el camino (otra máquina en un Wi-Fi público, el router, quien controle la red) puede leer la contraseña del login, la cookie de sesión y los datos de la compra con un programa como **Wireshark**.
+
+**Defensa.** HTTPS (TLS): la conexión va cifrada y el navegador comprueba que el certificado sea del servidor correcto.
+- `npm run certificado` usa **mkcert** para crear una autoridad local (se instala en esta computadora) y un certificado para `localhost`, `kozmok.local` y las IPs actuales (`certs/`, no se sube a GitHub).
+- Con el certificado, el servidor abre también el **443** (si está ocupado, el 3443) y **las páginas pedidas por http se mandan a https**. La cookie de sesión sale con `Secure` (nunca viaja por http).
+- La API no se redirige (para no romper nada a medio hacer ni las pruebas de ataque por http).
+- Celulares: instalar una vez `http://kozmok.local/kozmok-ca.crt` (la parte pública de la autoridad; la llave no sale de la computadora). Sin instalarlo abren con el aviso de "no seguro".
+- HSTS solo en producción (`COOKIE_SEGURA=1` o `HSTS=1`): en la red local amarraría `localhost`/`kozmok.local` a https por un año y no se podría repetir la demostración.
+
+**Demostración (antes y después).**
+1. Instala [Wireshark](https://www.wireshark.org/) en la computadora del servidor.
+2. **Antes:** en el `.env` pon `HTTPS=no` y reinicia. En Wireshark captura la interfaz **Wi-Fi** con el filtro `http.request.method == "POST"`.
+3. Desde un **celular** (misma red) abre `http://<IP>/login.html` e inicia sesión. En Wireshark aparece `POST /api/auth/login`: clic derecho → *Follow → HTTP Stream* y se lee el correo y la **contraseña** en texto plano, y la cookie `kz_sesion` en las respuestas.
+4. **Después:** quita `HTTPS=no` (o pon `HTTPS=si`) y reinicia; la consola dice "HTTPS: activo". Repite el login desde el celular (ya con el certificado instalado). En Wireshark, con el filtro `tls`, solo se ve *Application Data* cifrado; `http.request` ya no muestra nada.
+5. Si repites la demo en el mismo navegador: después de usar https, borra las cookies del sitio antes de volver a http (el navegador no deja que http reemplace una cookie `Secure`).
+
+> En la computadora misma se puede capturar la interfaz *Loopback* (Npcap) entrando por `http://localhost`, pero desde el celular es más claro: es lo que vería alguien en la red.
+
 ## Dónde está cada cosa
 
 | Archivo | Qué contiene |
@@ -295,7 +315,7 @@ curl -s -X POST localhost:3000/api/auth/qr/estado -H 'Content-Type: application/
 
 ## Limitaciones honestas
 
-- El proyecto corre en HTTP local; en producción debe ir con HTTPS (`COOKIE_SEGURA=1` agrega `Secure` y HSTS).
+- HTTPS local usa una autoridad propia (mkcert): sirve para la red de la clase, no para internet. En producción el certificado lo da una autoridad pública (p. ej. Let's Encrypt) y se activa `COOKIE_SEGURA=1` (cookie `Secure` siempre y HSTS).
 - La dirección secreta del panel es una capa extra (oculta la puerta), no la cerradura: la protección real siguen siendo la contraseña, la verificación en dos pasos y los permisos por rol en el servidor. Los scripts de `/admin/js/` siguen siendo públicos porque la página de acceso los necesita antes de iniciar sesión; no traen datos ni la dirección secreta.
 - El límite por minuto vive en memoria: se reinicia con el servidor. Los bloqueos de cuenta e IP sí quedan en la base.
 - Un atacante puede bloquear a propósito la cuenta de alguien fallando 5 veces (es el costo del bloqueo); por eso dura solo 15 minutos y la persona puede entrar con “¿Olvidaste tu contraseña?”, que además levanta el bloqueo.
