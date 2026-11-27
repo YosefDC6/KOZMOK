@@ -20,6 +20,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------
 -- LIMPIEZA (para poder re-ejecutar el archivo)
 -- ---------------------------------------------------------
+DROP TABLE IF EXISTS seguimiento_solicitudes CASCADE;
 DROP TABLE IF EXISTS ticket_adjuntos         CASCADE;
 DROP TABLE IF EXISTS cupones                 CASCADE;
 DROP TABLE IF EXISTS cupon_lotes             CASCADE;
@@ -694,6 +695,8 @@ CREATE TABLE tickets (
     navegador           VARCHAR(80),     -- del User-Agent de quien lo abrió
     dispositivo         VARCHAR(60),
     ticket_origen_id    INTEGER REFERENCES tickets(id) ON DELETE SET NULL,  -- seguimiento de otro ticket
+    confirmacion        VARCHAR(12) CHECK (confirmacion IN ('resuelto','no_resuelto')),  -- "¿Quedó resuelto?"
+    fecha_confirmacion  TIMESTAMP,
     fecha_creacion      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -723,6 +726,24 @@ CREATE TABLE errores_servidor (
 );
 CREATE INDEX idx_errores_folio ON errores_servidor(folio);
 CREATE INDEX idx_errores_fecha ON errores_servidor(fecha DESC);
+
+-- Solicitudes de seguimiento: el cliente pide seguimiento de un ticket
+-- resuelto o cerrado y Soporte lo aprueba (crea el ticket ligado) o lo
+-- rechaza con un motivo.
+CREATE TABLE seguimiento_solicitudes (
+    id              SERIAL PRIMARY KEY,
+    ticket_id       INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    cliente_id      INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+    mensaje_id      INTEGER REFERENCES ticket_mensajes(id) ON DELETE SET NULL,
+    mensaje         TEXT NOT NULL,
+    estado          VARCHAR(10) NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','aprobada','rechazada')),
+    motivo          TEXT,
+    usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    ticket_nuevo_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+    fecha           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_resuelta  TIMESTAMP
+);
+CREATE INDEX idx_seg_sol_ticket ON seguimiento_solicitudes(ticket_id);
 
 CREATE TABLE ticket_adjuntos (
     id          SERIAL PRIMARY KEY,

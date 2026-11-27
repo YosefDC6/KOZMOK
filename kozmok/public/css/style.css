@@ -3317,3 +3317,39 @@ a.cs-kpi:hover { border-color: var(--accent); }
 .ev-lista { margin: 0 0 6px; padding-left: 18px; font-size: .82rem; }
 .ev-ua { font-size: .74rem; color: var(--text-muted); word-break: break-all; }
 .ev-ua code { font-size: .72rem; }
+/* Ticket resuelto/cerrado: "¿Quedó resuelto?" y solicitud de seguimiento */
+.tk-cierre { margin-top: 16px; display: grid; gap: 12px; }
+.tk-cierre-estado { margin: 0; color: var(--text-muted); font-size: .9rem; }
+.tk-cierre-pregunta { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border: 2px solid var(--accent); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); }
+.tk-cierre-pregunta strong { font-size: 1rem; }
+.tk-cierre-pregunta p { margin: 3px 0 0; font-size: .84rem; color: var(--text-muted); }
+.tk-cierre-botones { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-cierre-sol { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg-panel-2); }
+.tk-cierre-sol svg { flex: 0 0 auto; margin-top: 2px; }
+.tk-cierre-sol p { margin: 3px 0 8px; font-size: .86rem; color: var(--text-muted); }
+.tk-cierre-sol p:last-child { margin-bottom: 0; }
+.tk-cierre-sol.espera svg { color: var(--warning, #f59e0b); }
+.tk-cierre-sol.ok { border-color: color-mix(in srgb, var(--success, #22c55e) 50%, transparent); }
+.tk-cierre-sol.ok svg { color: var(--success, #22c55e); }
+.tk-cierre-sol.no { border-color: color-mix(in srgb, var(--danger, #ef4444) 50%, transparent); }
+.tk-cierre-sol.no svg { color: var(--danger, #ef4444); }
+.tk-cierre-acciones { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.tk-cierre-otro { font-size: .84rem; }
+.tk-cierre-nota { margin: 0; font-size: .84rem; color: var(--text-muted); }
+.tk-seg-explica { margin: -4px 0 12px; font-size: .86rem; color: var(--text-muted); }
+/* Panel: solicitud de seguimiento pendiente */
+.tk-sol { border: 2px solid var(--warning, #f59e0b); margin-bottom: 14px; display: grid; gap: 10px; }
+.tk-sol-head { display: flex; gap: 10px; align-items: flex-start; }
+.tk-sol-head svg { color: var(--warning, #f59e0b); flex: 0 0 auto; margin-top: 2px; }
+.tk-sol-head div { display: grid; gap: 2px; }
+.tk-sol-head span { font-size: .78rem; color: var(--text-muted); }
+.tk-sol-msg { margin: 0; padding: 10px 14px; border-left: 3px solid var(--warning, #f59e0b); background: var(--bg-panel-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; white-space: pre-wrap; font-size: .9rem; }
+.tk-sol-ayuda { margin: 0; font-size: .78rem; color: var(--text-muted); }
+.tk-sol .field { margin: 0; }
+.tk-sol-botones { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-sol-hist { margin-top: 10px; display: grid; gap: 6px; font-size: .78rem; }
+.tk-sol-h { display: grid; gap: 2px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--bg-panel-2); border-left: 3px solid var(--line); }
+.tk-sol-h.aprobada { border-left-color: var(--success, #22c55e); }
+.tk-sol-h.rechazada { border-left-color: var(--danger, #ef4444); }
+.tk-sol-h span { color: var(--text-muted); }
+.tk-sol-h em { font-style: normal; }

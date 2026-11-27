@@ -3694,7 +3694,7 @@ function navegadorDeTicket(ua) {
 // Lo que el cliente puede ver de su ticket: nunca la prioridad interna ni a
 // quién se asignó. (Rama de Gael, TICKET_PUBLICO.)
 const TICKET_PUBLICO = `t.id, t.folio, t.cliente_id, t.asunto, t.categoria, t.estado, t.pedido_id, t.cupon_id,
-    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion, t.ticket_origen_id,
+    t.mensaje, t.respuesta, t.fecha_respuesta, t.fecha_creacion, t.fecha_actualizacion, t.ticket_origen_id, t.confirmacion, t.fecha_confirmacion,
     (SELECT o.folio FROM tickets o WHERE o.id = t.ticket_origen_id) AS origen_folio`;
 const MSG_DATO_SENSIBLE = 'Por seguridad, nunca le pedimos al cliente contraseñas, el número completo de la tarjeta, el CVV, el NIP ni códigos de verificación. Reescribe la respuesta sin pedir esos datos.';
 
@@ -3793,24 +3793,12 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
     if (!asunto || !descripcion) return res.status(400).json({ message: 'Asunto y descripción son requeridos' });
     let fotos;
     try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
-    // Seguimiento de un ticket resuelto o cerrado: hereda asunto, categoría,
-    // pedido y cupón del original (no se eligen otra vez) y queda ligado.
-    // Uno abierto a la vez por ticket: si ya hay, se regresa ese.
-    let origen = null;
-    if (req.body.seguimiento_de) {
-        origen = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [Number(req.body.seguimiento_de) || 0, req.params.id])).rows[0];
-        if (!origen) return res.status(404).json({ message: 'Ticket no encontrado' });
-        if (!['resuelto', 'cerrado'].includes(origen.estado)) return res.status(409).json({ message: `El ticket ${origen.folio} sigue abierto: escribe ahí tu mensaje.` });
-        const abierto = (await pool.query(
-            `SELECT id, folio, estado FROM tickets WHERE ticket_origen_id = $1 AND estado IN ('abierto','en_proceso') ORDER BY id DESC LIMIT 1`, [origen.id])).rows[0];
-        if (abierto) return res.json({ message: `Ya tienes un seguimiento abierto de ${origen.folio}: ${abierto.folio}`, ticket: { ...abierto, repetido: true } });
-        const base = String(origen.asunto).replace(/^Seguimiento a TK-\d+: /, '');
-        Object.assign(req.body, { asunto: `Seguimiento a ${origen.folio}: ${base}`.slice(0, 160), categoria: origen.categoria,
-            pedido_id: origen.pedido_id, cupon_id: origen.cupon_id });
-    }
+    // Un seguimiento ya no se abre directo: se solicita (ver
+    // /tickets/:ticketId/seguimiento) y Soporte lo aprueba o rechaza.
+    if (req.body.seguimiento_de) return res.status(409).json({ message: 'Para dar seguimiento a un ticket, solicítalo desde ese ticket: Soporte lo revisa.' });
     // El pedido tiene que servir para la categoría (no una garantía de un
-    // pedido cancelado). En un seguimiento se hereda tal cual.
-    if (!origen && req.body.pedido_id) {
+    // pedido cancelado).
+    if (req.body.pedido_id) {
         const p = (await pool.query(`SELECT p.*, (SELECT id FROM facturas f WHERE f.pedido_id = p.id LIMIT 1) AS factura
                                      FROM pedidos p WHERE p.id = $1 AND p.cliente_id = $2`, [Number(req.body.pedido_id) || 0, req.params.id])).rows[0];
         const cat = req.body.categoria;
@@ -3820,12 +3808,6 @@ app.post('/api/clientes/:id/tickets', asyncRoute(async (req, res) => {
         }
     }
     const ticket = await crearTicket(req.params.id, req.body, { fotos, ua: req.headers['user-agent'] });
-    if (origen && !ticket.repetido) {
-        await pool.query('UPDATE tickets SET ticket_origen_id = $2 WHERE id = $1', [ticket.id, origen.id]);
-        // La prioridad no baja de la del ticket original.
-        const ORD = { baja: 0, media: 1, alta: 2 };
-        if (ORD[origen.prioridad] > ORD[ticket.prioridad]) await pool.query('UPDATE tickets SET prioridad = $2 WHERE id = $1', [ticket.id, origen.prioridad]);
-    }
     res.status(ticket.repetido ? 200 : 201).json({ message: ticket.repetido ? 'Ya habías enviado este ticket' : 'Ticket creado',
         ticket: { id: ticket.id, folio: ticket.folio, estado: ticket.estado, repetido: !!ticket.repetido } });
 }));
@@ -3835,7 +3817,65 @@ app.get('/api/clientes/:id/tickets/:ticketId', asyncRoute(async (req, res) => {
         `SELECT ${TICKET_PUBLICO}, p.numero_orden, p.estado AS pedido_estado, cu.codigo AS cupon_codigo FROM tickets t LEFT JOIN pedidos p ON p.id = t.pedido_id
          LEFT JOIN cupones cu ON cu.id = t.cupon_id WHERE t.id = $1 AND t.cliente_id = $2`, [req.params.ticketId, req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ message: 'Ticket no encontrado' });
-    res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id) });
+    res.json({ ...t.rows[0], mensajes: await hiloTicket(t.rows[0].id), seguimiento: await estadoSeguimiento(t.rows[0]) });
+}));
+
+// ---------------------------------------------------------
+// "¿Quedó resuelto?" y solicitudes de seguimiento
+// Un ticket resuelto pregunta al cliente si quedó. "Sí" lo cierra. "No"
+// (o, ya cerrado, "¿Volvió a pasar?") pide un seguimiento: queda en el hilo
+// y Soporte lo aprueba (se crea un ticket ligado que hereda todo) o lo
+// rechaza con un motivo. Una solicitud pendiente a la vez y, tras
+// SEG_MAX_RECHAZOS rechazos, ya no se puede pedir más en ese ticket.
+// ---------------------------------------------------------
+const SEG_MAX_RECHAZOS = 2;
+async function estadoSeguimiento(t) {
+    const [sol, abierto] = await Promise.all([
+        pool.query(`SELECT s.id, s.estado, s.motivo, s.fecha, s.fecha_resuelta, s.ticket_nuevo_id, n.folio AS ticket_nuevo_folio
+                    FROM seguimiento_solicitudes s LEFT JOIN tickets n ON n.id = s.ticket_nuevo_id
+                    WHERE s.ticket_id = $1 ORDER BY s.id`, [t.id]),
+        pool.query(`SELECT id, folio, estado FROM tickets WHERE ticket_origen_id = $1 AND estado IN ('abierto','en_proceso') ORDER BY id DESC LIMIT 1`, [t.id]),
+    ]);
+    const solicitudes = sol.rows;
+    const pendiente = solicitudes.find((s) => s.estado === 'pendiente') || null;
+    const rechazos = solicitudes.filter((s) => s.estado === 'rechazada').length;
+    let puede = ['resuelto', 'cerrado'].includes(t.estado) && !pendiente && !abierto.rows[0] && rechazos < SEG_MAX_RECHAZOS;
+    let razon = !['resuelto', 'cerrado'].includes(t.estado) ? 'El ticket sigue abierto: escribe ahí tu mensaje.'
+        : pendiente ? 'Ya hay una solicitud de seguimiento en revisión.'
+        : abierto.rows[0] ? `Ya hay un seguimiento abierto: ${abierto.rows[0].folio}.`
+        : rechazos >= SEG_MAX_RECHAZOS ? `Se rechazaron ${rechazos} solicitudes de seguimiento de este ticket. Si es otro problema, abre un ticket nuevo.` : null;
+    if (puede) razon = null;
+    return { solicitudes, pendiente, rechazos, max_rechazos: SEG_MAX_RECHAZOS, seguimiento_abierto: abierto.rows[0] || null, puede_solicitar: puede, razon };
+}
+
+app.post('/api/clientes/:id/tickets/:ticketId/confirmar', asyncRoute(async (req, res) => {
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    if (t.estado !== 'resuelto') return res.status(409).json({ message: 'Solo se confirma un ticket marcado como resuelto.' });
+    // "Sí, quedó resuelto": se cierra. ("No" se contesta pidiendo el seguimiento.)
+    await pool.query("UPDATE tickets SET estado = 'cerrado', confirmacion = 'resuelto', fecha_confirmacion = CURRENT_TIMESTAMP, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1", [t.id]);
+    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', 'Confirmé que mi problema quedó resuelto.')`, [t.id]);
+    res.json({ message: '¡Gracias! Cerramos tu ticket.' });
+}));
+
+app.post('/api/clientes/:id/tickets/:ticketId/seguimiento', asyncRoute(async (req, res) => {
+    let fotos;
+    try { fotos = leerFotos(req.body.fotos); } catch (e) { return res.status(e.status || 400).json({ message: e.message }); }
+    const t = (await pool.query('SELECT * FROM tickets WHERE id = $1 AND cliente_id = $2', [req.params.ticketId, req.params.id])).rows[0];
+    if (!t) return res.status(404).json({ message: 'Ticket no encontrado' });
+    const est = await estadoSeguimiento(t);
+    if (!est.puede_solicitar) return res.status(409).json({ message: est.razon });
+    const texto = Sensible.enmascararSensible(String(req.body.mensaje || '').trim().slice(0, 4000)).texto;
+    if (texto.length < 15) return res.status(400).json({ message: 'Cuéntanos qué sigue pasando (al menos una o dos frases): Soporte lo revisa para abrir el seguimiento.' });
+    const m = await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, mensaje) VALUES ($1, 'cliente', $2) RETURNING id`,
+        [t.id, `Solicitud de seguimiento: ${texto}`]);
+    await guardarFotosTicket(pool, t.id, m.rows[0].id, fotos);
+    await pool.query('INSERT INTO seguimiento_solicitudes (ticket_id, cliente_id, mensaje_id, mensaje) VALUES ($1,$2,$3,$4)', [t.id, t.cliente_id, m.rows[0].id, texto]);
+    await pool.query(`UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP,
+                      confirmacion = CASE WHEN estado = 'resuelto' AND confirmacion IS NULL THEN 'no_resuelto' ELSE confirmacion END,
+                      fecha_confirmacion = CASE WHEN estado = 'resuelto' AND confirmacion IS NULL THEN CURRENT_TIMESTAMP ELSE fecha_confirmacion END
+                      WHERE id = $1`, [t.id]);
+    res.status(201).json({ message: 'Enviamos tu solicitud. Soporte la revisa y te avisamos por correo.' });
 }));
 app.get('/api/clientes/:id/tickets/:ticketId/fotos/:fotoId', asyncRoute(async (req, res) => {
     enviarFoto(res, (await pool.query(
@@ -5349,7 +5389,10 @@ app.get('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
         t.rows[0].ticket_origen_id ? pool.query('SELECT id, folio, estado FROM tickets WHERE id = $1', [t.rows[0].ticket_origen_id]) : { rows: [] },
         pool.query('SELECT id, folio, estado, fecha_creacion FROM tickets WHERE ticket_origen_id = $1 ORDER BY id', [t.rows[0].id]),
     ]);
-    res.json({ ...t.rows[0], origen: origen.rows[0] || null, seguimientos: seguimientos.rows, mensajes: await hiloTicket(t.rows[0].id) });
+    const sol = await pool.query(`SELECT s.*, u.nombre AS usuario_nombre, n.folio AS ticket_nuevo_folio FROM seguimiento_solicitudes s
+        LEFT JOIN usuarios u ON u.id = s.usuario_id LEFT JOIN tickets n ON n.id = s.ticket_nuevo_id WHERE s.ticket_id = $1 ORDER BY s.id`, [t.rows[0].id]);
+    res.json({ ...t.rows[0], origen: origen.rows[0] || null, seguimientos: seguimientos.rows, solicitudes: sol.rows, max_rechazos: SEG_MAX_RECHAZOS,
+        mensajes: await hiloTicket(t.rows[0].id) });
 }));
 app.get('/api/admin/tickets/:id/fotos/:fotoId', asyncRoute(async (req, res) => {
     enviarFoto(res, (await pool.query('SELECT tipo, datos FROM ticket_adjuntos WHERE id = $1 AND ticket_id = $2',
@@ -5365,6 +5408,48 @@ app.post('/api/admin/tickets/:id/mensajes', asyncRoute(async (req, res) => {
     const ok = await responderTicket(req.params.id, req.usuario.id, mensaje, null, fotos);
     if (!ok) return res.status(404).json({ message: 'Ticket no encontrado' });
     res.status(201).json({ message: 'Respuesta enviada' });
+}));
+
+// Aprobar una solicitud de seguimiento: se crea el ticket ligado, que hereda
+// asunto, categoría, pedido, cupón y prioridad; su primer mensaje es lo que
+// escribió el cliente, con sus fotos.
+app.post('/api/admin/tickets/:id/solicitudes/:solId/aprobar', asyncRoute(async (req, res) => {
+    const s = (await pool.query(`SELECT s.* FROM seguimiento_solicitudes s WHERE s.id = $1 AND s.ticket_id = $2`, [req.params.solId, req.params.id])).rows[0];
+    if (!s) return res.status(404).json({ message: 'Solicitud no encontrada' });
+    if (s.estado !== 'pendiente') return res.status(409).json({ message: `Esta solicitud ya fue ${s.estado}.` });
+    const o = (await pool.query('SELECT * FROM tickets WHERE id = $1', [s.ticket_id])).rows[0];
+    const base = String(o.asunto).replace(/^Seguimiento a TK-\d+: /, '');
+    const fotos = s.mensaje_id ? (await pool.query('SELECT nombre, tipo, datos, tamano FROM ticket_adjuntos WHERE mensaje_id = $1 ORDER BY id', [s.mensaje_id])).rows : [];
+    // Se marca primero (si dos personas aprueban a la vez, solo una crea el ticket).
+    const toma = await pool.query("UPDATE seguimiento_solicitudes SET estado = 'aprobada', usuario_id = $2, fecha_resuelta = CURRENT_TIMESTAMP WHERE id = $1 AND estado = 'pendiente' RETURNING id", [s.id, req.usuario.id]);
+    if (!toma.rows.length) return res.status(409).json({ message: 'Alguien más ya resolvió esta solicitud.' });
+    const nuevo = await crearTicket(o.cliente_id, { asunto: `Seguimiento a ${o.folio}: ${base}`.slice(0, 160), categoria: o.categoria, descripcion: s.mensaje,
+        pedido_id: o.pedido_id, cupon_id: o.cupon_id }, { fotos });
+    const ORD = { baja: 0, media: 1, alta: 2 };
+    await pool.query(`UPDATE tickets SET ticket_origen_id = $2, prioridad = CASE WHEN $3 > (CASE prioridad WHEN 'alta' THEN 2 WHEN 'media' THEN 1 ELSE 0 END) THEN $4 ELSE prioridad END,
+                      navegador = $5, dispositivo = $6 WHERE id = $1`, [nuevo.id, o.id, ORD[o.prioridad] || 0, o.prioridad, o.navegador, o.dispositivo]);
+    await pool.query('UPDATE seguimiento_solicitudes SET ticket_nuevo_id = $2 WHERE id = $1', [s.id, nuevo.id]);
+    const nota = String(req.body.nota || '').trim().slice(0, 1000);
+    const texto = `Abrimos el seguimiento ${nuevo.folio} para revisar lo que nos contaste.${nota ? ' ' + nota : ''}`;
+    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`, [o.id, req.usuario.id, texto]);
+    await pool.query('UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [o.id]);
+    avisarClienteTicket(nuevo.id, { texto }).catch(() => null);
+    await auditar(pool, req, { accion: 'seguimiento_aprobado', entidad: 'tickets', entidad_id: o.id, despues: { solicitud: s.id, ticket_nuevo: nuevo.folio } }).catch(() => null);
+    res.json({ message: `Seguimiento ${nuevo.folio} creado`, ticket: { id: nuevo.id, folio: nuevo.folio } });
+}));
+// Rechazar: el motivo es obligatorio y el cliente lo ve en su ticket y por correo.
+app.post('/api/admin/tickets/:id/solicitudes/:solId/rechazar', asyncRoute(async (req, res) => {
+    const motivo = Sensible.enmascararSensible(String(req.body.motivo || '').trim().slice(0, 1000)).texto;
+    if (motivo.length < 10) return res.status(400).json({ message: 'Explica al cliente por qué no se abre el seguimiento (al menos una frase).' });
+    const s = (await pool.query("UPDATE seguimiento_solicitudes SET estado = 'rechazada', motivo = $3, usuario_id = $4, fecha_resuelta = CURRENT_TIMESTAMP WHERE id = $1 AND ticket_id = $2 AND estado = 'pendiente' RETURNING *",
+        [req.params.solId, req.params.id, motivo, req.usuario.id])).rows[0];
+    if (!s) return res.status(409).json({ message: 'La solicitud no existe o ya se resolvió.' });
+    const texto = `No abrimos el seguimiento. Motivo: ${motivo}`;
+    await pool.query(`INSERT INTO ticket_mensajes (ticket_id, autor, usuario_id, mensaje) VALUES ($1, 'equipo', $2, $3)`, [s.ticket_id, req.usuario.id, texto]);
+    await pool.query('UPDATE tickets SET fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = $1', [s.ticket_id]);
+    avisarClienteTicket(s.ticket_id, { texto }).catch(() => null);
+    await auditar(pool, req, { accion: 'seguimiento_rechazado', entidad: 'tickets', entidad_id: s.ticket_id, despues: { solicitud: s.id }, motivo }).catch(() => null);
+    res.json({ message: 'Solicitud rechazada; el cliente verá el motivo.' });
 }));
 
 app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
@@ -5389,7 +5474,9 @@ app.put('/api/admin/tickets/:id', asyncRoute(async (req, res) => {
         `UPDATE tickets t SET
             estado    = COALESCE($1, estado),
             prioridad = COALESCE($2, prioridad),
-            asignado_a = COALESCE($3, asignado_a)
+            asignado_a = COALESCE($3, asignado_a),
+            -- Si se reabre, la pregunta "¿Quedó resuelto?" vuelve a salir.
+            confirmacion = CASE WHEN COALESCE($1, t.estado) IN ('abierto','en_proceso') THEN NULL ELSE t.confirmacion END
          FROM (SELECT estado AS antes FROM tickets WHERE id = $4) a
          WHERE t.id = $4 RETURNING t.*, a.antes`,
         [est.includes(estado) ? estado : null, pri.includes(prioridad) ? prioridad : null,
@@ -5512,7 +5599,7 @@ app.get('/api/admin/tickets/:id/diagnostico', asyncRoute(async (req, res) => {
 // =========================================================
 const PRIO_ORDEN = { alta: 0, media: 1, baja: 2 };
 app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
-    const [tk, rc, dv, rs, tkLista, rcLista, dvLista, rsLista] = await Promise.all([
+    const [tk, rc, dv, rs, tkLista, rcLista, dvLista, rsLista, solLista] = await Promise.all([
         pool.query(`
             SELECT COUNT(*) FILTER (WHERE t.estado = 'abierto')::int AS abiertos,
                    COUNT(*) FILTER (WHERE t.estado = 'en_proceso')::int AS en_proceso,
@@ -5563,6 +5650,10 @@ app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
             FROM resenas re JOIN clientes c ON c.id = re.cliente_id JOIN productos p ON p.id = re.producto_id
             WHERE re.respuesta IS NULL AND NOT re.oculta AND re.calificacion <= 3
             ORDER BY re.fecha DESC LIMIT 30`),
+        pool.query(`
+            SELECT s.id, s.mensaje, s.fecha AS desde, t.id AS ticket_id, t.folio, t.asunto, t.prioridad, t.cliente_id, c.nombre AS cliente_nombre
+            FROM seguimiento_solicitudes s JOIN tickets t ON t.id = s.ticket_id JOIN clientes c ON c.id = t.cliente_id
+            WHERE s.estado = 'pendiente'`),
     ]);
     const EST_REC = { recibido: 'Recibido', diagnostico: 'En diagnóstico', reparacion: 'En reparación', reemplazo: 'Reemplazo en proceso', listo: 'Listo para entregar' };
     const EST_DEV = { solicitada: 'Por revisar', aprobada: 'Esperando el producto', recibida: 'Recibida: falta reembolso o cambio' };
@@ -5574,6 +5665,14 @@ app.get('/api/admin/soporte/resumen', asyncRoute(async (req, res) => {
             estado: t.estado === 'abierto' ? 'Abierto' : 'En proceso', prioridad: t.prioridad,
             espera: t.ultimo_autor === 'cliente' ? 'nosotros' : 'cliente', desde: t.desde,
             url: `/admin/soporte.html?ticket=${t.id}`,
+        })),
+        ...solLista.rows.map((s) => ({
+            tipo: 'ticket', id: s.ticket_id, folio: s.folio, titulo: `Solicitud de seguimiento: ${s.asunto}`,
+            detalle: String(s.mensaje || '').slice(0, 90),
+            cliente_id: s.cliente_id, cliente_nombre: s.cliente_nombre,
+            estado: 'Aprobar o rechazar seguimiento', prioridad: s.prioridad,
+            espera: 'nosotros', desde: s.desde, solicitud: true,
+            url: `/admin/soporte.html?ticket=${s.ticket_id}`,
         })),
         ...rcLista.rows.map((r) => ({
             tipo: 'garantia', id: r.id, folio: r.folio, titulo: `Reclamo de garantía${r.producto ? ': ' + r.producto : ''}`, detalle: '',
@@ -9554,6 +9653,25 @@ async function migrarEsquema() {
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS navegador VARCHAR(80)');
     // Seguimiento: ticket nuevo ligado a uno resuelto o cerrado.
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_origen_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL');
+    // "¿Quedó resuelto?": lo que contestó el cliente sobre un ticket resuelto.
+    await pool.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS confirmacion VARCHAR(12) CHECK (confirmacion IN ('resuelto','no_resuelto'))");
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS fecha_confirmacion TIMESTAMP');
+    // Solicitudes de seguimiento: el cliente ya no abre un seguimiento por su
+    // cuenta; lo pide y Soporte lo aprueba (se crea el ticket ligado) o lo
+    // rechaza con un motivo que el cliente ve.
+    await pool.query(`CREATE TABLE IF NOT EXISTS seguimiento_solicitudes (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        cliente_id INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
+        mensaje_id INTEGER REFERENCES ticket_mensajes(id) ON DELETE SET NULL,
+        mensaje TEXT NOT NULL,
+        estado VARCHAR(10) NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','aprobada','rechazada')),
+        motivo TEXT,
+        usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        ticket_nuevo_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_resuelta TIMESTAMP)`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_seg_sol_ticket ON seguimiento_solicitudes(ticket_id)');
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');
     // Errores del servidor con el folio que vio el usuario.
     await pool.query(`CREATE TABLE IF NOT EXISTS errores_servidor (

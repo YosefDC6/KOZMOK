@@ -93,10 +93,7 @@ async function vistaHilo(panel, id) {
             `).join('')}
         </div>
         ${['resuelto', 'cerrado'].includes(t.estado)
-            ? `<div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-                   <p style="margin:0;color:var(--text-muted);font-size:.9rem">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong> y ya no recibe mensajes. ¿El problema sigue? Abre un seguimiento: queda ligado a este ticket.</p>
-                   <button class="btn btn-primary btn-sm" onclick="formSeguimiento(TICKET_PREVIO)">Abrir un seguimiento</button>
-               </div>`
+            ? tarjetaCierre(t)
             : `<div class="field" style="margin-top:16px"><textarea id="hilo-txt" rows="3" maxlength="4000" placeholder="Escribe tu mensaje…"></textarea></div>
                <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="hilo-fotos" accept="image/*" multiple hidden /></label>
                    <small>Hasta 3 (JPG, PNG o WebP). Útil como evidencia de un producto dañado.</small></div>
@@ -119,15 +116,59 @@ async function responder(id, btn) {
     });
 }
 
-// Seguimiento de un ticket resuelto o cerrado: asunto, categoría, pedido y
-// cupón vienen del original y no se cambian (el servidor también los toma
-// de ahí). Solo se escribe qué pasa ahora y se agregan fotos. Si es otro
-// tema, "¿Es otro problema?" abre el formulario normal.
+// Ticket resuelto o cerrado: "¿Quedó resuelto?" y el estado de la
+// solicitud de seguimiento (en revisión, rechazada con su motivo o aprobada
+// con el ticket nuevo). Un seguimiento no se abre directo: se solicita y
+// Soporte decide.
+function tarjetaCierre(t) {
+    const s = t.seguimiento || {};
+    const ultima = (s.solicitudes || []).slice(-1)[0];
+    const fecha = (d) => formatoFechaHora(d);
+    let estadoSol = '';
+    if (s.pendiente) {
+        estadoSol = `<div class="tk-cierre-sol espera">${icon('clock', 18)}<div><strong>Tu solicitud de seguimiento está en revisión</strong>
+            <p>La enviaste el ${escHTML(fecha(s.pendiente.fecha))}; Soporte la revisa y te avisamos por correo.</p></div></div>`;
+    } else if (ultima && ultima.estado === 'aprobada') {
+        estadoSol = `<div class="tk-cierre-sol ok">${icon('check', 18)}<div><strong>Abrimos el seguimiento ${escHTML(ultima.ticket_nuevo_folio || '')}</strong>
+            <p>Ahí continúa tu caso.</p>${ultima.ticket_nuevo_id ? `<a class="btn btn-primary btn-sm" href="/soporte.html?ticket=${ultima.ticket_nuevo_id}">Ir a ${escHTML(ultima.ticket_nuevo_folio)}</a>` : ''}</div></div>`;
+    } else if (ultima && ultima.estado === 'rechazada') {
+        estadoSol = `<div class="tk-cierre-sol no">${icon('alert', 18)}<div><strong>No abrimos el seguimiento</strong>
+            <p><b>Motivo:</b> ${escHTML(ultima.motivo || '')}</p></div></div>`;
+    }
+    // "¿Quedó resuelto?" solo en un ticket resuelto que aún no contesta.
+    const pregunta = t.estado === 'resuelto' && !t.confirmacion && !s.pendiente && !(s.solicitudes || []).length ? `
+        <div class="tk-cierre-pregunta">
+            <div><strong>¿Quedó resuelto tu problema?</strong><p>Si sí, cerramos el ticket. Si no, puedes pedir un seguimiento: Soporte lo revisa.</p></div>
+            <div class="tk-cierre-botones">
+                <button class="btn btn-primary btn-sm" onclick="confirmarResuelto(${t.id}, this)">${icon('check', 14)} Sí, quedó resuelto</button>
+                <button class="btn btn-outline btn-sm" onclick="formSeguimiento(TICKET_PREVIO)">No, sigue pasando</button>
+            </div>
+        </div>` : '';
+    const pedir = !pregunta && s.puede_solicitar ? `<button class="btn btn-outline btn-sm" onclick="formSeguimiento(TICKET_PREVIO)">${ultima && ultima.estado === 'rechazada' ? 'Enviar otra solicitud' : '¿Sigue o volvió a pasar? Solicitar seguimiento'}</button>` : '';
+    const limite = !s.puede_solicitar && !s.pendiente && s.rechazos >= s.max_rechazos ? `<p class="tk-cierre-nota">${escHTML(s.razon)}</p>` : '';
+    return `<div class="card tk-cierre">
+        <p class="tk-cierre-estado">Este ticket está <strong>${EST_LABEL[t.estado].toLowerCase()}</strong>${t.confirmacion === 'resuelto' ? ' (confirmaste que quedó resuelto)' : ''} y ya no recibe mensajes.</p>
+        ${pregunta}${estadoSol}
+        ${pedir || limite ? `<div class="tk-cierre-acciones">${pedir}${limite}<a href="#" onclick="formTicket(); return false;" class="tk-cierre-otro">¿Es otro problema? Abre un ticket nuevo</a></div>`
+            : (pregunta ? '' : `<div class="tk-cierre-acciones"><a href="#" onclick="formTicket(); return false;" class="tk-cierre-otro">¿Es otro problema? Abre un ticket nuevo</a></div>`)}
+    </div>`;
+}
+async function confirmarResuelto(id, btn) {
+    await conBoton(btn, async () => {
+        try { const r = await api(`/clientes/${CID}/tickets/${id}/confirmar`, { method: 'POST', body: {} }); toast(r.message, 'ok'); setTimeout(() => location.replace('/soporte.html?ticket=' + id), 600); }
+        catch (e) { toast(e.message, 'error'); }
+    }, 'Cerrando…');
+}
+
+// Formulario para SOLICITAR el seguimiento: asunto, categoría, pedido y
+// cupón vienen del original y no se cambian. Se escribe qué sigue pasando
+// y se agregan fotos; Soporte aprueba o rechaza.
 const CAT_LABEL = { pedido: 'Un pedido', garantia: 'Garantía', devolucion: 'Devolución o cambio', facturacion: 'Facturación', cupon: 'Un cupón de descuento', cuenta: 'Mi cuenta', general: 'Otro' };
 function formSeguimiento(t) {
     document.getElementById('modal-generico-body').innerHTML = `
         <button class="modal-close" onclick="document.getElementById('modal-generico').classList.remove('open')">${icon('x', 20)}</button>
-        <h3>Seguimiento de ${escHTML(t.folio)}</h3>
+        <h3>Solicitar seguimiento de ${escHTML(t.folio)}</h3>
+        <p class="tk-seg-explica">Soporte revisa tu solicitud: si la aprueba, abrimos un ticket ligado a este; si no, te explicamos por qué.</p>
         <div class="tk-seg-resumen">
             <div class="tk-seg-fila"><span>Asunto</span><strong>${escHTML(String(t.asunto).replace(/^Seguimiento a TK-\d+: /, ''))}</strong></div>
             <div class="tk-seg-fila"><span>Categoría</span><strong>${escHTML(CAT_LABEL[t.categoria] || t.categoria)}</strong></div>
@@ -135,13 +176,13 @@ function formSeguimiento(t) {
             ${t.cupon_codigo ? `<div class="tk-seg-fila"><span>Cupón</span><strong class="mono">${escHTML(t.cupon_codigo)}</strong></div>` : ''}
             <small>Soporte verá la conversación de ${escHTML(t.folio)}.</small>
         </div>
-        <div class="field"><label>¿Qué sigue pasando?</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó desde la última respuesta."></textarea></div>
+        <div class="field"><label>¿Qué sigue pasando?</label><textarea id="tk-desc" rows="4" maxlength="4000" placeholder="Cuéntanos qué pasó desde la última respuesta y por qué no quedó resuelto."></textarea></div>
         <div class="field"><label>Fotos <span style="color:var(--text-muted);font-weight:400">(opcional, hasta 3)</span></label>
             <div class="foto-sel"><label class="btn btn-ghost btn-sm foto-btn">${icon('image', 14)} Agregar fotos<input type="file" id="tk-fotos" accept="image/*" multiple hidden /></label>
                 <small>Evidencia de un producto dañado, el empaque o una captura de pantalla.</small></div>
             <div class="foto-lista" id="tk-prev"></div>
         </div>
-        <button class="btn btn-primary" style="width:100%" onclick="crearSeguimiento(${t.id}, this)">Enviar seguimiento</button>
+        <button class="btn btn-primary" style="width:100%" onclick="crearSeguimiento(${t.id}, this)">Enviar solicitud</button>
         <p class="tk-seg-otro">¿Es otro problema? <a href="#" onclick="formTicket(); return false;">Abre un ticket nuevo</a></p>
     `;
     SEL_NUEVO = FotosReclamo.selector(document.getElementById('tk-fotos'), document.getElementById('tk-prev'), { alError: (m) => toast(m, 'warn') });
@@ -150,13 +191,13 @@ function formSeguimiento(t) {
 }
 async function crearSeguimiento(origenId, btn) {
     const descripcion = document.getElementById('tk-desc').value.trim();
-    if (descripcion.length < 10) { toast('Cuéntanos qué sigue pasando (al menos unas palabras)', 'warn'); return; }
+    if (descripcion.length < 15) { toast('Cuéntanos qué sigue pasando (una o dos frases): Soporte lo revisa', 'warn'); return; }
     await conBoton(btn, async () => {
         try {
-            const r = await api(`/clientes/${CID}/tickets`, { method: 'POST',
-                body: { seguimiento_de: origenId, asunto: 'Seguimiento', descripcion, fotos: SEL_NUEVO ? SEL_NUEVO.fotos() : [] } });
-            toast(r.ticket.repetido ? r.message : `Seguimiento ${r.ticket.folio} creado`, 'ok');
-            location.replace('/soporte.html?ticket=' + r.ticket.id);
+            const r = await api(`/clientes/${CID}/tickets/${origenId}/seguimiento`, { method: 'POST',
+                body: { mensaje: descripcion, fotos: SEL_NUEVO ? SEL_NUEVO.fotos() : [] } });
+            toast(r.message, 'ok');
+            location.replace('/soporte.html?ticket=' + origenId);
         } catch (e) { toast(e.message, 'error'); }
     }, 'Enviando…');
 }

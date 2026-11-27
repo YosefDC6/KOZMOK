@@ -1020,6 +1020,18 @@ NAVEGACION RAPIDA EN EL PANEL
      campo para responder al cliente y el PEDIDO RELACIONADO (ver 9).
    - Si el ticket es seguimiento de otro, o tiene seguimientos, aparecen
      sus folios con su estado y un enlace a cada uno.
+   - SOLICITUD DE SEGUIMIENTO: si el cliente la pidio, arriba del hilo
+     sale el recuadro naranja "El cliente pide un seguimiento" con lo que
+     escribio (sus fotos estan en el hilo) y cuantas veces se le ha
+     rechazado. "Aprobar y abrir seguimiento" crea el ticket ligado y lleva
+     a el (la nota es opcional). "Rechazar con motivo" pide explicarle al
+     cliente por que (obligatorio): lo ve en su ticket y por correo. Las
+     solicitudes pendientes tambien aparecen en la bandeja "Por atender"
+     del Centro de soporte (boton "Revisar") y en las notificaciones ("X
+     pide un seguimiento de TK-..."). En el cuadro "Caso" se ve que
+     contesto el cliente ("quedo resuelto" / "no quedo resuelto") y el
+     historial de solicitudes. Si Soporte reabre el ticket, la pregunta
+     "¿Quedo resuelto?" vuelve a salir cuando se marque resuelto otra vez.
 
 4.6b GARANTIAS  (admin/garantias.html)  [CRM]
    - "Reclamos en curso": los casos que abrieron los clientes (RG-1xxx) con
@@ -1965,18 +1977,32 @@ Lado cliente  (soporte.html, dentro de Mi cuenta)
      correo con la respuesta y el boton "Ver mi ticket".
    - El cliente ve su ticket, sus mensajes y el estado; la prioridad y a
      quien del equipo se asigno son internos y no se le muestran.
-   - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente:
-     aparece "Este ticket esta cerrado..." con el boton "Abrir un
-     seguimiento".
-   - SEGUIMIENTO: hereda del ticket anterior el asunto ("Seguimiento a
-     TK-1009: ..."), la categoria, el pedido o cupon y la prioridad, y
-     esos datos no se pueden cambiar; el cliente solo escribe que sigue
-     pasando y puede agregar fotos. Queda ligado al anterior: el cliente
-     ve "Seguimiento de TK-1009" y Soporte ve en cada ticket de cual es
-     seguimiento y que seguimientos tiene. Solo puede haber un seguimiento
-     abierto por ticket (si ya hay uno, se abre ese). Si en realidad es
-     otro tema, el enlace "Es otro problema? Abre un ticket nuevo" abre el
-     formulario normal en blanco.
+   - Un ticket "Resuelto" o "Cerrado" ya no recibe mensajes del cliente.
+   - "¿QUEDO RESUELTO TU PROBLEMA?": cuando Soporte marca el ticket como
+     resuelto, el cliente ve la pregunta con dos botones:
+        * "Si, quedo resuelto": el ticket se cierra (queda escrito en el
+          hilo y Soporte ve "El cliente dijo: quedo resuelto").
+        * "No, sigue pasando": abre el formulario para SOLICITAR un
+          seguimiento. El seguimiento ya no se abre directo: Soporte lo
+          revisa primero.
+   - SOLICITAR SEGUIMIENTO: el formulario muestra fijos los datos del
+     ticket (asunto, categoria, pedido o cupon); el cliente escribe que
+     sigue pasando (una o dos frases) y puede agregar hasta 3 fotos. La
+     solicitud queda en el hilo del ticket y el cliente ve "Tu solicitud de
+     seguimiento esta en revision". Despues:
+        * APROBADA: se crea un ticket nuevo ligado ("Seguimiento a TK-1009:
+          ...") con los mismos datos y prioridad, y lo que escribio el
+          cliente con sus fotos. El cliente ve "Abrimos el seguimiento
+          TK-..." con el enlace y le llega un correo.
+        * RECHAZADA: el cliente ve "No abrimos el seguimiento" con el
+          MOTIVO que escribio Soporte (tambien le llega por correo) y puede
+          enviar otra solicitud.
+     Reglas: una solicitud en revision a la vez; no se puede pedir si ya
+     hay un seguimiento abierto; despues de 2 solicitudes rechazadas ya no
+     se puede pedir mas en ese ticket. En un ticket cerrado aparece
+     "¿Sigue o volvio a pasar? Solicitar seguimiento" con las mismas
+     reglas. Si en realidad es otro tema, "¿Es otro problema? Abre un
+     ticket nuevo" abre el formulario normal en blanco.
    - Desde el Centro de ayuda (ayuda.html) el boton de contacto lleva aqui
      (o al login si no hay sesion).
 

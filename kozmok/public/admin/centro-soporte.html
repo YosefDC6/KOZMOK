@@ -137,7 +137,9 @@ function pintarBandeja() {
         const espera = x.espera === 'nosotros'
             ? `<span class="cs-espera nos" title="El cliente espera nuestra respuesta">${icon('clock', 13)} ${hace(x.desde)}</span>`
             : `<span class="cs-espera cli" title="Esperamos al cliente">Cliente · ${hace(x.desde)}</span>`;
-        const accion = x.tipo === 'ticket'
+        const accion = x.solicitud
+            ? `<a class="btn btn-primary btn-sm" href="${x.url}" onclick="event.stopPropagation()">Revisar</a>`
+            : x.tipo === 'ticket'
             ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); responderRapido(${x.id})">Responder</button>`
             : `<a class="btn btn-outline btn-sm" href="${x.url}" onclick="event.stopPropagation()">Atender</a>`;
         return `<tr onclick="location.href='${x.url}'" style="cursor:pointer">

@@ -126,8 +126,9 @@ module.exports = function crearNotificaciones({ pool, enviarCorreo, puedeVer, ur
             WHERE m.id > $1 ORDER BY m.id LIMIT 500`)) {
             if (m.autor !== 'cliente') continue;
             ev.push({ categoria: 'tickets', dedupe: 'tk' + m.id, url: `/admin/soporte.html?ticket=${m.id}`,
-                titulo: m.primero ? `Ticket nuevo ${m.folio}${m.prioridad === 'alta' ? ' (prioridad alta)' : ''}` : `${m.nombre} respondió en ${m.folio}`,
-                cuerpo: `${m.primero ? `${m.nombre}: ${m.asunto}. ` : ''}${corto(m.mensaje) || 'Mandó fotos'}` });
+                titulo: m.primero ? `Ticket nuevo ${m.folio}${m.prioridad === 'alta' ? ' (prioridad alta)' : ''}`
+                    : /^Solicitud de seguimiento: /.test(m.mensaje || '') ? `${m.nombre} pide un seguimiento de ${m.folio}` : `${m.nombre} respondió en ${m.folio}`,
+                cuerpo: `${m.primero ? `${m.nombre}: ${m.asunto}. ` : ''}${corto(String(m.mensaje || '').replace(/^Solicitud de seguimiento: /, '')) || 'Mandó fotos'}` });
         }
         // Reclamos de garantía: nuevos y mensajes de clientes
         for (const r of await nuevas('reclamos', 'reclamos_garantia', `

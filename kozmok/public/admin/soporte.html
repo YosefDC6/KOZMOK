@@ -79,6 +79,47 @@ function filtrar(k, v) {
     location.search = q.toString();
 }
 
+// Solicitud de seguimiento pendiente: arriba del hilo, con aprobar y
+// rechazar (el motivo es obligatorio y el cliente lo ve).
+function tarjetaSolicitud(t) {
+    const s = (t.solicitudes || []).find((x) => x.estado === 'pendiente');
+    if (!s) return '';
+    const rech = (t.solicitudes || []).filter((x) => x.estado === 'rechazada').length;
+    return `<div class="card tk-sol" id="tk-sol">
+        <div class="tk-sol-head">${icon('alert', 18)}<div><strong>El cliente pide un seguimiento</strong>
+            <span>Enviada el ${formatoFechaHora(s.fecha)}${rech ? ` · ${rech === 1 ? 'ya se le rechazó 1 solicitud' : `ya se le rechazaron ${rech} solicitudes`}; al llegar a ${t.max_rechazos} ya no podrá pedir más` : ''}</span></div></div>
+        <blockquote class="tk-sol-msg">${escHTML(s.mensaje)}</blockquote>
+        <p class="tk-sol-ayuda">Sus fotos, si mandó, están en el hilo. <b>Aprobar</b> crea un ticket ligado con los mismos datos (asunto, categoría, pedido, cupón y prioridad) y este mensaje. <b>Rechazar</b> le explica al cliente por qué.</p>
+        <div class="field"><label>Nota para el cliente <span style="font-weight:400;color:var(--text-muted)">(al aprobar es opcional; al rechazar es el motivo y es obligatorio)</span></label>
+            <textarea id="sol-texto" rows="2" maxlength="1000" placeholder="Ej.: Revisamos tu pedido y el reembolso ya se procesó; puede tardar 5 días hábiles en reflejarse."></textarea></div>
+        <div class="tk-sol-botones">
+            <button class="btn btn-primary btn-sm" onclick="resolverSolicitud(${t.id}, ${s.id}, 'aprobar', this)">${icon('check', 14)} Aprobar y abrir seguimiento</button>
+            <button class="btn btn-outline btn-sm" onclick="resolverSolicitud(${t.id}, ${s.id}, 'rechazar', this)">Rechazar con motivo</button>
+        </div>
+    </div>`;
+}
+function historialSolicitudes(t) {
+    const hechas = (t.solicitudes || []).filter((x) => x.estado !== 'pendiente');
+    if (!hechas.length) return '';
+    return `<div class="tk-sol-hist"><strong>Solicitudes de seguimiento</strong>${hechas.map((x) => `
+        <div class="tk-sol-h ${x.estado}"><span>${formatoFecha(x.fecha)} · ${x.estado === 'aprobada' ? 'Aprobada' : 'Rechazada'}${x.usuario_nombre ? ` por ${escHTML(x.usuario_nombre)}` : ''}</span>
+            ${x.estado === 'aprobada' && x.ticket_nuevo_id ? `<a class="mono" href="/admin/soporte.html?ticket=${x.ticket_nuevo_id}">${escHTML(x.ticket_nuevo_folio || '')}</a>` : ''}
+            ${x.estado === 'rechazada' ? `<em>${escHTML(x.motivo || '')}</em>` : ''}</div>`).join('')}</div>`;
+}
+async function resolverSolicitud(ticketId, solId, accion, btn) {
+    const texto = document.getElementById('sol-texto').value.trim();
+    if (accion === 'rechazar' && texto.length < 10) { toast('Escribe el motivo para el cliente (al menos una frase).', 'warn'); document.getElementById('sol-texto').focus(); return; }
+    if (accion === 'rechazar' && !(await confirmar(`El cliente verá este motivo en su ticket y por correo:\n\n"${texto}"`, { okText: 'Rechazar', peligro: true }))) return;
+    await conBoton(btn, async () => {
+        try {
+            const r = await api(`/admin/tickets/${ticketId}/solicitudes/${solId}/${accion}`, { method: 'POST', body: accion === 'rechazar' ? { motivo: texto } : { nota: texto } });
+            toast(r.message, 'ok');
+            if (accion === 'aprobar' && r.ticket) location.href = '/admin/soporte.html?ticket=' + r.ticket.id;
+            else vistaHilo(ticketId);
+        } catch (e) { toast(e.message, 'error'); }
+    }, accion === 'aprobar' ? 'Creando…' : 'Rechazando…');
+}
+
 async function vistaHilo(id) {
     let t;
     try { t = await api(`/admin/tickets/${id}`); }
@@ -90,6 +131,7 @@ async function vistaHilo(id) {
         ${adminHeader(escHTML(t.asunto), `<span class="mono">${t.folio}</span> · <span class="tag estado-${t.estado}" id="t-estado-tag">${EST[t.estado]}</span> · <span class="tag prio-${t.prioridad}">${PRIO[t.prioridad]}</span> · <a href="/admin/cliente.html?id=${t.cliente_id}">${escHTML(t.cliente_nombre)}</a> · ${escHTML(t.cliente_correo)}`)}
         <div class="tk-layout">
             <section class="tk-hilo">
+                ${tarjetaSolicitud(t)}
                 <div class="hilo">
                     ${t.mensajes.map((m) => `
                         <div class="hilo-msg ${m.autor === 'equipo' ? 'mio' : 'equipo'}">
@@ -118,6 +160,8 @@ async function vistaHilo(id) {
                     <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted)">Categoría: ${escHTML(t.categoria)} · abierto el ${formatoFecha(t.fecha_creacion)}${t.navegador ? `<br>Desde ${escHTML(t.navegador)} · ${escHTML(t.dispositivo || '')}` : ''}</p>
                     ${t.origen ? `<p class="tk-ligado">${icon('undo', 13)} Seguimiento de <a class="mono" href="/admin/soporte.html?ticket=${t.origen.id}">${escHTML(t.origen.folio)}</a> (${EST[t.origen.estado] || t.origen.estado})</p>` : ''}
                     ${(t.seguimientos || []).length ? `<p class="tk-ligado">${icon('chat', 13)} Seguimientos: ${t.seguimientos.map((x) => `<a class="mono" href="/admin/soporte.html?ticket=${x.id}">${escHTML(x.folio)}</a> (${EST[x.estado] || x.estado})`).join(', ')}</p>` : ''}
+                    ${t.confirmacion ? `<p class="tk-ligado">${icon(t.confirmacion === 'resuelto' ? 'check' : 'alert', 13)} <span>El cliente dijo: <strong>${t.confirmacion === 'resuelto' ? 'quedó resuelto' : 'no quedó resuelto'}</strong>${t.fecha_confirmacion ? ` (${formatoFechaHora(t.fecha_confirmacion)})` : ''}</span></p>` : ''}
+                    ${historialSolicitudes(t)}
                 </div>
                 <div class="card" id="tk-diag">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
