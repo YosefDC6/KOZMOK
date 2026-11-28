@@ -1063,6 +1063,21 @@ CREATE TABLE IF NOT EXISTS notificaciones_cliente (
 );
 CREATE INDEX IF NOT EXISTS idx_notif_cliente ON notificaciones_cliente(cliente_id, id DESC);
 
+-- La bandeja real de un correo (Gmail ignora puntos y "+algo"): no se crean
+-- dos cuentas con la misma bandeja.
+CREATE OR REPLACE FUNCTION fn_bandeja_correo(c TEXT) RETURNS TEXT
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT CASE
+    WHEN split_part(lower(trim(c)), '@', 2) IN ('gmail.com', 'googlemail.com')
+      THEN replace(split_part(split_part(lower(trim(c)), '@', 1), '+', 1), '.', '') || '@gmail.com'
+    WHEN split_part(lower(trim(c)), '@', 2) IN ('outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'hotmail.com.mx',
+         'live.com', 'live.com.mx', 'icloud.com', 'me.com', 'protonmail.com', 'proton.me')
+      THEN split_part(split_part(lower(trim(c)), '@', 1), '+', 1) || '@' || split_part(lower(trim(c)), '@', 2)
+    ELSE lower(trim(c))
+  END
+$f$;
+CREATE INDEX IF NOT EXISTS idx_clientes_bandeja ON clientes (fn_bandeja_correo(correo));
+
 -- Cada cambio de estado de un pedido le avisa al cliente al momento, venga
 -- de donde venga (panel, ERP, PayPal, vencimiento), haya o no Gmail.
 CREATE OR REPLACE FUNCTION fn_notificar_pedido() RETURNS TRIGGER AS $f$

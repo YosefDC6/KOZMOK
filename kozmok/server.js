@@ -337,6 +337,23 @@ async function clienteDeSesion(req) {
 // la envía en cuanto se confirma la transacción (si la transacción se
 // deshace, el correo nunca sale). Si falla, se reintenta hasta 3 veces.
 //   boton: { texto, url } -> botón grande en la versión HTML del correo.
+// La bandeja real de un correo: Gmail ignora los puntos y lo que va después
+// de "+" (juan.perez+1@gmail.com llega a juanperez@gmail.com); Outlook, iCloud
+// y Proton ignoran el "+algo". Sirve para no crear dos cuentas con la misma
+// bandeja (p. ej. para juntar cupones de bienvenida).
+const SQL_BANDEJA_CORREO = `CREATE OR REPLACE FUNCTION fn_bandeja_correo(c TEXT) RETURNS TEXT
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT CASE
+    WHEN split_part(lower(trim(c)), '@', 2) IN ('gmail.com', 'googlemail.com')
+      THEN replace(split_part(split_part(lower(trim(c)), '@', 1), '+', 1), '.', '') || '@gmail.com'
+    WHEN split_part(lower(trim(c)), '@', 2) IN ('outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'hotmail.com.mx',
+         'live.com', 'live.com.mx', 'icloud.com', 'me.com', 'protonmail.com', 'proton.me')
+      THEN split_part(split_part(lower(trim(c)), '@', 1), '+', 1) || '@' || split_part(lower(trim(c)), '@', 2)
+    ELSE lower(trim(c))
+  END
+$f$;
+CREATE INDEX IF NOT EXISTS idx_clientes_bandeja ON clientes (fn_bandeja_correo(correo));`;
+
 // Avisos dentro de la cuenta del cliente (campana de la tienda).
 const SQL_NOTIFICACIONES_CLIENTE = `-- Avisos para el cliente dentro de su cuenta (campana de la tienda).
 CREATE TABLE IF NOT EXISTS notificaciones_cliente (
@@ -926,7 +943,9 @@ const hashRegistro = (token, codigo) => crypto.createHash('sha256').update(`reg:
 async function registroPendiente(req, res, { b, nombre, correo, password }) {
     // bcrypt en los dos casos: que no se note por el tiempo de respuesta.
     const hash = await seg.hashPassword(password);
-    const existe = (await pool.query('SELECT id, nombre FROM clientes WHERE LOWER(correo) = $1', [correo])).rows[0];
+    // Mismo correo u otra forma de escribir la misma bandeja (puntos, +algo).
+    const existe = (await pool.query('SELECT id, nombre, correo FROM clientes WHERE fn_bandeja_correo(correo) = fn_bandeja_correo($1) ORDER BY id LIMIT 1', [correo])).rows[0];
+    const alias = !!existe && seg.normalizarCorreo(existe.correo) !== correo;
     const token = crypto.randomBytes(24).toString('base64url');
     const codigo = nuevoCodigoVerificacion();
     const txt = (v, n) => (v ? String(v).trim().slice(0, n) || null : null);
@@ -935,19 +954,19 @@ async function registroPendiente(req, res, { b, nombre, correo, password }) {
         boletin: b.boletin === true || b.boletin === 'true' || b.boletin === 1, recordar: quiereRecordar(b, true) };
     // Un registro pendiente por correo (el nuevo reemplaza al anterior).
     const previo = (await pool.query(`SELECT existe, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - enviado))::int AS hace FROM registros_pendientes
-                                       WHERE correo = $1 ORDER BY id DESC LIMIT 1`, [correo])).rows[0];
-    await pool.query('DELETE FROM registros_pendientes WHERE correo = $1 OR expira < CURRENT_TIMESTAMP', [correo]);
+                                       WHERE fn_bandeja_correo(correo) = fn_bandeja_correo($1) ORDER BY id DESC LIMIT 1`, [correo])).rows[0];
+    await pool.query('DELETE FROM registros_pendientes WHERE fn_bandeja_correo(correo) = fn_bandeja_correo($1) OR expira < CURRENT_TIMESTAMP', [correo]);
     await pool.query(`INSERT INTO registros_pendientes (token_hash, correo, datos, codigo_hash, existe, expira)
                       VALUES ($1,$2,$3,$4,$5, CURRENT_TIMESTAMP + ($6 || ' minutes')::interval)`,
         [seg.sha256(token), correo, JSON.stringify(datos), existe ? crypto.randomBytes(32).toString('hex') : hashRegistro(token, codigo), !!existe, String(VERIF_MINUTOS)]);
     if (existe) {
         // Al dueño, como mucho un aviso cada 30 min (que no lo llenen de correos).
         if (!previo || !previo.existe || previo.hace > 1800) {
-            await enviarCorreo(pool, { para: correo, tipo: 'seguridad', cliente_id: existe.id,
+            await enviarCorreo(pool, { para: existe.correo, tipo: 'seguridad', cliente_id: existe.id,
                 asunto: 'Alguien intentó crear una cuenta con tu correo',
                 cuerpo: `Hola ${existe.nombre}:
 
-Alguien intentó crear una cuenta nueva en Kozmok con este correo, pero ya tienes una. No se creó nada y tu cuenta sigue igual.
+${alias ? `Alguien intentó crear una cuenta nueva en Kozmok con ${correo}, que es otra forma de escribir tu correo (llega a tu misma bandeja). Como ya tienes una cuenta, no se creó nada y tu cuenta sigue igual.` : 'Alguien intentó crear una cuenta nueva en Kozmok con este correo, pero ya tienes una. No se creó nada y tu cuenta sigue igual.'}
 
 Si fuiste tú, inicia sesión; si no recuerdas tu contraseña, usa "¿Olvidaste tu contraseña?".
 
@@ -956,7 +975,11 @@ ${urlPublica(req)}/login.html
 Si no fuiste tú, no tienes que hacer nada.`,
                 boton: { texto: 'Iniciar sesión', url: `${urlPublica(req)}/login.html` } });
         }
-        await seg.registrarEvento(req, { tipo: 'registro_correo_existente', severidad: 'baja', cliente_id: existe.id,
+        if (alias) await seg.registrarEvento(req, { tipo: 'registro_alias_correo', severidad: 'media', cliente_id: existe.id,
+            detalle: `Intento de crear otra cuenta con ${correo}, que llega a la misma bandeja que ${existe.correo}; no se creó y se respondió igual que a uno nuevo`,
+            datos: { cambio: { correo_escrito: correo, cuenta_existente: existe.correo },
+                     veredicto: { normal: false, explicacion: 'Gmail ignora los puntos y lo que va después de "+", así que las dos direcciones son la misma bandeja. Es la forma típica de abrir varias cuentas para juntar cupones de bienvenida. No se creó la cuenta y al dueño le llegó un aviso.' } } });
+        else await seg.registrarEvento(req, { tipo: 'registro_correo_existente', severidad: 'baja', cliente_id: existe.id,
             detalle: `Intento de crear una cuenta con un correo que ya tiene cuenta (${correo}); se respondió igual que a uno nuevo`,
             datos: { veredicto: { normal: true, explicacion: 'Puede ser el dueño que olvidó que ya tenía cuenta, o alguien probando qué correos están registrados. La respuesta fue la misma que para un correo nuevo, así que no pudo averiguarlo; al dueño le llegó un aviso.' } } });
     } else {
@@ -991,7 +1014,7 @@ app.post('/api/auth/registro/confirmar', limiteAuth, asyncRoute(async (req, res)
     // Se borra antes de crear (si llegan dos confirmaciones juntas, una sola crea).
     const borrado = await pool.query('DELETE FROM registros_pendientes WHERE id = $1 RETURNING id', [p.id]);
     if (!borrado.rows.length) return res.status(409).json({ message: 'Este registro ya se confirmó. Inicia sesión.' });
-    const ya = await pool.query('SELECT 1 FROM clientes WHERE LOWER(correo) = $1', [p.correo]);
+    const ya = await pool.query('SELECT 1 FROM clientes WHERE fn_bandeja_correo(correo) = fn_bandeja_correo($1)', [p.correo]);
     if (ya.rows.length) return res.status(409).json({ message: 'Ese correo ya tiene cuenta. Inicia sesión o recupera tu contraseña.' });
     const d = p.datos;
     const cliente = await crearCuentaCliente(req, { ...d, correo: p.correo, verificado: true });
@@ -1076,8 +1099,8 @@ const registrarCliente = asyncRoute(async (req, res) => {
     if (correo_.configurado()) return registroPendiente(req, res, { b, nombre, correo, password });
 
     // Sin Gmail no hay forma de comprobar el correo: se crea de una vez.
-    const existe = await pool.query('SELECT id FROM clientes WHERE LOWER(correo) = $1', [correo]);
-    if (existe.rows.length > 0) return res.status(409).json({ message: 'Este correo ya está registrado. Inicia sesión o recupera tu contraseña.' });
+    const existe = await pool.query('SELECT id FROM clientes WHERE fn_bandeja_correo(correo) = fn_bandeja_correo($1)', [correo]);
+    if (existe.rows.length > 0) return res.status(409).json({ message: 'Este correo (u otra forma de escribirlo) ya está registrado. Inicia sesión o recupera tu contraseña.' });
 
     const hash = await seg.hashPassword(password);
     // Código de socio único (reintenta si choca con uno existente)
@@ -10024,6 +10047,7 @@ async function migrarEsquema() {
         expira TIMESTAMP NOT NULL,
         creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_reg_pend_correo ON registros_pendientes(correo)');
+    await pool.query(SQL_BANDEJA_CORREO);
     // Avisos del cliente (campana de la tienda) y trigger de estado de pedidos.
     await pool.query(SQL_NOTIFICACIONES_CLIENTE);
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dispositivo VARCHAR(60)');
