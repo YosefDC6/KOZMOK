@@ -6364,7 +6364,7 @@ app.get('/api/admin/productos', asyncRoute(async (req, res) => {
 const LIMITES_PRODUCTO = {
     precio: { min: 1, max: 5000000, nombre: 'Precio de venta' },
     costo_unitario: { min: 0, max: 5000000, nombre: 'Costo unitario' },
-    stock: { min: 0, max: 100000, entero: true, nombre: 'Existencias iniciales' },
+    stock: { min: 0, max: () => INV_MAX_MOVIMIENTO, entero: true, nombre: 'Existencias iniciales' },
     stock_minimo: { min: 0, max: 500, entero: true, nombre: 'Stock mínimo' },
     ram_gb: { min: 1, max: 2048, entero: true, nombre: 'RAM (GB)' },
 };
@@ -6374,10 +6374,10 @@ function validarProducto(b) {
     for (const [k, l] of Object.entries(LIMITES_PRODUCTO)) {
         const v = b[k];
         if (v === undefined || v === null || v === '') continue;
-        const n = Number(v);
+        const n = Number(v), max = typeof l.max === 'function' ? l.max() : l.max;
         if (!Number.isFinite(n)) return `«${l.nombre}» no es un número válido.`;
         if (l.entero && !Number.isInteger(n)) return `«${l.nombre}» debe ser un número entero.`;
-        if (n < l.min || n > l.max) return `«${l.nombre}» debe estar entre ${l.min.toLocaleString('es-MX')} y ${l.max.toLocaleString('es-MX')}.`;
+        if (n < l.min || n > max) return `«${l.nombre}» debe estar entre ${l.min.toLocaleString('es-MX')} y ${max.toLocaleString('es-MX')}.`;
     }
     for (const [k, [min, max]] of Object.entries(LARGOS_PRODUCTO)) {
         const v = b[k];
@@ -6592,6 +6592,8 @@ app.post('/api/admin/productos/:id/restock', asyncRoute(async (req, res) => {
         await db.query('BEGIN');
         const prod = (await db.query('SELECT * FROM productos WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
         if (!prod) { await db.query('ROLLBACK'); return res.status(404).json({ message: 'Producto no encontrado' }); }
+        const excede = excedeExistencia(prod.stock, cantidad);
+        if (excede) { await db.query('ROLLBACK'); return res.status(400).json({ message: excede }); }
         nuevoStock = prod.stock + cantidad;
         await db.query('UPDATE productos SET stock = $1 WHERE id = $2', [nuevoStock, req.params.id]);
         await db.query(
@@ -6695,7 +6697,13 @@ const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;
 // Piezas máximas en un solo movimiento, restock u orden de compra (contra
 // errores de dedo: 1000 en vez de 10). Configurable en el .env.
 const INV_MAX_MOVIMIENTO = Math.max(1, Math.min(100000, Number(process.env.INVENTARIO_MAX_POR_MOVIMIENTO) || 500));
-app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS, max_movimiento: INV_MAX_MOVIMIENTO }));
+// Existencias máximas de un producto (lo que cabe en el almacén): una entrada
+// que lo rebase se rechaza. Configurable en el .env.
+const INV_MAX_EXISTENCIA = Math.max(1, Math.min(1000000, Number(process.env.INVENTARIO_MAX_EXISTENCIA) || 5000));
+const excedeExistencia = (stock, cantidad) => Number(stock) + Number(cantidad) > INV_MAX_EXISTENCIA
+    ? `Con esta entrada quedarían ${(Number(stock) + Number(cantidad)).toLocaleString('es-MX')} piezas; el máximo por producto es ${INV_MAX_EXISTENCIA.toLocaleString('es-MX')} (hoy hay ${Number(stock).toLocaleString('es-MX')}).`
+    : null;
+app.get('/api/admin/movimientos-inventario/motivos', (req, res) => res.json({ motivos: MOTIVOS_INV, umbral_valor: BAJA_UMBRAL_VALOR, umbral_piezas: BAJA_UMBRAL_PIEZAS, max_movimiento: INV_MAX_MOVIMIENTO, max_existencia: INV_MAX_EXISTENCIA }));
 
 app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
     // La fecha de REGISTRO la pone la base de datos; la del movimiento (cuándo
@@ -6724,6 +6732,10 @@ app.post('/api/admin/movimientos-inventario', asyncRoute(async (req, res) => {
         if (tipo === 'salida' && prod.stock < cantidad) {
             await db.query('ROLLBACK');
             return res.status(400).json({ message: `Solo hay ${prod.stock} en stock; no se puede registrar una salida mayor` });
+        }
+        if (tipo === 'entrada' && excedeExistencia(prod.stock, cantidad)) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({ message: excedeExistencia(prod.stock, cantidad) });
         }
         const valor = redondear(Number(prod.costo_unitario || prod.precio) * cantidad);
         const necesitaFirma = tipo === 'salida' && req.usuario.rol !== 'admin'
@@ -7025,8 +7037,10 @@ app.post('/api/admin/ordenes-compra', asyncRoute(async (req, res) => {
     if (Number(cantidad) > INV_MAX_MOVIMIENTO) {
         return res.status(400).json({ message: `Máximo ${INV_MAX_MOVIMIENTO} piezas por orden de compra` });
     }
-    const prod = await pool.query('SELECT proveedor_id FROM productos WHERE id = $1', [producto_id]);
+    const prod = await pool.query('SELECT proveedor_id, stock FROM productos WHERE id = $1', [producto_id]);
     if (prod.rows.length === 0) return res.status(404).json({ message: 'Producto no encontrado' });
+    const excedeOc = excedeExistencia(prod.rows[0].stock, cantidad);
+    if (excedeOc) return res.status(400).json({ message: excedeOc });
     const proveedorFinal = proveedor_id || prod.rows[0].proveedor_id;
     if (!proveedorFinal) return res.status(400).json({ message: 'Este producto no tiene proveedor asignado; elige uno' });
 
