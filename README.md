@@ -254,3 +254,16 @@ KOZMOK/
 - Al arrancar, el servidor actualiza solo la base (columnas y tablas nuevas, permisos y migraciones de datos), así que basta `git pull` y reiniciar.
 - Las contraseñas se guardan con **bcrypt** y las sesiones son tokens aleatorios en cookie HttpOnly (Etapa 5, ver [`SEGURIDAD.md`](SEGURIDAD.md)). En producción hay que servirlo con HTTPS y `COOKIE_SEGURA=1`.
 - Los detalles de cada pantalla están en [`Manual_usuario.txt`](Manual_usuario.txt), y en [`kozmok/README.md`](kozmok/README.md) hay notas técnicas adicionales.
+
+## Antes de publicar la tienda
+
+En la red local todo funciona tal cual. Para subirla a internet, en el `.env` del servidor:
+
+1. **Dominio y HTTPS**: el certificado lo da el hosting o Let's Encrypt (gratis) y los navegadores ya confían en él; no se usa `npm run certificado` (mkcert es solo para la red local).
+2. `COOKIE_SEGURA=1` y `HSTS=1`: la cookie de sesión solo viaja cifrada y el navegador ya no entra por http.
+3. `TRUST_PROXY=1` si hay un proxy delante (casi todos los hostings): sin esto, el bloqueo por IP vería a todos los visitantes como uno solo.
+4. reCAPTCHA con el dominio real agregado en la consola de Google y en `RECAPTCHA_DOMINIOS`.
+5. Una `PANEL_RUTA` propia, y cambiar las contraseñas de las cuentas de ejemplo del panel.
+6. PayPal y Facturama con credenciales de producción (hoy están en *sandbox*).
+7. Quitar `PRUEBA_CORREO` y `PRUEBA_PASSWORD`, y no dejar los archivos `.env` ni `certs/` en el repositorio.
+8. Base de datos con contraseña fuerte, sin acceso desde fuera del servidor y con respaldos automáticos.
