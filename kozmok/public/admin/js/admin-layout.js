@@ -4,6 +4,38 @@
 // pantalla (con estados viejos de tickets, pedidos…): en el panel se recarga.
 window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
 
+// Límites de captura en todo el panel: los números no pasan de su máximo
+// (o de 999,999,999 si la pantalla no puso uno) y los textos tienen tope.
+// El servidor vuelve a revisar todo; esto solo evita escribir valores absurdos.
+(function limitesDeCaptura() {
+    const MAX_NUMERO = 999999999;
+    const fmt = (n) => Number(n).toLocaleString('es-MX');
+    let ultimoAviso = 0;
+    const avisar = (msg) => { if (Date.now() - ultimoAviso < 1500) return; ultimoAviso = Date.now(); if (window.toast) window.toast(msg, 'warn'); };
+    const preparar = (el) => {
+        if (!el || el.dataset.kzLimite) return;
+        el.dataset.kzLimite = '1';
+        if (el.tagName === 'INPUT' && el.type === 'number' && !el.hasAttribute('max')) el.max = String(MAX_NUMERO);
+        else if (el.tagName === 'INPUT' && ['text', 'search', 'email', 'tel', 'url', ''].includes(el.type) && !el.hasAttribute('maxlength')) el.maxLength = 200;
+        else if (el.tagName === 'TEXTAREA' && !el.hasAttribute('maxlength')) el.maxLength = 5000;
+    };
+    document.addEventListener('focusin', (e) => preparar(e.target));
+    document.addEventListener('input', (e) => {
+        const el = e.target;
+        if (!el || el.tagName !== 'INPUT' || el.type !== 'number' || el.value === '') return;
+        preparar(el);
+        const v = Number(el.value), max = Number(el.max);
+        if (Number.isFinite(max) && v > max) { el.value = String(max); avisar(`El máximo para este campo es ${fmt(max)}.`); }
+    });
+    // El mínimo se revisa al salir del campo (mientras se escribe, "5" camino a "50" no es un error).
+    document.addEventListener('change', (e) => {
+        const el = e.target;
+        if (!el || el.tagName !== 'INPUT' || el.type !== 'number' || el.value === '' || el.min === '') return;
+        const v = Number(el.value), min = Number(el.min);
+        if (Number.isFinite(min) && v < min) { el.value = String(min); avisar(`El mínimo para este campo es ${fmt(min)}.`); }
+    });
+})();
+
 function requireAuthAdmin() {
     // La sesión real es la cookie HttpOnly "kz_admin"; aquí solo se
     // guardan los datos para pintar el menú y se confirman con el servidor.

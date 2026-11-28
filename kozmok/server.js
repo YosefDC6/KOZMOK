@@ -195,6 +195,33 @@ app.use('/api', seg.limitador({ nombre: 'api', ventanaMs: 60000, max: 600 }));
 app.use('/api', seg.verificarOrigen);
 app.use('/api', seg.filtroInyeccionSQL);
 app.use('/api', seg.sanitizarEntrada);
+// Ningún número absurdo (p. ej. 100000000000000000000000000000): se rechaza
+// con un mensaje claro antes de llegar a la base. Revisa los números del
+// cuerpo y los textos numéricos en campos de cantidades y dinero.
+const MAX_NUMERO = 999999999;
+const CAMPO_NUMERICO = /(precio|costo|monto|importe|stock|cantidad|minimo|maximo|valor|porcentaje|descuento|total|saldo|puntos|dias|meses|horas|tope|limite|ram_gb|piezas|unidades)/i;
+function numeroFueraDeRango(v, campo) {
+    if (typeof v === 'number') return !Number.isFinite(v) || Math.abs(v) > MAX_NUMERO;
+    if (typeof v === 'string' && CAMPO_NUMERICO.test(campo) && /^\s*-?[\d.,]+(e[+-]?\d+)?\s*$/i.test(v)) {
+        const n = Number(v.replace(/,/g, ''));
+        return !Number.isFinite(n) || Math.abs(n) > MAX_NUMERO;
+    }
+    return false;
+}
+function buscarNumeroGigante(obj, ruta = '', prof = 0) {
+    if (!obj || typeof obj !== 'object' || prof > 4) return null;
+    for (const [k, v] of Object.entries(obj)) {
+        const campo = ruta ? `${ruta}.${k}` : k;
+        if (v && typeof v === 'object') { const r = buscarNumeroGigante(v, campo, prof + 1); if (r) return r; }
+        else if (numeroFueraDeRango(v, k)) return campo;
+    }
+    return null;
+}
+app.use('/api', (req, res, next) => {
+    const campo = buscarNumeroGigante(req.body);
+    if (!campo) return next();
+    res.status(400).json({ message: `El valor de «${campo.replace(/_/g, ' ')}» es demasiado grande (máximo ${MAX_NUMERO.toLocaleString('es-MX')}).`, campo });
+});
 // Límite más estricto para login, registro y recuperación de contraseña.
 const limiteAuth = seg.limitador({
     nombre: 'auth', ventanaMs: 60000, max: 15,
@@ -6333,6 +6360,35 @@ app.get('/api/admin/productos', asyncRoute(async (req, res) => {
     res.json(result.rows);
 }));
 
+// Rangos razonables para un producto de la tienda (alta y edición).
+const LIMITES_PRODUCTO = {
+    precio: { min: 1, max: 5000000, nombre: 'Precio de venta' },
+    costo_unitario: { min: 0, max: 5000000, nombre: 'Costo unitario' },
+    stock: { min: 0, max: 100000, entero: true, nombre: 'Existencias iniciales' },
+    stock_minimo: { min: 0, max: 500, entero: true, nombre: 'Stock mínimo' },
+    ram_gb: { min: 1, max: 2048, entero: true, nombre: 'RAM (GB)' },
+};
+const LARGOS_PRODUCTO = { nombre: [2, 180], marca: [0, 80], procesador: [0, 120], almacenamiento: [0, 80],
+    tarjeta_grafica: [0, 120], pantalla: [0, 80], descripcion: [0, 5000], imagen_url: [0, 1000] };
+function validarProducto(b) {
+    for (const [k, l] of Object.entries(LIMITES_PRODUCTO)) {
+        const v = b[k];
+        if (v === undefined || v === null || v === '') continue;
+        const n = Number(v);
+        if (!Number.isFinite(n)) return `«${l.nombre}» no es un número válido.`;
+        if (l.entero && !Number.isInteger(n)) return `«${l.nombre}» debe ser un número entero.`;
+        if (n < l.min || n > l.max) return `«${l.nombre}» debe estar entre ${l.min.toLocaleString('es-MX')} y ${l.max.toLocaleString('es-MX')}.`;
+    }
+    for (const [k, [min, max]] of Object.entries(LARGOS_PRODUCTO)) {
+        const v = b[k];
+        if (v === undefined || v === null) continue;
+        const t = String(v).trim();
+        if (k === 'nombre' && t.length < min) return 'El nombre debe tener al menos 2 caracteres.';
+        if (t.length > max) return `El campo «${k.replace(/_/g, ' ')}» admite máximo ${max} caracteres.`;
+    }
+    return null;
+}
+
 app.post('/api/admin/productos', asyncRoute(async (req, res) => {
     const {
         nombre, descripcion, categoria_id, marca, precio, stock, stock_minimo,
@@ -6343,6 +6399,8 @@ app.post('/api/admin/productos', asyncRoute(async (req, res) => {
     if (!nombre || precio === undefined || precio < 0) {
         return res.status(400).json({ message: 'Nombre y precio válido son requeridos' });
     }
+    const errProducto = validarProducto(req.body);
+    if (errProducto) return res.status(400).json({ message: errProducto });
 
     const result = await pool.query(
         `INSERT INTO productos
@@ -6379,6 +6437,8 @@ app.put('/api/admin/productos/:id', asyncRoute(async (req, res) => {
 
     const previo = (await pool.query('SELECT * FROM productos WHERE id = $1', [req.params.id])).rows[0];
     if (!previo) return res.status(404).json({ message: 'Producto no encontrado' });
+    const errProducto = validarProducto({ ...req.body, stock: undefined });
+    if (errProducto) return res.status(400).json({ message: errProducto });
     // El stock solo cambia con movimientos (entrada / salida), que dejan
     // rastro de quién, cuándo y por qué. Aquí no se acepta cambiarlo.
     if (stock !== undefined && stock !== null && stock !== '' && Number(stock) !== Number(previo.stock)) {
