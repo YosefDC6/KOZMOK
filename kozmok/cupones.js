@@ -178,7 +178,7 @@ module.exports = function crearCupones({ pool, enviarCorreo, urlBase, niveles = 
         const tope = tipo === 'porcentaje' ? Math.max(0, r2(b.tope || 0)) : 0;
         const descripcion = String(b.descripcion || '').trim().slice(0, 160);
         if (!(valor > 0)) return { status: 400, message: 'Escribe el valor del descuento' };
-        if (tipo === 'porcentaje' && valor > 100) return { status: 400, message: 'El porcentaje no puede pasar de 100%' };
+        if (tipo === 'porcentaje' && valor > 90) return { status: 400, message: 'El porcentaje no puede pasar de 90%' };
         if (tipo === 'monto' && valor > 50000) return { status: 400, message: 'Un cupón de monto fijo no puede pasar de $50,000' };
         if (tope > 50000) return { status: 400, message: 'El descuento máximo no puede pasar de $50,000' };
         if (minimo > 5000000) return { status: 400, message: 'La compra mínima no puede pasar de $5,000,000' };

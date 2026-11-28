@@ -265,7 +265,7 @@ function darCupon() {
     modalCupon(`<h3 style="margin-top:0">Dar un cupón a ${escHTML(TICKET.cliente_nombre)}</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
-            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="100" step="1" value="10" /></div>
+            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="90" step="1" value="10" /></div>
             <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" max="50000" step="50" value="500" /></div>
             <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
             <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="30" /></div>
@@ -276,7 +276,7 @@ function darCupon() {
             tipo: document.getElementById('cp-tipo').value, valor: Number(document.getElementById('cp-valor').value),
             tope: Number(document.getElementById('cp-tope').value), minimo: Number(document.getElementById('cp-min').value),
             dias: Number(document.getElementById('cp-dias').value), motivo: document.getElementById('cp-motivo').value } }));
-    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '100' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
+    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '90' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
 }
 function accionCupon(id, accion) {
     const TXT = { extender: 'Extender la vigencia', reactivar: 'Reactivar el cupón', cancelar: 'Cancelar el cupón' };

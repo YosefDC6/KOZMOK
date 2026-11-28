@@ -205,7 +205,7 @@ function darCupon() {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
-            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="100" step="1" value="10" /></div>
+            <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="90" step="1" value="10" /></div>
             <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" max="50000" step="50" value="500" /></div>
             <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
             <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="30" /></div>
@@ -221,7 +221,7 @@ function darCupon() {
                 dias: Number(document.getElementById('cp-dias').value), descripcion: document.getElementById('cp-desc').value,
                 motivo: document.getElementById('cp-motivo').value } });
         }, 'Dar cupón');
-    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '100' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
+    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '90' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
     const inp = document.getElementById('cp-cli'), sug = document.getElementById('cp-cli-sug');
     let t;
     inp.addEventListener('input', () => {
@@ -292,7 +292,7 @@ function envioMasivo() {
             <div class="cup-grid">
                 <div class="field" style="grid-column:1/-1"><label>Nombre del envío (lo ve el cliente)</label><input id="cp-nombre" maxlength="160" placeholder="Ej. Buen Fin para clientes Oro" /></div>
                 <div class="field"><label>Tipo</label><select id="cp-tipo"><option value="porcentaje">Porcentaje</option><option value="monto">Monto fijo ($)</option></select></div>
-                <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="100" step="1" value="10" /></div>
+                <div class="field"><label>Valor</label><input id="cp-valor" type="number" min="1" max="90" step="1" value="10" /></div>
                 <div class="field" id="cp-tope-w"><label>Descuento máximo ($)</label><input id="cp-tope" type="number" min="1" max="50000" step="50" value="500" /></div>
                 <div class="field"><label>Compra mínima ($)</label><input id="cp-min" type="number" min="0" step="100" value="0" /></div>
                 <div class="field"><label>Vigencia (días)</label><input id="cp-dias" type="number" min="1" max="365" value="15" /></div>
@@ -311,7 +311,7 @@ function envioMasivo() {
                 .catch((e) => { if (e.status === 409) { MASIVO.total = null; verAudiencia(); } throw e; });
         }, 'Enviar cupones');
     document.getElementById('modal-generico-body').style.maxWidth = '760px';
-    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '100' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
+    document.getElementById('cp-tipo').onchange = (e) => { const pct = e.target.value === 'porcentaje'; document.getElementById('cp-tope-w').style.display = pct ? '' : 'none'; const v = document.getElementById('cp-valor'); v.max = pct ? '90' : '50000'; if (Number(v.value) > Number(v.max)) v.value = v.max; };
     document.querySelectorAll('.cup-modos button').forEach((b) => b.onclick = () => cambiarModo(b.dataset.modo));
     // Cualquier cambio de criterios invalida la vista previa.
     document.querySelector('.cup-pasos section').addEventListener('change', () => { if (MASIVO.total != null) { MASIVO.total = null; prevTexto('Cambiaste algo: pulsa “Ver a quiénes” otra vez.'); } });

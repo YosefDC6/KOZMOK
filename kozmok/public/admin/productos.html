@@ -143,10 +143,10 @@ function formularioProducto(p = {}) {
             ${p.id
                 ? `<div class="field"><label>Stock actual</label><input type="number" id="p-stock" value="${p.stock ?? 0}" disabled />
                     <small style="color:var(--text-muted)">Las existencias cambian con una entrada o salida de inventario (queda en la auditoría).</small></div>`
-                : `<div class="field"><label>Existencias iniciales</label><input type="number" min="0" max="500" step="1" id="p-stock" value="0" /></div>`}
+                : `<div class="field"><label>Existencias iniciales</label><input type="number" min="0" max="100" step="1" id="p-stock" value="0" /></div>`}
         </div>
         <div class="field-row">
-            <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" min="0" max="500" value="${p.stock_minimo ?? 5}" /></div>
+            <div class="field"><label>Stock mínimo</label><input type="number" id="p-stock-min" min="0" max="50" value="${p.stock_minimo ?? 5}" /></div>
         </div>
         <div class="field"><label>Imagen (URL)</label><input id="p-imagen" maxlength="1000" value="${p.imagen_url || ''}" /></div>
         <div class="field-row">

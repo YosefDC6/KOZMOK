@@ -68,7 +68,7 @@
                 </select>
             </div>
             <div class="field-row">
-                <div class="field"><label>Cantidad</label><input type="number" min="1" max="${Number(UMBRAL.max_movimiento) || 500}" step="1" id="msa-cantidad" value="${pedido ? pedido.cantidad : sugerirCantidad(p)}" oninput="ScmAcciones._costo()" /></div>
+                <div class="field"><label>Cantidad</label><input type="number" min="1" max="${Number(UMBRAL.max_movimiento) || 100}" step="1" id="msa-cantidad" value="${pedido ? pedido.cantidad : sugerirCantidad(p)}" oninput="ScmAcciones._costo()" /></div>
                 <div class="field"><label>Tipo</label><select disabled><option>Reposición</option></select></div>
             </div>
             <div class="field"><label>Proveedor</label>
@@ -113,7 +113,7 @@
         };
         if (!body.producto_id) return toast('Selecciona un producto', 'warn');
         if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
-        if (body.cantidad > (Number(UMBRAL.max_movimiento) || 500)) return toast(`Máximo ${Number(UMBRAL.max_movimiento) || 500} piezas por orden`, 'warn');
+        if (body.cantidad > (Number(UMBRAL.max_movimiento) || 100)) return toast(`Máximo ${Number(UMBRAL.max_movimiento) || 100} piezas por orden`, 'warn');
         try {
             const r = id ? await api(`/admin/ordenes-compra/${id}`, { method: 'PUT', body })
                 : await api('/admin/ordenes-compra', { method: 'POST', body });
@@ -125,7 +125,7 @@
     // Movimiento manual de inventario
     // ------------------------------------------------------------
     // Motivos y umbrales vienen del servidor (la misma lista que valida)
-    let MOTIVOS = null, UMBRAL = { umbral_valor: 3000, umbral_piezas: 3, max_movimiento: 500 };
+    let MOTIVOS = null, UMBRAL = { umbral_valor: 3000, umbral_piezas: 3, max_movimiento: 100 };
     async function nuevoMovimiento({ productoId = null, tipo = 'entrada', onListo: cb = null } = {}) {
         onListo = cb;
         try {
@@ -167,7 +167,7 @@
     function topeCantidad() {
         const t = document.querySelector('input[name="msa-tipo"]:checked').value;
         const p = producto(Number($('msa-producto').value));
-        const max = Number(UMBRAL.max_movimiento) || 500;
+        const max = Number(UMBRAL.max_movimiento) || 100;
         return t === 'salida' ? Math.min(max, p ? Number(p.stock) : 0) : max;
     }
     function limite() {
@@ -199,7 +199,7 @@
         if (body.fecha && new Date(body.fecha) > new Date(Date.now() + 5 * 60000)) return toast('La fecha del movimiento no puede ser futura', 'warn');
         if (!Number.isInteger(body.cantidad) || body.cantidad < 1) return toast('La cantidad debe ser un número entero mayor a 0', 'warn');
         const tope = topeCantidad();
-        if (body.cantidad > tope) return toast(body.tipo === 'salida' && tope < (Number(UMBRAL.max_movimiento) || 500)
+        if (body.cantidad > tope) return toast(body.tipo === 'salida' && tope < (Number(UMBRAL.max_movimiento) || 100)
             ? `Solo hay ${tope} en stock; no puedes sacar más` : `Máximo ${tope} piezas por movimiento`, 'warn');
         const obligatorio = body.tipo === 'salida' || ['otro', 'conteo'].includes(body.motivo_tipo);
         if (obligatorio && body.detalle.length < 10) return toast('Describe qué pasó (al menos 10 caracteres)', 'warn');

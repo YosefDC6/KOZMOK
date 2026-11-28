@@ -6364,8 +6364,8 @@ app.get('/api/admin/productos', asyncRoute(async (req, res) => {
 const LIMITES_PRODUCTO = {
     precio: { min: 1, max: 5000000, nombre: 'Precio de venta' },
     costo_unitario: { min: 0, max: 5000000, nombre: 'Costo unitario' },
-    stock: { min: 0, max: () => INV_MAX_MOVIMIENTO, entero: true, nombre: 'Existencias iniciales' },
-    stock_minimo: { min: 0, max: 500, entero: true, nombre: 'Stock mínimo' },
+    stock: { min: 0, max: () => Math.min(INV_MAX_MOVIMIENTO, INV_MAX_EXISTENCIA), entero: true, nombre: 'Existencias iniciales' },
+    stock_minimo: { min: 0, max: 50, entero: true, nombre: 'Stock mínimo' },
     ram_gb: { min: 1, max: 2048, entero: true, nombre: 'RAM (GB)' },
 };
 const LARGOS_PRODUCTO = { nombre: [2, 180], marca: [0, 80], procesador: [0, 120], almacenamiento: [0, 80],
@@ -6696,10 +6696,10 @@ const BAJA_UMBRAL_VALOR = Number(process.env.BAJA_UMBRAL_VALOR) || 3000;   // pe
 const BAJA_UMBRAL_PIEZAS = Number(process.env.BAJA_UMBRAL_PIEZAS) || 3;
 // Piezas máximas en un solo movimiento, restock u orden de compra (contra
 // errores de dedo: 1000 en vez de 10). Configurable en el .env.
-const INV_MAX_MOVIMIENTO = Math.max(1, Math.min(100000, Number(process.env.INVENTARIO_MAX_POR_MOVIMIENTO) || 500));
+const INV_MAX_MOVIMIENTO = Math.max(1, Math.min(100000, Number(process.env.INVENTARIO_MAX_POR_MOVIMIENTO) || 100));
 // Existencias máximas de un producto (lo que cabe en el almacén): una entrada
 // que lo rebase se rechaza. Configurable en el .env.
-const INV_MAX_EXISTENCIA = Math.max(1, Math.min(1000000, Number(process.env.INVENTARIO_MAX_EXISTENCIA) || 5000));
+const INV_MAX_EXISTENCIA = Math.max(1, Math.min(1000000, Number(process.env.INVENTARIO_MAX_EXISTENCIA) || 200));
 const excedeExistencia = (stock, cantidad) => Number(stock) + Number(cantidad) > INV_MAX_EXISTENCIA
     ? `Con esta entrada quedarían ${(Number(stock) + Number(cantidad)).toLocaleString('es-MX')} piezas; el máximo por producto es ${INV_MAX_EXISTENCIA.toLocaleString('es-MX')} (hoy hay ${Number(stock).toLocaleString('es-MX')}).`
     : null;
